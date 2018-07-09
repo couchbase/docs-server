@@ -15,10 +15,42 @@ In cases where the CA is a part of a hierarchy, the software can verify that the
 [#ol_zch_zwh_p1b]
 . When authenticating a client using x.509 certificates, Couchbase Server requests the client to present a client certificate during the handshake.
 . When the client presents the certificate, the server checks for the validity of the certificate.
-. If the certificate is valid and not expired, then it parses the certificate to obtain the user specified in the certificate.
+. If the certificate is valid and not expired, then it parses the certificate to obtain the user name specified in the certificate.
 . The server then verifies the user and the roles assigned to the user.
 If the user has appropriate roles, then it authenticates the user and completes the handshake.
 . If any of the checks fail, the handshake is not completed.
+
+Since the identity in client certificates can be encoded in different ways for different kinds of users, Couchbase provides a flexible scheme to extract the identity from different certificates.
+Starting version 5.1, Couchbase Server supports multiple prefixes to be specified for client certificate authentication, as shown below.
+
+----
+"client_cert_auth": {
+  "state": "enable",
+  "prefixes": [
+    {
+      "path": "san.dnsname",
+      "prefix": "www.",
+      "delimiters": ".,;"
+     },
+     {},
+     ...
+  ]
+}
+----
+
+The "prefixes" field is an array of `{path, prefix, delimiters}` tuples, where:
+
+[#ul_qz3_rx5_zcb]
+* `path` can be one of the following values: "`subject.cn`", "`san.uri`", "`san.email`", "`san.dns`"
+* `prefix` specifies the client certificate prefix value.
+* `delimiters` is a list of characters that can individually be treated as a delimiter
+
+The following constraints apply when specifying multiple tuples:
+
+[#ul_yfv_hx5_zcb]
+* You can specify up to a maximum of 10 `{path, prefix,delimiters}` tuples in the "prefixes" array.
+* No two tuples can have the same "`path`" and "`prefix`" fields.
+* All the fields in the tuple must be specified.
 
 == Prerequisites
 
@@ -37,29 +69,46 @@ For query and other services, use the other supported authentication mechanisms.
 
 *Using REST API*
 
-. Enable x.509 certificate authentication on the server.
-You must set this parameter once per cluster.
+. Create a data file containing the payload for your certificate authentication settings.
+For example, `cb-certauth-setting.json`:
 +
 ----
-curl -X POST  --data-binary "state=enable" http://Administrator:password@localhost:8091/settings/clientCertAuth
+{
+	"state": "enable",
+	"prefixes": [{
+			"path": "san.uri",
+			"prefix": "www.",
+			"delimiter": "."
+		},
+		{
+			"path": "san.email",
+			"prefix": "couchbase.",
+			"delimiter": "."
+		}
+	]
+}
 ----
 
-. Specify the path of the certificate to use to parse for the user on the server.
+. Run the following command to enable x.509 certificate authentication on the server.
 +
 ----
-curl -X POST  --data-binary "path=subject.cn" http://Administrator:password@localhost:8091/settings/clientCertAuth
+curl -H "Content-Type: application/json" --data-binary @cb-certauth-setting.json http://Administrator:password@127.0.0.1:8091/settings/clientCertAuth
 ----
 
-. Specify the prefix and delimiter in that path expression.
-+
+To retrieve the client certificate authentication settings, run the following command:
+
 ----
-curl -X POST  --data-binary "delimiter=" http://Administrator:password@localhost:8091/settings/clientCertAuth
-curl -X POST  --data-binary "prefix=" http://Administrator:password@localhost:8091/settings/clientCertAuth
+curl -X GET  Administrator:password@localhost:8091/settings/clientCertAuth
+----
+
+.Result
+----
+{"state":"enable","prefixes":[{"delimiter":".","path":"san.uri","prefix":"www."},{"delimiter":".","path":"san.email","prefix":"couchbase."}]}
 ----
 
 *Using CLI*
 
-Use the following [.cmd]`couchbase-cli` command:
+Use the [.cmd]`couchbase-cli` xref:cli:cbcli/couchbase-cli-ssl-manage.adoc#couchbaseclisslmanage1.idm68744912[ssl-manage] command:
 
 ----
 couchbase-cli ssl-manage <options>
@@ -83,8 +132,10 @@ If using XDCR, *do not* use the [.param]`mandatory` state for X.509 Certificate 
 
 
 | --set-client-auth-path
-| subject.cn | san.uri | san.dnsname | san.name
+| subject.cn | san.uri | san.dnsname | san.email
 | Set SSL client certificate type value.
+This field will be used to extract the user name from the certificate.
+Currently, only the fields specified in the values column are supported.
 
 | --set-client-auth-prefix
 | set_client_auth_prefix
@@ -93,6 +144,8 @@ If using XDCR, *do not* use the [.param]`mandatory` state for X.509 Certificate 
 | --set-client-auth-delimiter
 | set_client_auth_delimiter
 | Set SSL client certificate delimiter value.
+The delimiter can either be a string or a character.
+The parsing of the certificate for the user name ends when the delimiter value is found.
 
 | --client-auth
 | 
@@ -113,4 +166,10 @@ For information on assigning roles to users, see xref:security-rbac-for-admins-a
 Note the following limitations to the feature in the current release:
 
 * X.509 Certificate Based Authentication will only work for data service.
-* For Couchbase Server 5.0, X.509 Certificate-based Authentication support is only available in the Java Client.
+* For Couchbase Server 5.1, X.509 Certificate-based Authentication support is suported by all SDK Clients.
+However, only the very latest versions support it - check the https://developer.couchbase.com/server/other-products/release-notes-archives/java-sdk[release notes] for your SDK version.
+
+== Upgrade
+
+When upgrading from an earlier version to 5.1, the cluster will be in mixed mode and will return client certificate authentication settings in the older format until the cluster is completely upgraded.
+Once the cluster has been upgraded, any existing client certificate authentication settings from earlier versions will be automatically transformed into the new format.
