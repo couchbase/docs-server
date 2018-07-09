@@ -1,0 +1,214 @@
+[#topic_c5q_2g1_vs]
+= Common errors
+
+[abstract]
+Most commonly encountered errors when using Couchbase Server and possible resolutions.
+
+File descriptor and core file size limits::
+If you are having problems starting Couchbase Server on Linux for the first time, there are two common and related causes to consider.
+When the [.path]_/etc/init.d/couchbase-server _script runs, it tries to set the file descriptor limit and core file size limit:
++
+----
+> ulimit -n 10240 ulimit -c unlimited
+----
+This may or may not be allowed depending on your system configuration.
+If Couchbase Server is failing to start, you can look through the logs for one or both of these messages:
++
+----
+ns_log: logging ns_port_server:0:Port server memcached on node 'ns_1@127.0.0.1' exited with status 71.  
+Restarting. Messages: failed to set rlimit for open files. 
+Try running as root or requesting smaller maxconns value.
+----
+Alternatively, you may additionally see or optionally see:
++
+----
+ns_port_server:0:info:message - Port server memcached on node 'ns_1@127.0.0.1' exited with status 71. 
+Restarting. Messages: failed to ensure core file creation
+----
+The resolution to these is to edit the /etc/security/limits.conf file and add these entries:
++
+----
+couchbase hard nofile 10240
+couchbase hard core unlimited
+----
+
+IP address seems to have changed:: Error message:
++
+----
+IP address seems to have changed. Unable to listen on 'ns_1@'
+----
+This message means that Couchbase Server had a problem opening a port with that address.
+Couchbase Server listens on all interfaces (0.0.0.0), and chooses which interface to use for its cluster host name (Erlang OTP hostname, not DNS hostname, though the two values can be the same) (ns_1@IP) by determining which interface would lead out to external networks.
+This is defined by your routing table.
+This error often occurs due to a networking issue, particularly around DHCP and DNS resolution.
+
+Cluster version compatibility mismatch:: Error message:
++
+----
+ This node cannot add another node (ns@xx.xx.xx) because of cluster compatibility mismatch. 
+ Cluster works in [version xx] mode and only support [version xx].
+----
+This message means that the cluster is at version XX and only supports adding nodes XX or higher.
+Typically, to enable certain features like client-server SSL, or secure XDCR; all the nodes of the cluster to be at a required compatibility level or higher that supports the feature.
+
+Difficulties communicating with the cluster. Displaying cached information.:: Error message:
++
+----
+Lost connection to server at <IP>:8091. Repeating in XX seconds. Retry now. Repeating failed XHR request...
+----
++
+You are seeing the cached UI.
+This issue is mostly due to the network connection between your system and the Couchbase Server node.
+Verify your connectivity to the Couchbase Server node using [.cmd]`ping` and [.cmd]`telnet`.
+
+Transparent huge server pages enabled::
+Starting in Red Hat Enterprise Linux (RHEL) version 6, a new default method of managing huge pages was implemented in the OS.
+It combines smaller memory pages into Huge Pages without the running processes knowing.
+The idea is to reduce the number of lookups on TLB required and therefore increase performance.
+It introduces an abstraction for automation and management of huge page.
+Couchbase Engineering has determined that under some conditions, *Couchbase Server can be negatively impacted by severe page allocation delays when THP is enabled*.
+Couchbase therefore recommends that THP be disabled on all Couchbase Server nodes
+To disable THPs on a running system temporarily, run the following commands:
++
+----
+ # Disable THP on a running system
+      sudo echo never > /sys/kernel/mm/transparent_hugepage/enabled
+      sudo echo never > /sys/kernel/mm/transparent_hugepage/defrag
+----
+To disable this permanently, do the following:
++
+----
+# Backup rc.local
+      sudo cp -p /etc/rc.local /etc/rc.local.`date +%Y%m%d-%H:%M`
+----
+Then copy the following into the bottom of /etc/rc.local.
++
+----
+if test -f /sys/kernel/mm/transparent_hugepage/enabled; then
+      echo never > /sys/kernel/mm/transparent_hugepage/enabled
+      fi
+      
+      if test -f /sys/kernel/mm/transparent_hugepage/defrag; then
+      echo never > /sys/kernel/mm/transparent_hugepage/defrag
+      fi
+----
+
+Excessive memory consumption by the `beam.smp` process on Lnux::
+If the XDCR Max Replications per Bucket value is raised (such as to 128), then the `beam.smp` process uses excessive memory.
+The solution is to reset to 32 or lower.
+
+Blocked view indexing::
+You have defined a view with `a _stats` reduce function.
+You see constant empty results in your queries to the view::
++
+----
+  > curl -s 'http://localhost:8092/default/_design/dev_test3/_view/view1?full_set=true'
+      {"rows":[]
+      }
+----
+You might repeat this query for several minutes or even hours and always get an empty result set.
+Try to query the view with `stale=false`, and you will get:
++
+----
+> curl -s 'http://localhost:8092/default/_design/dev_test3/_view/view1?full_set=true&stale=false'
+      {"rows":[
+      ],
+      "errors":[
+      {"from":"local","reason":"Builtin _stats function
+      requires map values to be numbers"},
+      {"from":"http://192.168.1.80:9502/_view_merge/?stale=false","reason":"Builtin _stats function requires map values to be
+      numbers"},
+      {"from":"http://192.168.1.80:9501/_view_merge/?stale=false","reason":"Builtin _stats function requires map values to be
+      numbers"},
+      {"from":"http://192.168.1.80:9503/_view_merge/?stale=false","reason":"Builtin _stats function requires map values to be
+      numbers"}
+      ]
+      }
+----
+Then looking at the design document, you see it could never work, as values are not numbers:
++
+----
+ {
+      "views":
+      {
+      "view1": {
+      "map": "function(doc, meta) { emit(meta.id, meta.id); }",
+      "reduce": "_stats"
+      }
+      }
+      }
+----
+One important question to answer is, why do you see the errors when querying with `stale=false` but do not see them when querying with `stale=update_after `(default) or `stale=ok `? Consider these points:
+* `stale=false` means: trigger an index update/build, and wait until it that update/build finishes, then start streaming the view results.
+For this example, index build/update failed, so the client gets an error, describing why it failed, from all nodes where it failed.
+* `stale=update_after` means start streaming the index contents immediately and after trigger an index update (if the index is not up to date already), so query responses won’t see indexing errors as they do for the `stale=false` scenario.
+For this particular example, the error happened during the initial index build, so the index was empty when the view queries arrived in the system, whence the empty result set.
+* `stale=ok` is very similar to (2), except it doesn’t trigger index updates.
+Finally, index build/update errors, related to user Map/Reduce functions, can be found in a dedicated log file that exists per node and has a filename matching mapreduce_errors.#.
+For example, from node 1, the file *mapreduce_errors.1 contained:
+
+----
+[mapreduce_errors:error,2012-08-20T16:18:36.250,n_0@192.168.1.80:>0.2096.1<] Bucket `default`, 
+       main group `_design/dev_test3`,
+       error executing reduce
+       function for view `view1'
+       reason: Builtin _stats function requires map values to be numbers
+----
+
+View time-out errors:: View timeout errors can occur when querying a view with stale=false.
+When querying a view with stale=false, you often get timeout errors for one or more nodes.
+These nodes are nodes that did not receive the original query request.
+For example, you query node 1, and you get timeout errors for nodes 2, 3 and 4 as in the example below (view with reduce function _count):
++
+----
+> curl -s 'http://localhost:8092/default/_design/dev_test2/_view/view2?full_set=true&stale=false'
+      {"rows":[
+      {"key":null,"value":125184}
+      ],
+      "errors":[
+      {"from":"http://192.168.1.80:9503/_view_merge/?stale=false","reason":"timeout"},
+      {"from":"http://192.168.1.80:9501/_view_merge/?stale=false","reason":"timeout"},
+      {"from":"http://192.168.1.80:9502/_view_merge/?stale=false","reason":"timeout"}
+      ]
+      }
+----
+By default, for queries with `stale=false` (full consistency) the view merging node (node that receives the query request, node 1 in this example) waits up to 60000 milliseconds (1 minute) to receive partial view results from each other node in the cluster.
+If it waits for more than 1 minute for results from a remote node, it stops waiting and a timeout error entry is added to the final response.
+A `stale=false` request blocks a client, or the view merger node as in this example, until the index is up to date, and these timeouts can happen frequently.
+
+Swappiness enabled::
+Swappiness levels tell the virtual memory subsystem how much it should try and swap to disk.
+The thing is, the system will try to swap out items in memory even when there is plenty of RAM available to the system.
+The OS default is usually 60, and you can see what value your system is set to by running the following command:
++
+----
+ cat /proc/sys/vm/swappiness
+----
+Couchbase Server is tuned to operate in memory as much as possible.
+You can gain or at minimum not lose performance by just changing the swappiness value to 0.
+In a non-tech talk, this tells the virtual memory subsystem of the OS to not swap items from RAM to disk unless it really has to.
+If you have correctly sized your nodes, swapping should not be needed.
+To set this, perform the following process use sudo or just become root if you ride in the wild west.
+. Set the value for the running system:
++
+----
+sudo echo 0 > /proc/sys/vm/swappiness
+----
+
+. Backup sysctl.conf:
++
+----
+sudo cp -p /etc/sysctl.conf /etc/sysctl.conf.`date +%Y%m%d-%H:%M`
+----
+
+. Set the value in /etc/sysctl.conf so it stays after reboot:
++
+----
+sudo echo '' >> /etc/sysctl.conf
+       sudo echo '#Set swappiness to 0 to avoid swapping' >> /etc/sysctl.conf
+       sudo echo 'vm.swappiness = 0' >> /etc/sysctl.conf
+----
++
+Make sure that you either have or modify your process that builds your OSs to do this.
+This is especially critical for public/private clouds where it is so easy to bring up new instances.
+You need to make this part of your build process for a Couchbase node.

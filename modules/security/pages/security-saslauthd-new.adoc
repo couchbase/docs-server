@@ -1,0 +1,165 @@
+[#topic_bcf_jmq_wq]
+= Setting up `saslauthd`
+
+[abstract]
+`saslauthd` is a daemon process that handles plaintext authentication requests on behalf of the SASL library.
+
+In LDAP authentication, the `saslauthd` process handles authentication requests on behalf of Couchbase Server while the LDAP protocol is used to connect to the LDAP server.
+
+IMPORTANT: Remote authentication with the LDAP server requires proper configuration of the `saslauthd` agent, which must be installed and configured on each Couchbase Server node.
+
+NOTE: Make sure that you have the prerequisites for the LDAP software you are installing, such as OpenLDAP libraries.
+
+NOTE: Installation packages are a part of `cyrus-sasl rpm`, so make sure that it is installed.
+
+== Supported `saslauthd` packages for LDAP integration
+
+Install your Unix operating system with the package that is supported for LDAP integration.
+
+CentOS 6:: `saslauthd 2.1.26` or higher
+
+Ubuntu:: `saslauthd 2.1.25` or higher
+
+SUSE:: `saslauthd 2.1.23` or higher
+
+== Install `saslauthd`
+
+Install the saslauthd package on your operating system.
+On Ubuntu, install `saslauthd` with the following command:
+
+----
+sudo apt-get install sasl2-bin
+----
+
+== Configuring `saslauthd` library for LDAP
+
+Depending on the system, the `saslauthd` file is configured as follows:
+
+Red Hat Enterprise Linux, CentOS, and Amazon Linux AMI:: If you are using a system that configures `saslauthd` with the file [.path]_/etc/sysconfig/saslauthd_, such as Red Hat Enterprise Linux, CentOS, and Amazon Linux AMI, set the mechanism `MECH` to `ldap`:
++
+----
+MECH=ldap
+----
+
+Ubuntu:: If you are using a system that configures `saslauthd` with the file [.path]_/etc/default/saslauthd_, such as Ubuntu, set the `MECHANISMS` option to `ldap`:
++
+----
+MECHANISMS=ldap
+----
+
+[IMPORTANT]
+====
+Change permissions for the `saslauthd` directory!
+
+Don’t forget to set the correct access permissions for the `saslauthd` directory:
+
+----
+sudo chmod 755 /var/run/saslauthd
+----
+====
+
+== Configuring the `saslauthd` configuration file
+
+The default configuration file used to obtain the LDAP configuration parameters is located at [.path]_/usr/local/etc/saslauthd.conf_.
+
+Step 1: Set up `ldap_servers`::
+Specify URIs of the LDAP servers used for authentication, such as` ldap:///10.1.1.11/`, `ldap://10.1.1.12/`.
+Multiple LDAP servers can be specified in the list, which is then tested to find out whether one of the servers is offline.
+If you install OpenLDAP on the local host machine, you can specify the value `ldap://localhost:389`.
+If using LDAP over SSL, you can specify the value `ldaps://localhost:636`.
++
+----
+ldap_servers: ldaps://10.1.1.25 ldaps://10.1.1.15
+----
+
+Step 2: Set up `ldap_search_base`::
+Specify the distinguished name to which the search is relative.
+The search includes the base or objects below.
+It also includes Domain Components (`dc`) such as in `dc=company` and `dc=com`.
+The administrative users created in LDAP with the attribute `uid` are placed under the user's organizational unit `ou` under the two domain components (`example` and `com`).
++
+----
+ldap_search_base: ou=Users,dc=company,dc=com
+----
+
+Step 3: Set up `ldap_filter`::
+Specify the search filter.
+The values for these configuration options correspond to the values specific to the test.
+For example, to filter on email specify `ldap_filter: (mail=%n)`.
++
+----
+ldap_filter: (uid=%u)
+----
+Configure LDAP options `/etc/saslauthd.conf`:
++
+----
+ldap_servers: ldaps://ad.example.net
+              ldap_search_base: ou=Users,dc=example,dc=com
+              ldap_filter: (uid=%u)
+----
+
+== Example
+
+ $ cat /etc/saslauthd.conf
+        # ldap_servers: ldap:<URI>:<PORT> or ldaps:<URI>:<PORT> for TLS protected connection
+        ldap_servers: ldap://my.company.com:389
+        # Specifies the distinguished name to which the search is relative. 
+        # The search includes the base # or objects below. It also includes Domain Components (dc) 
+        # such as in dc=company and dc=com.
+        # The administrative users created in LDAP with the attribute uid are placed under the user's
+        # organizational unit ou under the two domain components (example and com).
+        OU=InteractiveUsers,DC=my,DC=company,DC=com
+        # Specifies the search filter. The values for these configuration options correspond to the 
+        # values specific to the test
+        ldap_filter: (samAccountName=%u)
+        # Optional: specify a user to perform ldap queries
+        ldap_bind_dn: CN=user_ldap,OU=Users,DC=my,DC=company,DC=com
+        # Optional: specify ldap user’s password
+        ldap_password: -sEcReTp#AssWoRd!
+
+ $ cat /etc/sysconfig/saslauthd
+        # Just keep the default
+        SOCKETDIR=/var/run/saslauthd
+        # Make sure MECH is set to ldap (pam is default)
+        MECH=ldap
+        # Include the config file described above
+        FLAGS="-O /etc/saslauthd.conf"
+
+== Configuring `saslauthd` with Windows Active Directory
+
+A common requirement is to delegate some or all authentication to another LDAP server.
+Here is a sample `saslauthd` configuration that uses Microsoft Active Directory (AD) as the LDAP server:
+
+Here is a sample `saslauthd` configuration with Microsoft Active Directory (AD):
+
+----
+ldap_servers: ldap://dc1.example.com:<port>
+       ldap_search_base: cn=Users,DC=ad,DC=example,DC=com
+       ldap_filter: sAMAccountName=%u
+       ldap_bind_dn: cn=saslauthd,cn=Users,DC=ad,DC=example,DC=com
+       ldap_password: secret
+----
+
+== Test `saslauthd`
+
+If the connection is properly working, the user `couchbase` must have access to [.path]_/var/run/saslauthd/mux_ (or the appropriate another folder for SUSE) in order to communicate to `saslauthd`.
+
+. Start the saslauthd service (or set it to start automatically with [.cmd]`chkconfig`).
++
+----
+[root@localhost ~]# service saslauthd restart
+     Stopping saslauthd:                             [  OK  ]
+     Starting saslauthd:                             [  OK  ]
+            
+     [root@localhost ~]# chkconfig  saslauthd on
+     [root@localhost ~]# chkconfig --list saslauthd
+     saslauthd   	0:off   1:off   2:on	3:on	4:on	5:on	6:off
+----
+
+. Test `saslauthd` by using the [.cmd]`testsaslauth` script to test LDAP authentication:
++
+----
+[root@localhost ~]# sudo -u couchbase /usr/sbin/testsaslauthd -u <username> \
+-p mypassword -f /var/run/saslauthd/mux
+0: OK "Success."
+----

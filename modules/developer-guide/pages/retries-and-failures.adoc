@@ -1,0 +1,65 @@
+[#concept_qqr_l1z_5t]
+= Handling retries and failures
+
+[abstract]
+When an operation fails with an error or exception, the application must decide whether the operation is to be retried or failed.
+
+Whether (and how) the operation is retried or failed typically depends on the business logic behind the application.
+In some instances the operation is part of a longer processing pipeline where it may be costly to immediately fail the operation (and therefore the pipeline), while in other instances the operation may be a result of a simple UI query in which case immediate failure is the better choice in order to maintain UI responsiveness.
+
+== Retrying
+
+If an operation should be retried, it is almost always a good idea to add a delay in between retries.
+If an operation failed because of some temporary condition (such as resource contention or network outage), then an immediate retry will typically not make the operation succeed.
+In fact, in the case of resource contention it may indeed have the opposite effect: overloading the cluster or network with even more requests that it cannot handle.
+
+Retries may be performed using a _backoff_ algorithm: waiting at increasing intervals during each retry attempt.
+In the case of resource contention, a backoff algorithm helps reduce load on the network by decreasing the rate at which the operation is attempted.
+
+The example below shows a simple backoff algorithm in Python.
+As the number of retries increases, so does the amount of time in between each retry attempt (250 milliseconds for the first attempt, 500 milliseconds for the second attempt, 750 for the third, and so on).
+In addition to employing a backoff delay it also caps the number of retries - so that the application does not try infinitely.
+
+----
+num_retries = 0
+last_error = None
+
+RETRIES_MAX = 5
+RETRY_BASE = 0.25 # 250 milliseconds
+
+while num_retries < RETRIES_MAX:
+    if num_retries > 0:
+        print "Sleeping for {0} before trying again".format(num_retries * RETRY_BASE)
+        time.sleep(num_retries * RETRY_BASE)
+    num_retries += 1
+    try:
+        cb.upsert(docid, value)
+        last_error = None
+        break # Success!
+    except CouchbaseTransientError as e:
+        last_error = e
+
+if last_error is not None:
+    print "Failed to complete operation!"
+    raise last_error
+----
+
+----
+num_retries = 0
+last_error = None
+
+RETRIES_MAX = 5
+TIME_MAX = 30
+
+time_limit = time.time() + TIME_MAX
+while num_retries < RETRIES_MAX and time.time() < time_limit:
+    if num_retries > 0:
+        # ...
+----
+
+== Fast Fail
+
+Fast-failure is available in the Java SDK as an option.
+It may also be implemented in the C SDK at the application level.
+
+== Requeing operations

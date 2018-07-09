@@ -1,0 +1,123 @@
+[#topic_fcf_chm_zs]
+= Using Automatic Failover
+
+[abstract]
+The Cluster Manager continuously monitors node availability and can automatically perform a hard failover of a node if it determines that a node is unavailable.
+
+With automatic failover, the Cluster Manager autonomously detects a failed node, verifies that it failed, and then initiates the hard failover process without user intervention.
+Automatic failover does not attempt to fix or even identify the issue that caused the node to fail.
+Once an administrator discovers and fixes the issue, he must initiate a rebalance to return the cluster to a healthy state.
+
+There are a number of built-in restrictions in Couchbase Server for automatic failover.
+These restrictions are in place to strike a balance between a self-healing cluster and the potential for automatic failover to make a small problem much worse by creating a cascading failure or data inconsistency.
+These problems are discussed in <<autofailover,Automatic Failover Considerations.>>
+
+NOTE: Automatic failover can be configured at any cluster size or configuration but will not be triggered until the following  conditions are met.
+
+Automatic failover is:
+
+* Disabled by default to prevent Couchbase Server from using it if you didn't enable it explicitly.
+* Available only on clusters that contain at least three nodes running the Data service.
+This helps prevent a split-brain scenario in the cluster.
+* Designed to failover a node only if that node is the only one down at a given time.
+Combined with the previous restriction, this also prevents a split-brain scenario in the cluster.
+* Designed to failover only one node before requiring human intervention.
+This measure is introduced to prevent a chain reaction failure of multiple or all nodes in the cluster.
+* Designed to failover after 120 secondly by default, with a minimum of 30 seconds.
+This helps prevent spurious failovers due to network or server slowdowns or interruptions.
+* Able to failover one node at a time with Rack/Zone Awareness (xref:architecture:smart-data-placement-rack-zone-aware.adoc#concept_bln_cnv_vs[RZA]) enabled.
+For more nodes, you will have to fail them manually.
+* Indended to performed intra-cluster only, so it does not operate with Cross Datacenter Replication xref:xdcr:xdcr-intro.adoc#topic1500[(XDCR]).
+* Available only if the auto-failover counter is at 0.
+* Not designed to failover the Index Service by default.
+
+Couchbase Server can be configured to generate an alert (via the Couchbase Web Console or email) both when a node is automatically failed over or when it has failed but not automatically failed over.
+
+== Failover Timeout
+
+By default, there is a 120 second delay before a node will be automatically failed over by the Cluster Manager.
+This timeout can be increased, but not decreased below the minimum of 30 seconds.
+The minimum time is needed by the software to confirm that the node is indeed down by performing multiple checks of that node’s status.
+This helps prevent false alarms, such as failover of a functioning but slow node or failover due to ephemeral network connection issues.
+
+== Resetting the Automatic Failover Counter
+
+After a node has been automatically failed over, Couchbase Server increments an internal counter that indicates to the cluster if a node has been failed over.
+The counter prevents the Cluster Manager from automatically failing over additional nodes until you identify any issues that caused the failover and resolve them.
+
+Reset the automatic failover only:
+
+* _after_ the node’s issue is resolved, rebalance has occurred, and the cluster was restored to a fully functioning state.
++
+or
+
+* if the node has the xref:architecture:data-service-core-data-access.adoc#concept_tcf_byn_vs[Data service] running and each bucket has additional replicas beyond the existing ones to handle another node auto-failover.
+
+You can reset this counter with the Couchbase Web Console by clicking on the btn:[Reset Quota] button as shown below.
+
+[#image_xfr_bxm_5v]
+image::admin/picts/reset-quota.png[,align=left]
+
+You can also reset the counter using the REST API:
+
+----
+>$ curl -i -u cluster-username:cluster-password \
+        http://localhost:8091/settings/autoFailover/resetCount
+----
+
+== When Not to Use Automatic Failover
+
+Automatic failover is appropriate in most environments.
+However, it is disabled by default to ensure that administrators are explicitly aware of the behavior of their cluster.
+
+There are a few situations where auto-failover would not advisable to use or when the environment is known to contain instability that could introduce false positives even when the nodes did not fail:
+
+* "Flaky" or very slow network between cluster nodes
+* An issue with the Cluster Manager or operating system
+
+While very rare, you might also consider turning off auto-failover if the network between nodes is not the same as the one between the nodes and the client application servers.
+Such difference might introduce the possibility of disruption between the nodes of the cluster without affecting the application’s ability to communicate with the nodes.
+
+[#autofailover]
+== Automatic Failover Considerations
+
+Automatically recovering from component failures in any distributed system involves at least some risks.
+If you cannot identify the cause of failure, and you do not understand the load that will be placed on the remaining systems, an automatic failover might actually cause more problems than it solves.
+This is why proper sizing and capacity planning of the cluster must include the possibilities of failures.
+Some of the situations that might lead to problems include:
+
+Avoiding failover chain-reactions (Thundering Herd)::
+Imagine a scenario where a five-node Couchbase cluster is running well and operating at 80–90% of aggregate capacity with a given load.
+A single node fails and the software decides to automatically failover that node.
+Unless your cluster is properly sized, it is unlikely that the four remaining nodes will be able to successfully handle the additional load.
++
+The result is that the increased load could lead to another node slowing and appearing to the Cluster Manager to have failed, therefore it too automatically will be failed over.
+Such failures can cascade and lead to the eventual loss of the entire cluster.
+Clearly, it is better if one fifth of the requests is not serviced due to a single node failure than to have the entire cluster fail and none of the requests serviced.
+To prevent cluster failure, the automatic failover is limited to a single node in the cluster.
++
+The partial solution is not to use auto-failover but to continue cluster operations with the single failed node (alerted by your monitoring system).
+You can then add a new server to the cluster to handle the missing capacity, manually failover the node, and then rebalance the cluster.
+This way there is a brief partial outage rather than an entire cluster being disabled.
+This solution considered being only a partial because it relies on human intervention or heavy automation.
+If the failover is not done promptly, the span in which that portion of the data is unavailable could be long.
++
+The best practice is to use automatic failover, but ensure that the cluster has been sized correctly to handle unexpected node failures and allow replicas to take over.
+Continual capacity planning is critical to a healthy and correct performance of the Couchbase cluster.
+
+Handling failovers with network partitions (Split Brain Scenario):: In the event of a network partition or [.term]_split brain scenario_, where the failure of a network device causes a network to be split, the following restrictions for the automatic failover are in place at all time:
+* A minimum of three (3) nodes per cluster are required.
+Such sizing prevents a 2-node cluster from having both nodes fail in the face of a network partition and protects the data integrity and consistency.
+* Occurs only if exactly one (1) node is down.
+This prevents a network partition from causing two or more halves of a cluster from failing each other over and protects the data integrity and consistency.
+* Occurs only once before requiring administrative action.
+This prevents cascading failovers and subsequent performance and stability degradation.
+In many cases, it is better to not have access to a small part of the dataset rather than having a cluster continuously degrade itself to the point of being non-functional.
+* Implements a 30 second delay when a node fails before it performs an automatic failover.
+This prevents transient network issues or slowness from causing a node to be failed over when it shouldn’t be.
+
+If a network partition occurs, automatic failover occurs if and only if automatic failover is allowed by the specified restrictions.
+For example, if a single node is partitioned out of a cluster of five (5), it is automatically failed over.
+If more than one (1) node is partitioned off, autofailover does not occur.
+After that, administrative action is required for a reset.
+In the event that another node fails before the automatic failover is reset, no automatic failover occurs.
