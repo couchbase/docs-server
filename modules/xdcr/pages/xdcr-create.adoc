@@ -10,7 +10,7 @@ As replication is on a per bucket basis, you must configure replication for each
 Before configuring XDCR:
 
 * Configure all nodes within each cluster to communicate from the source cluster over the network to all nodes on the destination cluster.
-* Ensure that all Couchbase Server versions and platforms match.
+* Ensure that all Couchbase Server platforms match.
 For instance, if you want to replicate from a Linux-based cluster, you need to do so with another Linux-based cluster.
 * Confirm that your cluster is properly sized and is able to handle new XDCR streams.
 For example, XDCR needs 1-2 additional CPU cores per stream and in some cases it will require more RAM and network resources as well.
@@ -27,3 +27,338 @@ You can monitor the current configuration, current status, and the last time a r
 
 [#image_vwk_d2t_zs]
 image::xccr-create.png[,720,align=left]
+
+== Create Cluster Reference
+
+Full, Cluster, and Replication Administrators can create a cluster reference.
+
+The cluster reference sets the cluster name, IP or hostname, administrator credentials and encryption.
+
+To create a cluster reference using the Couchbase Web Console:
+
+Go to *XDCR > Create Cluster Reference*
+
+[#image_fxf_crb_ft]
+image::admin/picts/xdcr-createreference.png[,align=left]
+
+To create the unidirectional replication (from cluster A to cluster B):
+
+. Verify that a destination bucket exists in the cluster where you will be replicating.
+. To check that a destination bucket exists, issue a REST API request using the following syntax, GET HTTP method, and URI path:
++
+----
+curl GET -u admin:password http://ip.for.destination.cluster:8091/pools/default/buckets
+----
+
+. Navigate to the XDCR section, *XDCR > Remote Cluster section > Create Cluster Reference*
+. Click the btn:[Create Cluster Reference] button.
+. Provide the following information for identifying and accessing the destination cluster.
+ ** Cluster Name
+ ** IP address or hostname of a node in the destination cluster
+ ** Administrator username and password for the destination cluster
+ ** Enable Encryption - If selected, XDCR data encryption occurs using SSL.
+. Click [.uicontrol]*Save* to store the new reference to the destination cluster.
+This cluster information is now available when configuring replication for the source cluster.
+
+== Create Replication
+
+Full, Cluster, and Replication Administrators can create a replication between clusters after creating references to the source and destination cluster.
+
+After you configure and start replication, view the current status and list of replications in the [.uicontrol]*Ongoing Replications* section.
+
+. Click [.uicontrol]*Create Replication* to configure a new XDCR replication.
+A panel appears where you can configure a new replication from the source to the destination cluster.
++
+[#image_zds_pjt_zs]
+image::xdcr-create-replication.png[,550,align=left]
+
+. In the section [.uicontrol]*Replicate changes from*, select a bucket from the current cluster to replicate.
+. In the section [.uicontrol]*To*, select a destination cluster and enter the bucket name from the destination cluster:
+. Select the check box [.uicontrol]*Enable Advanced filtering*.
+This will allow you to specify the filtering expression while creating replication.
++
+For more details, see <<configure-xdcr-filering>>.
+
+. Configure <<xdcr-adv>>.
+. Click the btn:[Replicate] button to start the replication process.
+
+[#xdcr-adv]
+== XDCR Advanced Settings
+
+XDCR advanced settings are internal settings available for configuration.
+
+Advanced settings that can be updated include:
+
+XDCR Protocol:: The XDCR protocol defaults to version 2.
+* Version 1 uses the REST protocol for replication.
+If the Elasticsearch plug-in is used, choose version 1.
+* Version 2 uses memcached REST protocol for replication, a high-performance mode that directly uses the memcached protocol on the destination nodes.
+Choose version 2 when setting up a new replication with Couchbase Server 2.2 or later.
+
+XDCR Source Nozzles per Node::
+This setting determines the number of XDCR source nozzles per node.
+This number must be less than or equal to the number of `XDCR Target Nozzles per Node`.
+A small value of two or four is often sufficient.
+The default is two and the value range is 1-100.
+The CLI command for setting this value is provided in xref:cli:cbcli/xdcr-replicate.adoc#cbcli-xdcr-manage-replications[[.cmd]`xdcr-replicate`].
+
+XDCR Target Nozzles per Node::
+This setting determines the number of XDCR target nozzles per node, and this number can be set higher if the target nodes have high processing power.
+The default is two and the value range is 1-100.
+The setting `XDCR Target Nozzles per Node` affects the level of concurrency as follows:
++
+----
+Number of concurrent workers writing to the target cluster  = 
+              XDCR Target Nozzles per Node * <Number of Nodes in Target Cluster>
+----
+
+NOTE: The setting for `XDCR Source Nozzles per Node` must be less or equal to `XDCR Target Nozzles per Node`.
+Otherwise, more mutations per second are received by XDCR than it can send to the target node.
+This can lead to mutations piling up in the XDCR queue and to DCP backing off, which results in a slow drain rate.
+
+XDCR Checkpoint Interval::
+The Checkpoint Interval does not affect the persistence of actual data.
+During that time, XDCR computes and persists checkpoint documents, which contain the high sequence number for each vBucket that was successfully replicated to the target cluster.
++
+If the replication is restarted by user or recovers from an error, the checkpoint documents can be used to determine the starting point of the replication to avoid unnecessary work.
+The shorter the interval, the more accurate the checkpoint documents will be and the less unnecessary work will be needed at the replication restart.
+The computation and persistence of checkpoint documents use considerable system resources and may impact XDCR performance if they are performed too frequently.
+A tradeoff is needed to determine the optimal value for the users.
+
+XDCR Batch Count::
+Document batching count, 500 to 10000.
+Default is 500.
+In general, increasing this value by 2 or 3 times will improve XDCR transmissions rates since larger batches of data will be sent in the same timed interval.
+For unidirectional replication from a source to a destination cluster, adjusting this setting by 2 or 3 times will improve overall replication performance as long as persistence to disk is fast enough on the destination cluster.
+Note however that this can have a negative impact on the destination cluster if you are performing bi-directional replication between two clusters and the destination already handles a significant volume of reads/writes.
+
+XDCR Batch Size (kilobytes)::
+Document batching size, 10 to 100000 (kilobytes).
+Default is 2048.
+In general, increasing this value by 2 or 3 times will improve XDCR transmissions rates since larger batches of data will be sent in the same timed interval.
+For unidirectional replication from a source to a destination cluster, adjusting this setting by 2 or 3 times will improve overall replication performance as long as persistence to disk is fast enough on the destination cluster.
+Note however that this can have a negative impact on the destination cluster if you are performing bi-directional replication between two clusters and the destination already handles a significant volume of reads/writes.
+
+XDCR Failure Retry Interval::
+This interval is the time that XDCR waits before it attempts to restart replication after a server or network failure.
+The interval for restarting a failed XDCR is 1 to 300 seconds (default 10): if you expect more frequent network or server failures, you may want to set this interval to a lower value.
+
+XDCR Optimistic Replication Threshold::
+This option improves XDCR latency and represents the compressed document size in bytes that spans from 0 to 20MB (default is 256 Bytes).
+XDCR will get metadata for documents larger than this size on a single time before replicating the uncompressed document to a destination cluster.
+
+XDCR Statistics Collection Interval:: Shows how often XDCR Statistics is updated.
+
+XDCR Logging Level::
+The log level for the replication.
+It can be `Error`, `Info`, `Debug` or `Trace`
+
+[#configure-xdcr-filering]
+== Configure XDCR Filtering
+
+Full, Cluster, and Replication Administrators can set up filtering in XDCR.
+
+The [.var]`filtering expression` is a regular expression for filtering keys that need to be transmitted from the source cluster to the destination cluster.
+It is set when creating the XDCR replication.
+
+IMPORTANT: Filtering expressions are currently implemented only for the document keys.
+
+If you need to replicate to the same destination cluster and bucket with different filtering expressions, you can create a single replication with the filter expression using multiple expressions ORed together as: `filterExpression0|filterExpression1`.
+
+For example, the expression `airline|hotel` would match both "unitedairline" and "marriothotel".
+
+*Define a Filtering Expression*
+
+To implement filtering, you must explicitly do it by selecting *XDCR > Create Replication > Enable Advanced filtering*.
+
+[#image_i12_h15_zs]
+image::xdcr-adv-filtering.png[,500,align=left]
+
+IMPORTANT: You cannot change a filtering expression on an existing replication.
+
+It is important to avoid conditions where two replications to the same destination overlap partially or fully.
+If an overlap occurs, it will waste machine resources since a single key gets replicated multiple times.
+Overlapping filtering expressions cannot guarantee which of the two replications will replicate the overlapping key instance to the destination faster.
+
+Filtering does not impact conflict resolution and can be used with a conflict resolution based on revision ID (RevID).
+
+You can pause or resume replication with filtering expression without restrictions.
+
+*Test a Replication Filter*
+
+For example, if you have installed the `Travel-Sample` bucket and want to replicate a subset of data to a remote cluster, use the regular expression provided below to test it out:
+
+----
+regular exp - airline* 
+          test key -airline_SFO
+----
+
+*XDCR Filtering Regular Expression*
+
+This is a list of JavaScript regular expressions (RegEx) you can use for XDCR filtering.
+
+Regular expressions (RegEx) are a powerful way to match a sequence of simple characters.
+You can use regular expressions to create filters.
+
+Regular expressions are case-sensitive: a lowercase '`a`' is distinct from an uppercase '`A`'.
+You can enclose a range of characters in square brackets to match against all of those characters.
+
+[cols="1,4,1,1"]
+|===
+| Expression | Description
+
+| `[tT]here`
+| Matches against 'There' and 'there'
+
+| `[ ]`
+| Might be used on a range of characters separated by a `-` character.
+
+| `[0-9]`
+| Matches any digit.
+
+| `[A-Z]`
+| Matches any uppercase alpha character.
+
+| `[A-Za-z0-9]`
+| Matches any alphanumeric character.
+
+| `^`
+| Matches beginning of input.
+If the multiline flag is set to `true`, also matches immediately after a line break character.
+For example, `/^A/` does not match the '`A`' in "`an A`", but does match the '`A`' in "`An E`".
+
+The '`^`' has a different meaning when it appears as the first character in a character set pattern.
+See https://developer.mozilla.org/en/docs/Web/JavaScript/Guide/Regular_Expressions#special-negated-character-set[complemented character sets] for details and an example.
+
+It can also be used as a "`not`" character, therefore `[^0-9] `matches against any character that is not a digit.
+|===
+
+You can use ranges to specify a group of characters.
+You can also use the following shortcuts:
+
+[cols="1,4,1,1"]
+|===
+| Expression | Description
+
+| `.`
+| Matches against any character.
+
+| `\d`
+| Matches against a digit [0-9].
+***
+
+| `\D`
+| Matches against a non-digit `[^0-9]`.
+***
+
+| `\s`
+| Matches against a whitespace character (such as a tab, space, or line feed character).***
+
+| `\S`
+| Matches against a non-whitespace character.***
+
+| `\w`
+| Matches against an alphanumeric character `[a-zA-Z_0-9]`.***
+
+| `\W`
+| Matches against a non-alphanumeric character.***
+
+| `\xhh`
+| Matches against a control character (for the hexadecimal character `hh`).***
+
+| `\uhhhh`
+| Matches against a Unicode character (for the hexadecimal character `hhhh`).***
+|===
+
+NOTE: ***Since the backslash character is used to denote a specific search expression, if you want to match against this character you must enter a double backslash (`\\`).
+
+To match against occurrences of a character or expression, you can use the following.
+
+[cols="1,4,1,1"]
+|===
+| Expression | Description
+
+| `*`
+| Matches against zero or more occurrences of the previous character or expression.
+
+| `+`
+| Matches against one or more occurrences of the previous character or expression.
+
+| `?`
+| Matches zero or one occurrence of the previous character or expression.
+
+| `(n)`
+| Matches `n` occurrences of the previous character or expression.
+
+| `(n,m)`
+| Matches from `n` to `m` occurrences of the previous character or expression.
+
+| `(n,)`
+| Matches at least `n` occurrences of the previous character or expression.
+|===
+
+You can provide text to replace all or part of your search string.
+To do this, you need to group together matches by enclosing them in parentheses so that they can be referenced in the replacement.
+To reference a matched parameter, use `$n` where `n` is the parameter starting from `1`.
+
+== Pause/Resume Replication
+
+Full, Cluster, and Replication Administrators can pause and resume XDCR replication.
+
+*Pause/Resume Replication with the Couchbase Web Console*
+
+XDCR streams between the source and destination cluster can be paused and later resumed.
+After XDCR is resumed, data continues to replicate between the source and destination clusters starting from where it previously left off.
+
+To pause and resume replication, click the replicating and paused icons under the ongoing replication status.
+
+. Using the Couchbase Web Console, navigate to XDCR.
+. To pause, under *Ongoing Replication > Status*, click on the [.uicontrol]*Replicating* icon to pause replication.
++
+[#image_ltl_q25_zs]
+image::xdcr-pause-resume.png[,720,align=left]
+
+. To resume, under *Ongoing Replication > Status*, click on the [.uicontrol]*Paused* triangle icon to continue replicating.
+
+*Pause/Resume Replication with REST API or CLI*
+
+To use REST API or CLI:
+
+* REST API: xref:rest-api:rest-xdcr-pause-resume.adoc#reference_kz4_khq_w4[Pausing XDCR Replication Streams]
+* CLI: xref:cli:cbcli/xdcr-replicate.adoc#cbcli-xdcr-manage-replications[[.cmd]`xdcr-replicate`]
+
+== Monitor Replication Status
+
+Full, Cluster, Read-only, and Replication Administrators can monitor the replication status using the [.uicontrol]*XDCR* and [.uicontrol]*Data Buckets* tabs.
+
+The following Couchbase Web Console areas contain information about replication via XDCR:
+
+* The XDCR tab.
+* The outgoing XDCR section under the Data Buckets tab.
+
+The Couchbase Web Console displays any replications configured, or replications in progress for that particular source cluster.
+If you want to view information about replications at a destination cluster, you must open the console for that cluster.
+When configuring bi-directional replication, use the web interfaces that belong to the source and destination clusters to monitor both clusters.
+
+Any errors that occur during replication appear in the XDCR errors panel.
+The following example shows the errors that occur if replication streams from XDCR fail due to the missing vBuckets at the source cluster:
+
+[#image_tfl_mg5_zs]
+image::xdcr-replication-statuis.png[,450,align=left]
+
+*XDCR Replication and Network Failures*
+
+XDCR is resilient to intermittent network failures.
+If the destination cluster is unavailable due to a network interruption, XDCR pauses replication and then retries the connection to the cluster every 30 seconds.
+Once XDCR can successfully reconnect with the destination cluster, it resumes replication.
+
+In the event of a more prolonged network failure, where the destination cluster is unavailable for more than 30 seconds, the source cluster continues to poll the destination cluster possibly resulting in numerous errors over time.
+
+== Delete XDCR Replication
+
+Full, Cluster, and Replication Administrators can  delete active replications.
+
+To delete the replication, delete the active replications.
+
+. In the XDCR section of the Couchbase Web Console, click [.uicontrol]*Delete* next to the active replication you want to delete.
+. Confirm the deletion.

@@ -1,0 +1,214 @@
+[#topic_uvg_4x1_4v]
+= Response Object Schema
+
+{blank}
+
+== Status
+
+The status object returns the number of successful and failed pindex queries.
+This information is useful as you can choose to use partial results depending on your application use case.
+For example, you may prefer to show an incomplete list of hits for a catalog search than return an error message if some pindexes are unresponsive.
+
+We recommend that you check the status object for failures rather than rely on the HTTP response codes alone.
+For example,FTS returns an HTTP 200 response in case of pindex failures or timeouts (not consistency timeouts).
+This is done so that you can choose to accept partial results in an application.
+However, this also means FTS returns an HTTP 200 response even when ALL pindexes fail.
+
+Refer to the following table for more information about the possible status messages.
+
+.Response Object Status Values
+[#table_omj_wgn_zv]
+|===
+| Status | Description
+
+| HTTP 400
+| Returned when an error is detected when validating the inputs.
+The text error message accompanying the status describes the problem.
+
+| HTTP 412
+| Returned when the consistency requirements are not satisfied within the specified timeout.
+The JSON structure accompanying the status provides information about the current consistency levels.
+
+| HTTP 200
+| Returned when an error is detected during query execution.
+The errors may be contained in the JSON section named "status".
+|===
+
+Total::
+The total field returns the total number of pindexes queried.
+This integer value varies based on the number of vBuckets per pindex.
+For example, when running on a machine with 64 vBuckets, with 32 vBuckets per pindex, the total number of pindexes is two.
+
+Successful::
+This field returns the total number of pindexes successfully queried.
+This integer value can range from 0 to the total number of pindexes.
++
+.Example Status: Successful
+----
+ "status": {
+     "total": 2,
+     "failed": 0,
+     "successful": 2
+},
+----
+
+Failed::
+This field returns the total number of pindexes with failed queries.
+This integer value can range from 0 to the total number of pindexes.
+If the number is greater than 0, the response object contains an `errors` array.
+
+Errors::
+This returns an array of error messages as reported by individual pindexes.
+This array only appears if the field "failed" is greater than 0.
++
+.Example Status: Failure
+----
+"status": {
+    "total":32,
+    "failed":16,
+    "successful":16,
+    "errors":{
+        "IndexClient - http://127.0.0.1:9201/api/pindex/beer-search_447fd6df2d6f4b54_0a44bddb":"context deadline exceeded",
+         "IndexClient - http://127.0.0.1:9201/api/pindex/beer-search_447fd6df2d6f4b54_24e7ea2d":"context deadline exceeded",
+         ...
+    }
+}
+----
+
+*Understanding the Query Response Status*
+
+This section explains the contents of a typical query response status.
+
+== Request
+
+The request object stores a copy of the query that was executed and other details from the request that generated this response object, for example the number of results requested (size), the offset, highlighting, and so on.
+
+Query:: Represents the actual query that was executed.
+
+Size::
+Represents the number of results requested.
+The default size is 10.
+If the size is set to 0, the query returns the count of matches with no other results.
+
+From::
+Results of a query are returned in the descending score order.
+This field specifies the offset, starting at 0 (default) for the first match, to return the results.
+
+Highlight::
+This object indicates whether highlighting was requested.
+The `highlight` object contains two fields:
+[#ul_byz_pzt_zv]
+* [.param]`style` - Optional field that specifies the name of the highlighter, which can be "[.input]`html`", "[.input]`ansi`", or a custom highlighter.
+* [.param]`fields` - Specifies an array of field names to which highlighting is restricted.
+
+Fields::
+This object contains an array of field names which must be loaded and returned with the query response.
+If you store a field and want it returned with the result, you must name the field here.
+The field names are specified as string values.
+While there is no field name pattern matching available, you can use an asterisk "*" to specify that all the fields must be loaded and returned with the response.
+
+Facets::
+This object indicates whether faceting was requested and when requested, returns the facets.
+The section on xref:fts-queries.adoc#search-facets[Search Facets] provides more information on the possible values of the facet request.
+
+----
+"facets": {
+    "type": {
+        "size": 5,
+        "field": "type"
+    }
+}
+----
+
+Explain:: This Boolean field when set to true prints a verbose response with full scoring information.
+
+----
+----
+
+== Hits
+
+Hits returns an array containing the matches for the executed query.
+The length of the array is equal to or less than the size specified in the request.
+
+Index::
+The unique ID of the pindex.
+The index name always begins with a string.
+
+ID:: The document ID that matched.
+
+Score:: The document score.
+
+Locations::
+This object contains field names where matches were found.
+The "Locations" object depends on the term vectors being stored; if term vectors are not stored, locations are not returned in the result object.
++
+*{Field Name}*
++
+Lists the field names where the match was found.
+These fields are scoped so that "description: american" searches for "american" scoped to the "description" field.
+In the example below, there are two fields named "description" and "name".
++
+*{Term Found}*
++
+A name value pair whose name is the name of the term that was found and whose value is an array on objects representing the vector information that describes the position of the matched term in the field.
+This value is only present if the term vectors are calculated.
+For each match, the object contains the position ([.output]`pos`), start, end, and array positions ([.output]`array_positions`).
++
+.Sample Locations Fragment
+----
+"locations": {
+    "reviews.content": {
+        "light": [
+            {
+                "pos": 277,
+                "start": 1451,
+                "end": 1456,
+                "array_positions": [
+                    0
+                ]
+           },
+           {
+               "pos": 247,
+               "start": 1321,
+               "end": 1326,
+               "array_positions": [
+                   3
+               ]
+           }
+       ]
+   }
+},
+----
+
+Fragments::
+These objects, also known as snippets, contain field names that contain an array of one or more text strings.
+The text strings contain the "`<mark>`" tags surrounding the term that was matched in order to render highlighting.
+
+Fields::
+This object returns the value of the field that was matched.
+However, unlike the Fragments field, this does not have any tags to render highlighting.
+
+== Facets
+
+Facets return an object that contains aggregated information about the documents that match a query.
+There are three types of queries: Numeric Range Facet, DateTime Range Facets, and Terms Facets.
+For more information on facets, see xref:fts-queries.adoc#search-facets[Search Facets].
+
+== Total_hits
+
+Total hits represents the total number of matches for this result.
+It can be any integer starting from 0.
+
+== Max_score
+
+Max score represents the highest score of all documents for this query.
+
+== Took
+
+Time taken to complete the query.
+
+----
+"total_hits": 56,
+"max_score": 0.8041158525040355,  
+"took": 1449005,
+----

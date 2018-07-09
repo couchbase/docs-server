@@ -1,0 +1,298 @@
+[#topic_wk1_5v3_t5]
+= Query Monitoring
+
+[abstract]
+Couchbase Server 4.5 introduces new system catalogs and API for monitoring the operation of individual queries and query service nodes.
+
+Using these APIs, you can easily find diagnostic information, for example, the top [.var]`k` slow queries, or details about how a query service is spending time.
+
+The following system catalogs (keyspaces) have been added in this release:
+
+* <<vitals,Vitals>>
+* <<sys-active-req,system:active_requests>>
+* <<sys-prepared,system:prepareds>>
+* <<sys-completed-req,system:completed_requests>>
+
+NOTE: The examples in the following sections use simplified REST API and SELECT commands.
+Refer to the reference documentation for full syntax.
+
+[#vitals]
+== Vitals
+
+The [.cmd]`Vitals` API provides data about the running state and health of the query engine, such as number of logical cores, active threads, queued threads,CPU utilization, memory usage, network utilization, garbage collection percentage, and so on.
+This information can be very useful to assess the current workload and performance characteristics of a query engine, and hence load-balance the requests being sent to various query engines.
+
+Get System Vitals::
++
+----
+GET http://localhost:8093/admin/vitals
+----
++
+.Example
+----
+{
+            "uptime":"30h0m10.801209195s",
+            "local.time":"2016-02-18 17:39:41.612724694 -0800 PST",
+            "version":"1.0.0",
+            "total.threads":225,
+            "cores":8,
+            "gc.num":11607200,
+            "gc.pause.time":"1.849506783s",
+            "gc.pause.percent":0,
+            "memory.usage":10019216,
+            "memory.total":5628336088,
+            "memory.system":29055224,
+            "cpu.user.percent":0,
+            "cpu.sys.percent":0,
+            "request.completed.count":111,
+            "request.active.count":0,
+            "request.per.sec.1min":0.0007,
+            "request.per.sec.5min":0.0107,
+            "request.per.sec.15min":0.0091,
+            "request_time.mean":"170.870877ms",
+            "request_time.median":"733.364µs",
+            "request_time.80percentile":"21.85926ms",
+            "request_time.95percentile":"1.274152266s",
+            "request_time.99percentile":"1.588775188s",
+            "request.prepared.percent":0
+}
+----
+
+[#sys-active-req]
+== system:active_requests
+
+This catalog lists all currently executing active requests or queries.
+
+Get Active Requests::
++
+.REST
+----
+GET  http://localhost:8093/admin/active_requests
+----
++
+.N1QL
+----
+SELECT * FROM system:active_requests;
+---- To get all active requests, use:
++
+To get a specific active request, use:
++
+.REST
+----
+GET  http://localhost:8093/admin/active_requests/request_ID
+----
++
+.Example
+----
+cbq> SELECT * FROM system:active_requests;
+
+{
+    "requestID": "82e0978b-a36a-46cd-afd5-3d483817893d",
+    "signature": {
+        "*": "*"
+    },
+    "results" : [
+        {
+        "active_requests": {
+            "ElapsedTime": "586.589µs",
+            "ExecutionTime": "550.136µs",
+            "RequestId": "82e0978b-a36a-46cd-afd5-3d483817893d",
+            "RequestTime": "2016-02-18 15:22:41.4563869 -0800 PST",
+            "State": "running",
+            "Statement": "select * from system:active_requests"
+        }
+    }
+],
+    "status": "success",
+    "metrics": {
+        "elapsedTime": "680.607µs",
+        "executionTime": "643.443µs",
+        "resultCount": 1,
+        "resultSize": 395
+    }
+}
+----
+
+Terminate an Active Request:: The DELETE command can be used to terminate an active request, for instance, a non-responding or a long-running query.
++
+.REST
+----
+DELETE http://localhost:8093/admin/active_requests/request_ID
+----
++
+.N1QL
+----
+DELETE FROM system:active_requests [ WHERE expression ]
+----
+
+[#sys-prepared]
+== system:prepareds
+
+This catalog provides data about the known prepared statements and their state in a query engine’s prepared statement cache.
+For each prepared statement, this catalog provides information such as name, statement, query plan, last use time, number of uses, and so on.
+
+Get Prepared Statements::
++
+.REST
+----
+GET http://localhost:8093/admin/prepareds
+----
++
+.N1QL
+----
+SELECT projection-list-expression FROM system:prepareds 
+              [ WHERE predicate-expression ]
+---- To get a list of all known prepared statements, use:
++
+To get information about a specific prepared statement, use:
++
+.REST
+----
+GET http://localhost:8093/admin/prepareds/prepared-statement-name
+----
++
+.Example
+----
+SELECT * FROM system:prepareds 
+    WHERE name = "p1";
+
+{
+    "name": "p1",
+    "statement": "prepare p1 as select * from default where foo = 42",
+    "plan": "{ TODO }",
+    "lastUse": "2015-08-27 15:29:49.274047526 +0100 IST",
+    "uses": 5,
+    "use.rate.1min":  "2.5",
+    "use.rate.5min": "1.1"
+    "use.rate.15min": "0.05",
+    "elapsedTime.80pct": "1.35s",
+    "elapsedTime.95pct": "3.879s",
+    "elapsedTime.99pct": "15.183s",
+    "elapsedTime.average": "1.15s",
+    "elapsedTime.median": "5.75s"        
+}
+----
+
+Delete Prepared Statement::
++
+.REST
+----
+DELETE http://localhost:8093/admin/prepareds/prepared-statement-name
+----
++
+.N1QL
+----
+DELETE FROM system:prepareds 
+WHERE name = "p1";
+---- The DELETE command can be used to delete a prepared statement.
++
+To delete all the known prepared statements, use
++
+.REST
+----
+DELETE http://localhost:8093/admin/prepareds
+----
+
+[#sys-completed-req]
+== system:completed_requests
+
+This catalog maintains a list of the most recent completed requests that have run longer than a predefined threshold of time.
+For each completed request, this catalog maintains information such as requsetId, statement text, prepared name (if prepared statement), request time, service time, and so on.
+This information provides a general insight into the health and performance of the query engine and the cluster.
+
+[NOTE]
+====
+For Couchbase Server version 4.5, the following is true:
+
+[#ul_a3j_41q_j1b]
+* `completed_requests `lives completely in memory, and memory usage is about 1K per request, so even at 100k requests, memory consumption will be significantly lower than what N1QL uses to operate.
+* Adding every request to` completed_request `is likely to add only a few microseconds to the request duration, which are needed to assemble the entry.
+* The` completed_request `cache is fragmented across multiple buckets, so contention is not at issue.
+* Garbage collection is not involved in adding` completed_requests`, but it will be involved when deleting` completed_requests `entries.
+====
+
+Get Completed Requests::
++
+.REST
+----
+GET http://localhost:8093/admin/completed_requests
+----
++
+.N1QL
+----
+SELECT * FROM system:completed_requests;
+---- To get a list of the completed requests, use:
++
+.Example
+----
+cbq> SELECT * FROM system:completed_requests LIMIT 1;
+{
+    "requestID": "c23ac87e-d756-4158-879f-98d8303de326",
+    "signature": {
+        "*": "*"
+    },
+    "results" : [
+        {
+            "completed_requests": {
+                "ElapsedTime": 1.617954658e+09,
+                "ErrorCount": 0,
+                "RequestId": "1fd0a5db-442f-4cfb-ab8e-438adcee380f",
+                "ResultCount": 0,
+                "ResultSize": 0,
+                "ServiceTime": 1.617933369e+09,
+                "SortCount": 0,
+                "Statement": "create index dayflight2 on `travel-sample`(distinct array v.day FOR v in schedule end) where type = \"route\"",
+                "Time": "2016-02-17 11:57:18.210234079 -0800 PST"
+            }
+        }
+    ],
+    "status": "success",
+    "metrics": {
+        "elapsedTime": "1.016817ms",
+        "executionTime": "981.564µs",
+        "resultCount": 1,
+        "resultSize": 556,
+        "sortCount": 11
+    }
+}
+----
+
+Purging the Completed Requests:: To purge the completed requests for a given time period, use
++
+.N1QL
+----
+DELETE FROM system:completed_requests requests 
+       WHERE requests.Time LIKE "2015-09-09%";
+----
+
+*Configuring the system:completed_requests Catalog*
+
+You can configure the `system:completed_requests` catalog by specifying the parameters as command line options for the cbq-engine.
+
+* [.param]`completed-threshold`: Sets the minimum request duration after which requests are added to the `system:completed_requests` catalog.
+The default value is 1000ms.
+Specify [.input]`0` to log all requests and [.input]`-1` to not log any requests to the catalog.
++
+To specify a different value, use:
++
+----
+cbq-engine -completed-threshold=500
+----
+
+* [.param]`completed-limit`: Sets the number of most recent requests to be tracked in the `system:completed_requests` catalog.
+The default value is 4000.
+Specify [.input]`0` to not track any requests and [.input]`-1` to set no limit.
++
+To specify a different value, use:
++
+----
+cbq-engine -completed-limit=1000
+----
+
+You can also set these parameters through the Admin API settings endpoint:
+
+----
+curl -X POST 'http://localhost:8093/admin/settings'  -u Administrator:password -d '{ ... }'
+----
+
+The JSON parameter accepts two new fields: [.param]`completed-threshold` and [.param]`completed-limit`.

@@ -1,0 +1,107 @@
+[#views-writing-map]
+= Map Function
+
+[abstract]
+Map functions create a mapping between input data (JSON objects) and  data displayed in the view results (output).
+
+Every document in the Couchbase bucket for the view is submitted to the `map()` function in each view once, and it is the output from the `map()` function that is used as the result of the view.
+
+The `map()` function is supplied two arguments by the views processor.
+The first argument is the JSON document data.
+The optional second argument is the associated metadata for the document, such as the expiration, flags, and revision information.
+
+The map function outputs zero or more ‘rows’ of information using an `emit()` function.
+Each call to the `emit()` function is equivalent to a row of data in the view result.
+The `emit()` function can be called multiple times within the single pass of the `map()` function.
+This functionality enables you to create views that may expose information stored in a compound format within a single stored JSON record, for example generating a row for each item in an array.
+
+The map function is the most critical part of any view as it provides the logical mapping between the input fields of the individual objects stored within Couchbase to the information output when the view is accessed.
+
+Through this mapping process, the map function and the view provide:
+
+* The output format and structure of the view on the bucket.
+* Structure and information used to query and select individual documents using the view information.
+* Sorting of the view results.
+* Input information for summarizing and reducing the view content.
+
+Applications access views through the REST API, or through a Couchbase client library.
+All client libraries provide a method for submitting a query into the view system and obtaining and processing the results.
+
+The following diagram shows the name, salary and city fields of the stored JSON documents translated into a table (an array of fields) in the generated view content.
+
+image::views-basic-overview.png[,480]
+
+In this example, a map function is taking the Name, City, and Salary fields from the JSON documents stored in the Couchbase bucket and mapping them to a table of these fields.
+The map function which produces this output might look like this:
+
+----
+function(doc, meta)
+{
+  emit(doc.name, [doc.city, doc.salary]);
+}
+----
+
+When the view is generated the `map()` function is supplied two arguments for each stored document, `doc` and `meta` :
+
+* `doc`
++
+The stored document from the Couchbase bucket, either the JSON or binary content.
+Content type can be identified by accessing the `type` field of the `meta` argument object.
+
+* `meta`
++
+The metadata for the stored document, containing expiry time, document ID, revision and other information.
++
+Every document in the Couchbase bucket is submitted to the `map()` function in turn.
+After the view is created, only the documents created or changed since the last update need to be processed by the view.
+View indexes and updates are materialized when the view is accessed.
+Any documents added or changed since the last access of the view will be submitted to the `map()` function again so that the view is updated to reflect the current state of the data bucket.
++
+Within the `map()` function itself you can perform any formatting, calculation or other detail.
+To generate the view information, you use calls to the `emit()` function.
+Each call to the `emit()` function outputs a single row or record in the generated view content.
++
+The `emit()` function accepts two arguments, the key and the value for each record in the generated view:
+
+* `key`
++
+The emitted key is used by Couchbase Server both for sorting and querying the content in the database.
++
+The key can be formatted in a variety of ways, including as a string or compound value (such as an array or JSON object).
+The content and structure of the key is important, because it is through the emitted key structure that information is selected within the view.
++
+All views are output in a sorted order according to the content and structure of the key.
+Keys using a numeric value are sorted numerically, for strings, UTF-8 is used.
+Keys can also support compound values such as arrays and hashes.
++
+The key content is used for querying by using a combination of this sorting process and the specification of either an explicit key or key range within the query specification.
+For example, if a view outputs the `RECIPE TITLE` field as a key, you could obtain all the records matching ‘Lasagne’ by specifying that only the keys matching ‘Lasagne’ are returned.
+
+* `value`
++
+The value is the information that you want to output in each view row.
+The value can be anything, including both static data, fields from your JSON objects, and calculated values or strings based on the content of your JSON objects.
+
+The content of the value is important when performing a reduction, since it is the value that is used during reduction, particularly with the built-in reduction functions.
+For example, when outputting sales data, you might put the `SALESMAN` into the emitted key, and put the sales amounts into the value.
+The built-in `_sum` function will then total up the content of the corresponding value for each unique key.
+
+The format of both key and value is up to you.
+You can format these as single values, strings, or compound values such as arrays or JSON.
+The structure of the key is important because you must specify keys in the same format as they were generated in the view specification.
+
+The `emit()` function can be called multiple times in a single map function, with each call outputting a single row in the generated view.
+This can be useful when you want to supporting querying information in the database based on a compound field.
+For a sample view definition and selection criteria.
+
+Views and map generation are also very forgiving.
+If you elect to output fields in from the source JSON objects that do not exist, they are replaced with a `null` value, rather than generating an error.
+
+For example, in the view below, some of the source records do contain all of the fields in the specified view.
+The result in the view result is just the `null` entry for that field in the value output.
+
+image::views-basic-overview-missing.png[,480]
+
+You should check that the field or data source exists during the map processing before emitting the data.
+
+To better understand how the map function works to output different types of information and retrieve it, see View and Query Pattern Samples.
