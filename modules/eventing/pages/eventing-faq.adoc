@@ -1,0 +1,202 @@
+[#eventing_faq]
+= Frequently Asked Questions
+
+[abstract]
+Some questions, frequently asked about the Eventing service and Functions.
+
+== Frequently Asked Questions
+
+* *Can a function listen to all changes across Couchbase Server?*
++
+A defined function listens only to changes that are exposed using the DCP for the buckets (Couchbase and Ephemeral) in the data-nodes.
+Memcached buckets are not supported.
+The function cannot listen to changes happening in other Couchbase components, such as FTS, Views, or GSI; nor can it listen to system events.
+
+* *Can there be more than one function listening to changes to a bucket?*
++
+Yes.
+More than one function can be defined for the same bucket.
+This lets you process the change according to the business logic that you enforce.
+But there is no ordering enforced; for example if bucket 'wine' has three different functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these functions are executed.
+
+* *Is it similar to a Database Trigger?*
++
+In a rough sense, it is similar to the Post-Triggers of the database world.
+But with functions, the action is already completed at the data-layer, and the event handler just gives an interface by which developers can key in the logic of what needs to happen ‘after’ the action is done.
+What a function sees is the actual event of the change, and hence it does not directly correlate with Database Triggers.
++
+Also, database triggers suffered from scalability and diagnosability issues.
+Functions offer multiple diagnosability solutions, and is highly scalable and performant.
+
+* *Is it similar to a Rules Engine?*
++
+Not exactly.
+A Rules Engine enforces ordering and other semantics that are not possible out of the box with Functions.
+However, Functions can be used to implement one - even Rules Engine; i.e, the function in its purest form offers a rule to implemented closer to the data, but cannot trigger another function directly.
+
+* *Is it similar to a Stored Procedure?*
++
+Stored Procedures enforce a request-response model.
+A stored procedure will not be invoked automatically; it has to be invoked by a calling method.
+Functions are based on the idea of events.
+Changes to the data are events.
+These events trigger functions, and hence this is not a request-response model in its purest sense.
+
+* *Is it an MDS-enabled service?*
++
+Yes.
+MDS enables workload isolation in a Couchbase cluster.
+Eventing nodes can be added as more functions are added, or if the mutation rates are high.
+
+* *What kind of node do I run my Eventing Service on?*
++
+Eventing leverages the latest trends in multi-core CPUs; therefore nodes selected for Eventing should optimally have a higher number of cores than those for indexing.
+If the use-case demands the creation of many timers, then systems with more RAM are recommended.
+
+* *What languages are supported?*
++
+Javascript is the language to be used while creating the function.
+Node modules cannot be Imported:  only simple Javascript can be used.
+
+* *Do I need a separate middleware to consume the Functions? How do I consume changes in my middleware/application?*
++
+Database changes are consumed using the function defined: there is no other programmatic way of accessing the changes (such as by using an SDK, or some other form of middleware).
+REST endpoints are exposed, to perform many administrative operations.
+
+* *Is the ordering of document mutations enforced?*
++
+All changes from a document are always processed in order.
+Timers are not ordered.
+
+* *Does a rebalance have any effect on the firing of events?*
++
+No.
+Functions do not lose any mutations when rebalance operations occur - i.e, when the Data Service undergoes a rebalance, or when Eventing nodes are added or removed.
+
+* *What is the metadata bucket? Do I need to create a separate bucket?*
++
+To provide better restartability semantics when eventing nodes goes down, some metadata needs to be stored: a Couchbase bucket solves this problem.
+Setting up the metadata bucket is a one-time activity that is done cluster-wide.
+It is recommended that the metadata bucket not be used for any other data-storage (which is to say, it should not be accessed by any other application).
+
+* *Are functions supported for both KV and Document storage?*
++
+Eventing listens to changes that appear in the DCP.
+DCP is valid for the Data Service; and functions operate on documents that are either in key-value or in document (JSON) format.
+
+* *Is it supported for both text and binary formats of the documents?*
++
+The value or the document must always be text.
+Neither binary values nor binary documents are supported.
+
+* *Can we determine what has changed on the document?*
++
+No.
+But you can implement versioning as part of the application logic.
+If versioning is important, include it as part of the data architecture.
+
+* *Can I import my own JS libraries or Node Modules?*
++
+No.
+We do not allow import of node modules or external JS libraries for now.
+
+* *Why can’t I create global variables?*
++
+We restrict the language model in such a way that chances of going wrong are minimized.
+As functions are stateless compute entities, global variables do not have a good use-case, and therefore, they are not supported.
+Though you can define Javascript functions inside a function (outside the scope of OnUpdate and OnDelete) that can be invoked any number of times from either of the event handlers.
+
+* *How do I get notified on or before a document expires?*
++
+There is currently no OnExpiry handler in the Functions offering.
+The only way to get notified is via timers associated with a document.
+Creating a timer for a document a few minutes before expiry generally solves this.
+
+* *Can I get the document’s value when it is deleted or expired?*
++
+As of now, it is not possible to get the document's value when it is expired or deleted.
+DCP does not contain this information.
+MB-17466 tracks this.
+The workaround for this is to create a timer before the expiry, and attempt to look up the document's value in the bucket.
+
+* *What is in the "meta" function parameter (OnUpdate, OnDelete)? Is this the metadata we currently write in order to figure out what actually changed in the document?*
++
+These are the meta fields associated with the document.
+
+* *How can the deployed function be debugged?*
++
+The online-realtime debugger is an extremely useful feature of the Functions offering.
++
+Only a function that is deployed can be debugged.
+If a function is not deployed, it cannot be debugged.
+Click on the ‘Debug’ button and wait for a mutation.
+Once the debugger thread receives a mutation, it displays the debugger URL that needs to be copy-pasted into a different Chrome window.
+
+* *What happens when a function is debugged?*
++
+We block one of the mutations alone, and hand it over to the debugger session.
+The rest of the mutations continue to be serviced by the event handler.
+
+* *Will all the updates to a document be seen in DCP?*
++
+When a document is updated multiple times in a small time-window, not all updates are seen in DCP.
+This means that the event handlers see only those deduplicated events that are published in DCP.
+Refer to MB-26908.
+
+* *Is it possible to get additional state during function execution, e.g.
+can you read from the data service in a function to fetch related data? For example, can we enrich the updated document with data from another document (using a document id)?*
++
+Yes.
+You can read from any other bucket, or even from a REST endpoint, and enrich the document.
+
+* *Can I get old and new values of the document inside the function?*
++
+No.
+We do not support versioning of documents; therefore, this feature is not available out of the box.
+Though customers can have another ‘Mother’ bucket that stores documents that could be looked up, in order to determine the difference between the current document and the last modified.
+
+* *How does the Functions offering compare with the Couchbase’s Kafka Connector?*
++
+The Functions offering is about server-side processing or compute; it does not require any middleware to be deployed or managed.
+Couchbase’s Kafka connector is an SDK component that needs an application container or middleware to run.
+
+== Known Limitations
+
+.Known Limitations Related to Couchbase Functions
+[#known_limitations_functions,cols="3,11"]
+|===
+| Ticket | Description
+
+| MB-27268, MB-26939
+| Not possible to update the source bucket from with a Function
+
+| MB-27338
+| Unable to deploy if handler has N1QL query with ( for Union clause
+
+| MB-28317
+| No logs appended to Application log during Debug
+
+| MB-27267
+| Ability to Set Expiry from the Function
+
+| MB-28315
+| Redeployment truncates log
+|===
+
+.Known Limitations Related to DCP
+[#known_limitations_dcp,cols="3,11"]
+|===
+| Ticket | Description
+
+| MB-26907
+| Differentiate Between Delete and Expiry Operations using OpCodes
+
+| MB-26905
+| Differentiate Between Create and Update Operations using OpCodes
+
+| MB-26908
+| Disallow Dedup to capture All Updates
+
+| MB-17466
+| DCP should allow configuring delete/expiry sending the value in addition to key/metadata
+|===

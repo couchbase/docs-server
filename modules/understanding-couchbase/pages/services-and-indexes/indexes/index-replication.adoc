@@ -1,0 +1,128 @@
+[#topic_axj_xtr_zz2]
+= Index Availability and Performance
+
+[abstract]
+The _Index Service_ ensures availability and performance through _replication_ and _partitioning_.
+The _consistency_ of query-results can be controlled per query.
+
+[#section_tnn_hbz_zz2]
+== Index Replication
+
+Secondary indexes can be replicated across cluster-nodes.
+This ensures:
+
+{blank}
+
+* _Availability_: If one Index-Service node is lost, the other continues to provide access to replicated indexes.
++
+{blank}
+
+* _High Performance_: If original and replica copies are available, incoming queries are load-balanced across them.
++
+{blank}
+
+Index-replicas can be created with the N1QL `CREATE INDEX` statement.
+Note that whenever a given number of index-replicas is specified for creation, the number must be less than the number of cluster-nodes currently running the xref:services-and-indexes/services/index-service.adoc[Index Service].
+If it is not, the index-creation fails.
+Note also that if, following creation of the maximum number of copies, the number of nodes running the Index Service decreases, Couchbase Server progressively assigns replacement index-replicas to any and all Index-Service nodes subsequently be added to the cluster, until the required number of index-replicas again exists for each replicated index.
+
+Index-replicas can be created as follows:
+
+{blank}
+
+* Specifying, by means of the `WITH` clause, the destination nodes.
+In the following example, an index with two replicas is created.
+The active index is on `node1`, and the replicas are on `node2` and `node3`:
++
+----
+CREATE INDEX productName_index1 ON bucket_name(productName, ProductID) 
+    WHERE type="product" USING GSI 
+    WITH {"nodes":["node1:8091", "node2:8091", "node3:8091"]};
+----
++
+{blank}
++
+{blank}
+
+* Specifying _no_ destination nodes; but specifying instead, by means of the `WITH` clause and the `num_replica` attribute, only the _number_ of replicas required.
+The replicas are automatically distributed across those nodes of the cluster that are running the Index Service: the distribution-pattern is based on a projection of optimal index-availability, given the number and disposition of Index-Service nodes across defined server-groups.
++
+In the following example, an index is created with two replicas, with no destination-nodes specified:
++
+{blank}
++
+----
+CREATE INDEX productName_index1 ON bucket_name(productName, ProductID) 
+    WHERE type="product" USING GSI 
+    WITH {"num_replica": 2};
+----
++
+{blank}
++
+Note that if `nodes` and `num_replica` are both specified in the `WITH` clause, the specified number of nodes must be _one greater_ than `num_replica`.
++
+{blank}
++
+{blank}
+
+* Specifying a number of index-replicas to be created by the Index Service whenever `CREATE INDEX` is invoked.
+The default is `0`.
+If the default is changed to, say, `2`, creation of a single index is henceforth accompanied by the creation of two replicas, which are automatically distributed across the nodes of the cluster running the Index Service.
+No explicit specification within the `CREATE INDEX` statement is required.
++
+With credentials that provide appropriate authorization, this default can be changed; by means of the `curl` command, as follows:
++
+{blank}
++
+----
+curl -u <username>:<password> <host>:9102/settings -d "{\"indexer.settings.num_replica\": <num_replicas>}"
+----
++
+{blank}
++
+Note, however, that whenever explicit specification of replica-numbers is made within the `CREATE INDEX` statement, this explicit specification takes precedence over any established default.
++
+{blank}
++
+{blank}
+
+For further information on using N1QL, see xref:sdk:n1ql-query.adoc[Querying with N1QL].
+
+== Index Partitioning
+
+As index-sizes and item-counts increase, individual indexes may not fit on their assigned node.
+To remedy this, indexes can be _partitioned_ (divided into two or more segments) by means of the `WHERE` clause to `CREATE INDEX`: the resulting partitions can be distributed across multiple, individually specified Index-Service nodes, under different index-names.
+
+In the following example, _ranges_ are specified, to partition index-content across two indexes:
+
+----
+CREATE INDEX productName_index1 ON bucket_name(productName, ProductID) 
+    WHERE type="product" AND productName BETWEEN "A" AND "K" USING GSI 
+    WITH {"nodes":["node1:8091"]};
+    
+    CREATE INDEX productName_index2 ON bucket_name(productName, ProductID) 
+    WHERE type="product" AND productName BETWEEN "K" AND "Z" USING GSI 
+    WITH {"nodes":["node2:8091"]};
+----
+
+== Index Consistency
+
+Whereas Couchbase Server handles data-mutations with _full consistency_ — all mutations to a given key are applied to the same vBucket, and become immediately available — it maintains indexes with degrees of _eventual consistency_, determined by means of the following query consistency-options, specified per query:
+
+[#ul_vzd_j1z_zz2]
+* `not_bounded`: Executes the query immediately, without requiring any consistency for the query.
+If index-maintenance is running behind, out-of-date results may be returned.
++
+{blank}
+
+* `at_plus`: Executes the query, requiring indexes first to be updated to the timestamp of the last update.
+If index-maintenance is running behind, the query waits for it to catch up.
++
+{blank}
+
+* `request_plus`: Executes the query, requiring the indexes first to be updated to the timestamp of the current query-request.
+If index-maintenance is running behind, the query waits for it to catch up.
++
+{blank}
+
+For N1QL, the default consistency is `not_bounded`.
