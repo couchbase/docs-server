@@ -1,0 +1,88 @@
+[#topic_gyd_f5r_zz]
+= Performance and Consistency
+
+[abstract]
+GSIs are designed to provide low latency scans for the query service.
+There are many things that can be done to improve the performance of GSIs.
+Sometimes, however, you may wish to compromise on performance in order to achieve better consistency for your queries.
+
+[#section_szd_j1z_zz]
+== Index Performance
+
+GSIs provide a lower latency scan compared to view indexes due to its architecture.
+GSI, as its name suggests is a global index that is independently placed within the cluster as opposed to Views, which are local indexes placed aligned to the data distribution.
+
+.Query Execution with Global Indexes
+[#fig_jzj_ms1_vv]
+image::query-exe-with-global-indexes.png[,370,align=left]
+
+Global secondary indexes can be placed on a single node.
+However as the number of index scans, mutations, the total items indexed, and the total index size increases, it will be necessary to scale the index.
+You can scale the index in 2 ways:
+
+[#ul_tzd_j1z_zz]
+* Load balancing with GSI.
+You can create replicas of the same index to allow scans to be routed to multiple nodes.
+* Partitioning with GSI.
+You can split the index into multiple partitions, to distribute indexed items, index scan requests, and limit the mutations and size the single index has to handle.
+
+In either approach, you also need to scale the index service to allocate more computational resources to indexes.
+
+Load Balancing with GSI::
+It is possible to create indexes with replicas distributed amongst multiple nodes.
+Unlike replicas used in the data service, each replica index is considered to be equivalent to the active index.
+This means that the query service automatically load balances between the replica indexes, even when using the [.api]`USE INDEX` statement or prepared statements.
+See xref:index-replication.adoc[Index Replication and High Availability] for further details on index replication.
+
+Partitioning with GSI::
+Some of your indexes may no longer fit a single node as the number of mutations, index size, and item count increases.
+You can partition a single index using a [.api]`WHERE` clause with [.api]`CREATE INDEX` and by placing partitions across multiple index service nodes under different index names.
++
+To load-balance GSIs, you must manually specify the nodes on which index partitions should be built on.
++
+You can also create indexes by partitioning your indexes as shown in the following example using ranges:
++
+----
+CREATE INDEX productName_index1 ON bucket_name(productName, ProductID) 
+       WHERE type="product" AND productName BETWEEN "A" AND "K" USING GSI 
+       WITH {"nodes":["node1:8091"]};
+       
+CREATE INDEX productName_index2 ON bucket_name(productName, ProductID) 
+       WHERE type="product" AND productName BETWEEN "K" AND "Z" USING GSI 
+       WITH {"nodes":["node2:8091"]};
+----
+
+Scaling the Index Service::
+Couchbase Server scales indexes independent of data and queries.
+With multidimensional scaling, you can allocate separate hardware resources for separate services, and avoid resource contention by performing queries, maintaining indexes, and writing data to different nodes.
+If your application needs more indexing resources, you can either scale out your infrastructure to add more index nodes, or scale up the index services to handle more workload.
+
+[#section_uzd_j1z_zz]
+== Query and Index Consistency
+
+In Couchbase Server, mutations to data in the data service is done with full consistency.
+All mutations to a given key are done using the same vBucket on a node and are immediately available to anyone reading the latest value for the given key.
+However, indexes are maintained in an eventually consistent manner.
+This is true for all indexers (GSI, View, and Spatial).
+At query time, you can specify a query consistency flag for each N1QL query request, similar to the view API.
+The query consistency flag can be one of the following:
+
+[#ul_vzd_j1z_zz]
+* [.param]`Not_bounded`: This scan consistency flag executes the query immediately without requiring any consistency for the query.
+If the index maintenance is running behind, query may return out-of-date results.
+`Not_bounded` scan consistency has the same characteristics as `stale=ok` in the view API.
+* [.param]`At_plus`: This scan consistency flag executes the query but require the indexes to be updated to the logical timestamp of the last update performed by the application.
+For example, an application issuing the query may have done its last update 10 ms ago.
+The sequence number of the update is retrieved from the mutation response and is passed to the query request.
+This behavior achieves consistency, at least or later than the moment of the most recent mutation from the application.
+If the index maintenance is running behind, the query waits for the index to catch up to the last update.
+// At_plus scan consistency flag is not yet implemented by the
+//               View API.
+* [.param]`Request_plus`: This `scan_consistency` flag executes the query but require the indexes to be updated to the logical timestamp of the query request.
+For example, an application issuing the query may have done its last update 10 ms ago.
+An application issuing the query with `request_plus` scan consistency flag takes the logical timestamp of the query request.
+This behavior achieves consistency, at least or later than the moment of the request timestamp.
+If the index maintenance is running behind the request timestamp, the query waits for the index to catch up to the request timestamp, this can cause a delay in response to the query.
+`Request_plus` scan consistency value has the same characteristics as `stale=false` in the view API.
+
+For N1QL, the default consistency setting is `not_bounded`.

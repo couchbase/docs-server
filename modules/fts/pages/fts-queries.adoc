@@ -1,326 +1,51 @@
 [#topic_q2x_tl4_1v]
-= Queries
+= Understanding Queries
 
-*Queries Using the Web Console*
+[abstract]
+Full Text Search allows queries to be performed on Full Text Indexes.
+Queries can be performed by means of the Couchbase Web Console, the Couchbase REST API, or the Couchbase SDK.
 
-Once you have created a full text index, you can search it using the Couchbase Server Web Console ([.path]_http://your-Couchbase:8091_).
-Go to [.uicontrol]*Indexes* > [.uicontrol]*Full Text*.
-Select your index from the drop down and then enter your query using the xref:fts-query-types.adoc#query-string-query-syntax[query string syntax].
+[#query-specification-options]
+== Query-Specification Options
 
-*Queries Using the REST API*
+Full Text Search allows a range of query options.
+These include:
 
-You can also use the REST API to perform queries.
-The easiest way to get started is to perform a query using the Web Console.
-Then, click the "[.uicontrol]*Advanced*" checkbox.
-You will see the JSON payload to pass to the REST API.
-Click the nearby checkbox to get the CURL command.
-See the xref:rest-api:rest-fts.adoc#topic_ytp_sx4_1v[REST reference] for more information.
-
-.Example CURL command to query the index 'beer-idx'
-----
-curl -X POST -H "Content-Type: application/json" \
-http://127.0.0.1:8094/api/index/beer-idx/query \
--d '{
-        "indexName": "beer-idx",
-        "size": 10,
-        "from": 0,
-        "explain": true,
-        "highlight": {},
-        "query": {
-            "boost": 1,
-            "query": "geo.accuracy:rooftop"
-        },
-        "fields": [
-            "*"
-        ],
-        "ctl": {
-            "consistency": {
-                "level": "",
-                "vectors": {}
-            },
-            "timeout": 0
-        }
-    }'
-----
-
-== Sorting Query Results
-
-Unlike previous releases where the search results were always sorted by descending score, you can now sort search results by any indexed field.
-If you don't specify a sort order, the search results are sorted by descending score by default.
-For more information on specifying the sort order, see xref:fts-sorting.adoc#topic_l2x_pkx_vx[Sorting Query Results].
-
-== Query Response
-
-The response object contains the result of a full text query.
-It consists of the following objects.
-For more information, see Response Object Schema.
-
-Status::
-The status object returns the number of successful and failed pindex queries.
-This information is useful as you can choose to use partial results depending on your application use case.
+* Input-text and target-text can be _analyzed_: this transforms input-text into _token-streams_, according to different specified criteria, so allowing richer and more finely controlled forms of text-matching.
 +
-We recommend that you check the status object for failures rather than rely on the HTTP response codes alone.
-For example,FTS returns an HTTP 200 response in case of pindex failures or timeouts (not consistency timeouts).
-This is done so that you can choose to accept partial results in an application.
-However, this also means FTS returns an HTTP 200 response even when ALL pindexes fail.
+{blank}
 
-Request:: The request object stores a copy of the query that was executed and other details from the request that generated this response object, for example the number of results requested (size), the offset, highlighting, and so on.
-
-Hits::
-Hits returns an array containing the matches for the executed query.
-The length of the array is equal to or less than the size specified in the request.
-
-Facets::
-Facets return an object that contains aggregated information about the documents that match a query.
-There are three types of queries: Numeric Range Facet, DateTime Range Facets, and Terms Facets.
-For more information, see <<search-facets>>.
-The facets object contains the following fields:
-[#ul_bzz_p5z_bx]
-* total - the count of all results returned, regardless of which facet they are a part of.
-* count - the count of documents in a specific facet.
-* other - the count of results that don't fall into any defined facet.
-* missing - the count of documents that do not have a value for the field at all.
-The total count minus all the individual facet counts will give you the missing count, which may be 0.
-
-The other possible structures vary depending on whether it is a term facet or a range facet.
-This means terms have a structure called "term" with the name, or for a range query, they have some definition of the range and how to  name it.
-
-[source,json]
-----
-"facets": {
-  "abv": {
-    "field": "abv",
-    "total": 70,
-    "missing": 21,
-    "other": 0,
-    "numeric_ranges": [
-      {
-        "name": "high",
-        "max": 7,
-        "count": 57
-      },
-      {
-        "name": "low",
-        "min": 7,
-        "count": 13
-      }
-    ]
-  }
-}
-----
-
-Total_hits::
-Total hits represents the total number of matches for this result.
-It can be any integer starting from 0.
-
-Max_score:: Max score represents the highest score of all documents for this query.
-
-Took:: Time taken to complete the query.
-
-*Response Headers*
-
-The response headers can contain the following information:
-
-.Response Headers
-[#table_wcx_nw1_4v]
-|===
-| Code | Example | Valid Return Codes
-
-| Status
-| HTTP/1.1 200 OK
-| 200 OK
-
-400 Bad Request, returned if the query is invalid due to malformed JSON or invalid consistency request.
-
-412 if timeout occurs before the requested consistency requirements are met.
-
-
-
-For a complete list of status codes and information on how to interpret them, see xref:fts-response-object-schema.adoc#handling-response-status[Understanding the Query Response Status].
-
-| Cache-Control
-| no-cache
-| 
-
-| Content-Type
-| application/json; version=1.0.0
-| The API version information is included in this field unless the response is HTTP 400, in which case the response will be "text/plain: charset=utf-8"
-
-| Date
-| Tue, 22 Mar 2016 19:28:57 GMT
-| Date of the response
-
-| Transfer-Encoding
-| chunked
-| 
-
-| X-Content-Type-Options
-| nosniff
-| Value "https://blogs.msdn.microsoft.com/ie/2008/09/02/ie8-security-part-vi-beta-2-update/[nosniff]" is returned in case of a bad request (400 or 412) in order to deter driveby downloads.
-|===
-
-*Query Counts*
-
-All queries return a result count.
-To get just the count of documents that match a particular query without returning documents or ids, execute the query as usual but specify size "[.input]`0`" to return no results, as in the following example:
-
-----
-curl -X POST -H "Content-Type: application/json" \
-                  http://127.0.0.1:8094/api/index/beer-idx/query \
-                  -d '{
-                  "indexName": "beer-idx",
-                  "size": 0,
-                  "from": 0,
-                  "explain": true,
-                  "highlight": {},
-                  "query": {
-                  "boost": 1,
-                  "query": "geo.accuracy:rooftop"
-                  },
-                  "fields": [
-                  "*"
-                  ],
-                  "ctl": {
-                  "consistency": {
-                  "level": "",
-                  "vectors": {}
-                  },
-                  "timeout": 0
-                  }
-                  }'
-----
-
-You can get a count of entries in an index overall by using the REST API:
-
-----
-http://localhost:8094/api/index/beer-idx/count
-----
-
-== Types of Queries
-
-See xref:fts-query-types.adoc[Types of Queries] for details.
-
-[#search-facets]
-== Search Facets
-
-Facets are aggregate information collected on a particular result set.
-So, you have to already have a search in mind, and then you collect additional facet information along with it.
-All of the facet examples below are for the query "`water`" on the beer-sample dataset.
-
-FTS supports 3 types of facets:
-
-* Term Facet - A term facet counts up how many of the matching documents have a particular term in a particular field.
-Most of the time this only makes sense for relatively low cardinality fields, like a type or tags.
-It would not make sense to use it on a unique field like an ID.
-* Numeric Range Facet - A numeric range facet works by the user defining their own buckets (numeric ranges).
-The facet then counts how many of the matching documents fall into a particular bucket for a particular field.
-* Date Range Facet - same as numeric, but on dates instead of numbers.
-Full text search and Bleve expect dates to be in the format specified by https://www.ietf.org/rfc/rfc3339.txt[RFC-3339], which is a specific profile of ISO-8601 that is more restrictive.
+* The _fuzziness_ of a query can be specified, so that the scope of matches can be constrained to a particular level of exactitude.
+A high degree of fuzziness means that a large number of partial matches may be returned.
 +
-NOTE: For Developer Preview, Date Range Facets are not supported.
+{blank}
 
-NOTE: Most of the time, when building a term facet you want to use the keyword analyzer.
-Otherwise multi-term values get tokenized and the results are not what you expect.
+* Multiple queries can be specified for simultaneous processing, with one given a higher _boost_ than another; so ensuring that its results are returned at the top of the set.
++
+{blank}
 
-*Examples*
+* _Regular expressions_ and _wildcards_ can be used in text-specification for search-input.
++
+{blank}
 
-. Term Facet - computes facet on the type field which has 2 values: `beer` and `brewery`.
+* _Compound_ queries can be designed, such that an appropriate conjunction or disjunction of the total result-set can be returned.
 +
-----
-curl -X POST -H "Content-Type: application/json" \
-                          http://localhost:8094/api/index/bix/query \
-                          -d '{
-                          "size": 10,
-                          "query": {
-                          "boost": 1,
-                          "query": "water"
-                          },
-                          "facets": {
-                          "type": {
-                          "size": 5,
-                          "field": "type"
-                          }
-                          }
-                          }'
-----
-+
-The result snippet below only shows the facet section for clarity.
-Run the curl command to see the HTTP response containing the full results.
-+
-[source,json]
-----
-"facets": {
-                          "type": {
-                          "field": "type",
-                          "total": 91,
-                          "missing": 0,
-                          "other": 0,
-                          "terms": [
-                          {
-                          "term": "beer",
-                          "count": 70
-                          },
-                          {
-                          "term": "brewery",
-                          "count": 21
-                          }
-                          ]
-                          }
-                          }
-----
+{blank}
 
-. Numeric Range Facet - computes facet on the `abv` field with 2 buckets describing `high` (greater than 7) and `low` (less than 7).
-+
-----
-curl -X POST -H "Content-Type: application/json" \
-                          http://localhost:8094/api/index/bix/query \
-                          -d '{
-                          "size": 10,
-                          "query": {
-                          "boost": 1,
-                          "query": "water"
-                          },
-                          "facets": {
-                          "abv": {
-                          "size": 5,
-                          "field": "abv",
-                          "numeric_ranges": [
-                          {
-                          "name": "high",
-                          "max": 7
-                          },
-                          {
-                          "name": "low",
-                          "min": 7
-                          }
-                          ]
-                          }
-                          }
-                          }'
-----
-+
-Results:
-+
-[source,json]
-----
-facets": {
-                          "abv": {
-                          "field": "abv",
-                          "total": 70,
-                          "missing": 21,
-                          "other": 0,
-                          "numeric_ranges": [
-                          {
-                          "name": "high",
-                          "max": 7,
-                          "count": 57
-                          },
-                          {
-                          "name": "low",
-                          "min": 7,
-                          "count": 13
-                          }
-                          ]
-                          }
-                          }
-----
+All the above options, and others, are explained in detail on the page xref:fts-query-types.adoc[Query Types].
+
+For information on how to execute queries, see xref:fts-performing-searches.adoc[Performing Searches].
+
+[#sorting-results]
+== Sorting Results
+
+The results returned from a Full Text Search can be _sorted_: by *id*, *score*, *field*, and more.
+Details are provided in xref:fts-sorting.adoc[Sorting Query Results].
+
+[#query-response-objects]
+== Query Response Objects
+
+Every Full Text Search query provides a _response object_.
+This contains the query-result; and consists of individual child-objects that respectively contain _status_, a _request-copy_, the number of _hits_ (or matches) achieved, and (optionally) _facets_, which provide aggregation information.
+
+For full information, see xref:fts-response-object-schema.adoc[Handling Response Objects].

@@ -2,92 +2,101 @@
 = X.509 for TLS
 
 [abstract]
-Couchbase Server uses X.509 certificates to encrypt client-server communications and XDCR (Cross Data Center Replication).
+Couchbase Server uses X.509 certificates to encrypt Cross Data Center Replication (XDCR) and other client-server communications.
 
-Couchbase Server 4.5 Enterprise Edition supports X.509 certificates for Transport Layer Security (TLS).
+Couchbase Server Enterprise Edition supports X.509 certificates, for Transport Layer Security (TLS).
 
-With X.509 certificates, Couchbase Server can strongly encrypt client-server communications and http://developer.couchbase.com/documentation/server/4.1/xdcr/xdcr-intro.html[XDCR] (Cross Data Center Replication).
+With X.509 certificates, Couchbase Server can strongly encrypt http://developer.couchbase.com/documentation/server/4.1/xdcr/xdcr-intro.html[Cross Data Center Replication] and other client-server communications.
 
-NOTE: Full administrators in Couchbase can manage certificates using the Couchbase CLI tools (as described in xref:cli:cbcli/ssl-manage.adoc#cbcli-xdcr-ssl[[.cmd]`ssl-manage`]) or REST API (as described in xref:rest-api:rest-security.adoc#reference_ytt_hdx_hv[Security API]).
+Full administrators can manage certificates, using the Couchbase CLI tools (as described in xref:cli:cbcli/couchbase-cli-ssl-manage.adoc[ssl-manage]) and REST API (as described in xref:rest-api:rest-security.adoc#reference_ytt_hdx_hv[Security API]).
 
 [#image_gnp_5mk_y5]
 image::pict/ca_sys_diagram.png[,570]
 
-With CA-based certificates, you also achieve their simplified management and rotation without client downtime.
+CA-based certificates can be managed and rotated without client downtime.
 
-NOTE: Your prior knowledge of TLS/SSL, PKI certificates including X.509 certificates, and Certificate Authorities (CAs) is assumed for this overview.
+The following overview of Couchbase certificate-management assumes the reader's prior knowledge of TLS/SSL, PKI certificates including X.509 certificates, and Certificate Authorities (CAs).
 
-*When to use X.509 Certificates*
+*When to Use X.509 Certificates*
 
-An X.509 certificate does more than just distribute the public key: it is signed by a trusted (internal or third-party) CA and verifies the identity of the server so that clients know their information is not being sent to a rogue server.
+An X.509 certificate does more than just distribute the public key: it is signed by a trusted (internal or third-party) CA, and thereby verifies the identity of the server, assuring clients that their information is not being sent to a rogue server.
 
-Some common scenarios which may require use of X.509 certificates are:
+Therefore, scenarios potentially requiring the use of X.509 certificates include:
 
 [#ul_j3z_b1k_1v]
-* In production where clients have to go through the internet.
+* In production, where clients have to go through the internet.
 * When transferring sensitive data on the wire between application and Couchbase Server, or between data centers (XDCR).
-* When mandated by regulatory compliance regulations.
+* When mandated by compliance regulations.
 
 *CA Hierarchies Supported by Couchbase*
 
-Couchbase customers can tie Couchbase Server with their CA hierarchies.
+Couchbase customers can associate Couchbase Server with their CA hierarchies.
 The CA at the top of a hierarchy is called the root authority, or root CA.
-There are two types of CA hierarchies supported by Couchbase: single- or n-tier.
+Two types of CA hierarchy are supported by Couchbase: single-tier and n-tier.
 
 Single-Tier Hierarchy:: In its simplest form, the single-tier hierarchy starts with a root CA.
 +
 [#image_my1_wmk_y5]
 image::pict/ca_single_tier.png[,align=left]
 +
-For example, as shown in the figure above, the root CA is also the issuing CA.
-All certificates immediately below the root certificate inherit its trustworthiness and can be used to secure systems.
+{blank}
 +
-Although this is the simplest form of CA hierarchy, most enterprises use an N-tier CA hierarchy as described next.
+In the case represented by the figure immediately above, the root CA is also the issuing CA.
+All certificates immediately below the root certificate inherit its trustworthiness, and can be used to secure systems.
++
+{blank}
++
+This is the simplest form of CA hierarchy: however, most enterprises use the more complex, N-tier CA hierarchy, as described next.
 
-N-Tier Hierarchy:: Typically, in many production deployments, a hierarchy will have multiple CAs.
+N-Tier Hierarchy:: In many production deployments, a hierarchy has multiple CAs.
 +
 [#image_t1g_ymk_y5]
 image::pict/ca_n_tier.png[,570,align=left]
-In a multi-tier hierarchy, the root CA issues certificates to the intermediate CAs, which in turn generate intermediate certificates used to sign the client certificates such as a cluster certificate:
+In a multi-tier hierarchy, the root CA issues certificates to the intermediate CAs, which in turn generate _intermediate certificates_: these are used to sign client certificates, such as a cluster certificate:
 * Trusted root CA > Intermediate CA > Cluster certificate
 * Trusted root CA > Intermediate CA 1 > Intermediate CA 2\....
-> Intermediate CA N > Cluster certificate
+> Intermediate CA _n_ > Cluster certificate
+
+{blank}
 
 When you need to regenerate the intermediate certificate, ensure that the chain can be verified up to the root CA.
 
-If all intermediate certificates are not installed on your server, some clients might think you are on an insecure connection.
+{blank}
+
+All intermediate certificates should be installed on your server: otherwise, some clients will assume that the connection is not secure.
 This results in 'untrusted' warnings like the following:
 
 [#image_ofr_hg1_z5]
 image::pict/back-to-safety.png[,450,align=left]
 
-To avoid such warnings, a server should always send a complete trust chain.
-The trust chain contains your certificate concatenated with all intermediate certificates.
+{blank}
+
+To avoid such warnings, a server should always provide a complete _trust chain_.
+The trust chain contains your certificate, concatenated with all intermediate certificates.
 
 [#configuring-x.509]
 == Configuring X.509
 
 This section explains how to configure X.509 certificates for TLS in Couchbase Server.
-
-NOTE: Choosing a root CA, the CA hierarchy, and obtaining a certificate from that CA chain to set up a Couchbase cluster are not within the scope of this document.
+Note that choosing a root CA, the CA hierarchy, and obtaining a certificate from that CA chain to set up a Couchbase cluster are not within the scope of this document.
 
 *X.509 Certificate Requirements and Best Practices*
 
-Here are the basic requirements for using your X.509 certificates in Couchbase:
+Here are the basic requirements for using X.509 certificates in Couchbase:
 
 * The certificate must be in available in the `.pem` format.
 * The certificate must be an RSA key certificate.
 * The current system time must fall between the times set in the certificate's properties `valid from` and `valid to`.
 * Common name: This can be a certificate with a `nodename` (preferable), IP address, URI (`www.example.com`), or URI with a subject alternative name (SAN) certificate (`example.com` and `example.net`).
-* The node certificate must be designated for server authentication set in the optional field of the certificate's property `enhanced key usage` as `Server Authentication`.
+* The node certificate must be designated for server authentication, by setting the optional field of the certificate's property `enhanced key usage` to `Server Authentication`.
 
-Here are a few best practices around X.509 certificates in Couchbase that you should consider using:
+Recommended, best practices include:
 
-* To avoid man-in-the-middle attacks do not use wildcards with IP addresses in the certificate common name.
-* We recommended at least RSA key-length of 2048 bits or higher.
-As computing capabilities increase, longer RSA keys provide increased security.
+* To avoid man-in-the-middle attacks, do not use wildcards with IP addresses in the certificate common name.
+* Use an RSA key-length of 2048 bits or higher.
+(As computing capabilities increase, longer RSA keys provide increased security.)
 
-The certificate chain must be valid from the node certificate up to the root certificate, which can be verified using the https://www.openssl.org/docs/manmaster/man1/verify.html[OpenSSL validate certificate test].
+The certificate chain must be valid from the node certificate up to the root certificate: this can be verified using the https://www.openssl.org/docs/manmaster/man1/verify.html[OpenSSL validate certificate test].
 
 *Validating Server Identity*
 
@@ -108,12 +117,13 @@ Specify the certificate identity for the URL integrity check in one of the follo
 Using the `commonName`:: The usual way to specify the certificate identity (for the purpose of the URL integrity check) is through the Common Name (CN) in the subject DN of the certificate.
 
 Using the `subjectAltName`::
-If you deploy a certificate on a multi-homed host, however, you might find it is practical to allow the certificate to be used with any of the multi-homed host names.
-In this case, it is necessary to define a certificate with multiple, alternative identities, and this is only possible using the `subjectAltName` certificate extension.
+If you deploy a certificate on a multi-homed host, however, it may be practical to allow the certificate to be used with any of the multi-homed host names.
+In this case, it is necessary to define a certificate with multiple, alternative identities, and this is only possible using the `subjectAltName` certificate-extension.
 
-The HTTPS protocol also supports in host names the wildcard character *.
+The HTTPS protocol also supports, in host names, the wildcard character *.
 For example, you can define the `subjectAltName` as follows:
 
+[source,bash]
 ----
 subjectAltName=DNS:*.couchbase.com
 ----
@@ -166,7 +176,6 @@ Each node in the cluster must have its public key.
 | `chain.pem`
 | Concatenated chain file (chain file).
 This file contains the node public key and the intermediate public keys that signed first the node key (pkey.pem) and then each other.
-
 This file does not contain the CA public key.
 
 | Client-side files
@@ -184,7 +193,7 @@ NOTE: If your CA authority supports automatic generation of certificates, you ca
 Before you start configuring X.509 certificates for your nodes, assess your needs.
 
 Where will you put the configured CA, intermediate, and node keys?:: All the keys and certificates are generated in a directory named SSLCA, which can be located anywhere on your machine.
-The generated private node key (`pkey.key`) and chain certificate (`chain.pem`) must be posted in a specific place that is in the certificate trust path (such as [.path]_/Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/_ on MacOSX).
+The generated private node key (`pkey.key`) and chain certificate (`chain.pem`) must be posted in a specific place that is in the certificate trust path (such as [.path]_/Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/_ on MacOSX, or [.path]_/opt/couchbase/var/lib/couchbase/inbox/_) on Linux.
 
 Do you have one or more nodes in the cluster?::
 * With one node, you will generate one node directory inside the directory SSLCA that will contain the private node key (`pkey.key`) and the certificate chain file (`chain.pem`).
@@ -202,370 +211,393 @@ For example:
 image::pict/chain-pem.png[,500,align=left]
 
 [#sslconfig]
-== Configure X.509 Certificates using openSSL
+== Configure X.509 Certificates
 
-Here are the steps to help you generate X.509 certificates:
+The following steps configure X.509 certificates on Ubuntu 16: a root certificate is created with a single intermediate certificate and a single node certificate; and a chain certificate is created from the intermediate and node certificates.
+The chain certificate and node private key are then made active for the current Couchbase Server-node.
 
-. Create a top-level directory called SSLCA in your user folder and three types of sub-directories:
- ** One subdirectory called `root`
- ** One or more `int` subdirectories
- ** One or more `node` subdirectories
-. Generate the root private key file (`ca.key`), and CA public key file (`ca.pem`).
+Proceed as follows, using the `sudo` command where appropriate.
 
-Enter the following command inside the `root` subdirectory:
-
+. Create environment variables for the naming of a directory-structure, within which will reside the certificates you create for root, intermediate, and node.
++
+[source,bash]
 ----
-openssl genrsa -out ca.key 2048
+export TOPDIR=SSLCA
+export ROOT_DIR=rootdir
+export NODE_DIR=nodedir
+export INT_DIR=intdir
 ----
++
+{blank}
++
+Note that in cases where multiple intermediate and/or node certificates are to be included in the certificate-chain, multiple intermediate and/or directories are required — one for each intermediate or node certificate.
 
+. Create environment variables for each of the certificate-files to be created.
++
+[source,bash]
 ----
-Generating RSA private key, 2048 bit long modulus
-............................................................................................+++
-....+++ 
-e is 65537 (0x10001)
+export ROOT_CA=ca
+export INTERMEDIATE=int
+export NODE=pkey
+export CHAIN=chain
 ----
++
+{blank}
++
+Note that in cases where multiple intermediate and/or node certificates are to be included in the certificate-chain, additional environment-variable definitions — one for each of the additional intermediate and/or node certificates — are required.
 
+. Create environment variables for the administrator-credentials to be used for certificate management, the IP address at which the Couchbase Server-node is located, and the username required for role-based access to a particular resource.
++
+[source,bash]
 ----
-openssl req -new -x509  -days 3650 -sha256 -key ca.key -out ca.pem \
--subj '/C=UA/O=My Company/CN=My Company Root CA'
+export ADMINCRED=Administrator:password
+export ip=10.143.173.101
+export USERNAME=travel-sample
 ----
++
+{blank}
++
+Note that in this example, the username is specified as `travel-sample`, which is typically associated with the *Bucket Full Access* role, on the bucket _travel-sample_.
+For access to be fully tested, ensure that the `travel-sample` user has indeed been defined on the Couchbase Server-node, and is associated with the *Bucket Full Access* role.
+(See xref:security-authorization.adoc[Authorization] for more information on RBAC.)
++
+{blank}
++
+{blank}
 
-. Generate the intermediate private key file (`int.key)` and the intermediate certificate signing request (`int.csr`) to generate the intermediate public key file (`int.pem`).
-
-Enter the following command inside the `int` subdirectory:
-
+. Create a directory-structure in which, within a top-level directory named `SSLCA`, three subdirectories reside — `rootdir`, `intdir`, and `nodedir` — respectively to hold the certificates you create for root, intermediate, and node.
++
+[source,bash]
 ----
-openssl genrsa -out int.key 2048
+mkdir ${TOPDIR}
+cd ${TOPDIR}
+mkdir ${ROOT_DIR}
+mkdir ${INT_DIR}
+mkdir ${NODE_DIR}
 ----
++
+{blank}
++
+{blank}
 
+. Generate the root private key file (`ca.key`) and the public key file (`ca.pem`):
++
+[source,bash]
 ----
-Generating RSA private key, 2048 bit long modulus
-..........................................+++ 
-.....+++ 
-e is 65537 (0x10001
+cd ${ROOT_DIR}
+openssl genrsa -out ${ROOT_CA}.key 2048
+openssl req -new -x509 -days 3650 -sha256 -key ${ROOT_CA}.key \
+-out ${ROOT_CA}.pem -subj '/C=UA/O=MyCompany/CN=MyCompanyRootCA'
 ----
++
+{blank}
++
+{blank}
 
+. Generate, first, the intermediate private key (`int.key`); and secondly, the intermediate certificate signing-request (`int.csr`):
++
+[source,bash]
 ----
-openssl req -new -key int.key -out int.csr -subj '/C=UA/O=My Company/CN=My Company Intermediate CA'
+cd ../${INT_DIR}
+openssl genrsa -out ${INTERMEDIATE}.key 2048
+openssl req -new -key ${INTERMEDIATE}.key -out ${INTERMEDIATE}.csr \
+-subj '/C=UA/O=MyCompany/CN=MyCompanyIntermediateCA'
 ----
++
+{blank}
++
+{blank}
 
-. Create the extension file (`v3_ca.ext)` to add extensions to the certificate and to generate the certificate signing request.
-
-In the `int` subdirectory enter:
-
+. Create the extension-file `v3_ca.ext`; in order to add extensions to the certificate, and to generate the certificate signing-request:
++
+[source,bash]
 ----
-cat <<EOF >> v3_ca.ext
-----
-
-Then add the following:
-
-----
+cat <<EOF>> ./v3_ca.ext
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer:always
 basicConstraints = CA:true
 EOF
 ----
++
+{blank}
++
+{blank}
 
-Your `int` directory now contains three files: `int.csr`,  `int.key`, and `v3_ca.ext`.
+. Generate the intermediate public key (`int.pem`), based on the intermediate certificate signing-request (`int.csr`), and signed by the root public key (`ca.pem`).
++
+[source,bash]
+----
+openssl x509 -req -in ${INTERMEDIATE}.csr \
+-CA ../${ROOT_DIR}/${ROOT_CA}.pem -CAkey ../${ROOT_DIR}/${ROOT_CA}.key \
+-CAcreateserial -CAserial ../${ROOT_DIR}/rootCA.srl -extfile ./v3_ca.ext \
+-out ${INTERMEDIATE}.pem -days 365
+----
++
+{blank}
 
-. Generate the intermediate public key file (`int.pem)` based on the intermediate certificate signing request (`int.csr`), and signed by the root public key (`ca.pem`):
-
- .. In the `int` subdirectory enter:
+. Generate, first, the node private key (`pkey.key`); secondly, the node certificate signing-request (`pkey.csr`); and thirdly, the node public key (`pkey.pem`).
 +
+[source,bash]
 ----
-openssl x509 -req -in int.csr -CA ../root/ca.pem -CAkey ../root/ca.key -CAcreateserial \
--CAserial rootCA.srl -extfile v3_ca.ext -out int.pem -days 365
-----
-+
-The response will be similar to the following:
-+
-----
-Signature ok        
-subject=/C=UA/O=My Company/CN=My Company Intermediate CA       
-Getting CA Private Key
-----
-
- .. Verify that `openssl` has correctly signed the intermediate certificate with the root certificate:
-+
-----
-openssl verify -CAfile ../root/ca.pem int.pem
-----
-+
-The response will be:
-+
-----
-int.pem: OK
-openssl x509 -in int.pem -text
+cd ../${NODE_DIR}
+openssl genrsa -out ${NODE}.key 2048  
+openssl req -new -key ${NODE}.key -out ${NODE}.csr \
+-subj "/C=UA/O=MyCompany/CN=${USERNAME}"
+openssl x509 -req -in ${NODE}.csr -CA ../${INT_DIR}/${INTERMEDIATE}.pem \
+-CAkey ../${INT_DIR}/${INTERMEDIATE}.key -CAcreateserial \
+-CAserial ../${INT_DIR}/intermediateCA.srl -out ${NODE}.pem -days 365
 ----
 
-. Generate the node private key file (`pkey.key`) and the node certificate signing request (`pkey.csr`) to generate the node public key file (`pkey.pem`).
+. Generate the certificate chain-file, by concatenating the node and intermediate certificates.
+This allows the client to verify the intermediate certificate against the root certificate.
++
+[source,bash]
+----
+cd ..
+cat ./${NODE_DIR}/${NODE}.pem ./${INT_DIR}/${INTERMEDIATE}.pem > ${CHAIN}.pem
+----
++
+{blank}
++
+Note that if multiple intermediate certificates are specified for concatenation in this way, the concatenation-order must correspond to the order of signing.
+Thus, the node certificate, which appears in the first position, has been signed by the intermediate certificate, which therefore appears in the second position: and in cases where this intermediate certificate has itself been signed by a second intermediate certificate, the second intermediate certificate must appear in the third position, and so on.
++
+{blank}
++
+Note also that the root certificate is never included in the chain.
++
+{blank}
++
+{blank}
 
-Be sure to enter another node and use the appropriate node name instead of the variable *<node-name>*, such as "sales" or "HR’.
-Each time you use another name, another set of files will be generated.
- .. Inside the node subdirectory (repeated for each node in the cluster):
+. Manually copy the node private key (`pkey.key`) and the chain file (`chain.pem`) to the `inbox` folder of the Couchbase Server-node:
 +
+[source,bash]
 ----
-openssl genrsa -out pkey.key 2048
-openssl req -new -key pkey.key -out pkey.csr -subj '/C=UA/O=My Company/CN=<node-name>'
-openssl x509 -req -in pkey.csr -CA ../int/int.pem -CAkey ../int/int.key -CAcreateserial \
--CAserial intermediateCA.srl -out pkey.pem -days 365
-----
-+
-For example, for the `node-sales` directory:
-+
-----
-openssl genrsa -out pkey.key 2048
-openssl req -new -key pkey.key -out pkey.csr -subj '/C=UA/O=My Company/CN=sales'
-openssl x509 -req -in pkey.csr -CA ../int/int.pem -CAkey ../int/int.key -CAcreateserial \
--CAserial intermediateCA.srl -out pkey.pem -days 365
-----
-+
-The response for the `node-sales` directory should be as follows:
-+
-----
-johns-MacBook-Pro-4:node-sales john$ openssl genrsa -out pkey.key 2048
-Generating RSA private key, 2048 bit long modulus
-....................................................................+++
-.............+++
-e is 65537 (0x10001)
-johns-MacBook-Pro-4:node-sales john$ openssl req -new -key pkey.key -out pkey.csr -subj '/C=UA/O=My Company/CN=sales'
-johns-MacBook-Pro-4:node-sales john$ openssl x509 -req -in pkey.csr -CA ../int/int.pem -CAkey ../int/int.key -CAcreateserial \
-> -CAserial intermediateCA.srl -out pkey.pem -days 365
-Signature ok
-subject=/C=UA/O=My Company/CN=sales
-Getting CA Private Key
+mkdir /opt/couchbase/var/lib/couchbase/inbox/
+cp ./${CHAIN}.pem /opt/couchbase/var/lib/couchbase/inbox/${CHAIN}.pem
+chmod a+x /opt/couchbase/var/lib/couchbase/inbox/${CHAIN}.pem
+cp ./${NODE_DIR}/${NODE}.key /opt/couchbase/var/lib/couchbase/inbox/${NODE}.key
+chmod a+x /opt/couchbase/var/lib/couchbase/inbox/${NODE}.key
 ----
 
- .. Repeat the same step in each node directory you have.
-Each time another set of node keys will be generated.
+. Upload the root certificate, and activate it:
 +
+[source,bash]
 ----
-johns-MacBook-Pro-4:node-hr john$ ls
-intermediateCA.srl	pkey.csr		pkey.key		pkey.pem
+curl -X POST --data-binary "@./${ROOT_DIR}/${ROOT_CA}.pem" \
+http://${ADMINCRED}@${ip}:8091/controller/uploadClusterCA
+curl -X POST http://${ADMINCRED}@${ip}:8091/node/controller/reloadCertificate
+----
++
+{blank}
++
+Note that alternatively, the following command-line interfaces can be used:
++
+{blank}
++
+[source,bash]
+----
+couchbase-cli ssl-manage -c ${ip}:8091:8091 -u Administrator -p password \
+--upload-cluster-ca=./${ROOT_DIR}/${ROOT_CA}.pem
+couchbase-cli ssl-manage -c ${ip}:8091 -u Administrator -p password \
+--set-node-certificate
 ----
 
-. Verify the node-intermediate-root chain.
- .. Try to specify the node certificate `pkey.pem`:
+. For the current Couchbase Server-node, enable the client certificate:
 +
+[source,bash]
 ----
-openssl verify -verbose pkey.pem
+curl -X POST --data-binary "state=enable" \
+http://${ADMINCRED}@${ip}:8091/settings/clientCertAuth
+curl -X POST --data-binary "delimiter=" \
+http://${ADMINCRED}@${ip}:8091/settings/clientCertAuth
+curl -X POST --data-binary "path=subject.cn" \
+http://${ADMINCRED}@${ip}:8091/settings/clientCertAuth
+curl -X POST --data-binary "prefix=" \
+http://${ADMINCRED}@${ip}:8091/settings/clientCertAuth
 ----
 +
-The response should be similar to the following:
+{blank}
 +
-----
-johns-MacBook-Pro-4:node-sales john$ openssl verify -verbose pkey.pem
-pkey.pem: /C=UA/O=My Company/CN=sales
-error 20 at 0 depth lookup:unable to get local issuer certificate
-----
-+
-This means that the certificate at `depth=0` (intermediate certificate) cannot be looked up.
+For further information on certificate-deployment, see xref:cli:cbcli/couchbase-cli-ssl-manage.adoc[ssl-manage] and xref:rest-api:rest-encryption.adoc[Encryption On-the-Wire API].
 
- .. Next, let’s try to specify an intermediate certificate:
-+
-----
-openssl verify -untrusted ../int/int.pem pkey.pem
-----
-+
-The response should be similar to the following:
-+
-----
-pkey.pem: /C=UA/O=My Company/CN=My Company Intermediate CA                   
-error 20 at 1 depth lookup:unable to get local issuer certificate
-----
-+
-This means that the certificate at `depth=1` (root certificate) cannot be looked up.
+[#cert_auth_for_java_client]
+== Provide Certificate-Based Authentication for a Java Client
 
- .. Next, let’s try to specify the root certificate:
+Once the root certificate for a Couchbase Server-node has been deployed, a Java client can authenticate by means of an appropriately prepared keystore.
+
+For an overview, see xref:security-certs-auth.adoc[Certificate-Based Authentication]
+
+Proceed as follows.
+Note that these instructions assume use of the Ubuntu 16 environment configured in the preceding section, _Configure X.509 Certificates_.
+
+. Define environment variables for the name of the keystore to be created, and its password.
 +
+[source,bash]
 ----
-openssl verify -untrusted ../int/int.pem -CAfile ../root/ca.pem pkey.pem
-----
-+
-The response will be:
-+
-----
-pkey.pem: OK
-----
-+
-This means that certificate validation has passed.
-. Generate a certificate chain file.
-
-When a client application tries to verify a certificate signed by the intermediate CA, it must also verify the intermediate certificate against the root certificate.
-To complete the chain of trust, create a certificate chain to present it to the application.
-
-In a chain file, the lowest certificate goes first, then the intermediate certificates in proper order.
-
-IMPORTANT: Do not include in your chain file the root CA’s public key certificate and intermediate certificates that are not in the trust path.
-
-NOTE: The root certificate is not included in this chain.
-
-To create the certificate chain file, concatenate the intermediate and root certificates together, beginning with the lowest one in the chain.
-
- ** If you have only one intermediate CA in your trust path, use this command:
-+
-----
-cat pkey.pem ../int/int.pem > chain.pem
-----
-
- ** If you have more intermediate CAs in your trust path, keep in mind that the order of certificates in an SSL Certificate Chain file is important:
-  *** `pkey.pem` certificate is signed by intermediate (`int3.pem`) certificate
-  *** `int3.pem `is signed by intermediate (`int2.pem`)
-  *** `int2.pem `is signed by intermediate (`int1.pem`)
-
-For multiple intermediate CAs, use this command:
-
-----
-cat pkey.pem ../int3/int.pem ../int2/int.pem ../int1/int.pem  > chain.pem
-----
-
-. Copy the node private key (`pkey.key)` and the chain file (`chain.pem`) manually to the `inbox` folder on each node.
-
- .. Create an `inbox` folder in the Couchbase server path:
-+
-----
-mkdir /Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox
+export KEYSTORE_FILE=my.keystore
+export STOREPASS=storepass
 ----
 +
-For example:
+{blank}
 +
-----
-mkdir /Users/john/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox
-----
+{blank}
 
- .. Now go to the directory [.path]_SSLCA/node_ and copy the files `chain.pem` and `pkey.key` into the created `inbox` folder:
+. If necessary, install a package containing the `keytool` utility:
 +
+[source,bash]
 ----
-cp chain.pem /Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/chain.pem
-cp pkey.key /Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/pkey.pem
-----
-+
-For example:
-+
-----
-cp chain.pem /Users/john/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/chain.pem
-cp pkey.key /Users/john/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/pkey.key
+sudo apt install openjdk-9-jre-headless
 ----
 +
-Check if the the files `chain.pem` and `pkey.key` have been posted to the inbox:
+{blank}
 +
-----
-johns-MacBook-Pro-4:inbox john$ ls
-chain.pem	pkey.key
-----
+{blank}
 
-. Change permissions so that Couchbase can read `pkey.key` and `chain.pem:`
-
-----
-cd /Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/
-chmod 777 chain.pem
-chmod 777 pkey.pem
-----
-
-. Set up the cluster certificate and then a node certificate on each of the nodes.
-
-== Setting up a Cluster CA Certificate
-
-Using CLI::
+. Within the top-level, `SSLCA` directory that you created, generate the keystore:
 +
+[source,bash]
 ----
-couchbase-cli ssl-manage -c <node-name>:8091 -u[admin] -p[password] \
-    --upload-cluster-ca=<path to pem-encoded root certificate>
+keytool -genkey -keyalg RSA -alias selfsigned \
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -validity 360 -keysize 2048 \
+-noprompt  -dname "CN=${USERNAME}, OU=None, O=None, L=None, S=None, C=US" -keypass ${STOREPASS}
 ----
 +
-For example:
+{blank}
 +
+{blank}
+
+. Generate the certificate signing-request:
++
+[source,bash]
 ----
-couchbase-cli ssl-manage -c MyNode:8091 -u Administrator -p password \
-    --upload-cluster-ca=./root/ca.pem
+keytool -certreq -alias selfsigned -keyalg RSA -file my.csr \
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
++
+{blank}
++
+{blank}
+
+. Generate the client certificate, signing it with the intermediate private key:
++
+[source,bash]
+----
+openssl x509 -req -in my.csr -CA ./${INT_DIR}/${INTERMEDIATE}.pem \
+-CAkey ./${INT_DIR}/${INTERMEDIATE}.key -CAcreateserial -out clientcert.pem -days 365
+----
++
+{blank}
++
+{blank}
+
+. Add the root certificate to the keystore:
++
+[source,bash]
+----
+keytool -import -trustcacerts -file ./${ROOT_DIR}/${ROOT_CA}.pem \
+-alias root -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
++
+{blank}
++
+{blank}
+
+. Add the intermediate certificate to the keystore:
++
+[source,bash]
+----
+keytool -import -trustcacerts -file ./${INT_DIR}/${INTERMEDIATE}.pem \
+-alias int -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
++
+{blank}
++
+{blank}
+
+. Add the client certificate to the keystore:
++
+[source,bash]
+----
+keytool -import -keystore ${KEYSTORE_FILE} -file clientcert.pem \
+-alias selfsigned -storepass ${STOREPASS} -noprompt
 ----
 
-Using REST API::
-+
-----
-cd ../root
-    curl -X POST --data-binary "@./ca.pem" \
-    http://Administrator:password@127.0.0.1:8091/controller/uploadClusterCA
-----
-
-*Setting up a Per Node CA Certificate*
-
-Using CLI::
-+
-----
-couchbase-cli ssl-manage -c <node-name>:8091 -u[admin] -p[password] --set-node-certificate
-----
-
-Using REST API::
-+
-----
-curl -X POST http://Administrator:password@<node-name>:8091/node/controller/reloadCertificate
-----
-
-See also::: CLI: xref:cli:cbcli/ssl-manage.adoc#cbcli-xdcr-ssl[[.cmd]`ssl-manage`]
-REST API: xref:rest-api:rest-uploads-ca.adoc#reference_jm5_j2x_hv[Upload and Regenerate Certificate]
+This concludes preparation of the Java client's keystore.
+Copy the file (in this case, `my.keystore`) to a location on a local filesystem from which the Java client can access it.
 
 [#rotate-x509]
 == Rotating X.509
 
-Certificate rotation is needed when a certificate expires, if you are considering moving from an old CA authority to a new CA authority, there is a change in the policy of the certificates issued by the CA, or in the case of a widespread breach of security occurs in the system.
+Certificate rotation is needed when:
 
-You need to have a plan in place to renew the CA well before it expires.
-X.509 certificate rotation in Couchbase is an online operation and does not require a node or cluster restart.
-You can be reassured that the application will have continued access to Couchbase without getting hit with a downtime during the rotation operation.
+* A certificate expires.
+* You move from an old CA authority to a new.
+* There is a change in the policy of the certificates issued by the CA.
+* A widespread breach of security has occurred in your system.
 
-*How to Rotate an X.509 Certificate in Couchbase*
+Certificate-renewal should be planned well before a certificate expires.
+X.509 certificate-rotation in Couchbase is an online operation that does not require a node or cluster restart: applications maintain continued access to Couchbase Server, experiencing no downtime due to the rotation operation.
+
+*How to Rotate a Couchbase Server X.509 Certificate *
 
 . *Generate a new certificate.*
 +
 Before you rotate a certificate, you need to generate a new certificate.
 +
-Typically, your Certificate Authority (CA) will give you a self-service option to re-issue certificates.
-If this is not the case, you can manually regenerate your new X509 certificate.
+Typically, your Certificate Authority will give you a self-service option to re-issue certificates.
+If this is not the case, you can manually regenerate a new X509 certificate.
  .. Renew the root CA certificate
 +
-The root certificate authority (CA) is the topmost CA in a CA hierarchy.
-Its validity period is typically longer, between 10 and 20 years.
+The root certificate authority is the topmost CA in a CA hierarchy.
+Its validity period is typically the longest in the hierarchy: between 10 and 20 years.
 +
 NOTE: When you renew the root CA, you have the option of reusing its existing private key.
-If you keep the same private key on your root CA, all certificates can continue to validate successfully against the new root; all that's required of you is to trust the new root.
+If you keep the same private key on your root CA, all certificates can continue to validate successfully against the new root; all that is required of you is to trust the new root.
 
  .. Generate the root CA for the first time
 +
+[source,bash]
 ----
 openssl genrsa -out ca.key 2048
-                      openssl req -new -x509  -days 3650 -sha256 -key ca.key -out ca.pem \
-                      -subj '/C=UA/O=My Company/CN=My Company Root CA'
+openssl req -new -x509  -days 3650 -sha256 -key ca.key -out ca.pem \
+-subj '/C=UA/O=My Company/CN=My Company Root CA'
 ----
 
- .. After ten years, the renewal time for the root CA comes up!
+ .. After ten years, the renewal time for the root CA comes up.
   *** Renew the root CA using the existing `ca.key`:
 +
+[source,bash]
 ----
 openssl req -new -key ca.key -out newcsr.csr 
-                        openssl x509 -req -days 3650 -sha256 -in newcsr.csr -signkey newca.key -out newca.pem
+openssl x509 -req -days 3650 -sha256 -in newcsr.csr \
+-signkey newca.key -out newca.pem
 ----
 
-  *** Generate a completely new root CA similar to what you did the first time:
+  *** Generate a completely new root CA:
 +
+[source,bash]
 ----
 openssl genrsa -out newca.key 2048
-                        openssl req -new -x509  -days 3650 -sha256 -key newca.key -out newca.pem \
-                        -subj '/C=UA/O=My Company/CN=My Company Root CA'
+openssl req -new -x509  -days 3650 -sha256 -key newca.key \
+-out newca.pem -subj '/C=UA/O=My Company/CN=My Company Root CA'
 ----
  .. Renew the intermediate certificates.
 
-For the intermediate CAs, a possible strategy might be to renew them for a year to six months before they expire and reuse the existing key.
+For the intermediate CAs, a possible strategy might be to renew them for a year to six months before they expire, and reuse the existing key.
 
-By replacing the old chain file with the new chain file (that contains the updated intermediate certificate), rotation of the intermediate certificate can be performed:
+By replacing the old chain file with the new chain file (which contains the updated intermediate certificates), rotation of the intermediate certificates can be performed:
 
+[source,bash]
 ----
-> cat pkey.pem ../int/newint.pem <possibly other intermediate CAs> > chain.pem
+cat pkey.pem ../int/newint.pem \
+<possibly other intermediate CAs> > chain.pem
 ----
 
 . *Deploy the CA public key and intermediate certificates*
 
-Before modifying anything on the server-side, deploy the CA public key and intermediate certificates in the certificate stores used by your client browser and the SDK language.
+Before modifying anything on the server-side, deploy the CA public key and intermediate certificates in the certificate-stores used by your client browser and the SDK language.
 
 For example, here are steps to do that for http://www.cyberciti.biz/faq/firefox-adding-trusted-ca/[Firefox] and http://blogmines.com/blog/how-to-import-a-certificate-in-google-chrome/[Chrome].
 
@@ -573,38 +605,45 @@ For example, here are steps to do that for http://www.cyberciti.biz/faq/firefox-
  .. Configure the new root CA certificate (`newca.pem` is the new root CA certificate).
   *** Using CLI:
 +
+[source,bash]
 ----
-couchbase-cli ssl-manage -c <node-name>:8091 -u Administrator -p password \
-                        --upload-cluster-ca=newca.pem
+couchbase-cli ssl-manage -c <node-name>:8091 -u Administrator \
+-p password --upload-cluster-ca=newca.pem
 ----
 
   *** Using REST:
 +
+[source,bash]
 ----
-curl -X POST --data-binary "@newca.pem" \
-                        http://Administrator:password@127.0.0.1:8091/controller/uploadClusterCA
+curl -X POST \
+--data-binary "@newca.pem" http://Administrator:password@127.0.0.1:8091/controller/uploadClusterCA
 ----
  .. Configure the new intermediate and node certificate.
 
 For each node, copy over new `chain.pem` file, and per node private key (new `pkey.pem` file, if the node certificate is rotated) to the `inbox` folder.
   *** Using CLI:
 +
+[source,bash]
 ----
-couchbase-cli ssl-manage -c <node-name>:8091 -u Administrator -p password \
-                        --set-node-certificate
+couchbase-cli ssl-manage -c <node-name>:8091 -u Administrator \
+-p password --set-node-certificate
 ----
 
   *** Using REST:
 +
+[source,bash]
 ----
-curl -X POST http://Administrator:password@[node-name]:8091/node/controller/reloadCertificate
+curl -X \
+POST http://Administrator:password@[node-name]:8091/node/controller/reloadCertificate
 ----
 . *Test the server CA certificate*
 
 You can also use OpenSSL's `s_client` by trying to connect to a server that you know is using a certificate signed by the CA that you just installed:
 
+[source,bash]
 ----
-> openssl s_client -connect https://<hostname>:8091 -CApath <root ca public key>
+openssl s_client \
+-connect https://<hostname>:8091 -CApath <root ca public key>
 ----
 
 . *Troubleshoot X.509 certificates*
@@ -617,18 +656,20 @@ During the development process these external tools might come in handy for veri
 
 . *Revert from the X.509 to the self-signed certificate*
 
-If you configured Couchbase to use X.509 certificates, and you want to go back to the self-signed certificates, you can do this by regenerating the self-signed cluster certificate using CLI or REST.
+If you configured Couchbase to use X.509 certificates, and you want to go back to the self-signed certificates, you can do this by regenerating the self-signed cluster certificate, using CLI or REST.
 
-WARNING: Moving from CA certificates to self-signed certificates will cause application downtime because you need to reconfigure the self-signed cluster certificate on the client machines after self-signed certificate regeneration.
+WARNING: Moving from CA certificates to self-signed certificates causes application-downtime, because you need to reconfigure the self-signed cluster-certificate on the client-machines after self-signed certificate's regeneration.
  ** Using CLI:
 +
+[source,bash]
 ----
 couchbase-cli ssl-manage -c <hostname>:8091 -u Administrator -p password \
-                        --regenerate-cert=/tmp/test.pem
+--regenerate-cert=/tmp/test.pem
 ----
 
  ** Using REST:
 +
+[source,bash]
 ----
 curl -X POST  http://Administrator:password@remoteHost:8091/controller/regenerateCertificate
 ----
@@ -640,7 +681,7 @@ This section lists the error messages connected to the configuration of cluster 
 
 *Cluster CA Certificates*
 
-Here are some error messages you might encounter when configuring the cluster CA certificate and the suggested corrective actions:
+Here are error messages you might encounter when configuring the cluster CA certificate, and suggested corrective actions:
 
 .Error messages when configuring cluster CA certificates
 [#table_fsj_r3d_5v]
@@ -650,15 +691,15 @@ Here are some error messages you might encounter when configuring the cluster CA
 | `Certificate should not be empty`
 | This error message can occur if the request body of the certificate is empty.
 | Open the certificate file, and verify whether it is empty or not.
-The certificate file should be readable using openssl or via online SSL tools such as https://www.sslchecker.com/certdecoder[sslcheker].
+The certificate file should be readable using openssl or via online SSL tools such as https://www.sslchecker.com/certdecoder[sslchecker].
 
 | `Certificate is not valid at this time`
 | This error message can occur if the certificate has expired, or is not yet valid.
-| Verify whether the certificate validity dates (begins on, and expires on) are currently valid corresponding to the server clock time.
+| Verify whether the certificate validity-dates (begins on, and expires on) are currently valid corresponding to the server clock time.
 
 | `Malformed certificate`
 | This error message can occur due to many reasons - an extra space in the certificate digest body, incorrect certificate format, and so on.
-| Use a properly configured certificate, and make sure it’s readable using `openssl`.
+| Use a properly configured certificate, and make sure it’s readable, using `openssl`.
 It should look as follows: Certificate begins with
 
 `-----BEGIN CERTIFICATE-----`
@@ -676,7 +717,7 @@ on a new line with no spaces before or after.
 | `Encrypted certificates are not supported `
 | This error message can occur if you are trying to load a certificate that is encrypted.
 Verify by opening the certificate file.
-If you see something like shown below, you will know your certificate is encrypted.:
+If you see something similar to the line shown below, you will know your certificate is encrypted.:
 
 `-----BEGIN RSA PRIVATE KEY-----`
 | Couchbase does not support encrypted certificates.

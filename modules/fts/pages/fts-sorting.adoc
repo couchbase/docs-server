@@ -1,36 +1,52 @@
 [#topic_l2x_pkx_vx]
 = Sorting Query Results
 
-Starting Couchbase Server version 4.6, you can sort search results by any indexed field.
-In previous releases, search results were always sorted by descending score so that highest scoring results are listed first.
-This is still the default sort order, so if you don’t specify a sort order, you’re unlikely to notice any difference.
+[abstract]
+The results of Full Text Searches are returned as objects, the data within which can be sorted.
 
-You control sorting in your query JSON by specifying a `sort` field that takes an array of either strings or objects.
-Strings designate the names fields to sort on, e.g.
-`"sort": ["fieldname"]`.
-Objects are described below in <<fts-advanced-sort-options>>
+== Sorting Result Data
 
-You can prefix any field name with the ‘-’ character, which causes that field to sorted in descending order.
-Items will first be sorted by the first field.
-Any items with the same value for that field, are then also sorted by the next field, and so on.
-All fields in the sort order MUST be indexed.
+On query-completion, _sorting_ allows specified members of the result-set to be displayed prior to others: this facilitates review of the most significant data.
 
-There are two special fields:
+Within a JSON query object, the required sort-type is specified by using the `sort` field.
+This takes, as its value, an array of either _strings_ or _objects_.
 
-* `_id` - refers to the document identifier
-* `_score` - refers to the relevance score computed by http://www.blevesearch.com/[Bleve]
+== Sorting with Strings
 
-Here is a more complex example:
+The value of the `sort` field can be specified as an array of strings.
+These can be of three types:
+
+* _field name_: Specifies the name of a field.
+If multiple fields are included in the array, the sorting of documents begins according to their values for the field whose name is first in the array.
+If any number of these values are identical, their documents are sorted again, this time according to their values for the field whose name is second; then, if any number of these values are identical, their documents are sorted a third time, this time according to their values for the field whose name is third; and so on.
++
+Any document-field may be specified to hold the value on which sorting is to be based, provided that the field has been indexed in some way, whether dynamically or specifically.
++
+The default sort-order is _ascending_.
+If a field-name is prefixed with the `-` character, that field's results are sorted in _descending_ order.
+
+* `_id`: Refers to the document identifier.
+Whenever encountered in the array, causes sorting to occur by document identifer.
++
+{blank}
+
+* `_score`: Refers to the score assigned the document in the result-set.
+Whenever encountered in the array, causes sorting to occur by score.
++
+{blank}
+
+For example:
 
 ----
 "sort": ["country", "state", "city","-_score"]
 ----
 
-Results will first be sorted by country.
-If documents have the same value for country, they will be sorted by state, and then, if country and state are the same, matches will be sorted by city.
-Finally, if all other fields are equal, results will be sorted by score descending.
+This `sort` statement specifies that results will first be sorted by `country`.
+If some documents are then found to have the same value in their `country` fields, they are re-sorted by `state`.
+Next, if some of these documents are found to have the same value in their `state` fields, they are re-sorted by `city`.
+Finally, if some of these documents are found to have the same value in their `city` fields, they are re-sorted by `score`, in _descending_ order.
 
-Here is a full query example that performs a query string query and demonstrates the proper place to add the sort property.
+The following JSON query demonstrates how and where the `sort` property can be specified:
 
 ----
 {
@@ -47,25 +63,38 @@ Here is a full query example that performs a query string query and demonstrates
 ----
 
 [#fts-advanced-sort-options]
-== Advanced Sort Options
+== Sorting with Objects
+
+Fine-grained control over sort-procedure can be achieved by specifying _objects_ as array-values in the `sort` field.
+Each object can have the following fields:
 
 [#ul_xhg_wzz_yx]
-* `by` Sort results on `id`, `score`, or a `field` in the full text index.
-* `field` the name of the field to sort on, if you specify `"by" : "field"`.
-It is ignored if you specify `score` or `id`.
-* `missing` specifies how you want search results sorted if they have no value in a field used for sorting.
-Setting this sorts all results with missing values in the sort field either before all other results (`first`) or after them (`last`).
-Defaults to `last`.
-* `mode` A single field in a full-text search index can contain multiple values.
-This happens when you index an array with multiple elements or when a text analyzer emits multiple tokens for an input.
-By default, such results are sorted in `default` order, which is undefined but deterministic, allowing you to page through results using `from` (offset) with reliable ordering.
-If you need to control sort for multi-value fields, set mode to `min` or `max` to sort using the minimum or maximum value.
+* `by`: Sorts results on `id`, `score`, or a specified `field` in the Full Text Index.
++
+{blank}
 
-The example below demonstrates advanced sort settings.
-You can try it on the travel-sample bucket if you create a default index that indexes all fields in hotel documents.
-This query sorts search results based on `reviews.ratings.Overall`, a field that is normally multi-valued because it contains an array of different users' ratings.
-When there are multiple values, the highest "Overall" ratings will be used for sorting.
-All hotels with no "Overall" ratings will be sorted at the end.
+* `field`: Specifies the name of a field on which to sort.
+Used only if `field` has been specified as the value for the `by` field; otherwise ignored.
++
+{blank}
+
+* `missing`: Specifies the sort-procedure for documents with a missing value in a field specified for sorting.
+The value of `missing` can be `first`, in which case results with missing values appear _before_ other results; or `last` (the default), in which case they appear _after_.
++
+{blank}
+
+* `mode`: Specifies the search-order for index-fields that contain multiple values (in consequence of arrays or multi-token analyzer-output).
+The `default` order is undefined but deterministic, allowing the paging of results from `from (`_offset_`)`, with reliable ordering.
+To sort using the minimum or maximum value, the value of `mode` should be set to either `min` or `max`.
+
+The example below shows how an object-sort can be specified.
+It assumes that the `travel-sample` bucket has been loaded, and a default index has been created on it.
+This query sorts search-results based on `reviews.ratings.Overall` — a field that is normally multi-valued, because it contains an array of different users' ratings.
+When there are multiple values, the highest `Overall` ratings are used for sorting.
+Hotels with no `Overall` rating are placed at the end.
+
+For information on loading sample buckets, see xref:settings:install-sample-buckets.adoc[Install Sample Buckets].
+For instructions on creating a default Full Text Index by means of the Couchbase Web Console, see xref:fts-performing-searches.adoc[Performing Searches].
 
 ----
 {
@@ -90,6 +119,9 @@ All hotels with no "Overall" ratings will be sorted at the end.
    ]
 }
 ----
+
+Note also that `sort` field accepts _combinations_ of strings and objects as its value.
+This is demonstrated as follows:
 
 ----
 {

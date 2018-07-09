@@ -1,15 +1,21 @@
 [#topic_uvg_4x1_4v]
-= Response Object Schema
+= Handling Response Objects
 
-{blank}
+[abstract]
+Full Text Search provides a _response object_, which contains detailed information on the results of the search.
+Prior to the search, a _facet_ can be add to the response object, and information on _aggregations_ thereby returned.
+
+[#response-object-structure]
+== Response-Object Structure
+
+A Full Text Search _Response Object_ is itself composed of multiple child-objects, each of which provides important information.
+Each child-object is listed and explained below.
 
 == Status
 
-The status object returns the number of successful and failed pindex queries.
-This information is useful as you can choose to use partial results depending on your application use case.
-For example, you may prefer to show an incomplete list of hits for a catalog search than return an error message if some pindexes are unresponsive.
+The status object includes the number of successful and failed pindex queries.
 
-We recommend that you check the status object for failures rather than rely on the HTTP response codes alone.
+We recommend that the status object be checked for failures, as a preferred alternative to relying on HTTP response codes alone.
 For example,FTS returns an HTTP 200 response in case of pindex failures or timeouts (not consistency timeouts).
 This is done so that you can choose to accept partial results in an application.
 However, this also means FTS returns an HTTP 200 response even when ALL pindexes fail.
@@ -35,9 +41,11 @@ The errors may be contained in the JSON section named "status".
 |===
 
 Total::
-The total field returns the total number of pindexes queried.
-This integer value varies based on the number of vBuckets per pindex.
-For example, when running on a machine with 64 vBuckets, with 32 vBuckets per pindex, the total number of pindexes is two.
+The `total` field returns an integer representing the total number of pindexes queried.
+This value varies depending on how your index is configured, the platform you are running on, and whether you are querying an index or an index alias.
+Each index has a setting for number of vBuckets per pindex.
+For example, when running on a cluster with 1024 vBuckets and with an index setting of 171 vBuckets per pindex, the total number of pindexes is 6.
+When you query an xref:fts-index-alias.adoc#topic_c2m_wgz_1v[index alias], `total` is the sum of all the pindexes in each index that is included in the definition of the index alias.
 
 Successful::
 This field returns the total number of pindexes successfully queried.
@@ -46,9 +54,9 @@ This integer value can range from 0 to the total number of pindexes.
 .Example Status: Successful
 ----
  "status": {
-     "total": 2,
+     "total": 6,
      "failed": 0,
-     "successful": 2
+     "successful": 6
 },
 ----
 
@@ -64,9 +72,9 @@ This array only appears if the field "failed" is greater than 0.
 .Example Status: Failure
 ----
 "status": {
-    "total":32,
-    "failed":16,
-    "successful":16,
+    "total":6,
+    "failed":3,
+    "successful":6,
     "errors":{
         "IndexClient - http://127.0.0.1:9201/api/pindex/beer-search_447fd6df2d6f4b54_0a44bddb":"context deadline exceeded",
          "IndexClient - http://127.0.0.1:9201/api/pindex/beer-search_447fd6df2d6f4b54_24e7ea2d":"context deadline exceeded",
@@ -81,7 +89,7 @@ This section explains the contents of a typical query response status.
 
 == Request
 
-The request object stores a copy of the query that was executed and other details from the request that generated this response object, for example the number of results requested (size), the offset, highlighting, and so on.
+The request object stores a copy of the query that was executed and other details from the request that generated this response object: for example the number of results requested (size), the offset, highlighting, and so on.
 
 Query:: Represents the actual query that was executed.
 
@@ -109,7 +117,7 @@ While there is no field name pattern matching available, you can use an asterisk
 
 Facets::
 This object indicates whether faceting was requested and when requested, returns the facets.
-The section on xref:fts-queries.adoc#search-facets[Search Facets] provides more information on the possible values of the facet request.
+See below for detailed information on facets.
 
 ----
 "facets": {
@@ -121,9 +129,6 @@ The section on xref:fts-queries.adoc#search-facets[Search Facets] provides more 
 ----
 
 Explain:: This Boolean field when set to true prints a verbose response with full scoring information.
-
-----
-----
 
 == Hits
 
@@ -188,11 +193,9 @@ Fields::
 This object returns the value of the field that was matched.
 However, unlike the Fragments field, this does not have any tags to render highlighting.
 
-== Facets
-
-Facets return an object that contains aggregated information about the documents that match a query.
-There are three types of queries: Numeric Range Facet, DateTime Range Facets, and Terms Facets.
-For more information on facets, see xref:fts-queries.adoc#search-facets[Search Facets].
+Sort::
+This field contains an array of one or more values that were used to sort the search results.
+Documents that don't have a value in the index for a particular field used in sorting will return a series of non-printable Unicode characters: `\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd\ufffd`.
 
 == Total_hits
 
@@ -211,4 +214,209 @@ Time taken to complete the query.
 "total_hits": 56,
 "max_score": 0.8041158525040355,  
 "took": 1449005,
+----
+
+== Response Headers
+
+Response headers can contain the following information:
+
+.Response Headers
+[#table_wcx_nw1_4v]
+|===
+| Code | Example | Valid Return Codes
+
+| Status
+| HTTP/1.1 200 OK
+| 200 OK
+
+400 Bad Request, returned if the query is invalid due to malformed JSON or invalid consistency request.
+
+412 if timeout occurs before the requested consistency requirements are met.
+
+| Cache-Control
+| no-cache
+| 
+
+| Content-Type
+| application/json; version=1.0.0
+| The API version information is included in this field unless the response is HTTP 400, in which case the response will be "text/plain: charset=utf-8"
+
+| Date
+| Tue, 22 Mar 2016 19:28:57 GMT
+| Date of the response
+
+| Transfer-Encoding
+| chunked
+| 
+
+| X-Content-Type-Options
+| nosniff
+| Value "https://blogs.msdn.microsoft.com/ie/2008/09/02/ie8-security-part-vi-beta-2-update/[nosniff]" is returned in case of a bad request (400 or 412) in order to deter driveby downloads.
+|===
+
+== Query Counts
+
+All queries return a result count.
+To get just the count of documents that match a particular query without returning documents or ids, execute the query as usual but specify size "[.input]`0`" to return no results, as in the following example:
+
+----
+curl -X POST -H "Content-Type: application/json" \
+http://127.0.0.1:8094/api/index/beer-idx/query -d \
+'{
+    "indexName": "beer-idx",
+    "size": 0,
+    "from": 0,
+    "explain": true,
+    "highlight": {},
+    "query": {
+        "boost": 1,
+        "query": "geo.accuracy:rooftop"
+    },
+    "fields": [
+        "*"
+    ],
+    "ctl": {
+        "consistency": {
+            "level": "",
+            "vectors": {}
+        },
+        "timeout": 0
+    }
+}'
+----
+
+You can get a count of entries in an index overall by using the REST API:
+
+----
+http://localhost:8094/api/index/beer-idx/count
+----
+
+== Search Facets
+
+Facets are aggregate information collected on a particular result set.
+So, you have to already have a search in mind, and then you collect additional facet information along with it.
+All of the facet examples below are for the query "`water`" on the beer-sample dataset.
+
+FTS supports 3 types of facet:
+
+* Term Facet - A term facet counts up how many of the matching documents have a particular term in a particular field.
+Most of the time this only makes sense for relatively low cardinality fields, like a type or tags.
+It would not make sense to use it on a unique field like an ID.
+* Numeric Range Facet - A numeric range facet works by the user defining their own buckets (numeric ranges).
+The facet then counts how many of the matching documents fall into a particular bucket for a particular field.
+* Date Range Facet - same as numeric, but on dates instead of numbers.
+Full text search and Bleve expect dates to be in the format specified by https://www.ietf.org/rfc/rfc3339.txt[RFC-3339], which is a specific profile of ISO-8601 that is more restrictive.
+
+NOTE: Most of the time, when building a term facet you want to use the keyword analyzer.
+Otherwise multi-term values get tokenized and the results are not what you expect.
+
+*Examples*
+
+* Term Facet - computes facet on the type field which has 2 values: `beer` and `brewery`.
++
+----
+curl -X POST -H "Content-Type: application/json" \
+http://localhost:8094/api/index/bix/query -d \
+'{
+    "size": 10,
+    "query": {
+        "boost": 1,
+        "query": "water"
+     },
+    "facets": {
+         "type": {
+             "size": 5,
+             "field": "type"
+         }
+    }
+}'
+----
++
+{blank}
++
+The result snippet below only shows the facet section for clarity.
+Run the curl command to see the HTTP response containing the full results.
++
+{blank}
++
+[source,json]
+----
+"facets": {
+    "type": {
+        "field": "type",
+        "total": 91,
+        "missing": 0,
+        "other": 0,
+        "terms": [
+            {
+                "term": "beer",
+                "count": 70
+            },
+            {
+                "term": "brewery",
+                "count": 21
+            }
+        ]
+    }
+}
+----
+
+* Numeric Range Facet - computes facet on the `abv` field with 2 buckets describing `high` (greater than 7) and `low` (less than 7).
++
+----
+curl -X POST -H "Content-Type: application/json" \
+http://localhost:8094/api/index/bix/query -d \
+'{
+    "size": 10,
+    "query": {
+        "boost": 1,
+        "query": "water"
+    },
+    "facets": {
+        "abv": {
+            "size": 5,
+            "field": "abv",
+            "numeric_ranges": [
+                {
+                    "name": "high",
+                    "min": 7
+                },
+                {
+                    "name": "low",
+                    "max": 7
+                }
+             ]
+        }
+    }
+}'
+----
++
+{blank}
++
+Results:
++
+{blank}
++
+[source,json]
+----
+facets": {
+    "abv": {
+        "field": "abv",
+        "total": 70,
+        "missing": 21,
+        "other": 0,
+        "numeric_ranges": [
+            {
+                "name": "high",
+                "min": 7,
+                "count": 13
+            },
+            {
+                "name": "low",
+                "max": 7,
+                "count": 57
+            }
+        ]
+    }
+}
 ----
