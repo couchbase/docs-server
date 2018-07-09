@@ -1,0 +1,282 @@
+[#concept_yv4_c2z_wt]
+= Covering indexes
+
+[abstract]
+When an index includes the actual values of all the fields specified in the query, the index covers the query and does not require an additional step to fetch the actual values from the data service.
+An index, in this case, is called a covering index and the query is called a covered query.
+As a result, covered queries are faster and deliver better performance.
+
+The following diagram illustrates the query execution work flow without covering indexes:
+
+[#image_up2_ngx_xt]
+image::n1ql-query-workflow.png[,5.5in]
+
+The following diagram illustrates the query execution work flow with covering indexes: image:n1ql-query-workflow-cover-idx.png[,5.5in]
+
+As you can see in the second diagram, a well designed query that uses a covering index avoids the additional steps to fetch the data from the data service.
+This results in a considerable performance improvement.
+
+You can see the query execution plan using the EXPLAIN statement.
+When a query uses a covering index, the EXPLAIN statement shows that a covering index is used for data access, thus avoiding the overhead associated with key-value document fetches.
+Consider a simple index, [.input]`idxstate`, on the attribute [.param]`state` in the `beer-sample` bucket:
+
+----
+CREATE INDEX idxstate on `beer-sample` (state) USING GSI;
+----
+
+If we select [.param]`state` from the `beer-sample` bucket, the actual values of the field [.param]`state` that are to be returned are present in the index [.param]`idxstate`, and avoids an additional step to fetch the data.
+In this case, the index [.param]`idxstate` is called a covering index and the query is a covered query.
+
+----
+cbq> EXPLAIN SELECT count(state) from `beer-sample` WHERE state = "CA";
+{
+    "requestID": "98b6e3dd-3d89-4e00-9748-70f13160286e",
+    "signature": "json",
+    "results": [
+        {
+            "#operator": "Sequence",
+            "~children": [
+                {
+                    "#operator": "IndexScan",
+                    "covers": [
+                        "cover((meta(`beer-sample`).`id`))",
+                        "cover((`beer-sample`.`state`))"
+                    ],
+                    "index": "idxstate",
+                    "keyspace": "beer-sample",
+                    "namespace": "default",
+                    "spans": [
+                        {
+                            "Range": {
+                                "High": [
+                                    "\"CA\""
+                                ],
+                                "Inclusion": 3,
+                                "Low": [
+                                    "\"CA\""
+                                ]
+                            }
+                        }
+                    ],
+                    "using": "gsi"
+                },
+                {
+                    "#operator": "Parallel",
+                    "~child": {
+                        "#operator": "Sequence",
+                        "~children": [
+                            {
+                                "#operator": "Filter",
+                                "condition": "(cover((`beer-sample`.`state`)) = \"CA\")"
+                            },
+                            {
+                                "#operator": "InitialGroup",
+                                "aggregates": [
+                                    "count(cover((`beer-sample`.`state`)))"
+                                ],
+                                "group_keys": []
+                            }
+                        ]
+                    }
+                },
+                {
+                    "#operator": "IntermediateGroup",
+                    "aggregates": [
+                        "count(cover((`beer-sample`.`state`)))"
+                    ],
+                    "group_keys": []
+                },
+                {
+                    "#operator": "FinalGroup",
+                    "aggregates": [
+                        "count(cover((`beer-sample`.`state`)))"
+                    ],
+                    "group_keys": []
+                },
+                {
+                    "#operator": "Parallel",
+                    "~child": {
+                        "#operator": "Sequence",
+                        "~children": [
+                            {
+                                "#operator": "InitialProject",
+                                "result_terms": [
+                                    {
+                                        "expr": "count(cover((`beer-sample`.`state`)))"
+                                    }
+                                ]
+                            },
+                            {
+                                "#operator": "FinalProject"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    ],
+    "status": "success",
+    "metrics": {
+        "elapsedTime": "10.311043ms",
+        "executionTime": "10.261957ms",
+        "resultCount": 1,
+        "resultSize": 2997
+    }
+}
+----
+
+If you modify the query to select the [.param]`state` and [.param]`city` from the `beer-sample` bucket using the same index, [.param]`idxstate`, the index does not contain the values of all the fields to satisfy the query and hence a key-value fetch is performed to retrieve this data.
+
+----
+cbq> EXPLAIN SELECT state,city from `beer-sample` WHERE state = "CA";
+{
+    "requestID": "3706f7fa-3a6f-46fe-8174-e5f1dee5c38d",
+    "signature": "json",
+    "results": [
+        {
+            "#operator": "Sequence",
+            "~children": [
+                {
+                    "#operator": "IndexScan",
+                    "index": "idxstate",
+                    "keyspace": "beer-sample",
+                    "namespace": "default",
+                    "spans": [
+                        {
+                            "Range": {
+                                "High": [
+                                    "\"CA\""
+                                ],
+                                "Inclusion": 3,
+                                "Low": [
+                                    "\"CA\""
+                                ]
+                            }
+                        }
+                    ],
+                    "using": "gsi"
+                },
+                {
+                    "#operator": "Parallel",
+                    "~child": {
+                        "#operator": "Sequence",
+                        "~children": [
+                            {
+                                "#operator": "Fetch",
+                                "keyspace": "beer-sample",
+                                "namespace": "default"
+                            },
+                            {
+                                "#operator": "Filter",
+                                "condition": "((`beer-sample`.`state`) = \"CA\")"
+                            },
+                            {
+                                "#operator": "InitialProject",
+                                "result_terms": [
+                                    {
+                                        "expr": "(`beer-sample`.`state`)"
+                                    },
+                                    {
+                                        "expr": "(`beer-sample`.`city`)"
+                                    }
+                                ]
+                            },
+                            {
+                                "#operator": "FinalProject"
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    ],
+    "status": "success",
+    "metrics": {
+        "elapsedTime": "3.961692ms",
+        "executionTime": "3.91835ms",
+        "resultCount": 1,
+        "resultSize": 2108
+    }
+----
+
+To use a covering index for the modified query, you must define an index with the [.param]`state` and [.param]`city` attributes before executing the query.
+
+----
+CREATE INDEX idxstatecity on `beer-sample` (state, city) USING GSI;
+----
+
+[IMPORTANT,caption=Attention]
+====
+MISSING items are not indexed by indexers.
+To take advantage of covering indexes and for the index to qualify, a query needs to exclude documents where the index key expression evaluates to MISSING.
+For example, index index1 defined below covers the following query.
+
+----
+CREATE INDEX index1 ON bucket(attribute1) WHERE attribute2 = "value";
+----
+
+----
+SELECT attribute1 FROM bucket WHERE attribute2="value AND attribute1 IS NOT MISSING;
+----
+====
+
+Covering indexes are applicable to secondary index scans and can be used with view and global secondary indexes (GSI).
+Queries with expressions and aggregates benefit from covering indexes.
+
+NOTE: You cannot use multiple GSI indexes to cover a query.
+You must create a composite index with all the required fields for the query engine to cover by GSI and not require reading the documents from the data nodes.
+
+The following queries can benefit from covering indexes.
+Try these statements using [.api]`cbq` to see the query execution plan.
+
+*Expressions and Aggregates*
+
+----
+EXPLAIN SELECT max(country) from `beer-sample` WHERE state = 'CA';
+----
+
+----
+EXPLAIN SELECT country || state from `beer-sample` USE INDEX (idxstatecountry)  where state = 'CA';
+----
+
+*UNION/INTERSECT/EXCEPT*
+
+----
+select country from `beer-sample` where state = 'CA'
+    UNION ALL
+    select country from `beer-sample` where state = 'Texas';
+----
+
+*Sub-queries*
+
+----
+Select *
+   from (
+   SELECT country from `beer-sample` WHERE state = 'CA'
+   UNION ALL
+   select country from `beer-sample` WHERE state = 'Texas'
+   ) as newtab;
+----
+
+*SELECT in INSERT statements*
+
+----
+INSERT into `travel-sample`(KEY k, value state) 
+   SELECT country as k, state from `beer-sample` b WHERE state = 'CA';
+----
+
+*Arrays in WHERE clauses*
+
+First, create a new index, [.input]`idxarray`.
+
+----
+CREATE INDEX idxarray on `beer-sample`(a, b);
+----
+
+Then, run the following query:
+
+----
+SELECT b from `beer-sample` WHERE a = [1, 2, 3, 4];
+----
+
+*Prepared statements* also benefit from using covering indexes.
