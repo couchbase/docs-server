@@ -1,0 +1,120 @@
+[#topic_9]
+= Correlated Subqueries
+
+In the examples xref:n1ql-language-reference/subqueries.adoc#Q1[Q1], xref:n1ql-language-reference/subqueries.adoc#Q2[Q2], and xref:n1ql-language-reference/subqueries.adoc#Q3[Q3], subqueries are independent of the parent queries.
+That means, they do not depend on any of the variables, aliases defined in the outer query, nor the specific document being processed at the outer query.
+In such cases, the inner subquery has no correlation with its outer query so it is called as *non-correlated* subquery.
+
+When a subquery refers to variables, aliases, attributes, or keyspace in the outer statement, it is called as *correlated* subquery.
+These subqueries are special because their performance characteristics can be very different from non-correlated queries.
+Typically, correlated queries are expensive, and query engines take special care in planning and executing such queries efficiently.
+
+== Performance
+
+{blank}
+
+N1QL query engine optimizes the correlated subquery processing in multiple ways, such as:
+
+[#ul_gly_fyp_4z]
+* Subqueries are prepared only once, though they are executed multiple times.
+This will avoid repetitive costs such as parsing and planning of the subquery.
+* When subquery is correlated through the FROM clause expression, fetch of documents in the subquery is avoided.
+The query engine smartly reuses the correlated document already fetched in the outer query.
+
+== Types of Correlation
+
+In N1QL, the way in which a subquery is correlated with its parent queries is very important.
+That dictates certain behaviors and limitations in writing nested subqueries, and impacts query performance.
+
+Correlation by Source (or FROM clause-Expression)::
+The data source for a query or subquery is specified by its FROM clause.
+When the FROM clause of a subquery refers to any variables (aliases, keyspace names, LET/LETTING variables, or document attributes) in the scope of parent queries, then the correlation is established using the source keyspace in the FROM expression.
+Such subquery is called *Source Correlated Subquery* and it offers the following benefits:
++
+{blank}
+*Nested Paths in FROM clause*
+Couchbase Server version 4.6.2 introduced powerful subquery functionality where correlated nested paths can be used in a subquery FROM clause.
+This provides powerful language expressibility, simplicity, and flexibility to N1QL queries especially when dealing with nested array attributes.
+See xref:n1ql-language-reference/subqueries.adoc#nested-path-expr[Nested Paths in Subqueries] for more details.
++
+{blank}
+*Better Performance *
+When correlation is established through the FROM clause in the subquery (with variables in scope), then the N1QL engine knows that the subquery is referring to the same document that is being processed in one of the outer queries.
+Therefore, the subquery avoids fetch of the documents used in the subquery.
+This significantly improves the performance of such subqueries, as shown in example xref:n1ql-language-reference/subqueries.adoc#Q6[Q6] earlier, to contrast the example xref:n1ql-language-reference/subqueries.adoc#Q6A[Q6A] cannot take advantage of this optimization.
+
+Correlation by Reference (or non FROM clause-Expression)::
+In this case the subqueries refer to xref:n1ql-language-reference/subqueries.adoc#section_onz_3tj_mz[variables in the scope] of outer level queries, in clauses other than the FROM clause of the subquery.
+In such case, the FROM clause will have an independent keyspace identifier that does not reference any variables in the scope.
+This kind of subquery execution works like a JOIN query and requires the USE KEYS clause.
+For more information, see <<use-keys,USE KEYS in the Subquery>> and xref:n1ql-language-reference/subqueries.adoc#from-clause[FROM clause in Subqueries] for more details.
+In the following example, in LET clause of parent query, with correlation introduced in the WHERE clause (`t2.iata = t1.airline`) and USE KEYS clauses of the subquery (referencing `t1` fields).
+This query finds the airline and route details of flights that have routes starting from SFO airport.
++
+----
+Example Q10:
+
+SELECT airline_details, t1.destinationairport, t1.stops
+FROM `travel-sample`  t1
+LET airline_details = (SELECT t2.name, t2.callsign
+                       FROM `travel-sample` t2
+	               USE KEYS t1.airlineid
+                       WHERE t2.type = "airline" 
+                           AND t2.iata = t1.airline) 
+WHERE t1.type = "route" AND t1.sourceairport = "SFO" 
+      AND ARRAY_LENGTH(airline_details) > 0
+LIMIT 2;
+----
+
+[#use-keys]
+== FROM clause and USE KEYS in Correlated Subqueries
+
+It is important to understand the reasoning to include the USE KEYS clause.
+That is not always mandatory.
+It entirely depends on how the FROM clause is formulated, which indicates the source of documents for the subquery and hence the correlation with the parent query.
+
+NOTE: When a keyspace name identifier is used in FROM-clause of a subquery, that refers to a collection of documents referenced by the keyspace identifier.
+However, when an alias of the keyspace is used in FROM-clause (or any other clauses of the query), that refers to an individual document of the keyspace being considered in the outer query.
+
+FROM clause with Keyspace Identifier::
+The USE KEYS clause is mandatory for the primary keyspace of the subquery when the FROM clause has keyspace identifier that is independent of any of the aliases/variables in scope.
+This is needed to establish correlation with the documents/keyspace used in the outer query.
+For example:
+[#ul_oxc_jqx_mz]
+* FROM clause of the subquery in xref:n1ql-language-reference/subqueries.adoc#Q7[Q7] is an independent keyspace identifier ``travel-sample`` and hence the correlation with parent query is established explicitly using the USE KEYS clause through the referential attribute `t1.airlineid`.
+[#ul_pxc_jqx_mz]
+* Similarly, the subquery in xref:n1ql-language-reference/subqueries.adoc#Q6A[Q6A] has an independent keyspace identifier ``travel-sample`` in FROM clause, but the correlation is self-referencing to the same document.
+Therefore, `USE KEYS meta(t).id` is used.
+
+This is exactly same as the PrimaryKey-ForeignKey relationship required to xref:n1ql-language-reference/from.adoc#join-clause[join] two documents that are referenced in the outer/inner queries.
+Note that, in ``travel-sample`` keyspace data model, the `"route"` documents refer the `"airline"` documents using the attribute `airlineid`.
+Refer to the xref:data-modeling:entity-relationship-doc-design.adoc#concept_hgb_31r_dt[concepts of data modeling] for more details on reference based modeling.
+
+
+FROM clause with Expression::
+The USE KEYS clause is not required in the subquery when the FROM clause in subquery has generic expression as data source, and not a keyspace name identifier.
+The FROM clause expression can be:
+[#ul_j1y_3jw_4z]
+* Independent constant expression or subquery expression that does not refer to any variables in scope.
+* Generic N1QL expression or subquery that refers to any variables in scope.
+
+In the example xref:n1ql-language-reference/subqueries.adoc#Q6[Q6], the FROM clause is an expression referring to the variable/alias `t` (in fact the nested path `t.reviews`) that already establishes correlation and henc the subquery does not need explicit USE KEYS clause.
+
+== Correlated Subquery versus JOINs
+
+Correlated subqueries can be alternatively formulated using JOINs because conceptually a correlated query execution involves same steps as that of JOIN.
+For instance, evaluating nested subquery corresponding to each outer query document is equivalent to a nested-loop-join operation.
+This is one reason for the above mentioned mandatory requirement of USE KEYS clause for certain correlated queries using FROM clause.
+
+----
+Example Q7A: Earlier Q7 rewritten with JOIN
+
+SELECT DISTINCT airline.name, airline.callsign, route.destinationairport, route.stops, route.airline
+FROM `travel-sample` route 
+      JOIN `travel-sample` airline 
+      ON KEYS route.airlineid 
+WHERE route.type = "route" 
+      AND airline.type = "airline" 
+      AND route.sourceairport = "SFO" 
+LIMIT 2;
+----

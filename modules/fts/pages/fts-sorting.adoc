@@ -1,0 +1,114 @@
+[#topic_l2x_pkx_vx]
+= Sorting Query Results
+
+Starting Couchbase Server version 4.6, you can sort search results by any indexed field.
+In previous releases, search results were always sorted by descending score so that highest scoring results are listed first.
+This is still the default sort order, so if you don’t specify a sort order, you’re unlikely to notice any difference.
+
+You control sorting in your query JSON by specifying a `sort` field that takes an array of either strings or objects.
+Strings designate the names fields to sort on, e.g.
+`"sort": ["fieldname"]`.
+Objects are described below in <<fts-advanced-sort-options>>
+
+You can prefix any field name with the ‘-’ character, which causes that field to sorted in descending order.
+Items will first be sorted by the first field.
+Any items with the same value for that field, are then also sorted by the next field, and so on.
+All fields in the sort order MUST be indexed.
+
+There are two special fields:
+
+* `_id` - refers to the document identifier
+* `_score` - refers to the relevance score computed by http://www.blevesearch.com/[Bleve]
+
+Here is a more complex example:
+
+----
+"sort": ["country", "state", "city","-_score"]
+----
+
+Results will first be sorted by country.
+If documents have the same value for country, they will be sorted by state, and then, if country and state are the same, matches will be sorted by city.
+Finally, if all other fields are equal, results will be sorted by score descending.
+
+Here is a full query example that performs a query string query and demonstrates the proper place to add the sort property.
+
+----
+{
+  "explain": false,
+  "fields": [
+    "title"
+  ],
+  "highlight": {},
+  "sort": ["country", "-_score","-_id"],
+  "query":{ 
+    "query": "beautiful pool" 
+  }
+}
+----
+
+[#fts-advanced-sort-options]
+== Advanced Sort Options
+
+[#ul_xhg_wzz_yx]
+* `by` Sort results on `id`, `score`, or a `field` in the full text index.
+* `field` the name of the field to sort on, if you specify `"by" : "field"`.
+It is ignored if you specify `score` or `id`.
+* `missing` specifies how you want search results sorted if they have no value in a field used for sorting.
+Setting this sorts all results with missing values in the sort field either before all other results (`first`) or after them (`last`).
+Defaults to `last`.
+* `mode` A single field in a full-text search index can contain multiple values.
+This happens when you index an array with multiple elements or when a text analyzer emits multiple tokens for an input.
+By default, such results are sorted in `default` order, which is undefined but deterministic, allowing you to page through results using `from` (offset) with reliable ordering.
+If you need to control sort for multi-value fields, set mode to `min` or `max` to sort using the minimum or maximum value.
+
+The example below demonstrates advanced sort settings.
+You can try it on the travel-sample bucket if you create a default index that indexes all fields in hotel documents.
+This query sorts search results based on `reviews.ratings.Overall`, a field that is normally multi-valued because it contains an array of different users' ratings.
+When there are multiple values, the highest "Overall" ratings will be used for sorting.
+All hotels with no "Overall" ratings will be sorted at the end.
+
+----
+{
+  "explain": false,
+  "fields": [
+     "*"
+   ],
+   "highlight": {},
+   "query": {
+     "match": "bathrobes",
+     "field": "reviews.content",
+     "analyzer": "standard"
+   },
+   "size" : 10,
+   "sort": [
+      {
+       "by" : "field", 
+       "field" : "reviews.ratings.Overall", 
+       "mode" : "max",
+       "missing" : "last"
+      },
+   ]
+}
+----
+
+----
+{
+   ...
+   "sort": [
+      "country",
+      {
+       "by" : "field", 
+       "field" : "reviews.ratings.Overall", 
+       "mode" : "max",
+       "missing" : "last"
+      },
+      {
+       "by" : "field", 
+       "field" : "reviews.ratings.Location", 
+       "mode" : "max",
+       "missing" : "last"
+      },
+      "-_score"
+   ]
+}
+----

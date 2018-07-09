@@ -1,0 +1,91 @@
+[#timestamp-based-conflict-resolution]
+= Timestamp-based Conflict Resolution
+
+[abstract]
+Timestamp-based Conflict Resolution resolves conflicts by selecting the document with the most recent time stamp.
+In order to be able to perform this effectively it is essential that the time stamps created by each server are closely aligned.
+
+IMPORTANT: Timestamp based conflict resolution without the use of synchronized clocks is not supported.
+
+[#section_bty_ffv_qy]
+== Time Synchronization
+
+Accurate time synchronization across all nodes in all XDCR clusters is a strong requirement for timestamp-based conflict resolution.
+Couchbase Server requires an external entity to synchronize the clocks among the nodes in the clusters such as NTP (Network Time Protocol) or other methods.
+For more information on using NTP to synchronize clocks, see xref:install:synchronize-clocks-using-ntp.adoc[Using NTP to Synchronize Clocks].
+
+Even with time synchronization in place, it is expected that there may be small differences in the clocks between different nodes (time skew).
+You must also actively monitor this time skew between clusters to ensure that timestamp-based conflict resolution functions correctly.
+See xref:xdcr-monitor-timestamp-conflict-resolution.adoc[Monitoring XDCR Timestamp-based Conflict Resolution] for more details.
+To compensate for these small differences in time and to allow for updates that could theoretically be received on the same clock tick, Couchbase Server records time stamps using a <<hybrid-logical-clock,Hybrid Logical Clock>>.
+
+Failing to successfully synchronise clocks across nodes can result in document mutations incorrectly winning conflicts, which could lead to undesirable application behaviour.
+
+[#use-cases]
+== Use Cases Supported by Timestamp-based Conflict Resolution
+
+IMPORTANT: Only the following use cases are supported deployments for Timestamp-based conflict resolution.
+Other configurations must use xref:xdcr-conflict-resolution.adoc#revision-id-based-conflict-resolution[Revision ID based conflict resolution].
+
+*High Availability with Cluster Failover*
+
+In this example, all database operations go to Datacenter A and are replicated via XDCR to Datacenter B.
+If the cluster located in Datacenter A fails then the application fails all traffic over to Datacenter B.
+
+*Datacenter Locality*
+
+In the geographic locality scenario, two active clusters operate on discrete sets of documents.
+This ensures no conflicts are generated during normal operation.
+A bi-directional XDCR relationship is configured to replicate their updates to each other.
+When one cluster fails, application traffic can be failed over to the remaining active cluster.
+
+[#image_zfm_45b_yy]
+image::timestamp_datacenter_locality.png[,570]
+
+== Ensuring Safe Failover
+
+Timestamp-based conflict resolution requires that applications only allow traffic to the other Datacenter after the maximum of the following two time periods has elapsed:
+
+. The replication latency between A and B.
+This allows any mutations in-flight to be received by Datacenter B.
+. The absolute time skew between Datacenter A and Datacenter B.
+This ensures that any writes to Datacenter B occur *after *the last write to Datacenter A, after the calculated delay, at which point all database operations would go to Datacenter B.
+
+When availability is restored to Datacenter A, applications must observe the same time period before redirecting their traffic.
+For both of the use cases described above, using timestamp-based conflict resolution ensures that the most recent version of any document will be preserved.
+
+IMPORTANT: If you are unable to synchronize all clocks across clusters, you must at least know the absolute difference from the clock which each cluster is synchronized to, so that you can add an appropriate delay to your application in failover and failback scenarios.
+
+== Working Example of Cluster Failover and Failback
+
+Consider the example in the diagram above:
+
+. Datacenter A receives mutations (_m1_) from App1, App2 and App3.
+. Datacenter A has an outage before the latest mutations (_m1_) can be replicated to datacenter B.
+. App1, App2 and App3 then failover to Datacenter B and the user sees that there is data loss since the latest mutations (_m1_) were not replicated.
+This is unavoidable.
+. App1, App2 and App3 then submit another set of mutations (_m2_) to Datacenter B.
+. Once the outage in Datacenter A is resolved, App1, App2 and App3 fail back to Datacenter A *after the calculated delay*.
++
+NOTE: If the applications did not wait for the safe period to finish before failing back then there is the possibility of further data loss due to clock skews and replication latency.
+
+. At this point, the user still sees their latest mutations (_m2_) in Datacenter A, there is no further data loss.
+
+[#hybrid-logical-clock]
+== Hybrid Logical Clock
+
+A hybrid logical clock (HLC) is a combination of a physical clock and a logical clock.
+
+The physical clock is the time returned by the system, in nanoseconds.
+The logical clock is a counter, which increments when the physical clock yields a value that is smaller or equal to the currently stored physical clock value.
+
+The CAS of a document is used to store the hybrid logical clock timestamp.
+It is a 64-bit value, with the most significant 48 bits representing the physical clock and the least significant 16 bits representing the logical clock.
+Each mutation has its own hybrid logical clock timestamp.
+
+Here are some important properties of a hybrid logical clock:
+
+* A hybrid logical clock is monotonic through its use of a logical clock.
+This ensures that it does not suffer from the potential leap-back of a purely physical clock.
+* A hybrid logical clock captures the ordering of mutations.
+* A hybrid logical clock is close to physical time.
