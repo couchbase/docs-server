@@ -5,21 +5,28 @@
 The Eventing service is implemented in JavaScript.
 Some constructs have been removed, others added.
 
+[#section_ih2_fhw_m2b]
 == Language Constructs Overview
 
-The Eventing service is implemented in JavaScript.
-In general, functions inherit support for most ECMAScript constructs by using Google v8 as the execution container.
-However, to support the ability to shard and scale function-execution automatically, some capabilities have been removed.
+The language constructs are fundamental units of a language.
+Using JavaScript, you can write your custom Functions.
+Couchbase Functions inherit support for most ECMAScript constructs by using Google v8 as the execution container.
+However, to support the ability to shard and scale Function-execution automatically, some capabilities have been removed.
 Additionally, to optimize language-utilization of the server environment, some new constructs have been added.
 
+[#section_jh2_fhw_m2b]
 == Removed Language Features
 
 The following JavaScript features have been removed.
 
-* _Global State_: Functions do not allow global variables.
+[#ul_kh2_fhw_m2b]
+* _Global State_:
++
+Functions do not allow global variables.
 All state must be saved and retrieved from persistence providers.
-In Couchbase Server 5.5, the only available persistence provider is the KV provider: therefore, all global state is contained in the KV bucket(s) made available to the function via bindings.
-This restriction is necessary in order to enable function-logic to remain agnostic of rebalance.
+In Couchbase Server 5.5, the Data Service provider is used as a persistence provider.
+Therefore, all global states are contained in the Data Service bucket(s) made available to the Function through bindings.
+This restriction is mandatory for the Function-logic to remain agnostic of the rebalance operation.
 +
 [source,javascript]
 ----
@@ -29,10 +36,13 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _Asynchrony_: Asynchrony — and in particular, asynchronous callback  — can and often must retain access to parent scope to be useful.
+* _Asynchrony_:
++
+Asynchrony, particularly asynchronous callback, to be Functional needs to retain access to parent scope.
 This forms a node-specific, long-running state that prevents the capture of entire long-running state in persistence providers.
-Therefore, function handlers are restricted to running as short-running, straight-line code, without sleeps and wakeups.
-Limited asynchrony is added back via time observers (these are designed, however, not to make the state node-specific).
+Therefore, Function handlers are restricted to running as short-running, straight-line code, without sleep and wakeups.
+Limited asynchrony is added back through time observers.
+Time observers are designed not to make the state node-specific
 +
 [source,javascript]
 ----
@@ -41,8 +51,12 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _Browser and other Extensions_: As functions do not execute in context of a browser, the extensions browsers add to the core language, such as window methods and DOM events, are not available.
-A limited subset is added back (such as Function Timers in lieu of setTimeout, and curl calls instead of XHR).
+* _Browser and other Extensions_:
++
+.A Function executes on Couchbase Server similar to the code that is visible in the browser.
++
+As a Developer, you need to understand that the code displayed in the below example runs in the browser.
+The ‘window’ term in the code *window.XMLHttpRequest()*, is not a server-side construct but is in the context of a browser.
 +
 [source,javascript]
 ----
@@ -51,13 +65,17 @@ function OnUpdate(doc, meta) {
 }
 ----
 
+[#section_lh2_fhw_m2b]
 == Added Language Features
 
-The following constructs have been added.
+The following constructs are added:
 
-* _Bucket Accessors_: Couchbase buckets, when bound to a function, appear as a global JavaScript map.
-Map get, set and delete are mapped to KV get, set, and delete respectively.
-Other advanced KV operations are available as member functions on the map object.
+[#ul_mh2_fhw_m2b]
+* _Bucket Accessors_:
++
+Couchbase buckets, when bound to a Function, appear as a global JavaScript map.
+The map operations such as get, set and delete are mapped to the Data Service providers get, set, and delete operations respectively.
+Other advanced Data Service operations are available as member Functions on the map object.
 +
 [source,javascript]
 ----
@@ -69,16 +87,18 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _N1QL_: Top level N1QL keywords, such as `SELECT`, `UPDATE`, and `INSERT`, are available as keywords in functions.
-Operations that return values are accessible through a special iterator on which the `for (var <row> of <iterator>)` looping-construct has been defined.
+* _N1QL_:
++
+Top level N1QL keywords, such as SELECT, UPDATE, and INSERT, are available as keywords in Functions.
+Operations that return values are accessible through a special iterator on which the *for (var <row> of <iterator>)* looping-construct has been defined.
 This restricted looping-construct allows support of query-result streaming, and automatic query-cancellation when the iterator goes out of scope.
-Any variable that is reachable from the scope of the N1QL query can be referred to using `$<variable>` syntax in the N1QL statement, where parameters will be substituted according to the rules of named-parameter substitution in the N1QL grammar specification.
+Any variable that is reachable from the scope of the N1QL query can be referred to using *$<variable>* syntax in the N1QL statement, where parameters get substituted according to the rules of the named-parameter substitution in the N1QL grammar specification.
 +
 IMPORTANT: The N1QL construct is still in development and may have some rough edges and bugs, and may change significantly before the final GA release.
 This Beta-release version of Couchbase Server 5.5 is intended for development purposes only.
 +
 The iterator is an input iterator (elements are read-only).
-The keyword `this` cannot be used in the body of the iterator.
+The keyword _this_ cannot be used in the body of the iterator.
 The variables created inside the iterator are local to the iterator.
 +
 [source,javascript]
@@ -95,73 +115,15 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _Timers_: Functions can register to observe wall-clock time-events.
-Such events can occur either standalone, or in reference to a specific document.
-Timers are sharded across eventing nodes, and so are scalable.
-For this reason, there is no guarantee either that a timer will fire on the same node on which it was registered, or that ordering between any two timers will be maintained.
-Timers only guarantee to fire at or after the specified time.
-Timers allow an opaque value to be provided, which is made available to the callback when the timer fires.
-Opaque values are serialized and deserialized, and hence are passed by value, and must be smaller than system-defined limits.
-+
-IMPORTANT: The Timers construct is still in development and may have some rough edges and bugs, and may change significantly before the final GA release.
-This Beta-release version of Couchbase Server 5.5 is intended for development purposes only.
-
- ** _Cron Timers_: Cron timers allow a function-handler to be called at a specific time.
-The opaque value stored when the timer is created forms the context for the timer-callback.
-Epoch time, is the time at which the callback function gets invoked.
-Epoch time is usally specified in seconds.
-+
-[source,javascript]
-----
-function checkProblems(ctx) {
-     var res = SELECT * from inventory WHERE type = ctx.type;
-     for (var item of res) {
-       if (item.stock < 0) {
-        log("Invalid stock status for " + item);
-     }
- }
-
-function OnUpdate(item, meta) {
-      if (item.stock < 0) {
-        var time = Math.round((new Date()).getTime() / 1000) + 60;
-        cronTimer(checkProblems, {"type": item.type}, time);
-      }
- }
-----
-
- ** _Doc Timers_: A doc timer is similar to a cron timer, except that the timer is associated with a document.
-Hence, doc timers follow the lifecycle of the document, including rollbacks.
-Doc timer callbacks receive the document key.
-Epoch time, is the time at which the callback function gets invoked.
-Epoch time is usally specified in seconds.
-+
-[source,javascript]
-----
- function monitorRefill(key) {
-     var item = orders[key];
-     if (item.stock == 0) {
-       log("Possible refill problem for " + item)
-     }
- }
-
-function OnUpdate(item, meta) {
-    if (item.stock == 0) {
-       var time = Math.round((new Date()).getTime() / 1000) + 24 * 60 * 60;
-       docTimer(monitorRefill, meta.id, time);
-    }
-}
-----
-
+[#section_nh2_fhw_m2b]
 == Handler Signatures
 
-The Eventing service makes the following event-handlers available.
+The Eventing Service supports two event-handlers:
 
-* _Insert/Update Handler_: Gets called when a document is created or modified.
-The following limitations exist:
-
- ** If a document is modified several times in a short duration, the calls may be coalesced into a single event, due to deduplication.
- ** It is not possible to distinguish Create from Update operations.
-
+[#ul_oh2_fhw_m2b]
+* _Update Handler_: This handler gets called when a document is created or modified.
+The handler listens to data changes from the associated source vBucket.
+A sample OnUpdate handler is displayed below:
 +
 [source,javascript]
 ----
@@ -175,13 +137,20 @@ function OnUpdate(doc, meta) {
   }
 }
 ----
++
+In this handler following limitations exist:
 
-* _Delete Handler_: Gets called when a document is deleted.
-The following limitations exist:
+[#ul_gys_2cp_m2b]
+ ** If a document is modified several times in a short duration, the calls at times get coalesced into a single event, due to deduplication.
+ ** It is not possible to distinguish a Create from an Update operation.
 
- ** It is not possible to distinguish Expiration from Delete operations.
- ** It is not possible to get the value of the document that either was just deleted or expired.
-
+* _OnDelete Handler_:
++
+This handler gets called when a document is deleted.
+The handler listens to data changes from the associated source vBucket.
+This handler also gets invoked during the expiry of a document.
++
+A sample OnDelete handler is displayed below:
 +
 [source,javascript]
 ----
@@ -192,3 +161,151 @@ function OnDelete(meta) {
   }
   }
 ----
++
+In this handler the following limitations exist:
+
+[#ul_kml_jcp_m2b]
+ ** It is not possible to distinguish a delete as a result of expiration from a user-triggered delete operation.
+ ** It is not possible to get the value of the document that was just deleted or the one that just got expired.
+
+[#section_qtb_tcp_m2b]
+== Reserve Words
+
+Reserved words are words that cannot be used as a variable name, function name, or as a property in the Function handler code.
+
+Refrain from using any reserved words as these are used by the syntax of the N1QL query language.
+
+The table below displays a list of reserved words.
+
+.List of Reserved Words
+[#table_vxz_5cp_m2b]
+|===
+4+| Reserve Words
+
+| alter
+| execute
+| merge
+| update
+
+| build
+| explain
+| prepare
+| upsert
+
+| create
+| grant
+| rename
+| 
+
+| delete
+| infer
+| revoke
+| 
+
+| drop
+| insert
+| select
+| 
+|===
+
+[#section_rzz_gdp_m2b]
+== What Happens If You Use a Reserved Word?
+
+Let's say you try to create a new Function handler code using a reserved word for variable names, for function names, and as a property bindings value.
+All three cases generate a deployment error.
+
+Reserved words as a variable name
+
+.{empty}
+[#table_zvs_jdp_m2b,cols=1*]
+|===
+| function get_numip_first_3_octets(ip)
+
+{
+
+var grant = 0;
+
+if (ip)
+
+{
+
+var parts = ip.split('.');
+
+}
+
+}
+|===
+
+Reserved words as a function name
+
+.{empty}
+[#table_zdf_pdp_m2b,cols=1*]
+|===
+| function grant(ip)
+
+{
+
+var return_val = 0;
+
+if (ip)
+
+{
+
+var parts = ip.split('.');
+
+}
+
+}
+|===
+
+During the Function deployment step, when the system validates the handler code, it displays an error message.
+Sample error message is illustrated for reference.
+
+[#table_tb5_rdp_m2b,cols=1*]
+|===
+| *Sample Error Message - Deployment failed: Syntax error (<line and column numbers>) - grant is a reserved name in N1QLJs*
+|===
+
+Reserved words as a property bindings value
+
+[#image_imz_ghw_m2b]
+image::reserved-words.png[]
+
+[#section_ykb_qhw_m2b]
+== *Support for N1QL in Function Handlers*
+
+NOTE: N1QL queries in events are a BETA feature and may have some rough edges and bugs, and may change significantly before the final GA release.
+This Beta-release version of Couchbase Server 5.5 is intended for development purposes only, no Enterprise Support is provided for Beta features.
+
+The Function handler code supports N1QL queries.
+Top level N1QL keywords, such as *SELECT*, *UPDATE*, and *INSERT*, are available as keywords in Functions.
+
+During deployment, if a handler code includes an N1QL query, then the system generates a warning message.
+However, the warning message does not prevent the Function deployment.
+
+*Warning Message*: "Handler <function_name> uses Beta features.
+Do not use in production environments."
+
+You must use *$<variable>,* as per N1QL specification, to use a JavaScript variable in the query statement.
+The object expressions for substitution are not supported and therefore you cannot use the *meta.id* expression in the query statement.
+{
+
+Instead of *meta.id* expression, you can use *var id = meta.id* in an N1QL query.
+
+[#ul_qtd_yhw_m2b]
+* Invalid N1QL query
++
+delete from `transactions` where username = $meta.id;
+
+* Valid N1QL query
++
+var id = meta.id; delete from `transactions` where username = $id;
+
+When you use a N1QL query inside a Function handler, ensure to use an escaped identifier for bucket names with special characters.
+Escaped identifiers are surrounded by backticks and support all identifiers in JSON
+
+For example:
+
+[#ul_o3k_rhw_m2b]
+* If bucket name is _'beer-sample'_, then use the N1QL query: *select * from `beer-sample` where type…*
+* If bucket name is _'beersample'_, then use the N1QL query: *select * from beersample where type…*
