@@ -2,32 +2,32 @@
 = Language Constructs
 
 [abstract]
-The Eventing service is implemented in JavaScript.
-Some constructs have been removed, others added.
-
-[#section_ih2_fhw_m2b]
-== Language Constructs Overview
-
 The language constructs are fundamental units of a language.
+This topic discusses the JavaScript constructs that have been removed and new constructs that have been added in order to support the requirements of Couchbase Functions.
+
 Using JavaScript, you can write your custom Functions.
 Couchbase Functions inherit support for most ECMAScript constructs by using Google v8 as the execution container.
 However, to support the ability to shard and scale Function-execution automatically, some capabilities have been removed.
 Additionally, to optimize language-utilization of the server environment, some new constructs have been added.
 
-[#section_jh2_fhw_m2b]
+[#removed-lang-features]
 == Removed Language Features
 
-The following JavaScript features have been removed.
+The following JavaScript features have been removed:
 
-[#ul_kh2_fhw_m2b]
-* _Global State_:
-+
+[#ul_ptx_cv5_42b]
+* Global State
+* Asynchrony
+* Browser and other Extensions
+
+_Global State_:
+
 Functions do not allow global variables.
 All state must be saved and retrieved from persistence providers.
 In Couchbase Server 5.5, the Data Service provider is used as a persistence provider.
 Therefore, all global states are contained in the Data Service bucket(s) made available to the Function through bindings.
 This restriction is mandatory for the Function-logic to remain agnostic of the rebalance operation.
-+
+
 [source,javascript]
 ----
 var count = 0;                         // Not allowed - global variable.
@@ -36,14 +36,14 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _Asynchrony_:
-+
+_Asynchrony_:
+
 Asynchrony, particularly asynchronous callback, to be Functional needs to retain access to parent scope.
 This forms a node-specific, long-running state that prevents the capture of entire long-running state in persistence providers.
 Therefore, Function handlers are restricted to running as short-running, straight-line code, without sleep and wakeups.
 Limited asynchrony is added back through time observers.
 Time observers are designed not to make the state node-specific
-+
+
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
@@ -51,13 +51,13 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _Browser and other Extensions_:
-+
+_Browser and other Extensions_:
+
 .A Function executes on Couchbase Server similar to the code that is visible in the browser.
-+
+
 As a Developer, you need to understand that the code displayed in the below example runs in the browser.
 The ‘window’ term in the code *window.XMLHttpRequest()*, is not a server-side construct but is in the context of a browser.
-+
+
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
@@ -65,18 +65,20 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-[#section_lh2_fhw_m2b]
+[#added-lang-features]
 == Added Language Features
 
-The following constructs are added:
+The following constructs have been added:
 
-[#ul_mh2_fhw_m2b]
-* _Bucket Accessors_:
-+
+* Bucket Accessors
+* Top level N1QL keywords such as SELECT, UPDATE, and INSERT
+
+_Bucket Accessors_:
+
 Couchbase buckets, when bound to a Function, appear as a global JavaScript map.
 The map operations such as get, set and delete are mapped to the Data Service providers get, set, and delete operations respectively.
 Other advanced Data Service operations are available as member Functions on the map object.
-+
+
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
@@ -87,20 +89,20 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* _N1QL_:
-+
+_N1QL_:
+
 Top level N1QL keywords, such as SELECT, UPDATE, and INSERT, are available as keywords in Functions.
 Operations that return values are accessible through a special iterator on which the *for (var <row> of <iterator>)* looping-construct has been defined.
 This restricted looping-construct allows support of query-result streaming, and automatic query-cancellation when the iterator goes out of scope.
 Any variable that is reachable from the scope of the N1QL query can be referred to using *$<variable>* syntax in the N1QL statement, where parameters get substituted according to the rules of the named-parameter substitution in the N1QL grammar specification.
-+
-IMPORTANT: The N1QL queries in events are a BETA feature and may have some rough edges and bugs, and may change significantly before the final GA release.
-This Beta-release version of Couchbase Server 5.5 is intended for development purposes only; no Enterprise Support is provided for Beta features.
-+
+
+IMPORTANT: The N1QL construct is still in development and may have some rough edges and bugs, and may change significantly before the final GA release.
+This release version of Couchbase Server 5.5 is intended for development purposes only.
+
 The iterator is an input iterator (elements are read-only).
 The keyword _this_ cannot be used in the body of the iterator.
 The variables created inside the iterator are local to the iterator.
-+
+
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
@@ -115,161 +117,132 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-[#section_nh2_fhw_m2b]
+[#handler-signatures]
 == Handler Signatures
 
 The Eventing Service supports two event-handlers:
 
-[#ul_oh2_fhw_m2b]
-* _Update Handler_: This handler gets called when a document is created or modified.
+* OnUpdate Handler
+* OnDelete Handler
+
+_OnUpdate Handler_: This handler gets called when a document is created or modified.
 The handler listens to data changes from the associated source vBucket.
 A sample OnUpdate handler is displayed below:
-+
+
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
-
   if (doc.type === 'order' && doc.value > 5000) {
-
     //‘phonverify’ is a bucket alias that is specified as a binding.
-
     phoneverify[meta.id] = doc.customer;
   }
 }
 ----
-+
+
 In this handler following limitations exist:
 
-[#ul_gys_2cp_m2b]
- ** If a document is modified several times in a short duration, the calls at times get coalesced into a single event, due to deduplication.
- ** It is not possible to distinguish a Create from an Update operation.
+* If a document is modified several times in a short duration, the calls at times get coalesced into a single event, due to deduplication.
+* It is not possible to distinguish a Create from an Update operation.
 
-* _OnDelete Handler_:
-+
+_OnDelete Handler_:
+
 This handler gets called when a document is deleted.
 The handler listens to data changes from the associated source vBucket.
 This handler also gets invoked during the expiry of a document.
-+
+
 A sample OnDelete handler is displayed below:
-+
+
 [source,javascript]
 ----
 function OnDelete(meta) {
   var stmt = SELECT id from orders WHERE shipaddr = $meta.id;
     for (var id of stmt) {
       log("Address invalidated for pending order: " + id);
-  }
+    }
   }
 ----
-+
+
 In this handler the following limitations exist:
 
 [#ul_kml_jcp_m2b]
- ** It is not possible to distinguish a delete as a result of expiration from a user-triggered delete operation.
- ** It is not possible to get the value of the document that was just deleted or the one that just got expired.
+* It is not possible to distinguish a delete as a result of expiration from a user-triggered delete operation.
+* It is not possible to get the value of the document that was just deleted or the one that just got expired.
 
 [#section_qtb_tcp_m2b]
-== Reserve Words
+== Reserved Words
 
 Reserved words are words that cannot be used as a variable name, function name, or as a property in the Function handler code.
+The following table lists the reserved words that you must refrain from using as they are used by Couchbase's query language, N1QL.
 
-Refrain from using any reserved words as these are used by the syntax of the N1QL query language.
-
-The table below displays a list of reserved words.
-
-.List of Reserved Words
 [#table_vxz_5cp_m2b]
 |===
-4+| Reserve Words
+4+| N1QL Keywords
 
-| alter
-| execute
-| merge
-| update
+| ALTER
+| EXECUTE
+| MERGE
+| UPDATE
 
-| build
-| explain
-| prepare
-| upsert
+| BUILD
+| EXPLAIN
+| PREPARE
+| UPSERT
 
-| create
-| grant
-| rename
+| CREATE
+| GRANT
+| RENAME
 |
 
-| delete
-| infer
-| revoke
+| DELETE
+| INFER
+| REVOKE
 |
 
-| drop
-| insert
-| select
+| DROP
+| INSERT
+| SELECT
 |
 |===
 
-[#section_rzz_gdp_m2b]
-== What Happens If You Use a Reserved Word?
+*What Happens If You Use a Reserved Word?*
 
 Let's say you try to create a new Function handler code using a reserved word for variable names, for function names, and as a property bindings value.
 All three cases generate a deployment error.
 
-Reserved words as a variable name
+Reserved words as a variable name:
 
-.{empty}
-[#table_zvs_jdp_m2b,cols=1*]
-|===
-| function get_numip_first_3_octets(ip)
-
+[source,javascript]
+----
+function get_numip_first_3_octets(ip)
 {
+  var grant = 0;
+  if (ip)
+  {
+	var parts = ip.split('.');
+  }
+}
+----
 
-var grant = 0;
+Reserved words as a function name:
 
-if (ip)
-
+[source,javascript]
+----
+function grant(ip)
 {
-
-var parts = ip.split('.');
-
+  var return_val = 0;
+  if (ip)
+  {
+    var parts = ip.split('.');
+  }
 }
+----
 
-}
-|===
-
-Reserved words as a function name
-
-.{empty}
-[#table_zdf_pdp_m2b,cols=1*]
-|===
-| function grant(ip)
-
-{
-
-var return_val = 0;
-
-if (ip)
-
-{
-
-var parts = ip.split('.');
-
-}
-
-}
-|===
-
-During the Function deployment step, when the system validates the handler code, it displays an error message.
-Sample error message is illustrated for reference.
-
-[#table_tb5_rdp_m2b,cols=1*]
-|===
-| *Sample Error Message - Deployment failed: Syntax error (<line and column numbers>) - grant is a reserved name in N1QLJs*
-|===
+During the Function deployment step, when the system validates the handler code, it displays an error message such as the following: [.out]`Sample Error Message - Deployment failed: Syntax error (<line and column numbers>) - grant is a reserved name in N1QLJs`
 
 Reserved words as a property bindings value
 
 [#image_b2j_gvq_42b]
-image::reserved-words.png[,70%]
+image::reserved-words.png[,300]
 
 [#section_ykb_qhw_m2b]
 == *Support for N1QL in Function Handlers*
@@ -278,34 +251,45 @@ IMPORTANT: The N1QL queries in events are a BETA feature and may have some rough
 This Beta-release version of Couchbase Server 5.5 is intended for development purposes only; no Enterprise Support is provided for Beta features.
 
 The Function handler code supports N1QL queries.
-Top level N1QL keywords, such as *SELECT*, *UPDATE*, and *INSERT*, are available as keywords in Functions.
+Top level N1QL keywords, such as SELECT, UPDATE, and INSERT, are available as keywords in Functions.
 
 During deployment, if a handler code includes an N1QL query, then the system generates a warning message.
-However, the warning message does not prevent the Function deployment.
+[.out]``Warning Message: "Handler <function_name> uses Beta features.
+Do not use in production environments."``However, the warning message does not prevent the Function deployment.
 
-*Warning Message*: "Handler <function_name> uses Beta features.
-Do not use in production environments."
+You must use [.var]`$<variable>`, as per N1QL specification, to use a JavaScript variable in the query statement.
+The object expressions for substitution are not supported and therefore you cannot use the [.param]`meta.id` expression in the query statement.
 
-You must use *$<variable>,* as per N1QL specification, to use a JavaScript variable in the query statement.
-The object expressions for substitution are not supported and therefore you cannot use the *meta.id* expression in the query statement.
-{
-
-Instead of *meta.id* expression, you can use *var id = meta.id* in an N1QL query.
+Instead of [.param]`meta.id` expression, you can use `var id = meta.id` in an N1QL query.
 
 [#ul_qtd_yhw_m2b]
 * Invalid N1QL query
 +
-delete from `transactions` where username = $meta.id;
+----
+DELETE FROM `transactions` WHERE username = $meta.id;
+----
 
 * Valid N1QL query
 +
-var id = meta.id; delete from `transactions` where username = $id;
+----
+var id = meta.id;
+DELETE FROM `transactions` WHERE username = $id;
+----
 
-When you use a N1QL query inside a Function handler, ensure to use an escaped identifier for bucket names with special characters.
+When you use a N1QL query inside a Function handler, remember to use an escaped identifier for bucket names with special characters (`[.var]`bucket-name``).
 Escaped identifiers are surrounded by backticks and support all identifiers in JSON
 
 For example:
 
 [#ul_o3k_rhw_m2b]
-* If bucket name is _'beer-sample'_, then use the N1QL query: *select * from `beer-sample` where type…*
-* If bucket name is _'beersample'_, then use the N1QL query: *select * from beersample where type…*
+* If the bucket name is [.param]`beer-sample`, then use the N1QL query such as:
++
+----
+SELECT * FROM `beer-sample` WHERE type...
+----
+
+* If bucket name is [.param]`beersample`, then use the N1QL query such as:
++
+----
+SELECT * FROM beersample WHERE type ...
+----
