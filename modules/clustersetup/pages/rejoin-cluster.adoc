@@ -1,107 +1,94 @@
-= Rejoining a Cluster
+= Recovering a Node
 
 [abstract]
-From the Couchbase Web Console, the [.term]_Delta Recovery_ and [.term]_Full Recovery_ options display after the server node is failed over.
+After a node has been failed over, it can be _recovered_: that is, added back into the cluster from which it was failed over, by means of _rebalancing_.
 
-Both recovery methods add the server node back into the cluster during the rebalance operation.
-However, full recovery removes the node's data prior to the rebalance and delta recovery schedules the node's existing data to be reused.
+== Performing Node Recovery
+
+After a node has been failed over, there are two principal options:
+
+* The node can be _removed_ from the cluster, by means of the xref:rebalance.adoc[rebalance] operation.
+* The node can be _recovered_, and thereby added back into the cluster — again by means of the rebalance operation.
+
+These options are displayed by Couchbase Web Console as follows:
+
+[#recovery_options]
+image::recoveryOptions.png[,align=left]
+
+Removal of a failed-over node is appropriate when you have no intention or ability to recover the failed-over node: for example, when full hardware-replacement is required.
+Since the *REMOVAL pending rebalance* notification is now displayed, to remove the node, simply left-click on the *Rebalance* button, at the upper-right.
+
+Alternatively, _Recovery_ of the node may be more appropriate: for example, when the node's availability has been restored, and no other key aspect of the node's integrity has been impaired.
+To recover a failed-over node, you must select a _recovery option_, before performing a rebalance.
+Two recovery options are provided, by the buttons at the lower right; which are *Add Back: Full Recovery* and *Add Back: Delta Recovery*.
+After you have selected the appropriate option, you then *Rebalance*.
+
+For example, if you left-click on *Add Back: Full Recovery*, the display changes as follows:
+
+[#full_recovery_pending]
+image::fullRecoveryPending.png[,align=left]
+
+This now indicates that a _Full Recovery_ will occur when you left-click the *Rebalance* button.
+
+The _Full_ and _Delta_ recovery-options are described below.
 
 == Full Recovery
 
-Full recovery characteristics are as follows:
+_Full_ recovery involves removing all pre-existing data from, and assigning new data to, the node that is being recovered.
+Therefore, when this option has been specified, left-clicking on *Rebalance* causes the following:
 
-* Data files are removed from the server node.
-* Indexes must be rebuilt on the server node that is being re-added.
-* A working set of documents is restored for the vBuckets that are being moved.
-* It is used when the data size is smaller than the bucket quotas.
-In this case, moving data over the network and on the disk (full recovery) may be faster than warming up data files (delta recovery).
+* All existing vBuckets and documents are removed from the node.
+* If GSI Indexes reside on the node, they are left unmodified during the rebalance process.
+* A new set of vBuckets and documents is assigned to the node.
+* When the node's vBuckets are all up to date, and the rebalance process concludes, the node recommences the serving of data.
+If GSI Indexes reside on the node, they become active, and are updated by the Index Service as appropriate.
 
-== Delta Node Recovery
+== Delta Recovery
 
-Delta node recovery permits nodes to be re-added to the cluster and incrementally caught up with the data changes.
+_Delta_ recovery maintains and resynchronizes a node's pre-existing data.
+Therefore, when this option has been specified, left-clicking on *Rebalance* causes the following:
 
-Delta node recovery permits a failed over node to be recovered by re-using the data on its disk and then resynchronizing the data based on the delta change.
-The failed over node is checked to identify the point when data mutations stopped and resynchronized beginning at that point.
-The server node catches up on data mutations for its vBuckets and starts serving data.
-Because the original data and data buckets are retained, the cluster starts functioning with minimal downtime.
-Index nodes retain their index definitions when being failed over and recovered using delta recovery, although the data within the indexes is deleted.
-When they are re-added to the cluster, the indexes will be automatically rebuilt by the Index service.
-This operation improves recovery time and network resource usage.
-Server nodes are removed from clusters under many circumstances.
-The following are circumstances (among many others) where a server node might be re-added to the cluster after being failed over.
+* No existing vBucket or document is removed from the node.
+* All existing data is loaded into memory.
+* The point at which mutations to node-data most recently _stopped_ is determined.
+Then, vBuckets are duly updated from that point; based on the data-changes that have since occurred, elsewhere on the cluster.
+* If GSI Indexes reside on the node, they are left unmodified during the rebalance process.
+* When the node's vBuckets are all up to date, and the rebalance process concludes, the node recommences the serving of data.
+If GSI Indexes reside on the node, they become active, and are updated by the Index Service as appropriate (this includes updates that correspond to whatever mutations were made by the Data Service while the node was in a failed over state).
 
-* Node goes down for a short period of time
-* Routine maintenance is scheduled
-* Network connectivity is briefly disrupted
+== Delta-Recovery Requirements
 
-When a node is failed over, data files are preserved.
-The data files are used either for Couchbase support, data recovery, or delta node recovery.
+_Delta_ recovery can only be performed when:
 
-In the process of failing over a node, performing maintenance, adding the node back into the cluster, and rebalancing, data is recovered via either full recovery mode or delta recovery mode.
-With delta recovery mode, Couchbase detects (with the Database Change Protocol) which data files are up-to-date and which are out-of-date and then, during rebalance, the existing data files on the failed over server node are retained and the out-of-date files are updated.
+* The node to be recovered is healthy; likewise the cluster.
+* The node to be recovered is in a _failed over_ state.
+* _Delta_ recovery is possible for all Buckets on the node.
+Note that the correspondence of Buckets, vBuckets, and documents on the node remains entirely unchanged by _Delta_ recovery.
 
-From the web console, the Delta Recovery and Full Recovery options display after the server node is failed over.
-Both recovery methods add the server node back into the cluster during the rebalance operation, however, full recovery removes the node's data prior to the rebalance and delta recovery schedules the node's existing data to be re-used.
+== Delta-Recovery Failures
 
-Delta recovery requirements:
+In some cases, when _Delta_ recovery is attempted, and all the requirements listed immediately above have been met, the operation nevertheless either fails or defaults to _Full_ recovery.
+This indicates that one or more of the following conditions exist:
 
-* A healthy server node and a healthy state for the cluster.
-* The server node is failed over.
-Delta recovery is not possible for a rebalance-in operation (add server) or rebalance-out operation (remove server).
-* Delta recovery must be possible for all buckets.
-For example, if delta recovery is possible for a subset of buckets but not possible for another subset of buckets, then the Couchbase cluster does not permit a rebalance operation.
-* Because delta recovery relies on the existing data files on the failed over server node's disk, the exact same set of buckets must be transferred to the failed over server node.
+* Cluster-topology has changed since the node was last available within the cluster.
+* The node was _hard_ failed over, and is marked for removal.
+* The rebalance was configured to perform the _Delta_ recovery while simultaneously moving other nodes in or out of the cluster, and the numbers of nodes intended respectively to leave and join the cluster were unequal.
+(Note that in this case, a _Swap Rebalance_ can be performed instead.)
+* Bucket-operations were performed while _Delta_ recovery was pending: this changed configurations, and has made _Delta_ recovery impossible.
+* Either the node being recovered or another node in the cluster has crashed, or become otherwise unavailable, at some point during the process of recovery and rebalance.
 
-Delta recovery characteristics:
+== Recovery Performance
 
-* Data files are "warmed up" into memory.
-Warmed up into memory means that data is loaded into memory.
-As a minimum, depending on whether metadata is retained in or not, all data file keys are loaded from disk prior to the rebalance operation.
-* Index definitions are retained on the node being recovered.
-Once the node has been re-added, these indexes are automatically rebuilt by the Index service.
+In many cases, _Delta_ recovery is faster than _Full_ recovery; since a significant quantity of usable data already resides on the node, and therefore does not require network-transfer: only updates made since the node's last-recorded mutation need to be accessed from other nodes in the cluster.
 
-TIP: An environment with a large data footprint might use delta node recovery when re-adding a failed over server node.
+However, in cases where the node's memory-footprint is extremely large, and data-size exceeds bucket memory-quotas, the memory-management overhead potentially entailed by _Delta_ recovery might imply _Full_ recovery's taking less time overall.
 
-*Failure Scenarios*
+== Performing Recovery with CLI
 
-There are conditions where delta node recovery either defaults to full recovery or is not available.
+To select a recovery option with the Couchbase CLI, see the xref:cli:cbcli/couchbase-cli-recovery.adoc[recovery] command.
+To perform the subsequent rebalance, see the xref:cli:cbcli/couchbase-cli-rebalance.adoc[rebalance] command.
 
-The following are conditions for delta node recovery failures:
+== Performing Recovery with REST
 
-* If topology changes occur while a node is pending delta recovery, delta node recovery is impacted.
-For example, another node is added, a node is removed, or a node is swapped.
-* If a down node is hard failed over and is marked for removal.
-* If rebalance-in-out operations are performed where the number of in and out nodes do not match (swap rebalance works in this case).
-* If certain bucket operations are performed while a node is pending delta recovery, delta node recovery is impacted.
-For example, a new bucket is added, a bucket's replica configuration is changed, or a bucket is flushed.
-
-The following describes scenarios where delta node recovery either defaults to full recovery or is not available.
-
-Node 1 is in delta recovery and Node 2, an active server node, crashes.::
-. Node 1 is failed over and delta recovery is specified.
-Now, Node 1 is pending delta recovery.
-. Node 2, an active server, goes down.
-+
-NOTE: The rebalance operation is not available.
-
-. Fail over Node 2.
-. Cancel the pending delta recovery, specify full recovery, and rebalance.
-. Repair Node 2, add the server to the cluster, and rebalance.
-
-Node 1 is in delta recovery and Node 1 crashes during rebalance.::
-. Node 1 is failed over, delta recovery is specified, and the rebalance operation is started.
-. Node 1 crashes and the rebalance operation fails.
-. Repair Node 1, re-start the server node, and rebalance.
-Node1 is added back to the cluster using full recovery.
-
-Node 1 is in delta recovery and a bucket operation is performed.:: The bucket operations that cause rebalance to fail are adding bucket, changing replica configuration, or flushing bucket
-. Node 1 is failed over, delta recovery is specified, and then a bucket operation is performed.
-. Rebalance is performed and fails.
-. Cancel the pending delta recovery, specify full recovery, and rebalance.
-+
-NOTE: Bucket deletion does not lead to delta recovery failure.
-
-Node 1 and Node 2 are in delta node recovery and Node 2 crashes.::
-. Both Node 1 and Node 2 are failed over, delta recovery is specified.
-. Node 2 crashes.
-. Rebalance is performed and fails.
+To select a recovery option with the Couchbase REST API, see xref:rest-api:rest-node-recovery-incremental.adoc[Setting Recovery Type].
+To perform the subsequent rebalance, see xref:rest-api:rest-cluster-rebalance.adoc[Rebalancing Nodes]
