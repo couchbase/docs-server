@@ -1,0 +1,46 @@
+= Enhanced Durability
+:page-topic-type: concept
+
+[abstract]
+Couchbase 4.0 offers additional durability options which provide clearer semantics in the face of failover.
+
+Prior to Couchbase 4.0, durability was only implemented using the xref:cas-concurrency.adoc[CAS].
+Since the CAS changed for each mutation, a client could normally determine if the mutation was persisted on a given node if the item existed on the node with the same CAS.
+
+The core issue with CAS-based checking is that a different CAS on a replica may either be a result of:
+
+* Client contention: The CAS is different from the current mutation because it been changed by a subsequent mutation (one performed _after_ our current client)
+* Slow propagation: The mutation has not yet been propagated to all replicas
+* Failover: The CAS has changed because the master was failed over and control has been transferred to a replica which is using an older copy.
+
+== Sequence number based durability
+
+In Couchbase 4.0, an enhanced mode of durability, based on _sequence numbering_ is available.
+To this effect, an application may opt to enable receiving sequence data for each mutation.
+This provides the SDK with an ever-increasing sequence number for a given mutation.
+The sequence number data contains:
+
+* A random identifier representing (called a [.underline]#UUID#) the current cluster state.
+This state is changed whenever something happens to the cluster (for example, a failover).
+* A counter value which is associated with the current state.
+
+Applications may enable this extra sequence data to be sent for each mutation response.
+This data is then transparently used by the SDK to use sequence number-based durability checking.
+
+Unlike CAS-based polling, it is simple to distinguish various failure cases:
+
+* If the _UUID_ is equal, but the sequence number is lower than the expected value, then it means the mutation has not yet been propagated.
+* If the UUID is equal, and the sequence number is greater or equal to the current mutation, it means the current mutation has been propagated.
+* If the UUID is different than the one available at the client, it means the mutation has been lost.
+
+== Enabling enhanced durability via the SDK
+
+Enhanced durability can be enabled and used transparently via the SDK.
+Enhanced durability is disabled by default as it adds an overhead of 16 bytes per operation.
+An example for the Python client is presented below.
+Consult your SDK's documentation to see how to enable enhanced durability for your SDK:
+
+----
+from couchbase.bucket import Bucket
+cb = Bucket('couchbase://localhost/default?fetch_mutation_tokens=1
+----

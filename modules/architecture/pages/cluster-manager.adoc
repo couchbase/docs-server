@@ -1,0 +1,106 @@
+= Cluster manager
+:page-topic-type: concept
+
+[abstract]
+Cluster Manager runs on all the nodes of the cluster and orchestrates cluster wide operations.
+
+== Cluster manager architecture
+
+The Cluster Manager is responsible for the following operations:
+
+* Cluster topology and node membership
+ ** Managing node membership, adding and removing nodes
+ ** Discovery of cluster topology by internal and external connections
+ ** Service layout for data, index, and query services across nodes
+ ** Rebalancing the load as cluster topology changes
+ ** Node health, and failure and service monitoring
+* Data placement
+ ** Smart distribution of primary and secondary replicas with node, rack failure domain awareness for best failure-protection
+* Central statistics and logging
+ ** Operational statistics gathering and aggregation to cluster level statistics
+ ** Logging services for cluster supportability
+* Authentication
+ ** Authentication of connections to the cluster
+
+.Cluster Manager architecture
+image::cluster-manager-internals.png[,600]
+
+The Cluster Manager consists of the following modules to perform the tasks above:
+
+* *REST API and Auth* modules: Cluster Manager communication and authentication happen through the REST API and Auth modules.
+All administrative operations performed through CLI tools or Admin Portal are executed through the admin REST API.
+* *Master Services* module manages global cluster level operations such as master and replica vbucket placement, auto failover and rebalance.
+* *Bucket Services* module manages bucket level operations such as establishing or handing off replication for replica maintenance or bucket level stats collection.
+* *Per-node Services* module manage node health and process/service monitoring and restart.
+* *Cluster manager generic local and distributed facilities* also manage local and distributed configuration management, cluster-wide logging and more.
+
+== Node membership: adding and removing nodes without downtime
+
+The Cluster Manager is responsible for cluster membership.
+When the topology of a cluster changes, the Cluster Manager walks through a set of carefully orchestrated operations to redistribute the load while keeping the existing workload running without a hiccup.
+
+The following workflow describes the high-level operations to add a new node to the data service:
+
+. The Cluster Manager ensures the new nodes inherit the cluster configuration.
+. In order to redistribute the data to the new nodes,  the Cluster Manager initiates rebalance and recalculates the vBucket map.
+. The nodes which are to receive data initiate DCP replication streams from the existing nodes for each vBucket and begin building new copies of those vBuckets.
+This occurs for both active and replica vBuckets depending on the new vBucket map layout.
+. Incrementally as each new vBucket is populated, the data replicated and the indexes optionally updated, an atomic switchover takes place from the old vBucket to the new vBucket.
+. As the new vBuckets on the new nodes become active, the Cluster Manager ensures that the new vBucket map and cluster topology is communicated to all the existing nodes and clients.
+This process is repeated until the rebalance operation completes running.
+
+Removal of one or more nodes from the data service follows a similar process by creating new vBuckets within the remaining nodes of the cluster and transitioning them off of the nodes to be removed.
+When there are no more vBuckets assigned to a node, the node is removed from the cluster.
+
+When adding or removing nodes from the indexing and query services, no data is moved and so their membership is simply added or removed from the cluster map.
+The client SDKs automatically begin load balancing across those services using the new cluster map.
+
+[#RZA]
+== Smart data placement with rack and zone awareness
+
+Couchbase Server buckets physically contain 1024 master and 0 or more replica vBuckets.
+The Cluster Manager master services module governs the placement of these vBuckets to maximize availability and rebalance performance.
+
+The Cluster Manager master services module calculates a vBucket map with heuristics to maximize availability and rebalance performance.
+The vBucket map is recalculated whenever the cluster topology changes.
+The following rules govern the vBucket map calculation:
+
+* Master and replica vBuckets are placed on separate nodes to protect against node failures.
+* If a bucket is configured with more than 1 replica vBucket, each additional replica vBucket is placed on a separate node to provide better protection against node failures.
+* If server groups are defined  for master vBuckets (such as rack and zone awareness capability),  the replica vBuckets are placed in a separate server group for better protection against rack or availability zone failures.
+
+== Centralized management, statistics, and logging for simplified managing
+
+The Cluster Manager simplifies centralized management with centralized configuration management, statistics gathering and logging services.
+All configuration changes are managed by the orchestrator and pushed out to the other nodes to avoid configuration conflicts.
+
+In order to understand what your cluster is doing and how the cluster is performing, the Couchbase Server incorporates a complete set of statistical and monitoring information.
+The statistics are accessible through all the administration interfaces - CLI ( cbstats tool), REST API, and the Web Console.
+
+The Couchbase Web Console provides a complete suite of statistics including the built-in real-time graphing and performance data.
+It gives great flexibility as you (as an Administrator) can aggregate the statistics for each bucket and choose to view the statistics for the whole cluster or per node.
+
+The statistics information is grouped into categories, allowing you to identify different states and performance information within the cluster.
+
+Statistics on hardware resources::
+Node statistics show CPU, RAM and I/O numbers on each of the servers and across your cluster as a whole.
+This information is useful to identify performance and loading issues on a single server.
+
+Statistics on vBuckets::
+The vBucket statistics shows the usage and performance numbers for the vBuckets.
+This is useful to determine whether you need to reconfigure your buckets or add servers to improve performance.
+
+Statistics on views and indexes::
+View statistics display information about individual views in your system such as number of reads from the index or view and its disk usage, so that you can monitor the effects and loading of a view on the Couchbase nodes.
+This information can indicate that your views need optimization, or that you need to consider defining views across multiple design documents.
+
+Statistics on replication (DCP, TAP, and XDCR)::
+The Database Change Protocol (DCP) interface is used to monitor changes and updates to the database.
+DCP is widely used internally to replicate data between the nodes, for backups with [.api]`cbbackup`, to maintain views and indexes and to integrate with external products with connectors such as Elasticsearch connector, Kafka connector or the Sqoop connector.
+XDCR replicates data between clusters and uses DCP in conjunction with an agent that is tuned to replicate data under higher WAN latencies.
++
+TAP is similar to DCP, but is a deprecated protocol.
+Legacy tools may still use the protocol and stats are still available through the console.
++
+Given the central role of replication in a distributed system like Couchbase Server, identifying statistics on replication is critical.
+Statistics in replication help visualize the health of replication and bottlenecks in replication by displaying replication latency and pending items in replication streams.

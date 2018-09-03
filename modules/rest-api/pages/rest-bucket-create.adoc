@@ -1,0 +1,200 @@
+= Creating and editing buckets
+:page-topic-type: reference
+
+[abstract]
+To create and edit buckets, use the `POST` operation with the `/pools/default/bucket` URI.
+
+== Description
+
+Buckets are created and edited with a `POST` sent to the REST URI endpoint for buckets in a cluster.
+This can be used to create either a Couchbase or a Memcached type bucket.
+Bucket names cannot have a leading underscore.
+
+This endpoint is also used to get a list of buckets that exist for a cluster.
+
+IMPORTANT: When editing bucket properties, be sure to  specify all bucket properties.
+If a bucket property is not specified (whether or not you are changing the existing value), Couchbase Server may reset the property to the default.
+Even if you do not intend to change a certain property, re-specify the existing value to avoid this behavior.
+
+The REST API returns a successful response when preliminary files for a data bucket are created on one node.
+However, if a multi-node cluster is implemented, bucket creation may not have completed for all nodes when a response is sent.
+Therefore, it is possible that the bucket is not available for operations immediately after this REST call successful returns.
+
+To verify that a bucket is available, try to read a key from the bucket.
+If a ‘key not found’ error is received or the document for the key is returned, then the bucket exists and is available to all nodes in a cluster.
+Key requests can be issued via a Couchbase Server SDK with any node in the cluster.
+See the _Couchbase Server Developer Guide_ for more information.
+
+== HTTP method and URI
+
+----
+POST /pools/default/buckets
+----
+
+* Request data - List of payload parameters for the new bucket
+* Response data - JSON of the bucket confirmation or an error condition
+* Authentication required - Yes
+
+Parameters for creating buckets:
+
+.Create bucket parameters
+[cols="100,163"]
+|===
+| Payload Arguments | Description
+
+| `authType`
+| Required parameter.
+Type of authorization to be enabled for the new bucket as a string.
+Defaults to blank password if not specified.
+"sasl" enables authentication.
+"none" disables authentication.
+
+| `bucketType`
+| Required parameter.
+Type of bucket to be created.
+String value.
+"memcached" configures as Memcached bucket.
+"couchbase" configures as Couchbase bucket
+
+| `evictionPolicy`
+| Optional parameter, a string.
+Possible values are `fullEviction` and `valueOnly`.
+The default is `valueOnly`.
+This parameter determines what is ejected: only the value or the key, value, and all metadata.
+
+| `flushEnabled`
+| Optional parameter.
+Enables the ‘flush all’ functionality on the specified bucket.
+Boolean.
+1 enables flush all support, 0 disables flush all support.
+Defaults to 0.
+
+| `name`
+| Required parameter.
+Name for new bucket.
+
+| `parallelDBAndViewCompaction`
+| Optional parameter.
+String value.
+Indicates whether database and view files on disk can be compacted simultaneously.
+Defaults to "false."
+
+| `proxyPort`
+| Required parameter.
+Numeric.
+Proxy port on which the bucket communicates.
+Must be a valid network port which is not already in use.
+You must provide a valid port number if the authorization type is not SASL.
+
+| `ramQuotaMB`
+| Required parameter.
+RAM Quota for new bucket in MB.
+Numeric.
+The minimum you can specify is 100, and the maximum can only be as great as the memory quota established for the node.
+If other buckets are associated with a node, RAM Quota can only be as large as the amount memory remaining for the node, accounting for the other bucket memory quota.
+
+| `replicaIndex`
+| Optional parameter.
+Boolean.
+1 enable replica indexes for replica bucket data while 0 disables.
+Default of 1.
+
+| `replicaNumber`
+| Optional parameter.
+Numeric.
+Number of replicas to be configured for this bucket.
+Required parameter when creating a Couchbase bucket.
+Default 1, minimum 0, maximum 3.
+
+| `saslPassword`
+| Optional Parameter.
+String.
+Password for SASL authentication.
+Required if SASL authentication has been enabled.
+
+| `threadsNumber`
+| Optional Parameter.
+Integer from 2 to 8.
+Change the number of concurrent readers and writers for the data bucket.
+|===
+
+When creating a bucket, the `authType` parameter must be provided:
+
+* If `authType` is set to `none`, then a proxyPort number must be specified.
+* If `authType` is set to `sasl`, then the `saslPassword` parameter may optionally be specified.
+
+The `ramQuotaMB` parameter specifies how much memory, in megabytes, is allocate to each node for the bucket.
+The minimum supported value is 100MB.
+
+* If the items stored in a memcached bucket take space beyond the `ramQuotaMB`, Couchbase Sever typically evicts items on a least-requested-item basis.
+Couchbase Server might evict other infrequently used items depending on object size or on whether or not an item is being referenced.
+* In the case of Couchbase buckets, the system might return temporary failures if the `ramQuotaMB` is reached.
+The system tries to keep 25% of the available ramQuotaMB free for new items by ejecting old items from occupying memory.
+In the event these items are later requested, they are retrieved from disk.
+
+== Syntax
+
+Curl request syntax:
+
+----
+curl -X POST -u [admin]:[password]
+  -d name=[new-bucket-name] -d ramQuotaMB=[value] -d authType=[none | sasl]
+  -d replicaNumber=[value]
+  -d proxyPort=[proxy-port]
+  http://[localhost]:8091/pools/default/buckets
+----
+
+== Example
+
+Curl request example:
+
+----
+curl -X POST -u Administrator:password \
+
+  -d 'proxyPort=11215' \
+  http://10.5.2.54:8091/pools/default/buckets
+----
+
+Raw HTTP request example:
+
+The parameters for configuring the bucket are provided as payload data.
+Each parameter and value are provided as a key/value pair where each pair is separated by an ampersand.
+Include the parameters setting in the payload of the HTTP `POST` request.
+
+----
+POST /pools/default/buckets
+HTTP/1.1
+Host: 10.5.2.54:8091
+Content-Type: application/x-www-form-urlencoded; charset=UTF-8
+Authorization: Basic YWRtaW46YWRtaW4=
+Content-Length: xx
+name=newbucket&ramQuotaMB=20&authType=none&replicaNumber=2&proxyPort=11215
+----
+
+== Response
+
+If the bucket creation was successful, HTTP response 202 (Accepted) is returned with empty content.
+
+----
+202 Accepted
+----
+
+== Response codes
+
+If the bucket could not be created, because the parameter was missing or incorrect, HTTP response 400 returns, with a JSON payload containing the error reason.
+
+.Create bucket error codes
+[cols="1,4"]
+|===
+| Error codes | Description
+
+| 202
+| Accepted
+
+| 204
+| Bad Request JSON with errors in the form of {"errors": {….
+}} name: Bucket with given name already exists ramQuotaMB: RAM Quota is too large or too small replicaNumber: Must be specified and must be a non-negative integer proxyPort: port is invalid, port is already in use
+
+| 404
+| Object Not Found
+|===
