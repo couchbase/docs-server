@@ -1,4 +1,4 @@
-= Covering indexes
+= Covering Indexes
 :page-topic-type: concept
 
 [abstract]
@@ -251,12 +251,12 @@ select country from `beer-sample` where state = 'CA'
 *Sub-queries*
 
 ----
-Select *
-   from (
-   SELECT country from `beer-sample` WHERE state = 'CA'
+SELECT *
+   FROM (
+   SELECT country FROM `beer-sample` WHERE state = 'CA'
    UNION ALL
-   select country from `beer-sample` WHERE state = 'Texas'
-   ) as newtab;
+   SELECT country FROM `beer-sample` WHERE state = 'Texas'
+   ) AS newtab;
 ----
 
 *SELECT in INSERT statements*
@@ -279,5 +279,62 @@ Then, run the following query:
 ----
 SELECT b from `beer-sample` WHERE a = [1, 2, 3, 4];
 ----
+
+*Collection Operators: FIRST, ARRAY, ANY, EVERY, and ANY AND EVERY*
+
+Since the `default` bucket is empty by default, let's first insert the following documents into the default bucket:
+
+----
+INSERT into default values ("account-customerXYZ-123456789",
+{ "accountNumber": 123456789,
+  "docId": "account-customerXYZ-123456789",
+  "code": "001",
+  "transDate":"2016-07-02" } );
+
+INSERT into default values("codes-version-9",
+{ "version": 9,
+  "docId": "codes-version-9",
+  "codes": [
+    { "code": "001",
+      "type": "P",
+      "title": "SYSTEM W MCC",
+      "weight": 26.2466
+    },
+    { "code": "166",
+      "type": "P",
+      "title": "SYSTEM W/O MCC",
+      "weight": 14.6448 }
+  ]
+});
+----
+
+Create an index, `idx_account_customer_xyz_transDate`:
+
+----
+CREATE INDEX idx_account_customer_xyz_transDate
+    ON default(SUBSTR(transDate,0,10),code)
+    WHERE code != "" AND meta().id LIKE "account-customerXYZ%";
+----
+
+Then, run the following query:
+
+----
+SELECT SUBSTR(account.transDate,0,10) AS transDate, AVG(codes.weight) AS avgWeight
+FROM default account
+JOIN default codesDoc ON KEYS "codes-version-9"
+LET codes = FIRST c FOR c IN codesDoc.codes WHEN c.code = account.code END
+WHERE account.code != "" AND meta(account).id LIKE "account-customerXYZ-%"
+AND SUBSTR(account.transDate,0,10) >= "2016-07-01" AND SUBSTR(account.transDate,0,10) < "2016-07-03"
+GROUP BY SUBSTR(account.transDate,0,10);
+
+[
+  {
+    "avgWeight": 26.2466,
+    "transDate": "2016-07-02"
+  }
+]
+----
+
+The EXPLAIN statement for the above query shows that the index covers the query.
 
 *Prepared statements* also benefit from using covering indexes.

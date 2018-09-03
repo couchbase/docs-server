@@ -1,0 +1,242 @@
+= Array Indexing
+
+Couchbase 4.5 adds the capability to create global indexes on array elements and optimizes the execution of queries involving array elements.
+This is a huge leap from the previous versions where secondary indexes could only be created and subsequently queried on whole arrays.
+You can now create an index of array elements ranging from plain scalar values to complex arrays or JSON objects nested deeper in the array.
+
+== N1QL Syntax
+
+----
+CREATE INDEX [ index_name ]
+        ON named_keyspace_ref ( expression || distinct_array_expression, … )
+        [ WHERE filter_expressions ]
+        [ USING GSI ]
+        [ WITH { "nodes": [ "node_name" ],
+                "defer_build": true | false
+              }
+        ];
+----
+
+[.var]`index_name`::
+Specify a unique name to identify the index.
+The index name is optional and there can be one index that is unnamed.
+
+[.var]`named_keyspace_ref`::
++
+----
+named_keyspace_ref ::= [ namespace-name : ] keyspace-name
+----
++
+Specify the name of the keyspace or bucket to create an index on
+
+[.var]`expression`:: Refers to the an attribute name or a function (or expression) that returns a single element.
+
+[.var]`distinct_array_expression`::
++
+----
+distinct_array_expression ::=
+[ ALL ] DISTINCT ARRAY var_expression FOR variable1 ( IN | WITHIN ) expression1
+                                      [ , variable2 ( IN | WITHIN ) expression2 ]
+                                      [ ( WHEN condition ) ] END
+----
++
+The [.cmd]`ARRAY` operator lets you map and filter the elements or attributes of a collection, object, or objects.
+It evaluates to an array of the operand expression that satisfies the WHEN clause, if specified.
++
+[.var]`var_expression` evaluates to a function of [.var]`variable1`/[.var]`variable2` etc, and [.var]`expression1/expression` etc evaluate to an array of objects, each of which is represented by the variables.
++
+NOTE: The variables used in query predicates ([.var]`where-clause`) of subsequent SELECT/UPDATE/UPSERT/DELETE statements must be the same as those used in the above [.var]`distinct_array_expression`.
+See <<query-predicate-format,Format of Query Predicate in SELECT, UPDATE, or DELETE>> for details.
+
+[.var]`filter_expression`:: Specifies WHERE clause predicates to qualify the subset of documents to include in the index.
+
+USING GSI:: USING clause specifies the index type to use.
+
+WITH options:: Use the WITH clause to specify additional options and is fully supported with nodes and [.var]`defer_build` expressions.
+
+See the http://developer.couchbase.com/documentation/server/4.1/n1ql/n1ql-language-reference/createindex.html[CREATE INDEX^] statement for more details on the syntax.
+
+[#query-predicate-format]
+*Format of Query Predicate in SELECT, UPDATE, or DELETE*
+
+The query predicate, which must appear in the WHERE clause of a SELECT, UPDATE, or DELETE statement, must have the exact matching format as the variable in the array index key, including the name of the variable [.var]`x`.
+
+Consider the following expressions used in a CREATE INDEX statement:
+
+----
+(a) DISTINCT ARRAY f(x) FOR x IN expr1 END;
+
+(b) DISTINCT ARRAY f(x) FOR x WITHIN expr1 END;
+----
+
+And the expression used in the SELECT [.var]`where-clause` as:
+
+----
+(c) ANY x IN expr2 SATISFIES g(x) END;
+
+(d) ANY x WITHIN expr2 SATISFIES g(x) END
+----
+
+The following dependencies must be satisfied in Couchbase Server 4.5 for N1QL to consider the array index:
+
+* The index keys used in CREATE INDEX must be used in the [.var]`where-clause`.
+* [.var]`expr2` in (c) and (d) must be equivalent to [.var]`expr1` in (a) and (b).
+This is a formal notion of equivalence.
+For example, if they are the same expressions, or equivalent arithmetic expressions such as (x+y) and (y+x).
+* The variable [.var]`x` in (c) and (d) must be exactly the same variable name as [.var]`x` in (a) and (b).
+* g(x) in (c) and (d) must be sargable for `f(x)` in (a) and (b).
+In other words, if there was a scalar index with key `f(x)`, that index would be applicable to the predicate `g(x)`.
+For example, the index key [.var]`UPPER(x)` is sargable for the predicate `UPPER(x) LIKE "John%"`.
+* IN vs.
+WITHIN: Index key (a) can be used for query predicate (c).
+Index key (b) can be used for both query predicates (c) and (d).
+
+NOTE: Index key (b) is strictly more expensive than index key (a), for both index maintenance and query processing.
+Index key (b) and query predicate (d) are very powerful.
+They can efficiently index and query recursive trees of arbitrary depth.
+
+== Examples
+
+The following samples use the `travel-sample` bucket.
+
+*Indexing individual elements in an array*
+
+Create an index on all schedules:
+
+----
+CREATE INDEX isched
+        ON `travel-sample` ( DISTINCT ARRAY v FOR v IN schedule END );
+----
+
+The following query finds the list of scheduled 'AA' flights:
+
+----
+ SELECT  * from  `travel-sample`
+        WHERE ANY v IN schedule SATISFIES v.flight LIKE 'AA%' END;
+----
+
+*Indexing individual attributes of an array of documents*
+
+Create an index on flight IDs scheduled in the first 4 days of the week:
+
+----
+CREATE INDEX iflight_day
+       ON `travel-sample` ( DISTINCT ARRAY v.flight FOR v IN schedule WHEN v.day < 4 END )
+       WHERE type = "route" ;
+----
+
+*Compound indexing with individual elements of an array and other attributes*
+
+Create an index on scheduled flight IDs and number of stops:
+
+----
+CREATE INDEX iflight_stops
+       ON `travel-sample` ( stops, DISTINCT ARRAY v.flight FOR v IN schedule END )
+       WHERE type = "route" ;
+----
+
+The following query finds the list of scheduled 'AA' flights that have one or more stops:
+
+----
+SELECT * FROM `travel-sample`
+WHERE type = "route" AND ANY v IN schedule SATISFIES v.flight LIKE 'AA%' END AND stops >= 0;
+----
+
+*Indexing the individual elements of nest arrays*
+
+Use the DISTINCT ARRAY clause in a nested fashion to index specific attributes of a document when the array contains other arrays or documents that contain arrays.
+For example,
+
+----
+cbq> UPDATE `travel-sample`
+SET schedule[0] = {"day" : 7, "special_flights" :
+                    [ {"flight" : "AI444", "utc" : "4:44:44"},
+                      {"flight" : "AI333", "utc" : "3:33:33" }
+                    ] }
+WHERE type = "route" AND destinationairport = "CDG" AND sourceairport = "TLV";
+----
+
+----
+cbq> CREATE INDEX inested ON `travel-sample`
+( DISTINCT ARRAY (DISTINCT ARRAY y FOR y IN x.special_flights END) FOR x IN schedule END)
+WHERE type = "route";
+----
+
+[#array-idx-limitations]
+== Limitations
+
+Let's use the following sample document with Doc_Id "foo" to explain the limitations:
+
+----
+"foo": {
+          "a":1,
+          "b":[1,2],
+          "c":{"ca":[1,2,3], "cb":4},
+          "d":[{"da":5,"db":6},
+          {"da":7,"db":8}],
+          "e":[{"ea":9,"eb":[10,11,12]},
+          {"ea":13,"eb":[14,NULL,16]}],
+          "f":[[17,18],
+          [19,20,21]]
+          }
+----
+
+* Covering indexes with indexed arrays do not cover queries where the array needs to be reconstructed in full form, with duplicates and position of each element placed correctly in the projection.
++
+[cols="100,733"]
+|===
+| Supported | Example
+
+a|
+image::introduction/yes.png[,align=center]
+a|
+----
+SELECT a
+         FROM default
+         WHERE ANY i IN b SATISFIES i < 5 END;
+----
+
+a|
+image::introduction/yes.png[,align=center]
+a|
+----
+SELECT ARRAY_DISTINCT(b)
+        FROM default
+        WHERE a = 5;
+----
+
+a|
+image::introduction/no.png[,align=center]
+a|
+----
+SELECT b,a
+       FROM default;
+----
+|===
+
+* Indexed arrays do not maintain duplicate elements of an array or the position of the elements within an array in the GSI array index.
+This means that GSI array indexes do not cover expressions that reference the array attribute itself.
+For example, the following statements are not supported:
++
+----
+SELECT b FROM default;
+SELECT b[*] FROM default;
+SELECT b[1] FROM default;
+----
+
+* Array indexes only support ANY, ANY AND EVERY, ARRAY, DISTINCT, IN, WITHIN, and UNNEST operators.
+Other operators such as ALL and EVERY are not supported.
++
+NOTE: EVERY operator evaluates to true for arrays with zero elements, whereas ANY AND EVERY evaluates to true when the array has at least one matching element.
+
+* The total size of the array index keys cannot exceed 10K for a single document.
+The array index key size is calculated using the total size of all array elements being indexed in a single document.
+If the total array index key size exceeds 10K in a single document, the items are skipped.
+The following error is logged to indicate that an item is skipped when building the index: "[.out]``Encoded array key is too long``" in the [.path]_indexer.log_ file.
+The [.path]_indexer.log_ file is included in cbcollect_info output.
+For example, the array key size for the following index is calculated by adding all the elements in this list : "{[1,1], [1,2]}".
+You can contact Couchbase Support for details on how to change the limit on array index key size.
++
+----
+CREATE INDEX i1 on default(a,ARRAY x FOR x IN b END) USING GSI;
+----

@@ -1,0 +1,211 @@
+= cbbackupmgr backup
+
+[abstract]
+cbbackupmgr-backup - Backs up data from a Couchbase cluster
+
+== Synopsis
+
+_cbbackupmgr backup_ [--archive <archive_dir>] [--repo <repo_name>] [--host <url>] [--username <username>] [--password <password>] [--resume] [--purge] [--thread <num>] [--no-progress-bar]
+
+== Description
+
+Backs up a Couchbase cluster into the backup repository specified.
+Before running the backup command, you must create a backup repository.
+For more details on creating a backup repository, see xref:cbbackupmgr-config.adoc[cbbackupmgr config].
+The _backup_ command uses information from the previous backup taken in order to backup all new data on a Couchbase cluster.
+If no previous backup exists then all data on the cluster is backed up.
+The backup is taken based on the backup repository's backup configuration.
+Each backup creates a new folder in the backup repository.
+This folder contains all the data from the backup and is named to reflect the time that the backup was started.
+
+As the backup process runs, it tracks its progress which allows failed backups to be resumed from the point where they left off.
+If a backup fails before it completes, it is considered a partial backup.
+To attempt to complete the backup process, you can resume the backup using the [.param]`--resume` flag.
+You can also delete the partial backup and resume from the previous successful backup using the [.param]`--purge` flag.
+
+The _backup_ command is capable of backing up data when there is a cluster rebalance operation in progress.
+During a rebalance, the _backup_ command tracks data as it moves around the cluster and completes the backup.
+However, you should use caution when running backups during a rebalance since both the rebalance and backup operations can be resource intensive and may cause temporary performance degradations in other parts of the cluster.
+See the [.param]`--threads` flag for information on how to lower the impact of the _backup_ command on your Couchbase cluster.
+
+The _backup_ command is also capable of backing up data when there are server failures in the target backup cluster.
+When a server failure occurs, the _backup_ command waits for 180 seconds for the failed server to come back online or for the failed server to be failed over and removed from the cluster.
+If 180 seconds pass without the failed server coming back online or being failed over, then the _backup_ command marks the data on that node as failed and attempts to back up the rest of the data from the cluster.
+The backup is then marked as a partial backup in the backup archive and needs to be either resumed or purged when you invoke the _backup_ command again.
+
+== Options
+
+Below are a list of required and optional parameters for the backup command.
+
+*Required*
+
+--archive <archive_dir>
+
+* The location of the backup archive directory.
+
+--repo <repo_name>
+
+* The name of the backup repository to backup data into.
+
+--host <hostname>
+
+* The hostname of one of the nodes in the cluster to back up.
+See the Host Formats section below for hostname specification details.
+
+--username <username>
+
+* The username for cluster authentication.
+
+--password <password>
+
+* The password for cluster authentication.
+
+*Optional*
+
+--resume
+
+* If the previous backup did not complete successfully it can be resumed from where it left off by specifying this flag.
+Note that the resume and purge flags may not be specified at the same time.
+
+--purge
+
+* If the previous backup did not complete successfully the partial backup will be removed and restarted from the point of the previous successful backup by specifying this flag.
+Note that the purge and resume flags may not be specified at the same time.
+
+--threads <num>
+
+* Specifies the number of concurrent clients to use when taking a backup.
+Fewer clients means backups will take longer, but there will be less cluster resources used to complete the backup.
+More clients means faster backups, but at the cost of more cluster resource usage.
+This parameter defaults to 1 if it is not specified and it is recommended that this parameter is not set to be higher than the number of CPUs on the machine where the backup is taking place.
+
+--no-progress-bar
+
+* By default, a progress bar is printed to stdout so that the user can see how long the backup is expected to take, the amount of data that is being transferred per second, and the amount of data that has been backed up.
+Specifying this flag disables the progress bar and is useful when running automated jobs.
+
+== Host Formats
+
+When specifying a host for the _backup_ command the following formats are expected:
+
+* couchbase://<addr>
+
+* <addr>:<port>
+
+* \http://<addr>:<port>
+
+It is recommended to use the couchbase://<addr> format for standard installations.
+The other two formats allow an option to take a port number which is needed for non-default installations where the admin port has been set up on a port other that 8091.
+
+== Examples
+
+The following command is used to take a backup of a Couchbase cluster.
+
+[source,console]
+----
+   $ cbbackupmgr config --archive /data/backups --repo example
+
+   $ cbbackupmgr backup --archive /data/backups --repo example \
+   --host couchbase://172.23.10.5 --username Administrator --password password
+----
+
+Once the backup process is complete, there will be a new directory in the specified backup repository containing the backed up data.
+You can see this new directory using the xref:cbbackupmgr-list.adoc[cbbackupmgr list] command.
+
+[source,console]
+----
+$ cbbackupmgr list --archive /data/backups
+
+Size      Items          Name
+91.57MB   -              /
+91.57MB   -              + example
+91.57MB   -                  + 2016-02-11T16_35_35.796709869-08_00
+91.57MB   -                      + default
+322B      0                          bucket-config.json
+91.56MB   31569                      + data
+91.56MB   31569                          shard_0.fdb
+2B        0                          full-text.json
+10.07KB   8                          gsi.json
+1.72KB    1                          views.json
+----
+
+If a backup fails then it is considered a partial backup and the backup client will not be able to back up any new data until you decide whether to resume or purge the partial backup.
+This decision is made by specifying either the [.param]`--resume` or the [.param]`--purge` flag on the next invocation of the _backup_ command.
+Below is an example of how this process works if you want to resume a backup.
+
+[source,console]
+----
+$ cbbackupmgr config --archive /data/backups --repo example
+
+$ cbbackupmgr backup --archive /data/backups --repo example \
+--host 172.23.10.5 --username Administrator --password password
+
+Error backing up cluster: Not all data was backed up due to connectivity
+issues. Check to make sure there were no server side failures during
+backup. See backup logs for more details on what wasn't backed up.
+
+$ cbbackupmgr backup --archive /data/backups --repo example \
+--host 172.23.10.5 --username Administrator --password password
+
+Error backing up cluster: Partial backup error 2016-02-11T17:00:19.594970735-08:00
+
+$ cbbackupmgr backup --archive /data/backups --repo example --host 172.23.10.5 \
+--username Administrator --password password --resume
+
+Backup successfully completed
+----
+
+To backup a cluster with a different number of concurrent clients and decrease the backup time you can specify the [.param]`--threads` flag.
+Remember that specifying a higher number of concurrent clients increases the amount of resources the cluster uses to complete the backup.
+Below is an example of using 16 concurrent clients.
+
+[source,console]
+----
+$ cbbackupmgr config --archive /data/backups --repo example
+
+$ cbbackupmgr backup --archive /data/backups --repo example \
+--host 172.23.10.5 --username Administrator --password password --thread 16
+----
+
+== Discussion
+
+This command always backs up data incrementally.
+By using the vBucket sequence number that is associated with each item, the _backup_ command is able to examine previous backups in order to determine where the last backup finished.
+
+When backing up a cluster, data for each bucket is backed up in the following order:
+
+* Bucket Settings
+
+* View Definitions
+
+* Global Secondary Index (GSI) Definitions
+
+* Full-Text Index Definitions
+
+* Key-Value Data
+
+== Environment And Configuration Variables
+
+(None)
+
+== Files
+
+bucket-config.json
+
+* Stores the bucket configuration settings for a bucket.
+
+views.json
+
+* Stores the view definitions for a bucket.
+
+gsi.json
+
+* Stores the global secondary index (GSI) definitions for a bucket.
+
+full-text.json
+
+* Stores the full-text index definitions for a bucket.
+
+shard-*.fdb
+
+* Stores the key-value data for a bucket bucket.

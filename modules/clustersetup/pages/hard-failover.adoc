@@ -4,16 +4,16 @@
 Hard failover is the process of ejecting an unavailable or unstable node from a cluster immediately.
 
 NOTE: To fully understand how Hard Failover works, you must first understand how Couchbase partitions data across a cluster.
-If you are not familiar, click xref:concepts:buckets-vbuckets.adoc[here].
 
 Hard failover is the act of ejecting a node from a cluster when that node is unavailable or unstable (for example, in case of a server or instance failure).
 When hard failover is initiated, it tells the Cluster Manager to remove the node from active use, regardless of what is occurring, and then to start the procedures necessary for the other nodes in the cluster to take over for that ejected node.
-The Cluster Manager performs slightly different actions for each service (Data, Index, Query) running on the node being failed over.
+The Cluster Manager performs slightly different actions for each service (Data, Index, Query, Full Text Search) running on the node being failed over.
 We will discuss these service-specific actions later in this section.
 
 You can perform hard failover on any node in the cluster.
 
 NOTE: Do not use hard failover for regular planned maintenance.
+For that purpose see the explanations provided in xref:setup-failover-graceful.adoc[Using Graceful Failover] or xref:remove-nodes.adoc[Removing a Node].
 
 Hard failover can be initiated in multiple ways:
 
@@ -30,7 +30,7 @@ Hard failover affects each of the services slightly different, depending whether
 
 If the failed-over node is running the Data service, the cluster initiates multiple operations to make an active set of vBuckets available as soon as possible.
 Perform a hard failover _only_ when there is a full compliment of replica vBuckets available to promote for each Bucket.
-For example, f you have four nodes running the Data service, and one node has failed, there are 256 active and 256 replica vBuckets missing from the cluster.
+For example, if you have four nodes running the Data service, and one node has failed, there are 256 active and 256 replica vBuckets missing from the cluster.
 
 The vBucket resources will look like below:
 
@@ -65,7 +65,7 @@ If the node is irreparable and replaced, the indexes will need to be created aga
 To rebalance a new node into the cluster, you must first eject the failed node using hard failover.
 
 The best practices suggest the secondary indexes on at least two nodes running the Index service to mitigate the situation when the indexes are unavailable.
-For more information, see the documentation on xref:indexes:indexing-overview.adoc[Indexing in Couchbase].
+For more information, see the documentation on xref:indexes:indexing-overview.adoc[Indexing].
 
 == Hard Failover Effect on Nodes Running the Query Service
 
@@ -74,9 +74,23 @@ However, any in-flight queries on those node(s) will error.
 As long as the node to be removed is not the last Query service's node, the cluster will continue to function.
 As one might expect, when node capacity is reduced the cluster can experience higher load on the remaining node(s) which can lead to performance issues on queries.
 
+== Hard Failover Effect on Nodes Running the Full Text Search (FTS) Service
+
+Full text indexes are partitioned and automatically distributed across nodes if multiple nodes are running the FTS service.
+When a node running the FTS service is failed over, it stops taking traffic.
+If there are no other nodes running FTS, all full text index building stops and full text queries fail.
+If there is at least one other node running FTS, other nodes continue responding to queries and return partial results, which your application may choose to accept or not, depending on your requirements.
+
+When the administrator rebalances the cluster, it performs multiple operations depending on the level of redundancy you have designed for the FTS service by configuring the replicas for the full text index:
+
+* If configured, the FTS service promotes the replicas to active on the remaining nodes of the cluster.
+* If not configured, the FTS service rebuilds the indexes on the remaining nodes of the cluster using stored index definitions.
+
+The FTS service does not perform Delta Node Recovery.
+
 == Returning the Cluster to a Stable State
 
-If or when the failed node is repaired and ready, it can be added back to the cluster via xref:delta-node-recovery.adoc[Delta Node Recovery], xref:full-recovery.adoc[full recovery] or an entirely new node could be added.
+If or when the failed node is repaired and ready, it can be added back to the cluster via xref:delta-node-recovery.adoc[Delta Node Recovery], xref:full-recovery.adoc[Full Recovery], or an entirely new node could be added.
 
 * If Delta Node Recovery is an option, the Cluster Manager recognizes this node as a previous member of the cluster.
 If using the Couchbase Web Console, it will prompt the administrator to perform the Delta Node Recovery.
@@ -137,6 +151,7 @@ The exception to the above rule is when the Rack/Zone Awareness (RZA) feature is
 RZA allows designating which nodes are in a server rack in a data center, different VM hosts or availability zones in a cloud hosting provider.
 It ensures that the replica vBuckets for the nodes residing in Rack A are never in Rack A.
 When using RZA, it is safe to failover an entire rack’s worth of Couchbase nodes without data loss or interrupting your application: because the other racks contain nodes with the replicas.
+For more information see xref:ha-dr:ha-dr-intro.adoc#rza[Rack Zone Awareness].
 
 Hard failover when the cluster has not recognized that the node is down::
 In rare cases, the Cluster Manager might fail to recognize that an unhealthy node is down.

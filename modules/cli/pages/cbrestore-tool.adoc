@@ -27,7 +27,28 @@ Items that had been written to file on disk are restored to RAM.
 The `cbbackup`, `cbrestore`, and `cbtransfer` tools do not communicate with external IP addresses for server nodes outside of a cluster.
 Backup, restore, or transfer operations are performed on data from a node within a Couchbase cluster.
 They only communicate with nodes from a node list obtained within a cluster.
-If you install Couchbase Server with a default IP address, you cannot use an external hostname to access it.
+If you install Couchbase Server with a default IP address, you cannot use an external host name to access it.
+
+If the backup being restored contains global secondary index definitions (stored in `index.json`), then these are also restored as part of the cbrestore process.
+Unlike both data and map-reduce views, global secondary indexes are not automatically distributed across a cluster.
+As a result, many users manually distribute their indexes across separate index nodes to ensure high availability (see xref:n1ql:n1ql-language-reference/createindex.adoc[CREATE INDEX]).
+
+Due to the topology-agnostic nature of `cbbackup`,these index definitions are stored without the explicit node names, which are passed in as part of the `CREATE INDEX` command.
+`Cbbackup` does however store the indexer-id for each index, a value used to internally identify a specific index node.
+In order to restore indexes to a cluster, `cbrestore` sends each index definition, along with this identifier, to the index service which will appropriately distribute these indexes across all index nodes.
+When you restore indexes to the same cluster (and same topology) that the backup was taken from, the indexing service is able to locate the appropriate index nodes so that the indexes are on the same nodes as before.
+Often the topology of a cluster at the time of backup is not the same as the topology when restoring.
+In this case the indexing service may be unable to find the specific node associated with an index which it is restoring.
+The behaviour when the specific index node cannot be found is for the index service to distribute the index definition to another index node, chosen at random.
+This random distribution can cause indexes with the same definitions to be placed on the same node rather than separate nodes.
+You should always check that the indexes have been correctly distributed after running a restore, you may need to manually redistribute some indexes if necessary.
+
+Once the index definitions have been restored by cbrestore they must be built manually (see xref:n1ql:n1ql-language-reference/build-index.adoc[BUILD INDEX]).
+as the index service only creates them (without building them).
+This is to prevent resource contention caused by simultaneous data restoration and building of indexes during the cbrestore process.
+Additionally this gives the Couchbase administrator a chance to examine and redistribute the indexes before they are built.
+
+You can check whether or not an index is in a ‘created’, ‘built’ or ‘building’ state by viewing the ‘Index’ tab in the web console.
 
 The tool is in the following locations:
 
@@ -154,9 +175,10 @@ The following are extra, specialized command options with the `cbrestore -x` par
 | For value 1, transfer only data from a backup file or cluster.
 
 | `design_doc_only=0`
-| The documents are restored from a backup file (created with the `cbbackup`) tool.
-For value 1, transfer only design documents from a backup file or cluster.
+| For value 1, transfer only design documents from a backup file or cluster.
 Default: 0.
+
+The design documents are restored from a backup file created with the `cbbackup` tool.
 
 | `max_retry=10`
 | Max number of sequential retries if the transfer fails.
@@ -190,6 +212,9 @@ The value of 0 is used only when transferring from 1.8.x to 1.8.x.
 
 | `uncompress=0`
 | For value 1, restore data in uncompressed mode.
+
+This option is unsupported.
+To restore from compressed backups, you should use xref:backup-restore:cbbackupmgr.adoc[cbbackupmgr], which is available for Couchbase Server Enterprise Edition only.
 |===
 
 == Examples
