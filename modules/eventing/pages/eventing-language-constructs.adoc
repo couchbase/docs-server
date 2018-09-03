@@ -1,0 +1,338 @@
+= Language Constructs
+
+[abstract]
+The language constructs are fundamental units of a language.
+This topic discusses the JavaScript constructs that have been removed and new constructs that have been added in order to support the requirements of Couchbase Functions.
+
+Using JavaScript, you can write your custom Functions.
+Couchbase Functions inherit support for most ECMAScript constructs by using Google v8 as the execution container.
+However, to support the ability to shard and scale Function-execution automatically, some capabilities have been removed.
+Additionally, to optimize language-utilization of the server environment, some new constructs have been added.
+
+[#removed-lang-features]
+== Removed Language Features
+
+The following JavaScript features have been removed:
+
+* Global State
+* Asynchrony
+* Browser and other Extensions
+
+_Global State_:
+
+Functions do not allow global variables.
+All state must be saved and retrieved from persistence providers.
+In Couchbase Server 5.5, the Data Service provider is used as a persistence provider.
+Therefore, all global states are contained in the Data Service bucket(s) made available to the Function through bindings.
+This restriction is mandatory for the Function-logic to remain agnostic of the rebalance operation.
+
+[source,javascript]
+----
+var count = 0;                         // Not allowed - global variable.
+function OnUpdate(doc, meta) {
+  count++;
+}
+----
+
+_Asynchrony_:
+
+Asynchrony, particularly asynchronous callback, to be Functional needs to retain access to parent scope.
+This forms a node-specific, long-running state that prevents the capture of entire long-running state in persistence providers.
+Therefore, Function handlers are restricted to running as short-running, straight-line code, without sleep and wakeups.
+Limited asynchrony is added back through time observers.
+Time observers are designed not to make the state node-specific
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  setTimeout(function(){}, 300);     // Not allowed - asynchronous flow.
+}
+----
+
+_Browser and other Extensions_:
+
+{empty} .A Function executes on Couchbase Server similar to the code that is visible in the browser.
+
+As a Developer, you need to understand that the code displayed in the below example runs in the browser.
+The ‘window’ term in the code *window.XMLHttpRequest()*, is not a server-side construct but is in the context of a browser.
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  var rpc = window.XMLHttpRequest();  // Not allowed - browser extension.
+}
+----
+
+[#added-lang-features]
+== Added Language Features
+
+The following constructs have been added:
+
+* Bucket Accessors
+* Top level N1QL keywords such as SELECT, UPDATE, and INSERT
+
+_Bucket Accessors_:
+
+Couchbase buckets, when bound to a Function, appear as a global JavaScript map.
+The map operations such as get, set and delete are mapped to the Data Service providers get, set, and delete operations respectively.
+Other advanced Data Service operations are available as member Functions on the map object.
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  // Assuming 'dest' is a bucket alias binding
+  var val = dest[meta.id];         // this is a bucket GET operation.
+  dest[meta.id] = {"status":3};    // this is a bucket SET operation.
+  delete dest[meta.id];            // this is a bucket DEL operation.
+}
+----
+
+_N1QL_:
+
+Top level N1QL keywords, such as SELECT, UPDATE, and INSERT, are available as keywords in Functions.
+Operations that return values are accessible through a special iterator on which the *for (var <row> of <iterator>)* looping-construct has been defined.
+This restricted looping-construct allows support of query-result streaming, and automatic query-cancellation when the iterator goes out of scope.
+Any variable that is reachable from the scope of the N1QL query can be referred to using *$<variable>* syntax in the N1QL statement, where parameters get substituted according to the rules of the named-parameter substitution in the N1QL grammar specification.
+
+IMPORTANT: The N1QL construct is still in development and may have some rough edges and bugs, and may change significantly before the final GA release.
+This release version of Couchbase Server 5.5 is intended for development purposes only.
+
+The iterator is an input iterator (elements are read-only).
+The keyword _this_ cannot be used in the body of the iterator.
+The variables created inside the iterator are local to the iterator.
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  var strong = 70;
+  var stmt =
+    SELECT *                  // N1QL queries are embedded directly.
+    FROM `beer-samples`       // Token escaping is standard N1QL style.
+    WHERE abv > $strong;      // Local variable reference using $ syntax.
+  for (var beer of stmt) {  // Stream results using 'for' iterator.
+    break;                   // Cancel streaming query by breaking out.
+  }
+}
+----
+
+[#handler-signatures]
+== Handler Signatures
+
+The Eventing Service supports two event-handlers:
+
+* OnUpdate Handler
+* OnDelete Handler
+
+_OnUpdate Handler_: This handler gets called when a document is created or modified.
+The handler listens to data changes from the associated source vBucket.
+A sample OnUpdate handler is displayed below:
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  if (doc.type === 'order' && doc.value > 5000) {
+    //‘phonverify’ is a bucket alias that is specified as a binding.
+    phoneverify[meta.id] = doc.customer;
+  }
+}
+----
+
+In this handler following limitations exist:
+
+* If a document is modified several times in a short duration, the calls at times get coalesced into a single event, due to deduplication.
+* It is not possible to distinguish a Create from an Update operation.
+
+_OnDelete Handler_:
+
+This handler gets called when a document is deleted.
+The handler listens to data changes from the associated source vBucket.
+This handler also gets invoked during the expiry of a document.
+
+A sample OnDelete handler is displayed below:
+
+[source,javascript]
+----
+function OnDelete(meta) {
+  var stmt = SELECT id from orders WHERE shipaddr = $meta.id;
+    for (var id of stmt) {
+      log("Address invalidated for pending order: " + id);
+    }
+  }
+----
+
+In this handler the following limitations exist:
+
+* It is not possible to distinguish a delete as a result of expiration from a user-triggered delete operation.
+* It is not possible to get the value of the document that was just deleted or the one that just got expired.
+
+== Reserved Words
+
+Reserved words are words that cannot be used as a variable name, function name, or as a property in the Function handler code.
+The following table lists the reserved words that you must refrain from using as they are used by Couchbase's query language, N1QL.
+
+|===
+4+| N1QL Keywords
+
+| ALTER
+| EXECUTE
+| MERGE
+| UPDATE
+
+| BUILD
+| EXPLAIN
+| PREPARE
+| UPSERT
+
+| CREATE
+| GRANT
+| RENAME
+|
+
+| DELETE
+| INFER
+| REVOKE
+|
+
+| DROP
+| INSERT
+| SELECT
+|
+|===
+
+*What Happens If You Use a Reserved Word?*
+
+Let's say you try to create a new Function handler code using a reserved word for variable names, for function names, and as a property bindings value.
+All three cases generate a deployment error.
+
+Reserved words as a variable name:
+
+[source,javascript]
+----
+function get_numip_first_3_octets(ip)
+{
+  var grant = 0;
+  if (ip)
+  {
+	var parts = ip.split('.');
+  }
+}
+----
+
+Reserved words as a function name:
+
+[source,javascript]
+----
+function grant(ip)
+{
+  var return_val = 0;
+  if (ip)
+  {
+    var parts = ip.split('.');
+  }
+}
+----
+
+During the Function deployment step, when the system validates the handler code, it displays an error message such as the following: [.out]`Sample Error Message - Deployment failed: Syntax error (<line and column numbers>) - grant is a reserved name in N1QLJs`
+
+Reserved words as a property bindings value
+
+image::reserved-words.png[,300]
+
+== *Support for N1QL in Function Handlers*
+
+IMPORTANT: The N1QL queries in events are a BETA feature and may have some rough edges and bugs, and may change significantly before the final GA release.
+This Beta-release version of Couchbase Server 5.5 is intended for development purposes only; no Enterprise Support is provided for Beta features.
+
+The Function handler code supports N1QL queries.
+Top level N1QL keywords, such as SELECT, UPDATE, and INSERT, are available as keywords in Functions.
+
+During deployment, if a handler code includes an N1QL query, then the system generates a warning message.
+[.out]``Warning Message: "Handler <function_name> uses Beta features.
+Do not use in production environments."``However, the warning message does not prevent the Function deployment.
+
+You must use [.var]`$<variable>`, as per N1QL specification, to use a JavaScript variable in the query statement.
+The object expressions for substitution are not supported and therefore you cannot use the [.param]`meta.id` expression in the query statement.
+
+Instead of [.param]`meta.id` expression, you can use `var id = meta.id` in an N1QL query.
+
+* Invalid N1QL query
++
+----
+DELETE FROM `transactions` WHERE username = $meta.id;
+----
+
+* Valid N1QL query
++
+----
+var id = meta.id;
+DELETE FROM `transactions` WHERE username = $id;
+----
+
+When you use a N1QL query inside a Function handler, remember to use an escaped identifier for bucket names with special characters (`[.var]`bucket-name``).
+Escaped identifiers are surrounded by backticks and support all identifiers in JSON
+
+For example:
+
+* If the bucket name is [.param]`beer-sample`, then use the N1QL query such as:
++
+----
+SELECT * FROM `beer-sample` WHERE type...
+----
+
+* If bucket name is [.param]`beersample`, then use the N1QL query such as:
++
+----
+SELECT * FROM beersample WHERE type ...
+----
+
+== Timers
+
+*Creating a Timer*
+
+To create a timer use the below syntax:
+
+----
+createTimer(callback, timestamp, reference, context)
+----
+
+In the createTimer syntax:
+
+* *callback* - is the function called when the timer gets triggered.
+You need to ensure that the callback function is the top-level function that takes a single argument, the context.
+* *timestamp* - is the JavaScript Date object timestamp at which the Function handler code must be executed.
+* *reference* - is a unique string that gets passed.
+This string helps to identify the timer that is being created.
+All callback and references are scoped to the Function definition.
+Also, all references must be unique within the Function scope.
+When multiple timers are created with the same unique reference, old timers (with the same unique reference) get canceled.
+* *context* - is any JavaScript object that can be serialized.
+When the timer gets triggered, the context specified during timer creation gets passed to the callback Function.
+For optimal performance, the context object payload needs to be lesser than 100 KB.
+
+A sample *createTimer* language construct is provided for reference.
+
+----
+createTimer(DocTimerCallback, twoMinsPrior, meta.id, context)
+----
+
+In the sample construct:
+
+* *DocTimerCallback* is the name of the function used in the Function handler code.
+* *twoMinsPrior* is a JavaScript Date object.
+* *meta.id* is a generic reference string that can be used in the Couchbase cluster.
+* *context* is the JavaScript object that is used in the Function handler code.
+
+A few ascpects related to timer construct are listed below:
+
+* Bindings can be reused in timers.
+Bindings, created during the Function definition, can be accessed by the timer constructs in the Function handler code.
+* When logging is enabled, timer related logs get captured as part of the Application logs.
+* Timers get deleted when the associated Function is deleted or undeployed.
+* While using timers, ensure that other applications do not use the metadata bucket.
+The metadata bucket stores information about timers and its association with a Function.
+Therefore, the metadata bucket should not be deleted or flushed, or the keys be updated.
+* With an increase in the usage of timers, the metadata memory assignment must also be increased.
+Due to runtime or programmatic errors in the Function handler code, if triggering of a timer fails, then triggering of timer gets permanently blocked.
+* For easy debugging, Couchbase recommends enclosing of timers in a try-catch block.
+* Timers follow the same timeout semantics as their Parent Functions.
+So, if a Function has an execution timeout of 60 seconds, each of the timers created from the Function inherits the same execution timeout value of 60 seconds.
