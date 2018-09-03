@@ -1,25 +1,29 @@
 = CREATE PRIMARY INDEX
-:page-topic-type: concept
 
-The CREATE PRIMARY INDEX statement allows you to create a primary index.
-Primary indexes contain a full set of keys in a given bucket.
-Primary indexes are optional and are only required for running ad hoc queries on a bucket that is not supported by a secondary index.
+The `CREATE PRIMARY INDEX` statement allows you to create a primary index.
+Primary indexes contain a full set of keys in a given keyspace.
+Primary indexes are optional and are only required for running ad hoc queries on a keyspace that is not supported by a secondary index.
 
-CREATE PRIMARY INDEX is by default a synchronous operation.
-The CREATE PRIMARY INDEX statement blocks until the operation finishes.
+`CREATE PRIMARY INDEX` is by default a synchronous operation.
+The `CREATE PRIMARY INDEX` statement blocks until the operation finishes.
 Index building starts by creating a task that is queued for index build.
 After this phase, if you lose connectivity, the index build operation continues in the background.
 You can also run index creation asynchronously by using the `defer_build` clause.
-In the asynchronous mode, CREATE PRIMARY INDEX starts a task to create the primary index and returns as soon as the task is queued for execution.
+In the asynchronous mode, `CREATE PRIMARY INDEX` starts a task to create the primary index and returns as soon as the task is queued for execution.
 The full index creation operation happens in the background.
 
 Both GSI and view indexers provide a status field and mark index status pending.
 With the GSI indexer, index status continues to report `pending`.
 This status field and other index metadata can be queried by using `system:indexes`.
 
+*RBAC Privileges*
+
+Users executing the `CREATE PRIMARY INDEX` statement must have the _Query Manage Index_ privilege granted on the keyspace.
+For more details about user roles, see xref:security:security-authorization.adoc[Authorization].
+
 [IMPORTANT]
 ====
-Indexes cannot be built concurrently on a given bucket unless the `defer_build` option in the CREATE PRIMARY INDEX statement is used in combination with the BUILD INDEX statement.
+Indexes cannot be built concurrently on a given keyspace unless the `defer_build` option in the `CREATE PRIMARY INDEX` statement is used in combination with the `BUILD INDEX` statement.
 The following error is reported if a second index creation operation is kicked off before the completion of the ongoing index creation.
 
 ----
@@ -30,94 +34,105 @@ The following error is reported if a second index creation operation is kicked o
 You can create multiple primary indexes on a bucket for better index availability and place them on separate nodes by using the `nodes` clause.
 ====
 
-_create-primary-index:_
+== Syntax
 
 ----
 CREATE PRIMARY INDEX [index_name]
     ON named_keyspace_ref
-    [ USING GSI | VIEW ]
-    [ WITH {"nodes": ["node_name"], "defer_build":true|false} ];
+    [ USING GSI | USING VIEW ]
+    [ WITH {"nodes": ["node_name"], "defer_build":true|false}, "num_replica": num_replica_num } ];
 ----
 
-_index_name:_
-
-`index_name` is a unique name that identifies the index.
-`index_name` is optional: if it is not specified, the default name of `#primary` is applied.
-
-Valid GSI index names can contain any of the following characters: A-Z a-z 0-9 # _, and must start with a letter, [A-Z a-z].
+Arguments::
+index_name;;
+[Optional]  The unique name that identifies the index.
+If a name is not specified, the default name of `#primary` is applied.
++
+Valid GSI index names can contain any of the following characters: A-Z a-z 0-9 # _, and must start with a letter [A-Z a-z].
++
 The minimum length of an index name is 1 character and there is no maximum length set for an index name.
++
 When querying, if the index name contains a '&#35;' or '_' character, you must enclose the index name within backticks.
++
+IMPORTANT: Unnamed primary indexes are dropped by using the `DROP PRIMARY INDEX` statement, and named primary indexes are dropped by using the `DROP INDEX` statement.
 
-IMPORTANT: Unnamed primary indexes are dropped by using the DROP PRIMARY INDEX statement, and named primary indexes are dropped by using the DROP INDEX statement.
-
-_named-keyspace-ref:_
-
-----
-[ namespace-name :] keyspace-name
-----
-
-_keyspace-name:_
-
-identifier that refers to the bucket name.
-Specifies the bucket as source for which the index needs to be created.
+named_keyspace_ref;;
+Identifier that refers to the keyspace name.
+Specifies the keyspace as source for which the index needs to be created.
 You can add an optional namespace name to the keyspace name in this way:
-
++
 ----
 namespace-name : keyspace-name
 ----
-
++
 For example, `main:customer` indicates the `customer` keyspace in the main namespace.
 If the namespace name is omitted, the default namespace in the current session is used.
 
-_USING GSI | VIEW_
-
+USING GSI | USING VIEW;;
 The USING clause specifies the index type to use.
 Primary indexes can be created as global secondary indexes (`GSI`) or views (`VIEW`).
 If the USING clause is not specified, by default `GSI` is used as the indexer.
 
-_WITH options_
-
-The `WITH` clause specifies additional options for the `GSI` type primary indexes.
-
-_"nodes":["node name"]_
-
+WITH options;; The `WITH` clause specifies additional options for the `GSI` type primary indexes.
+"nodes":["node name"]:::
 A single primary index of type `GSI` can only be placed on a single node that runs the indexing service.
 The `nodes` option allows you to specify the node that the index is placed on.
-If `nodes` is not specified, one of the nodes running the index service is randomly picked for the index.
+If `nodes` is not specified, one of the nodes running the index service is randomly selected to host the index.
++
+Multiple nodes can be specified to distribute replicas of an index amongst multiple nodes.
++
+If specifying both [.var]`nodes` and [.var]`num_replica`, the number of nodes in the array must be one greater than the specified number of replicas otherwise the index creation will fail.
++
+IMPORTANT: The node names passed to the `nodes` parameter must include the cluster administration port (by default 8091).
+For example `WITH {"nodes": ["192.0.2.0:8091"]}` instead of `WITH {"nodes": ["192.0.2.0"]}`.
 
-_"defer_build":true|false_
-
-When `defer_build` is set to true, the CREATE PRIMARY INDEX operation queues the task for building the index but immediately pauses the building of the index of type `GSI`.
+"defer_build":true|false:::
+When `defer_build` is set to true, the `CREATE PRIMARY INDEX` operation queues the task for building the index but immediately pauses the building of the index of type `GSI`.
 Index building requires an expensive scan operation.
 Deferring building of the index with multiple indexes can optimize the expensive scan operation.
-You can defer building multiple indexes and, using BUILD INDEX statement, multiple indexes to be built efficiently with one efficient scan of bucket data.
+You can defer building multiple indexes and, using `BUILD INDEX` statement, multiple indexes to be built efficiently with one efficient scan of keyspace data.
++
+When `defer_build` is set to `false`, the `CREATE PRIMARY INDEX` operation queues the task for building the index and immediately kicks off the building of the index of type `GSI`.
 
-When `defer_build` is set to `false`, the CREATE PRIMARY INDEX operation queues the task for building the index and immediately kicks off the building of the index of type `GSI`.
+"num_replica": num_replica_num:::
+[.var]`num_replica` specifies the number of replicas of the index to create.
++
+The indexer will automatically distribute these indexes amongst index nodes in the cluster for load-balancing and high availability purposes.
+When creating an index with replicas in this manner, the indexer will attempt to distribute the replicas based on the server groups in use in the cluster where possible.
++
+If [.var]`num_replica_num` is not less than the number of index nodes in the cluster, then the index creation will fail.
++
+[caption=Attention]
+IMPORTANT: We recommend that you do not create (or drop) secondary indexes when any node with a secondary index role is down as this may result in duplicate index names.
 
-Examples
+*Example 1*: Create a primary index on the travel-sample keyspace.
 
-The following example creates a primary index on the [.param]`beer-sample` bucket.
+----
+CREATE PRIMARY INDEX `travel-sample-primary-index` ON `travel-sample` USING GSI;
+----
+
 After the index creation statement comes back, `system:indexes` is queried for the status of the index.
 
 ----
-CREATE PRIMARY INDEX `beer-sample-primary-index` ON `beer-sample` USING GSI;
-SELECT * FROM system:indexes WHERE name="beer-sample-primary-index";
+SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
 ----
 
-The following example creates the same primary index using the `defer_build` option coupled with the BUILD INDEX statement.
+*Example 2*: Create the same primary index using the `defer_build` option coupled with the `BUILD INDEX` statement.
 
 ----
-CREATE PRIMARY INDEX `beer-sample-primary-index` ON `beer-sample` USING GSI
+CREATE PRIMARY INDEX `travel-sample-primary-index` ON `travel-sample` USING GSI
     WITH {"defer_build":true};
-SELECT * FROM system:indexes WHERE name="beer-sample-primary-index";
+
+SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
 ----
 
-With the `defer_build` option enabled, the output from `system:indexes` shows the `beer-sample-primary-index` in the pending state (`"state": "pending"`).
-BUILD INDEX can be used to kick off the deferred build on the primary index:
+With the `defer_build` option enabled, the output from `system:indexes` shows the `travel-sample-primary-index` in the pending state (`"state": "pending"`).
+`BUILD INDEX` can be used to kick off the deferred build on the primary index:
 
 ----
-BUILD INDEX ON `beer-sample`(`beer-sample-primary-index`) USING GSI;
-SELECT * FROM system:indexes WHERE name="beer-sample-primary-index";
+BUILD INDEX ON `travel-sample`(`travel-sample-primary-index`) USING GSI;
+
+SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
 ----
 
 == Primary scan timeout
@@ -125,7 +140,8 @@ SELECT * FROM system:indexes WHERE name="beer-sample-primary-index";
 For a primary index scan on any keyspace size, the query engine guarantees that the client is not exposed to scan timeout if the indexer throws a scan timeout after it has returned a greater than zero sized subset of primary keys.
 To complete the scan, the query engine performs successive scans of the primary index until all the primary keys have been returned.
 It is possible that the indexer throws scan timeout without returning any primary keys, and in this event the query engine returns scan timeout to the client.
+
 For example, if the indexer cannot find a snapshot that satisfies the consistency guarantee of the query within the timeout limit, it will timeout without returning any primary keys.
 
 For secondary index scans, the query engine does not handle scan timeout, and returns index scan timeout error to the client.
-You can handle scan timeout on a secondary index by increasing the indexer timeout setting, or, preferably, defining and using a more selective index.
+You can handle scan timeout on a secondary index by increasing the indexer timeout setting (See xref:settings:query-settings.adoc[Query Settings]) or preferably by defining and using a more selective index.

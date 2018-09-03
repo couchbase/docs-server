@@ -53,6 +53,37 @@ When there are no more vBuckets assigned to a node, the node is removed from the
 When adding or removing nodes from the indexing and query services, no data is moved and so their membership is simply added or removed from the cluster map.
 The client SDKs automatically begin load balancing across those services using the new cluster map.
 
+== Node Failure Detection
+
+Each node within a Couchbase Server cluster communicates with one another via a heartbeating mechanism.
+Traditionally, these heartbeats are sent between the cluster managers on all nodes at regular intervals.
+The heartbeats contain basic statistics about the node, which are used to assess the health of the node.
+
+For the purposes of automatic failover, one node is designated as the orchestrator based on an election by the other nodes.
+This orchestrator is then responsible for keeping track of the heartbeats received from other nodes.
+If automatic failover is enabled, then after a specified period of time given by the automatic failover timeout period, if no heartbeats have been received from a node the orchestrator node will automatically failover the node.
+This is dependent on other criteria being met as detailed on xref:clustersetup:automatic-failover.adoc[Using Automatic Failover] such as only a single node being unhealthy.
+
+This approach is fairly brittle and susceptible to 'false positives', that is a node being identified as offline even if the service on that node (e.g.
+Query, Data etc) continues to serve traffic without issue.
+Additionally, as the orchestrator is solely responsible for deciding which nodes to failover it is vulnerable to issues such as network partitions.
+
+To mitigate these issues, the monitoring of node health is performed by a node monitor, which exists outside of the cluster management process, rather than the cluster manager itself.
+This node monitor is responsible for monitoring the services which are running on the node and including this information in heartbeats.
+The node monitor heartbeats are similar to the cluster manager heartbeats in that they are exchanged between all nodes, but these heartbeats contained much more detailed information.
+Each node then decides whether a particular node is healthy based on the heartbeats that it receives from the node.
+A node is only considered for automatic failover if every other node reports that it is unhealthy.
+
+Currently the following services are monitored:
+
+* *Cluster Manager* - The cluster management process' health is assessed by monitoring the basic heartbeating that the cluster manager performs.
+If the cluster manager is not sending out its basic heartbeats to other nodes then it is considered unhealthy.
+* *Data Service* - The health of the Data service is monitored by inspecting the xref:high-availability-replication-architecture.adoc[DCP traffic] coming out of the node.
+If the memcached process is not sending data or no-ops (internal keep-alives) along its connections then it is considered unhealthy.
+
+This monitoring is then used to more accurately inform the decision about whether to automatically failover a node.
+By using specific service monitoring, the chance for 'false positives' is greatly reduced, although it is still vulnerable to an unstable network.
+
 [#RZA]
 == Smart Data Placement with Rack and Zone Awareness
 

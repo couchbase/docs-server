@@ -1,417 +1,639 @@
-= Text Indexing
+= Creating Indexes
 
-In order to perform full text queries, you must first create a full text index.
-Unlike N1QL or other SQL systems, you can’t run full text searches directly on data without a full text index: full text search has nothing like a table scan that can inspect documents outside the index.
+[abstract]
+Full Text Searches are supported by specially purposed indexes, which can be created either from the Couchbase Web Console, or by means of the REST API.
 
-The process of creating an index is called [.term]_index mapping_, in which you specify how you want Couchbase Server to map the different fields in your JSON documents to elements in the full text index.
-You typically want a different index mapping for each type of document you want to search.
-For example, if you’re using the Couchbase [.param]`beer-sample` bucket, you might choose to map documents of type [.param]`beer` one way and documents of type [.param]`brewery` another.
+[#indexes-and-full-text-search]
+== Indexes and Full Text Search
 
-An index can contain information from one bucket only.
-Your user must have appropriate access permissions for the bucket they want to search.
-You can enable searches across buckets by using an <<index-alias,index alias>>.
+Every Full Text Search is performed on a user-created _Full Text Index_, which contains the targets on which searches are to be performed: these targets are values derived from the textual and other contents of documents within a specified bucket.
 
-To create an index, go to the Couchbase Server web console > [.ui]*Indexes* tab > [.ui]*Full Text*.
+Index-creation is configurable, and can be highly selective: documents can be user-grouped into different _types_ (for example, `airline` documents versus `hotel` documents), based on the document-IDs or the values of a designated document-field; and each document-type can be assigned its own index-mapping.
+Each index-mapping in turn can be assigned its own _analyzers_, can be applied to a specific subset of document-fields, and can be explicitly included in or excluded from the index.
 
-Your URL might look something like this, if you replace [.param]`localhost` with the name of your server:
+Additionally, searches can be performed across multiple buckets, by means of _index aliases_.
 
+This section provides detailed explanations of how indexes can be created by means of the Couchbase Web Console.
+Additionally, it explains how index-creation can be achieved with the Couchbase REST API: see xref:fts-creating-indexes.adoc#index-creation-with-the-rest-api[Index-Creation with the REST API], below.
+
+[#creating-a-full-text-index]
+== Creating a Full Text Index
+
+Index-creation can be performed by means of the Couchbase Web Console.
+The basic procedure is outlined in xref:fts-searching-from-the-ui.adoc[Searching from the UI].
+The current page explains the more advanced aspects of index-creation, and shows how they can be managed from the console.
+
+[#accessing-and-managing-full-text-indexes]
+== Accessing and Managing Full Text Indexes
+
+Full Text Indexes are different from the _Global_ indexes that are accessed under the *Indexes* tab in the left-hand navigation panel of the Couchbase Web Console.
+Full Text Indexes are accessed from the *Search* tab: left-click on this to display the *Full Text Search* panel, which contains a tabular presentation of currently existing indexes, with a row for each index.
+(See xref:fts-searching-from-the-ui.adoc[Searching from the UI] for a full illustration.) To manage an index, left-click on its row.
+The row expands, as follows:
+
+[#fts_index_management_ui]
+image::fts-index-management-ui.png[,820,align=left]
+
+Three buttons are displayed:
+
+* [.ui]*Delete* causes the current index to be deleted.
+* [.ui]*Clone* brings up the *Clone Index* screen, which allows the a copy of the current index to be modified as appropriate and saved under a new name.
+* [.ui]*Edit* brings up the *Edit Index* screen, which allows the index to be modified.
+Saving modifications causes the index to be rebuilt.
++
+Note that both the [.ui]*Edit Index* and [.ui]*Clone Index* screens are in most respects the same as the [.ui]*Add Index* screen, which was itself described in xref:fts-searching-from-the-ui.adoc[Searching from the UI].
+
+[#specifying-type-identifiers]
+== Specifying Type Identifiers
+
+A _type identifier_ allows the documents in a bucket to be identified by the index according to their _type_.
+When the [.ui]*Add Index*, [.ui]*Edit Index*, or [.ui]*Clone Index* screen is accessed, a [.ui]*Type Identifier* panel is displayed:
+
+[#fts_type_identifer_ui]
+image::fts-type-identifier-ui.png[,460,align=left]
+
+Three options are provided, each of which gives the index a particular way of determining the type of each document in the bucket:
+
+* *JSON type field*: The name of a document-field.
+The value specified for this field is used by the index to determine the type of the document.
+The default value is `type`: meaning that the index searches for a field in each document whose name is `type`.
+Each document that contains a field with that name is duly included in the index, with the value of the field specifying the type of the document.
+Note that the value cannot be an array or JSON object.
+* *Doc ID up to separator*: The characters in the ID of each document, up to but not including the separator.
+For example, if the document's ID is `hotel_10123`, the value `hotel` is determined by the index to be the type of the document.
+The value entered into the field should be the separator-character used in the ID: for example, `_`, if that character is the underscore.
+* *Doc ID with regex*: A regular expression that is applied by the index to the ID of each document.
+The resulting value is determined to be the type of the document.
+(This option may be used when the targeted document-subset contains neither a suitable *JSON type field* nor an ID that follows a naming convention suitable for *Doc ID up to separator*.) The value entered into the field should be the regular expression to be used.
+
+[#specifying-type-mappings]
+== Specifying Type Mappings
+
+Whereas a _type identifer_ tells the index how to determine the position in each document of the characters that specify the document's type, a _type mapping_ specifies the characters themselves.
+Thus, if *Doc ID up to separator* is used as a type identifier, and the underscore is specified as the separator-character, a type mapping of _hotel_ ensures that `hotel_10123`, rather than `airline_10`, is indexed.
+
+When the [.ui]*Add Index*, [.ui]*Edit Index*, or [.ui]*Clone Index* screen is accessed, the [.ui]*Type Mappings* panel can be opened.
+The default setting is displayed:
+
+[#fts_type_mappings_ui_closed]
+image::fts-type-mappings-ui-closed.png[,720,align=left]
+
+Left-click on the btn:[+ Add Type Mapping] button.
+The display now appears as follows:
+
+[#fts_type_mappings_ui_add]
+image::fts-type-mappings-ui-add.png[,700,align=left]
+
+The display indicates that a single type mapping is currently defined, which is `default`.
+This is a special type mapping created by every index automatically: it is applied to each document whose type _either_ does not match a user-specified type mapping, _or_ has no recognized type attribute.
+Therefore, if the default mapping is left enabled, all documents are included in the index, regardless of whether the user actively specifies type mappings.
+To ensure that only documents corresponding to the user's specified type mappings are included in the index, the default type mapping must be disabled (see below for an example).
+
+Each type mapping is listed as either *dynamic*, meaning that all fields are considered available for indexing; or *only index specified fields*, meaning that only fields specified by the user are indexed.
+Therefore, specifying the default index with dynamic mapping creates a large index whose response times may be relatively slow; and is, as such, an option potentially unsuitable for post-production deployments.
+
+For information on how values are data-typed when dynamic mapping is specified, see the section below, xref:fts-creating-indexes.adoc#document-fields-and-data-types[Document Fields and Data Types].
+
+To specify a type mapping, type an appropriate string (for example, `hotel`) into the interactive text field.
+Note the [.ui]*only index specified fields* checkbox: if this is checked, only user-specified fields from the document are included in the index.
+(For an example, see xref:fts-creating-indexes.adoc#specifying-fields[Specifying Fields], below.)
+
+Optionally, an _analyzer_ can be specified for the type mapping: for all queries that do indeed support use of an analyzer, the specified analyzer will be applied, rather than the default analyzer (which is itself specified in the *Advanced* pane, as described below, in xref:fts-creating-indexes.adoc#specifying-advanced-settings[Specifying Advanced Settings]).
+A list of available analyzers can be accessed and selected from, by means of the pull-down menu to the right of the interactive text-field:
+
+[#fts_type_mappings_ui_analyzers_menu]
+image::fts-type-mappings-ui-analyzers-menu.png[,440,align=left]
+
+The default value, `inherit`, means that the type mapping inherits the default analyzer.
+Note that custom analyzers can be created and stored for the index that is being defined, by means of the [.ui]*Analyzers* panel, described below in xref:fts-creating-indexes.adoc#creating-analyzers[Creating Analyzers].
+On creation, all custom analyzers are available for association with a type mapping, and so appear in the pull-down menu shown above.
+
+Additional information on analyzers can also be found on the page xref:fts-using-analyzers.adoc[Understanding Analyzers].
+
+Left-click on [.ui]*OK* to save.
+
+The [.ui]*Type Mappings* panel now appears as follows:
+
+[#fts_type_mappings_ui_addition_both_checked]
+image::fts-type-mappings-ui-addition-both-checked.png[,540,align=left]
+
+Note that the checkbox to the left of each of the two specified type mappings, `hotel` and `default`, is checked.
+Because `default` is checked, _all_ documents in the bucket (not merely those that correspond to the `hotel` type mapping) will be included in the index.
+To ensure that only `hotel` documents are included, _uncheck_ the checkbox for `default`.
+The panel now appears as follows:
+
+[#fts_type_mappings_ui_addition_default_unchecked]
+image::fts-type-mappings-ui-addition-default-unchecked.png[,540,align=left]
+
+Note also that should you wish to ensure that all documents in the bucket are included in the index _except_ those that correspond to the `hotel` type mapping, _uncheck_ the checkbox for `hotel`:
+
+[#fts_type_mappings_ui_addition_both_unchecked]
+image::fts-type-mappings-ui-addition-both-unchecked.png[,540,align=left]
+
+[#specifying-fields]
+== Specifying Fields
+
+A Full Text Index can be defined not only to include (or exclude) documents of a certain _type_, but also to include (or exclude) specified _fields_ within each of the typed documents.
+
+To specify one or more fields, hover with the mouse cursor over a row in the *Type Mappings* panel that contains an enabled type mapping.
+Buttons labeled [.ui]*edit* and [.ui]*+* appear:
+
+[#fts_type_mappings_ui_fields_buttons]
+image::fts-type-mappings-ui-fields-buttons.png[,700,align=left]
+
+Left-clicking on the btn:[edit] button displays the following interface:
+
+[#fts_type_mappings_ui_edit]
+image::fts-type-mappings-ui-edit.png[,700,align=left]
+
+This allows the mapping to be deleted or associated with a different analyzer.
+If the *only index specified fields* checkbox is checked, only fields specified by the user are included in the index.
+Left-clicking on the btn:[+] button displays a pop-up that features two options:
+
+[#fts_type_mappings_ui_field_options]
+image::fts-type-mappings-ui-field-options.png[,700,align=left]
+
+These options are described in the following sections.
+
+[#inserting-a-child-field]
+== Inserting a Child Field
+
+The option [.ui]*insert child field* allows a field to be individually included for (or excluded from) indexing, provided that it contains a single value or an array, rather than a JSON object.
+Selecting this option displays the following:
+
+[#fts_type_mappings_child_field_dialog]
+image::fts-type-mappings-child-field-dialog.png[,700,align=left]
+
+The interactive fields and checkboxes are:
+
+* [.ui]*field*: The name of any field within the document that contains a single value or an array, rather than a JSON object.
+* [.ui]*type*: The _data-type_ of the value of the field.
+This can be `text`, `number`, `datetime`, `boolean`, `disabled`, or `geopoint`; and can be selected from the field's pull-down menu, as follows:
++
+[#fts_type_mappings_ui_select_data_type]
+image::fts-type-mappings-ui-select-data-type.png[,300,align=left]
+
+* [.ui]*searchable as*: Typically identical to the [.ui]*field* (and dynamically supplied during text-input of the [.ui]*field*-value).
+This can be modified, to indicate an alternative field-name, whose associated value thereby becomes included in the indexed content, rather than that associated with the field-name specified in *field*.
+* [.ui]*analyzer*: The analyzer to be used for the field.
+The list of available analyzers can be displayed by means of the field's pull-down muenu, and so selected from.
+* [.ui]*index*: When checked, the field is indexed; when unchecked, the field is not indexed.
+This may be used, therefore, to explicitly remove an already-defined field from the index.
+* [.ui]*store*: When checked, the field-content is included in the set of values returned from a search; when unchecked, the field-content is not so included.
+Note that inclusion of field-content specifically permits _highlighting_ of results, so that matched expressions can be easily seen; and generally assists in debugging procedures.
+However, it also results in larger indexes and longer processing-times.
+* [.ui]*include in _all field*: When checked, the field is included in the definition of [.ui]*_all*, which is the field specified by default in the [.ui]*Advanced* panel.
+When unchecked, the field is not so included.
+Inclusion means that when _query strings_ are used to specify searches, the text in the current field is searchable without the field-name requiring a prefix (thus, a search on `description:modern` can be accomplished simply by specifying `modern`).
+* [.ui]*include term vectors*: When checked, term vectors are included.
+When unchecked, term vectors are not included.
+Term vectors are the locations of terms in a particular field.
+Certain kinds of functionality (such as highlighting, and phrase search) require term vectors.
+Inclusion of term vectors results in larger indexes and correspondingly slower index build-times.
+
+Note that when the value of the specified field is an array, the array-values are all indexed and searched individually: no special configuration is required.
+
+The dialog, when completed, might look as follows:
+
+[#fts_type-mappings_child_field_dialog_complete]
+image::fts-type-mappings-child-field-dialog-complete.png[,700,align=left]
+
+Left-click on [.ui]*OK*.
+The field is saved, and its principal attributes displayed on a new row:
+
+[#fts_type-mappings_child_field_saved]
+image::fts-type-mappings-child-field-saved.png[,700,align=left]
+
+Note that when this row is hovered over with the mouse, an btn:[Edit] button appears, whereby updates to the definition can be made.
+
+[#inserting-a-child-mapping]
+== Inserting a Child Mapping
+
+The option [.ui]*insert child mapping* specifies a document-field whose value is a JSON object.
+Selecting this option displays the following:
+
+[#fts_type_mappings_child_mapping_dialog]
+image::fts-type-mappings-child-mapping-dialog.png[,700,align=left]
+
+The following interactive field and checkbox are displayed:
+
+* [.ui]*{}*: The name of a field whose value is a JSON object.
+Note that an analyzer can be specified for the field, by means of the pull-down menu.
+* [.ui]*only index specified fields*: When checked, only fields explicitly specified are added to the index.
+Note that the JSON object specified as the value for [.ui]*{}* has multiple fields of its own.
+Checking this box ensures that all or a subset of these can be selected for indexing.
+
+When completed, this panel might look as follows (note that `reviews` is a field within the `hotel`-type documents of the `travel-sample` bucket whose value is a JSON object):
+
+[#fts_type_mappings_child_mapping_dialog_complete]
+image::fts-type-mappings-child-mapping-dialog-complete.png[,700,align=left]
+
+Save by left-clicking [.ui]*OK*.
+The field is now displayed as part of the `hotel` type mapping.
+Note that by hovering over the `reviews` row with the mouse, the [.ui]*Edit* and [.ui]*+* buttons are revealed: the [.ui]*+* is present because `reviews` is an object that contains child-fields; which can now themselves be individually indexed.
+Left-click on this, and a child-field, such as `content`, can be specified:
+
+[#fts_type_mappings_child_mapping_add_field]
+image::fts-type-mappings-child-mapping-add-field.png[,700,align=left]
+
+[#creating-analyzers]
+== Creating Analyzers
+
+Analyzers increase search-awareness by transforming input text into token-streams, which permit the management of richer and more finely controlled forms of text-matching.
+An analyzer consists of modules, each of which performs a particular role in the transformation (for example, removing undesirable characters; transforming standard words into _stemmed_ or otherwise modified forms, referred to as _tokens_; and performing miscellaneous post-processing activities).
+For more information on analyzers, see xref:fts-using-analyzers.adoc[Understanding Analyzers].
+
+A default selection of analyzers is made available from the pull-down menu provided by the [.ui]*Type Mappings* interface, discussed above.
+Additional analyzers can be custom-created, by means of the [.ui]*Analyzers* panel, which appears as follows:
+
+[#fts_analyzers_panel_initial]
+image::fts-analyzers-panel-initial.png[,620,align=left]
+
+To create a new analyzer, left-click on the btn:[+ Add Analyzer] button.
+The *Custom Analyzer* dialog appears:
+
+[#fts_custom_analyzer_dialog_initial]
+image::fts-custom-analyzer-dialog-initial.png[,380,align=left]
+
+The dialog contains four interactive panels.
+
+* *Name*: A suitable, user-defined name for the analyzer.
+* *Character Filters*: One or more available character filters.
+(These strip out undesirable characters from input: for example, the `html` character filter removes HTML tags, and indexes HTML text-content alone.) To select from the list of available character filters, use the pull-down menu:
++
+[#fts_custom_analyzer_panel_select_char_filter]
+image::fts-analyzers-panel-select-char-filter.png[,460,align=left]
++
+Following addition of one character filter, to add another, left-click on the btn:[+ Add] button, to the right of the field.
++
+For an explanation of character filters, see the section in xref:fts-using-analyzers.adoc#character-filters[Understanding Analyzers].
+
+* *Tokenizer*: One of the available tokenizers.
+(These split input-strings into individual _tokens_, which together are made into a _token stream_.
+Typically, a token is established for each word.) The default value is `unicode`.
+To select from a list of all tokenizers available, use the pull-down menu:
++
+[#fts_add_tokenizer_pulldown]
+image::fts-add-tokenizer-pulldown.png[,460,align=left]
++
+For more information on tokenizers, see the section in xref:fts-using-analyzers.adoc#character-filters/tokenizers[Understanding Analyzers].
+
+* *Token Filter*: One or more of the available token filters.
+(When specified, these are chained together, to perform additional post-processing on the token stream.) To select from the list of available filters, use the pull-down menu:
++
+[#fts_custom_analyzer_panel_select_token_filter]
+image::fts-analyzers-panel-select-token-filter.png[,460,align=left]
++
+Following addition of one token filter, to add another, left-click on the btn:[+ Add] button, to the right of the field.
++
+For more information on token filters, see the section in xref:fts-using-analyzers.adoc#character-filters/token-filters[Understanding Analyzers].
+
+When these fields have been appropriately completed, save; by left-clicking on the btn:[Save] button.
+On the *Edit Index* screen, the newly defined analyzer now appears in the *Analyzers* panel, with available options displayed for further editing, and deleting.
+For example:
+
+[#fts_analyzers_panel_subsequent]
+image::fts-analyzers-panel-subsequent.png[,700,align=left]
+
+[#adding-custom-filters]
+== Adding Custom Filters
+
+_Custom Filters_ can be added, by means of the *Custom Filters* panel.
+When opened, this appears as follows:
+
+[#fts_custom_filters_panel_initial]
+image::fts-custom-filters-panel-initial.png[,700,align=left]
+
+The following four options are provided:
+
+* *character filter*: Adds a new character filter to the list of those available.
+The new filter becomes available for inclusion in custom-created analyzers.
+Left-clicking on the btn:[+ Add Character Filter] button displays the *Custom Character Filter* dialog:
++
+[#fts_custom_character_filter_dialog_initial]
+image::fts-custom-character-filter-dialog-initial.png[,380,align=left]
++
+The following interactive fields are provided:
+
+ ** *Name*: A suitable, user-defined name for the new character filter.
+ ** *Type*: The type of filtering to be performed.
+Available options can be accessed from the pull-down menu, at the right of the field.
+(Currently, only `regexp` is available.)
+ ** *Regular Expression*: The specific _regular expression_ that the new character filter is to apply.
+Character-strings that match the expression will be affected, others will not.
+ ** *Replacement*: The replacement text that will be substituted for each character-string match returned by the regular expression.
+If no replacement text is specified, the matched character-string will be omitted.
+
++
+The following, completed fields define a character filter for deleting leading whitespace:
++
+[#fts_custom_character_filter_dialog_filled]
+image::fts-custom-character-filter-dialog-filled.png[,380,align=left]
++
+When saved, the new character filter is displayed on its own row, with options for further editing, and deleting:
++
+[#fts_custom_filters_panel_new_character_filter]
+image::fts-custom-filters-panel-new-character-filter.png[,700,align=left]
+
+* *tokenizer*: Adds a new tokenizer to the list of those available.
+The new tokenizer becomes available for inclusion in custom-created analyzers.
+Left-clicking on the btn:[+ Add Tokenizer] button displays the *Custom Tokenizer* dialog:
++
+[#fts_custom_filters_tokenizer_dialog_initial]
+image::fts-custom-filters-tokenizer-dialog-initial.png[,380,align=left]
++
+The following interactive fields are provided:
+
+ ** *Name*: A suitable, user-defined name for the new tokenizer.
+ ** *Type*: The process used in tokenizing.
+Available options can be accessed from the pull-down menu, at the right of the field.
+(Currently, only `regexp` is available.)
+ ** *Regular Expression*: The specific _regular expression_ used by the tokenizing process.
+
++
+The following, completed fields define a tokenizer that removes uppercase characters:
++
+[#fts_custom_filters_tokenizer_dialog_completed]
+image::fts-custom-filters-tokenizer-dialog-completed.png[,380,align=left]
++
+When saved, the new tokenizer is displayed on its own row, with options for further editing, and deleting:
++
+[#fts_custom_filters_panel_new_tokenizer]
+image::fts-custom-filters-panel-new-tokenizer.png[,700,align=left]
+
+* *token filter*: Adds a new token filter to the list of those available.
+The new token filter becomes avalable for inclusion in custom-created analyzers.
+Left-clicking on the [.ui]*+ Add Token Filter* displays the *Custom Token Filter* dialog:
++
+[#fts_custom_filters_token_filter_dialog_initial]
+image::fts-custom-filters-token-filter-dialog-initial.png[,380,align=left]
++
+The following interactive fields are provided:
+
+ ** *Name*: A suitable, user-defined name for the new token filter.
+ ** *Type*: The type of post-processing to be provided by the new token filter.
+The default is `length`, which creates tokens whose minimum number of characters is specified by the integer provided in the *Min* field, and whose maximum by the integer provided in the *Max*.
+Additional post-processing types can be selected from the pull-down menu at the right of the field:
++
+[#fts_custom_filters_token_filter_types]
+image::fts-custom-filters-token-filter-types.png[,420,align=left]
++
+Note that type-selection determines which interactive fields appear in the *Custom Token Filter* dialog, following *Name* and *Type*.
+Experimentation with the type-options in the pull-down menu can be used to reveal which fields are provided in support of different types.
+
+ ** *Min*: The minimum length of the token, in characters.
+Note that this interactive field is displayed for the `length` type, and may not appear, or be replaced, when other types are specified.
+The default value is 3.
+ ** *Max*: The maximum length of the token, in characters.
+Note that this interactive field is displayed for the `length` type, and may not appear, or be replaced, when other types are specified.
+The default value is 255.
+
++
+The following, completed fields define a token filter that restricts token-length to a minimum of 3, and a maximum of 255 characters:
++
+[#fts_custom_filters_token_filter_dialog_complete]
+image::fts-custom-filters-token-filter-dialog-complete.png[,380,align=left]
++
+When saved, the new token filter is displayed on its own row, with options for further editing, and deleting:
++
+[#fts_custom_filters_panel_new_token_filter]
+image::fts-custom-filters-panel-new-token-filter.png[,700,align=left]
++
+For an explanation of the token filters made available by this dialog, see the section _Token Filters_, in xref:fts-using-analyzers.adoc#token-filters[Understanding Analyzers].
+
+* *wordlist*: Adds a list of words to be removed from the current search.
+Left-clicking on the btn:[+ Add Word List] button displays the *Custom Word List* dialog:
++
+[#fts_custom_wordlist_dialog_initial]
+image::fts-custom-wordlist-dialog-initial.png[,380,align=left]
++
+To create a custom word list, first, type a suitable name into the *Name* field.
+Then, add words by typing each individually into the field that bears the placeholder text, `word to be added`.
+After each word has been added, left-click on the [.ui]*+ Add* button, at the lower-right.
+The word is added to the central *Words* panel.
+Continue adding as many words as are required.
+For example:
++
+[#fts_custom_wordlist_dialog_complete]
+image::fts-custom-wordlist-dialog-complete.png[,380,align=left]
++
+To remove a word, select the word within the *Words* panel, and left-click on the btn:[Remove] button.
+To save, left-click on [.ui]*Save*.
+The new word list is displayed on its own row, with options for further editing, and deleting:
++
+[#fts_custom_filters_panel_new_word_list]
+image::fts-custom-filters-panel-new-word-list.png[,700,align=left]
+
+[#specifying-advanced-settings]
+== Specifying Advanced Settings
+
+Advanced settings can be specified by means of the *Advanced* panel.
+When opened, this appears as follows:
+
+[#fts_advanced_panel]
+image::fts-advanced-panel.png[,420,align=left]
+
+The following, interactive fields are displayed:
+
+* *Type Field*: The default type for documents in this bucket.
+The default value of this field is `type`.
+* *Default Type*: The default type for documents in this bucket.
+The default value for this field is `_default`.
+* *Default Analyzer*: The default analyzer to be used for this bucket.
+The default value is `standard`.
+A list of available options can be displayed and selected from, by means of the pull-down menu at the right-hand side of the field.
+* *Default Date/Time Parser*: The default date/time parser to be used for this bucket.
+The default value is `dateTimeOptional`.
+A list of available options can be displayed and selected from, by means of the pull-down menu at the right-hand side of the field.
+* *Default Field*: The default field for this bucket.
+the default value is `_all`.
+* *Store Dynamic Fields*: When checked, ensures inclusion of field-content in returned results.
+When unchecked, no such inclusion occurs.
+* *Index Dynamic Fields*: When checked, ensures dynamic fields are indexed.
+When unchecked, they are not indexed.
+
+[#using-index-aliases]
+== Using Index Aliases
+
+An _index alias_ points to one or more Full Text Indexes, or to additional aliases: its purpose is therefore somewhat comparable to that of a symbolic link in a filesystem.
+Queries on an index alias are performed on all ultimate targets, and merged results are provided.
+
+The use of index aliases permits _indirection_ in naming, whereby applications refer to an alias-name that never changes, leaving administrators free periodically to change the identity of the real index pointed to by the alias.
+This may be particularly useful when an index needs to be updated: to avoid down-time, while the current index remains in service, a clone of the current index can be created, modified, and tested.
+Then, when the clone is ready, the existing alias can be retargeted, so that the clone becomes the current index; and the (now) previous index can be removed.
+
+To create an Index Alias, access the *Full Text Search* screen, by left-clicking on the [.ui]*Search* tab, in the navigation bar at the left of the console.
+The *Full Text Aliases* panel is displayed in the lower section of the page:
+
+[#fts_full_text_aliases_panel]
+image::fts-full-text-aliases-panel.png[,700,align=left]
+
+Left-clicking on the btn:[Add Alias] button displays the *Add Alias* screen:
+
+[#fts_add_alias_screen]
+image::fts-add-alias-screen.png[,620,align=left]
+
+The *Name* field allows an appropriate name for the alias to be entered.
+The *Target Indexes* pane displays the defined indexes available to be included in the alias.
+To select indexes within this pane, left-click on each: when the index-name is highlighted, the index has been selected.
+
+To create the alias, left-click on the btn:[Create Index Alias] button.
+The saved index now appears on its own row in the *Full Text Aliases* area of the *Full Text Search* screen:
+
+[#fts_add_alias_page_with_alias]
+image::fts-full-text-aliases-page-with-alias.png[,700,align=left]
+
+Note that when the *Add Alias* screen is again accessed, by left-clicking the btn:[Add Alias] button, the `travelSampleIndexesAlias` appears in the *Target Indexes* panel, along with the two existing indexes.
+
+[#establishing-index-replicas]
+== Establishing Index Replicas
+
+Full Text Indexes can be replicated by Couchbase Server.
+Up to three replicas can be specified, by means of the pull-down menu in the *Index Replicas* panel:
+
+[#fts_index_replicas_ui]
+image::fts-index-replicas-ui.png[,180,align=left]
+
+Note that for replicas to be used, a sufficient number of nodes must exist in the cluster: otherwise, the replicas are not replicated.
+
+[#using-the-index-definition-preview]
+== Using the Index Definition Preview
+
+The _Index Definition Preview_ appears to the right-hand side of the *Edit Index* screen.
+Following index-definition, the upper portion may appear as follows:
+
+[#fts_index_definition_preview]
+image::fts-index-definition-preview.png[,380,align=left]
+
+The preview consists of the JSON document that describes the current index-configuration, as created by means of the user interface.
+By left-clicking on the tab [.ui]*copy to clipboard*, the definition can be saved.
+By means of the REST API, the saved index definition (potentially after modification) can be re-used in creation of an additional index: see the section immediately below.
+
+[#index-creation-with-the-rest-api]
+== Index-Creation with the REST API
+
+The REST API can be used to create indexes.
+Each call requires the following:
+
+* An appropriate username and password.
+* Use of the verb `PUT`.
+* An endpoint referring to the Full Text Search service, on port `8094`; and including the appropriate endpoint for index-creation as defined by the xref:rest-api:rest-fts.adoc[Full Text Search REST API], including the name of the new index.
+* Headers to specify settings for `cache-control` (`no-cache`) and `application-type` (`application/json`).
+* A body containing the JSON document that defines the index to be created.
+This must include the name of the bucket on which the index is to be created.
+
+The simplest way to create the appropriate JSON index-definition for the body is to create an index by means of the Couchbase Web Console, make a copy of the JSON index-definition thereby produced (by accessing the xref:fts-creating-indexes.adoc#using-the-index-definition-preview[Using the Index Definition Preview], explained above), modify the index-definition as appropriate, and finally, add the index-definition to the other, preceding elements required for the call.
+Note, however, that this requires modification of the `uuid` field; since the re-specifying of an existing field-value is interpreted as an attempted _update_, to an existing index.
+Therefore, if the `uuid` field for an existing index appears in the Index Definition Preview as `"uuid": "3402702ff3c862c0"`, it should be edited to appear `"uuid": ""`.
+A new ID will be allocated to the new index, and this ID will appear in the Index Definition Preview for the new index.
+Note also that a similar condition applies to the `sourceUUID` field, which refers to the targeted bucket: if a new index is being created for the same bucket that was referred to in the index-object copied from the UI, the field-value can remain the same.
+However, if a different bucket is now to be targeted, the field should be edited to appear `"sourceUUID": ""`
+
+When specifying the endpoint for the index you are creating, make sure the path-element that concludes the endpoint is the same as that specified in the `name` field (which is the first field in the object).
+
+The following `curl` example demonstrates the creation of an index named `demoIndex`, on the `price` field of documents of type `product`, within the `travel-sample` bucket.
+It assumes that Couchbase Server is running on `localhost`, and that the required username and password are `Administrator` and `password.`
+
+[source,bourne]
 ----
-http://localhost:8091/ui/index.html#/fts_list
-----
-
-From here, you can create, edit, clone, and delete index definitions.
-If you see a message saying "[.out]``Full Text not enabled on this node,``" access the web console on another node where the full text service is enabled.
-
-To create an index in the web console, using your web browser:
-
-* Navigate to the [.ui]*Indexes* tab > [.ui]*Full Text*.
-* Click on the btn:[New Full Text Index] button.
-
-To edit an index definition in the web console, using your web browser:
-
-* Navigate to the [.ui]*Indexes* tab > [.ui]*Full Text*.
-* This page displays a list of full text indexes that you had previously defined, , if any.
-
-Each listed index, if any, has buttons for the following operations:
-
-* The index btn:[edit] button allows you to update an index definition.
-Updating the index definition causes it to be rebuilt.
-* the index btn:[clone] button allows you to copy an index definition.
-* the index btn:[delete] button allows you to delete an index definition.
-+
-NOTE: When you click on the index btn:[delete] button, you will have a chance to first confirm the deletion operation.
-Deleting an index, importantly, is a permanent operation.
-
-[#fts-index-mapping]
-== Index Mapping
-
-The simplest way to create an index is to use the default index mapping with no further customization.
-This is what you did in the xref:full-text-intro.adoc#fts-quick-start[Executing Your First Full Text Query] section.
-[.term]_Default index mapping_ refers to the index mapping that Couchbase Server uses for JSON documents that don’t match a more specific document mapping based on document type.
-This example relies on dynamic mapping, explained later, to decide how to index the individual fields in the documents.
-
-WARNING: Using the default index mapping with dynamic mapping is a good way to ensure that full text search is working properly on a small set of data, but it’s not very selective so it tends to write a lot of information into the index.
-For this reason, default index mapping may be slow or result in high load if used on a production-sized dataset.
-
-. Click the button [.ui]*New Full Text Index*.
-+
-image::fts-create-index.png[,570]
-
-. Give your index a name like "[.in]``beer-sample-idx``" and select the bucket you want to index from the drop-down list.
-+
-image::fts-create-index-2.png[,300]
-
-. Starting version 4.6, you can create custom index mappings by document type when the type is specified in the document key.
-FTS uses the type identifier that you specify to determine where to find the type of each document.
-The type mapping then uses the value of type identifier for each document to determine which index mapping rules to apply.
-Select one of the three options for type identifier: "JSON type field", "Doc ID up to separator", and "Doc ID with regex".
-
- ** *JSON type field*: Specify the field in the JSON document whose value determines the type of the document.
-Defaults to "type".
- ** *Doc ID up to separator*: The type identifier is the prefix of the document key, up to but not including the given character.
- ** *Doc ID with regex*: For advanced users, you can specify a regular expression that matches the type identifier.
-
-+
-For example, the Doc ID up to the first underscore is considered the type identifier, so beer name, brewery name, and so on could be specified as type mappings.
-+
-image::fts-create-index-4.png[,300]
-
-. If you click on "[.ui]*Type Mappings*," you will only see one type listed, which is "[.out]``default``."
-. Click the "[.ui]*Create Index*" button.
-You will then see a screen that shows you how many documents are in your index and the percentage complete.
-+
-image::fts-create-index-3.png[,300]
-
-. Click on the [.ui]*Full Text* link again to search the index you just created.
-. Your search shows the list of document IDs that contain the best matches for whatever search you ran, in order of score, with the highest scoring document listed first.
-
-== Custom Mapping
-
-There are many additional controls that can be used to build indexes on your documents just the way you want them.
-These can be found under [.ui]*Indexes* > [.ui]*Full Text* > *New* or [.ui]*Edit Full Text Index* buttons.
-
-Document mapping works as follows:
-
-. Specify the type of the document you want to include in your index.
-You can include more than one type of document in a single index but you can only index documents in a single bucket.
-. For each type of document, you specify how to index its fields and embedded structures.
-. The term [.param]`field` refers to a name value pair in JSON where the value is simple (i.e.
-not an object).
-. Use a *child mapping* to index embedded objects, i.e.
-name-value pairs where the value is of type object.
-You can add field mappings as in step 3 to describe how the name-value pairs in the embedded object should be indexed.
-. To index arrays, use fields for arrays of simple values and use a child mapping for arrays of objects.
-In other words, you design your mapping so that you essentially ignore the array and FTS "just works" even though there are multiple values.
-For example, to index the following document containing an array, add a field of type [.param]`text` for [.param]`pachyderms`.
-Queries work just like any other field.
-If included in `_all`, a query for [.param]`rhinoceros` matches this document, or you can scope to the field using the normal field scoping syntax: `pachyderms:rhinoceros`.
-+
-[source,json]
-----
-{
-  "pachyderms": ["hippopotamus", "rhinoceros",  "elephant"]
-}
-----
-
-*Type Mappings*
-
-Couchbase Server indexes JSON documents differently depending on the type of the JSON document.
-For example, you can create a full text index that only includes documents of type="brewery," and you can specify exactly how you want the documents mapped.
-To do this, click [.ui]*Add Type Mapping* and enter a type name that matches the type attribute of the JSON document you want to index.
-
-There is also a special type mapping for the _Default Type_.
-The default type mapping is created for every index automatically and is used for any document whose type does not match another type mapping or that doesn’t have a type attribute.
-
-NOTE: You must disable the default mapping if you _only_ want documents of the types that you specify to be in the index.
-If default mapping is enabled, Couchbase Server will use it to include all the documents in your index that don’t match another type mapping, which may or may not be what you want.
-
-Each type mapping in an index definition can be enabled or disabled.
-Disabling a type mapping can be used to ignore documents of a certain type.
-For example, if you want to index all documents in the beer-sample bucket _except_ "breweries" you could simply create a type mapping for breweries and then check disabled (assuming the default mapping is also disabled).
-
-You can also specify an analyzer to use for a type mapping.
-This defaults to inheriting the Default Analyzer specified in "[.ui]*Advanced*".
-
-*Field Mapping*
-
-For any type mapping, you can insert a child field to index the values in your JSON document with more control about what appears in the index and how.
-The word "field" in index mapping refers to a name-value pair in JSON whose value is a simple type: string, number, true, false, or null.
-These child fields refer to name-value pairs that are directly under an object.
-In the brewery sample below, [.param]`name`, [.param]`city`, and [.param]`description` are all fields.
-
-You can index the [.param]`description` field of every document in the beer-sample bucket, you can create an index, hover over the _default index_, click on the plus that appears, and select "[.ui]*Insert child field*".
-Because both beers and breweries have a description field, this default mapping will end up with every document in it.
-
-[source,json]
-----
-{
-  "name": "21st Amendment Brewery Cafe",
-  "city": "San Francisco",
-  ...
-  "description": "The 21st Amendment Brewery offers a variety of award winning house made brews and American grilled cuisine in a comfortable loft like setting. Join us before and after Giants baseball games in our outdoor beer garden. A great location for functions and parties in our semi-private Brewers Loft. See you soon at the 21A!",
-  "address": [
-    "563 Second Street"
-    ],
-  "geo": {
-    "accuracy": "ROOFTOP",
-    "lat": 37.7825,
-    "lon": -122.393
+$ curl -u Administrator:password -XPUT  \
+  http://localhost:8094/api/index/demoIndex \
+  -H 'cache-control: no-cache' \
+  -H 'content-type: application/json' \
+  -d '{
+"name": "demoIndex",
+"type": "fulltext-index",
+"params": {
+  "doc_config": {
+    "docid_prefix_delim": "",
+    "docid_regexp": null,
+    "mode": "type_field",
+    "type_field": "type"
+  },
+  "mapping": {
+    "default_analyzer": "standard",
+    "default_datetime_parser": "dateTimeOptional",
+    "default_field": "_all",
+    "default_mapping": {
+      "dynamic": true,
+      "enabled": false
+    },
+    "default_type": "_default",
+    "index_dynamic": true,
+    "store_dynamic": false,
+    "types": {
+      "product": {
+        "dynamic": true,
+        "enabled": true,
+        "properties": {
+          "price": {
+            "enabled": true,
+            "dynamic": false,
+            "fields": [
+              {
+                "analyzer": "",
+                "include_in_all": true,
+                "include_term_vectors": true,
+                "index": true,
+                "name": "price",
+                "store": false,
+                "type": "number"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "store": {
+    "kvStoreName": "mossStore"
   }
-}
+},
+"sourceType": "couchbase",
+"sourceName": "travel-sample",
+"sourceUUID": "99e9829898a45ba35f1c9c85dfcdb42b",
+"sourceParams": {},
+"planParams": {
+  "maxPartitionsPerPIndex": 171,
+  "numReplicas": 0
+  },
+"uuid": ""
+}'
 ----
 
-There are four values and four checkboxes you can specify when you insert a child field.
+If the call is successful, the following object is returned:
 
-* [.param]`field`: The name of name-value pair in the JSON document.
-* [.param]`type`: Defaults to text, but other possible values are object, number, datetime, and disabled.
-+
-NOTE: Type object is not supported in Developer Preview and will cause an index mapping to fail.
-
-* [.param]`searchable as`: You can change the name that is written into the index, so if a user limits their search to a specific field they would use this value instead of the actual name of the field in the JSON.
-For example, if we mapped the field [.param]`description` "searchable as" [.param]`info`, instead of typing "description:semi-private", users would instead search for "info:semi-private".
-* [.param]`analyzer`: The analyzer to use for this specific field.
-
-In addition, there are four checkboxes:
-
-* [.ui]*index*: If unchecked, fields that match this will not be indexed.
-If the store checkbox is checked, they will still be stored.
-* [.ui]*store*: Normally, only the document IDs are written to the index.
-If this is checked, the document contents are also written to the index.
-This enables highlighting and result snippets but generally results in larger indexes that are slower to build.
-Since gets and multi-gets are quite fast, usually users don’t need to store the additional information in the index.
-* [.ui]*Include in _all field*: If this is checked, the text in this field will be searchable in query strings without prefixing the field name.
-If unchecked, the query must include this prefix, for example, "description:modern."
-* [.ui]*include term vectors*: Term vectors are the locations of terms in a particular field.
-Some functionality, such as snippets, highlighting, and phrase search, requires term vectors and can’t be used without them.
-Not storing term vectors results in smaller indexes and faster index build times.
-
-In this example, you would create the mapping like this:
-
-[source,json]
+[source,bourne]
 ----
-field: description
-          type: text
-          searchable as: description (automatically filled in)
-          analyzer: inherit
+{"status":"ok"}
 ----
 
-Check "[.ui]*store*" so that all four checkboxes are checked.
-This makes it easier to test and debug your new index because search results will include snippets with the search terms highlighted.
-The downside of storing the information is the extra size and time it takes to build, but these should be acceptable in this case.
+The newly created index can then be inspected in the Couchbase Web Console.
 
-Field is the name of the name-value pair in the JSON.
-In our example, the [.param]`description` property is at the top level but if you need to map name-value pairs that are embedded in complex structures, you need to use a <<topic_cmy_jzk_1v/child-mapping,child mapping>> instead.
+[#document-fields-and-data-types]
+== Document-Fields and Data-Types
 
-[#child-mapping]
-*Insert Child Mapping*
+During index-creation, for each document-field for which the data-type has not been explicitly specified (which is to say, *text*, *number*, *datetime*, *boolean*, *disabled*, or *geopoint*), the field-value is examined, and the best-possible determination made, as follows:
 
-Child Mappings are similar to field mappings, but instead of indexing simple values, they enable you to index embedded structures in a JSON document.
-Use a child mapping when the value of  a name-value pair is an object.
+|===
+| Type of JSON value | Indexed as\...
 
-For example, consider the brewery document in the beer sample bucket.
-This document contains an embedded object called "geo" that has three fields: accuracy, lat, and lon.
+| Boolean
+| Boolean
 
-[source,json]
-----
-"geo": {
-  "accuracy": "ROOFTOP",
-  "lat": 37.7825,
-  "lon": -122.393
-}
-----
+| Number
+| Number
 
-To create an index with an object mapping for the geo structure using the Web Console, do the following:
+| String containing a date
+| Date
 
-. Create a type mapping for breweries.
-. Insert a child mapping for the attribute "[.param]``geo``".
-. In the "[.param]``geo structure``", insert a child field for "[.param]``accuracy``".
-. Insert child fields for "[.param]``lat``" and "[.param]``lon``" and set them to type `number`.
-. In a search on your newly created index, you can search the accuracy field using a dot syntax: "[.code]``geo.accuracy:rooftop``".
-. You can also do range searches on the geo fields: "[.code]``geo.accuracy:rooftop +geo.lat:>37 +geo.lon:>141``".
+| String (not containing a date)
+| String
+|===
 
-The index definition you created will look like the example below.
-You can create the same index definition with object mappings using the REST API:
+Note that the indexer attempts to parse String date-values as dates, and indexes them as such if the operation succeeds.
+Note, however, that on query-execution, Full Text Search expects dates to be in the format specified by https://www.ietf.org/rfc/rfc3339.txt[RFC-3339^], which is a specific profile of ISO-8601.
 
-[source,json]
-----
-{
-          "type": "fulltext-index",
-          "name": "beer-idx",
-          "uuid": "af4c073428d51ed5",
-          "sourceType": "couchbase",
-          "sourceName": "beer-sample",
-          "sourceUUID": "a6e631d6c59692d8a8e4280615afd727",
-          "planParams": {
-          "maxPartitionsPerPIndex": 32,
-          "numReplicas": 0,
-          "hierarchyRules": null,
-          "nodePlanParams": null,
-          "pindexWeights": null,
-          "planFrozen": false
-          },
-          "params": {
-          "mapping": {
-          "analysis": {
-          "analyzers": {},
-          "char_filters": {},
-          "token_filters": {},
-          "token_maps": {},
-          "tokenizers": {}
-          },
-          "byte_array_converter": "json",
-          "default_analyzer": "standard",
-          "default_datetime_parser": "dateTimeOptional",
-          "default_field": "_all",
-          "default_mapping": {
-          "display_order": "1",
-          "dynamic": true,
-          "enabled": false,
-          "fields": [],
-          "properties": {}
-          },
-          "default_type": "_default",
-          "type_field": "type",
-          "types": {
-          "brewery": {
-          "display_order": "0",
-          "dynamic": false,
-          "enabled": true,
-          "fields": [],
-          "properties": {
-          "geo": {
-          "display_order": "0",
-          "dynamic": true,
-          "enabled": true,
-          "fields": [],
-          "properties": {
-          "accuracy": {
-          "dynamic": false,
-          "enabled": true,
-          "fields": [
-          {
-          "analyzer": "",
-          "date_format": null,
-          "display_order": "2",
-          "include_in_all": false,
-          "include_term_vectors": true,
-          "index": true,
-          "name": "accuracy",
-          "store": true,
-          "type": "text"
-          }
-          ],
-          "properties": {}
-          },
-          "lat": {
-          "dynamic": false,
-          "enabled": true,
-          "fields": [
-          {
-          "analyzer": "",
-          "date_format": null,
-          "display_order": "1",
-          "include_in_all": true,
-          "include_term_vectors": true,
-          "index": true,
-          "name": "lat",
-          "store": true,
-          "type": "number"
-          }
-          ],
-          "properties": {}
-          },
-          "lon": {
-          "dynamic": false,
-          "enabled": true,
-          "fields": [
-          {
-          "analyzer": "",
-          "date_format": null,
-          "display_order": "0",
-          "include_in_all": true,
-          "include_term_vectors": true,
-          "index": true,
-          "name": "lon",
-          "store": true,
-          "type": "number"
-          }
-          ],
-          "properties": {}
-          }
-          }
-          }
-          }
-          }
-          }
-          },
-          "store": {
-          "kvStoreName": "forestdb"
-          }
-          },
-          "sourceParams": {
-          "authPassword": "",
-          "authSaslPassword": "",
-          "authSaslUser": "",
-          "authUser": "beer-sample",
-          "clusterManagerBackoffFactor": 0,
-          "clusterManagerSleepInitMS": 0,
-          "clusterManagerSleepMaxMS": 2000,
-          "dataManagerBackoffFactor": 0,
-          "dataManagerSleepInitMS": 0,
-          "dataManagerSleepMaxMS": 2000,
-          "feedBufferAckThreshold": 0,
-          "feedBufferSizeBytes": 0
-          }
-          }
-----
+Note also that String values such as `7` or `true` are not respectively indexed as numbers or Booleans: they remain as Strings.
 
-*Advanced Index Settings*
-
-*Type field*
-
-By default, Couchbase Server will look for an attribute called "type" in your document and will use that for type mappings.
-You can change the name of the "type" field by clicking on the "[.ui]*Advanced*" options and changing the value of the "[.ui]*Type Field*".
-
-*Default Type*
-
-Documents that match the default type mapping rules are written to the index as being of this type.
-The field defaults to "[.code]``_default``", which you can change to avoid conflicts if "[.code]``_default``" is a valid type field value in your JSON documents.
-
-*Default Analyzer*
-
-This analyzer is used by default when creating an index, if no other analyzer is specified.
-When you define your index mapping, you can override this value in a number of places, for example, when you create type mappings or field mappings.
-
-*Default Date/Time Parser*
-
-The name of a Date/Time parser that will be used to parse a date stored as a string.
-
-NOTE: Full text search and Bleve expect dates to be in the format specified by https://www.ietf.org/rfc/rfc3339.txt[RFC-3339^], which is a specific profile of ISO-8601 that is more restrictive.
-
-[#def-field-all]
-*Default Field*
-
-The default field is searched when a user query does not limit the scope of a search to a particular field.
-This is highly convenient because most of the time you want a user to be able to search for a term wherever it shows up in the index.
-For example, if you create a text index of breweries, as long as terms are included in the `_all` field, you can query "[.code]``La Jolla``" and find it without specifying "[.code]``name:la jolla``" or "[.code]``city:la jolla``".
-You would only need to change the name of this value if your JSON documents already include a field called "[.code]``_all``".
-
-[#index-alias]
-== Index Aliases
-
-An [.term]_index alias_ is a special "virtual index" that points to other, real full text indexes.
-
-Similar to a symbolic link in a file system, an index alias allows a naming level of indirection, so that applications can refer to a stable name (the alias' name) while administrators can dynamically re-target or re-point the index alias to different, real indexes.
-This can be useful for applications that are in production.
-For example, say you build an index my-index.
-You then build my-index-alias and point it to my-index.
-Your production application can search my-index-alias until you need to adjust the index, perhaps to change the index mapping or the analyzer.
-Any such change will require the index to be rebuilt, which would mean the current index will be out of commission.
-Instead, you can clone the index and give it a new name, like my-better-index.
-Once this index has had the time to build, you can test it before putting it into production.
-If you decide it's ready, you then modify the definition of my-index-alias to remove my-index and instead point to my-better-index.
-By using an alias like this, the switch to my-better-index will be instantaneous and the index will already be fully ready to use.
-
-Similar to an email list alias, an index alias in FTS can also "fan-out" and refer to multiple, real indexes.
-Aliases can also refer to other aliases.
-A query on an index alias will be scatter-gathered by FTS to all of the actual, real indexes and FTS will provide merged results from those scatter-gathered queries.
+The number-type is modeled as a 64-bit floating-point value internally.

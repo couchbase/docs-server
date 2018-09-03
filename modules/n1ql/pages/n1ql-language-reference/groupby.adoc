@@ -1,81 +1,209 @@
 = GROUP BY clause
-:page-topic-type: concept
 
-_group-by-clause:_
+[abstract]
+The GROUP BY clause arranges aggregate values into groups, based on one more fields.
 
-----
-GROUP BY expression [ , expression ]* [ letting-clause ]
-    [having-clause] ] | [letting-clause]
-----
+_(Introduced in Couchbase Server 4.0)_
 
-_letting-clause:_
+== Purpose
 
-----
-LETTING  alias = expression [(, alias = expression) ]*
-----
+Use the GROUP BY clause to arrange aggregate values into groups of one or more fields.
+This `GROUP BY` clause follows the `WHERE` clause and precedes the optional `LETTING`, `HAVING`, and `ORDER BY` clauses.
 
-_having-clause:_
+== Syntax
+
+image::n1ql-language-reference/group-by-clause.png[]
 
 ----
-HAVING condition
+GROUP BY expr [, expr2 ]*
+  [ LETTING alias = expr [, alias2 = expr2 ]* ]
+  [ HAVING cond ]
+|
+LETTING alias = expr [, alias2 = expr2 ]*
 ----
 
-GROUP BY allows you to organize a result set by one or more expressions.
-It can be used with aggregate functions to group the result set.
-The optional LETTING and HAVING clauses follow the GROUP BY clause.
+== Arguments
 
-Example
+expr:: [At least one is required] String or expression representing the xref:n1ql-language-reference/aggregatefun.adoc[aggregate function] or fields to group together.
 
-----
-SELECT relation, COUNT(*) AS count
-    FROM tutorial
-        GROUP BY relation
-----
+`LETTING` letting-clause::
+[Optional] Stores the result of a sub-expression in order to use it in subsequent clauses.
+image:n1ql-language-reference/letting-clause.png[]
+alias;; String or expression representing the name of the clause to be referred to.
 
-Results
+expr;; String or expression representing the value of the `LETTING` [.var]`alias` variable.
 
-----
-{
-  "results": [
-    {
-      "count": 2,
-      "relation": "friend"
-    },
-    {
-      "count": 1,
-      "relation": "coworker"
-    },
-    {
-      "count": 1,
-      "relation": "parent"
-    },
-    {
-      "count": 2,
-      "relation": "cousin"
-    }
-  ]
-}
-----
+`HAVING` having-clause::
+[Optional] To return items where xref:n1ql-language-reference/aggregatefun.adoc[aggregate] values meet the specified conditions.
+image:n1ql-language-reference/having-clause.png[]
+cond;; String or expression representing the clause of aggregate values.
 
-Example
+== Limitations
+
+`GROUP BY` works only on a group key or xref:n1ql-language-reference/aggregatefun.adoc[aggregate function].
+
+== Examples
+
+*Example 1: Group the unique landmarks by city and list the top 4 cities with the most landmarks in descending order.*
 
 ----
-SELECT title, type, COUNT(*) AS count FROM catalog GROUP BY type
+SELECT city City, COUNT(DISTINCT name) LandmarkCount
+FROM `travel-sample`
+WHERE type = "landmark"
+GROUP BY city
+ORDER BY LandmarkCount DESC
+LIMIT 4;
 ----
 
-*LETTING Clause*
+Results:
 
 ----
-LETTING  alias = expression [(, alias = expression) ]*
+[
+  {
+    "City": "San Francisco",
+    "LandmarkCount": 797
+  },
+  {
+    "City": "London",
+    "LandmarkCount": 443
+  },
+  {
+    "City": "Los Angeles",
+    "LandmarkCount": 284
+  },
+  {
+    "City": "San Diego",
+    "LandmarkCount": 197
+  }
+]
 ----
 
-Aliases in the LETTING clause create new names that can be referred to in the HAVING, SELECT, and ORDER BY clauses.
-
-*HAVING Clause*
+*Example 2: Use LETTING to find cities that have a minimum number of things to see.*
 
 ----
-HAVING condition
+SELECT city City, COUNT(DISTINCT name) LandmarkCount
+FROM `travel-sample`
+WHERE type = "landmark"
+GROUP BY city
+LETTING MinimumThingsToSee = 400
+HAVING COUNT(DISTINCT name) > MinimumThingsToSee;
 ----
 
-The HAVING clause optionally follows the GROUP BY clause.
-It filters a stream of variable bindings, retaining those bindings for which the truth value of the HAVING clause is TRUE and discarding the bindings for which this truth value is FALSE.
+Results:
+
+----
+[
+  {
+    "City": "London",
+    "LandmarkCount": 443
+  },
+  {
+    "City": "San Francisco",
+    "LandmarkCount": 797
+  }
+]
+----
+
+*Example 3: Use HAVING to specify cities that have more than 180 landmarks.*
+
+----
+SELECT city City, COUNT(DISTINCT name) LandmarkCount
+FROM `travel-sample`
+WHERE type = "landmark"
+GROUP BY city
+HAVING COUNT(DISTINCT name) > 180;
+----
+
+Results:
+
+----
+[
+  {
+    "City": "London",
+    "LandmarkCount": 443
+  },
+  {
+    "City": "Los Angeles",
+    "LandmarkCount": 284
+  },
+  {
+    "City": "San Francisco",
+    "LandmarkCount": 797
+  },
+  {
+    "City": "San Diego",
+    "LandmarkCount": 197
+  }
+]
+----
+
+NOTE: The above `HAVING` clause must use the xref:n1ql-language-reference/aggregatefun.adoc[aggregate function] `COUNT` instead of its alias `LandmarkCount`.
+
+*Example 4: Use HAVING to specify landmarks that begin with an "S" or higher.*
+
+----
+SELECT city City, COUNT(DISTINCT name) LandmarkCount
+FROM `travel-sample`
+WHERE type = "landmark"
+GROUP BY city
+HAVING city > "S";
+----
+
+138 Results in 150ms:
+
+----
+[
+  {
+    "City": "Santa Barbara",
+    "LandmarkCount": 53
+  },
+  {
+    "City": "San Francisco",
+    "LandmarkCount": 797
+  },
+  {
+    "City": "Stable Yd",
+    "LandmarkCount": 1
+  },
+  {
+    "City": "Wembley",
+    "LandmarkCount": 1
+  },
+...
+----
+
+*Example 4b: Using WHERE yields the same results as HAVING, however, WHERE is faster.*
+
+----
+SELECT city City, COUNT(DISTINCT name) LandmarkCount
+FROM `travel-sample`
+WHERE type = "landmark"
+AND city > "S"
+GROUP BY city
+----
+
+138 Results in 94ms:
+
+----
+[
+  {
+    "City": "San Luis Obispo",
+    "LandmarkCount": 1
+  },
+  {
+    "City": "Twentynine Palms",
+    "LandmarkCount": 1
+  },
+  {
+    "City": "Westlake Village",
+    "LandmarkCount": 1
+  },
+  {
+    "City": "Surrey",
+    "LandmarkCount": 1
+  },
+...
+----
+
+NOTE: The `WHERE` clause is faster because `WHERE` gets processed _before_ any `GROUP BY` and doesn't have access to aggregated values.
+`HAVING` gets processed _after_ `GROUP BY` and is used to constrain the resultset to only those with aggregated values.

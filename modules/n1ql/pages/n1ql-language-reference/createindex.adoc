@@ -1,21 +1,25 @@
 = CREATE INDEX
 :page-topic-type: concept
 
-The CREATE INDEX statement allows you to create a secondary index.
+The `CREATE INDEX` statement allows you to create a secondary index.
 Secondary indexes contain a filtered or a full set of keys in a given bucket.
 Secondary indexes are optional but increase query efficiency on a bucket.
 
-CREATE INDEX is by default a synchronous operation.
-CREATE INDEX statement blocks until the operation finishes.
+`CREATE INDEX` is by default a synchronous operation.
+so every `CREATE INDEX` statement blocks until the operation finishes.
 Index building starts by creating a task that is queued for index build.
-After this phase, if you lose connectivity, index build operation continues to happen in the background.
-You can also run index creation asynchronously using the "defer_build" clause.
-In the async mode, CREATE INDEX starts a task to create the primary index and returns as soon as the task is queued for execution.
-The full index creation operation happens in the background.
+After this phase, if you lose connectivity, the index build operation continues in the background.
+You can also run index creation asynchronously using the `defer_build` clause.
+In the asynchronous mode, `CREATE INDEX` starts a task to create the primary index and returns as soon as the task is queued for execution, and then the full index creation operation happens in the background.
 
 Both GSI and View indexes provide a status field and mark index status pending.
 With GSI indexer, index status continues to report "pending".
-This status field and other index metadata can be queried using system:indexes.
+This status field and other index metadata can be queried using `system:indexes`.
+
+*RBAC Privileges*
+
+User executing the CREATE INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
+For more details about user roles, see xref:security:security-authorization.adoc[Authorization].
 
 [IMPORTANT]
 ====
@@ -33,96 +37,90 @@ You can create multiple identical secondary indexes on a bucket for better index
 NOTE: Couchbase Server 4.5 release adds the capability to create global indexes on array elements and optimizes the execution of queries involving array elements.
 See xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing] for details.
 
-_create-index:_
+*Syntax*
 
 ----
-CREATE INDEX [index_name] ON named_keyspace_ref( expression [ , expression ] * )
+CREATE INDEX index_name ON named_keyspace_ref ( expression1 [ , expression2 ] * )
     WHERE filter_expressions
     [ USING GSI | VIEW ]
-    [ WITH { "nodes": [ "node_name" ], "defer_build":true|false } ];
+    [ WITH { "nodes": [ "node_name" ], "defer_build":true|false , "num_replica": num_replica_num } ];
 ----
 
-_index_name:_
-
-A unique name that identifies the index.
-This parameter is required.
-
+Arguments::
+index_name;;
+[Required] A unique name that identifies the index.
++
 Valid GSI index names can contain any of the following characters: A-Z a-z 0-9 # _, and must start with a letter, [A-Z a-z].
++
 The minimum length of an index name is 1 character and there is no maximum length set for an index name.
++
 When querying, if the index name contains a '&#35;' or '_' character, you must enclose the index name within backticks.
 
-_named-keyspace-ref( expression [ ,expression ]* )_
-
-----
-[ namespace-name :] keyspace-name
-----
-
-_keyspace-name:_
-
+named_keyspace_ref;;
 An identifier that refers to the bucket name.
 Specifies the bucket as the source for which the index needs to be created.
++
 You can add an optional namespace name to the keyspace name in this way:
-
-_namespace-name : keyspace-name_
-
++
+----
+namespace-name : keyspace-name
+----
++
 For example, `main:customer` indicates the customer keyspace in the main namespace.
 If the namespace name is omitted, the default namespace in the current session is used.
 
-_Expression index-key_
-
+expression1, expression2, \... , expressionX;;
 Refers to an attribute name or a scalar function or an ARRAY expression on the attribute.
 This constitutes an index-key for the index.
-See https://developer.couchbase.com/documentation/server/4.6/n1ql/n1ql-language-reference/indexing-arrays.html[Array Indexing^] for more details about the array expressions.
+For details about array expressions, see xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing].
 
-_USING GSI | VIEW_
-
-USING clause specifies the index type to use.
+`USING GSI` | `VIEW`;; [Optional; Default is GSI]
++
+The `USING` clause specifies the index type to use.
 Secondary indexes can be created using global secondary indexes (GSI) or views.
-If the USING clause is not specified, by default GSI is used as the indexer.
 
-_WITH options_
-
-With clause is used to specify additional options with the GSI type indexes.
-
-_"nodes":["node name"]_
-
-A single secondary index of type GSI can only be placed on a single node that runs the indexing service.
-The "nodes" option allows you to specify the node that the index is placed on.
-If nodes is not specified, one of the nodes running the index service is randomly picked for the index.
-
-IMPORTANT: The node name passed to the `nodes` parameter must include the cluster administration port (by default 8091).
+`WITH`;;
+"nodes":["node_name"]:::
+A single global secondary index can be placed on specific nodes that run the indexing service.
+The `nodes` option allows you to specify the nodes that the index is placed on.
++
+If `nodes` is not specified, then nodes running the index service are randomly selected to host the index, based on the number of replicas.
++
+Multiple nodes can be specified to distribute replicas of an index amongst multiple nodes, for example:
++
+----
+CREATE INDEX productName_index1 ON bucket_name(productName, ProductID)
+WHERE type="product" USING GSI
+WITH {"nodes":["node1:8091", "node2:8091", "node3:8091"]};
+----
++
+If specifying both [.var]`nodes` and [.var]`num_replica`, the number of nodes in the array must be one greater than the specified number of replicas otherwise the index creation will fail.
++
+IMPORTANT: The node names passed to the `nodes` parameter must include the cluster administration port (by default 8091).
 For example `WITH {"nodes": ["192.0.2.0:8091"]}` instead of `WITH {"nodes": ["192.0.2.0"]}`.
 
-_"defer_build":true | false_
-
-With defer_build set to true, CREATE INDEX operation queues the task for building the index but immediately pauses the building of the index of type GSI.
-Index building require an expensive scan operation.
+"defer_build":true | false:::
+*With defer_build set to TRUE*, then the `CREATE INDEX` operation queues the task for building the index but immediately pauses the building of the index of type GSI.
+Index building requires an expensive scan operation.
 Deferring building of the index with multiple indexes can optimize the expensive scan operation.
-Admins can defer building multiple indexes and, using BUILD INDEX statement, multiple indexes to be built efficiently with one efficient scan of bucket data.
+Admins can defer building multiple indexes and, using the `BUILD INDEX` statement, multiple indexes to be built efficiently with one efficient scan of bucket data.
++
+*With defer_build set to FALSE*, then the `CREATE INDEX` operation queues the task for building the index and immediately kicks off the building of the index of type GSI.
 
-With defer_build set to false, CREATE INDEX operation queues the task for building the index and immediately kicks off the building of the index of type GSI.
-
+"num_replica": num_replica_num:::
+[.var]`num_replica` specifies the number of replicas of the index to create.
++
+The indexer will automatically distribute these indexes amongst index nodes in the cluster for load-balancing and high availability purposes.
+When creating an index with replicas in this manner, the indexer will attempt to distribute the replicas based on the server groups in use in the cluster where possible.
++
+If [.var]`num_replica_num` is not less than the number of index nodes in the cluster, then the index creation will fail.
++
 [caption=Attention]
 IMPORTANT: We recommend that you do not create (or drop) secondary indexes when any node with a secondary index role is down as this may result in duplicate index names.
 
 *Using the meta().id function*
 
-You can use the `meta().id` function when creating an index.
-The `meta().id` function does not require a parameter; it implicitly uses the keyspace being indexed.
-
-----
-CREATE INDEX id_ix on `beer-sample`(meta().id);
-----
-
-The `meta().id` function in a query is given an expression; if it resolves to a keyspace alias, the requested field (id) is returned.
-
-----
-SELECT b.name, meta(b).id
-FROM `beer-sample` b
-WHERE meta(b).id > "g" limit 1;
-----
-
-The only supported `meta()` field in the  `CREATE INDEX` statement for Couchbase Server version 4.5 is `meta().id`.
+For details, see xref:n1ql-language-reference/indexing-meta-info.adoc[Indexing Meta Info].
 
 *Using indices for aggregates*
 
@@ -151,33 +149,26 @@ The following example creates a secondary index on the `beer-sample` bucket and 
 
 ----
 CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI;
+
 SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
 ----
 
 The following example creates the same secondary index by using the deferred build option and then queries `system:indexes` for status of the index:
 
 ----
-CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI
-    WITH {"defer_build":true};
+CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI WITH {"defer_build":true};
+
 SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
 ----
 
 Because the deferred build option was enabled, the output from the query on `system:indexes` shows `beer-sample-type-index` shows the index has not finished building (`"state": "pending"`).
 
-The following example uses the BUILD INDEX statement to kick off the deferred build on the `beer-sample-type-index` index and then queries `system:indexes` for status of the index:
+The following example uses the `BUILD INDEX` statement to kick off the deferred build on the `beer-sample-type-index` index and then queries `system:indexes` for status of the index:
 
 ----
 BUILD INDEX ON `beer-sample`(`beer-sample-type-index`) USING GSI;
+
 SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
 ----
 
 This time the query on `system:indexes` shows that the index is built (`"state": "online"`).
-
-[#idx-limitations]
-== Limitations
-
-* The total size of the index keys cannot exceed 4K for a single document.
-Index key size is calculated using the total size of all the expressions being indexed in a single document.
-If an index keys size exceeds 4K, it will be skipped.
-The following error is logged to indicate that an item is skipped when building the index: "[.out]``Encoded secondary key is too long``" in the [.path]_indexer.log_ file.
-The [.path]_indexer.log_ file is included in cbcollect_info output.

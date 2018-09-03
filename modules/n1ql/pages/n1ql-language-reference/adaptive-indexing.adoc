@@ -1,0 +1,428 @@
+= Adaptive Index
+
+Adaptive Indexes are a special type of GSI array index that can index all or specified fields of a document.
+Such an index is generic in nature, and it can efficiently index and lookup any of the index-key values.
+This enables efficient ad hoc queries (that may have WHERE clause predicates on any of the index-key fields) without requiring to create various composite indexes for different combinations of fields.
+Adaptive Index is a functional array index created using the N1QL function PAIRS().
+
+Basically, the idea is to be able to simply load data and start querying:
+
+* using a single secondary index, and
+* not worrying about creating appropriate secondary indexes for each query
+
+Note that without Adaptive Indexes:
+
+* Only primary index can help run any ad hoc query.
+But using primary index can be expensive for queries with predicates on any of the non-key fields of the document.
+* Each query will need a compatible secondary index that can qualify for the predicates in the WHERE clause.
+See section <<section_w31_bnm_5z>> for details.
+
+For instance, consider a user profile or hotel reservation search use case.
+A person's profile may need to be searched based on any of the personal attributes such as first name, last name, age, city, address, job, title, company, etc.
+Similarly, a hotel room availability may be searched based on wide criteria, such as room facilities, amenities, price, and other features.
+In this scenario, traditional secondary indexes or composite indexes can't be used effectively (see section <<section_w31_bnm_5z,Contrast with Composite Indexes>> to understand some of the concerns).
+Adaptive indexes can help effectively and efficiently run such ad hoc search queries.
+
+== Syntax
+
+----
+CREATE INDEX index_name
+ON keyspace_ref( (ALL | DISTINCT) PAIRS(SELF | index_key_object) )
+[WHERE where_clause]
+[WITH with_clause]
+----
+
+When the `SELF` keyword is used, the adaptive index is created with all fields in the documents of the keyspace.
+
+----
+index_key_object ::== {["name1" :] expr1, ["name2" :] expr2, ...}
+----
+
+This is an object of name-value pairs of the document fields that should be indexed.
+
+* [.var]`expr1`, [.var]`expr2`, etc.
+are the N1QL expressions that are allowed in CREATE INDEX.
+These must be expressions over any document fields.
+The names [.var]`name1`, [.var]`name2`, etc.
+are the corresponding field names.
+* In a simplified form, the names in the object can be omitted, in which case the corresponding names will be same as expressions, and the expressions must be field names in the document that are being indexed.
++
+[NOTE]
+====
+When using PAIRS(arg) with an OBJECT construction, you need to keep in mind:
+
+* {a, c.a} – when evaluated, both will inherit the same name of "a" causing one value to overwrite the other.
+Both values will not be indexed.
+A better way to handle this is to explicitly name one with an alias, such as {a, "ca":c.a}
+* {abs(a)} – name of the object field is null and will raiser an error.
+A better way to handle this is to explicitly use an alias, such as {abs_a":abs(a)}
+====
+
+For example, consider the `travel-sample` data that is shipped with the product and the following indexes.
+Sample buckets can be installed as explained xref:settings:install-sample-buckets.adoc[here].
+
+[source,json]
+----
+C1: CREATE INDEX `def_airportname` ON `travel-sample`(`airportname`) WHERE type = "airport"
+C2: CREATE INDEX `def_city`        ON `travel-sample`(`city`)        WHERE type = "airport"
+C3: CREATE INDEX `def_faa`         ON `travel-sample`(`faa`)         WHERE type = "airport"
+----
+
+Here, three different indexes need to be created to help different queries whose WHERE clause predicates may refer to different fields.
+For instance, the following queries Q1, Q2, and Q3 will use the indexes created in C1, C2, and C3, respectively:
+
+[source,json]
+----
+Q1: SELECT * FROM `travel-sample` WHERE airportname LIKE  "San Francisco%";
+Q2: SELECT * FROM `travel-sample` WHERE city = "San Francisco";
+Q3: SELECT * FROM `travel-sample` WHERE faa = "SFO";
+----
+
+However, the following single adaptive index can serve all three of the above queries:
+
+[source,json]
+----
+C4: CREATE INDEX `ai_airport_day_faa`
+    ON `travel-sample`(DISTINCT PAIRS({airportname, city, faa}))
+    WHERE type = "airport";
+----
+
+Similarly, following adaptive index over SELF (that includes all fields in the documents) is also qualified for these queries.
+In fact, the index in C5 can serve any query on the `travel-sample` keyspace, though it might have different performance characteristics when compared to specific indexes created for a particular query.
+See the section <<section_u4c_gzm_5z,Performance Implications>> for details.
+For example, the following queries Q5 and Q5A show how the generic adaptive index C5 is used to query predicates on different fields of the "airport" documents.
+
+[source,json]
+----
+C5: CREATE INDEX `ai_self`
+    ON `travel-sample`(DISTINCT PAIRS(self))
+    WHERE type = "airport";
+
+Q5: EXPLAIN SELECT * FROM `travel-sample`
+    USE INDEX (ai_self)
+    WHERE faa = "SFO" AND (`type` = "airport");
+
+Result:
+{
+  "plan": {
+    "#operator": "Sequence",
+    "~children": [
+      {
+        "#operator": "IntersectScan",
+        "scans": [
+          {
+            "#operator": "IndexScan2",
+            "index": "ai_self",
+            "index_id": "c564a55225d9244c",
+            "index_projection": {
+              "primary_key": true
+            },
+            "keyspace": "travel-sample",
+            "namespace": "default",
+            "spans": [
+              {
+                "exact": true,
+                "range": [
+                  {
+                    "high": "[\"faa\", \"SFO\"]",
+                    "inclusion": 3,
+                    "low": "[\"faa\", \"SFO\"]"
+                  }
+                ]
+              }
+            ],
+            "using": "gsi"
+          }
+...
+
+
+
+Q5A: EXPLAIN SELECT *
+     FROM `travel-sample`
+     USE INDEX (ai_self)
+     WHERE tz = "Europe/Paris"
+     AND (`type` = "airport");
+
+Result:
+{
+  "plan": {
+    "#operator": "Sequence",
+    "~children": [
+      {
+        "#operator": "IntersectScan",
+        "scans": [
+          {
+            "#operator": "IndexScan2",
+            "index": "ai_self",
+            "index_id": "c564a55225d9244c",
+            "index_projection": {
+              "primary_key": true
+            },
+            "keyspace": "travel-sample",
+            "namespace": "default",
+            "spans": [
+              {
+                "exact": true,
+                "range": [
+                  {
+                    "high": "[\"tz\", \"Europe/Paris\"]",
+                    "inclusion": 3,
+                    "low": "[\"tz\", \"Europe/Paris\"]"
+                  }
+                ]
+              }
+            ],
+            "using": "gsi"
+          }
+...
+----
+
+[#section_w31_bnm_5z]
+== Contrast with Composite Indexes
+
+Traditionally, composite secondary indexes are used to create indexes with multiple index keys.
+For example, the following index in C6:
+
+[source,json]
+----
+C6: CREATE INDEX `def_city_faa_airport`
+    ON `travel-sample`(city, faa, airportname)
+    WHERE (`type` = "airport");
+----
+
+Such composite indexes are very different from the adaptive index in C4 in many ways:
+
+. *Order of index keys is vital for composite indexes.*  When an index key is used in the WHERE clause, all prefixing index keys in the index definition must also be specified in the WHERE clause.
+For example, to use the index C6, a query to "_find details of airports with FAA code SFO_", must specify the prefixing index key `city` also in the WHERE clause just to qualify the index C6.
+Contrast the following query Q6 with Q3 above that uses the adaptive index in C3.
++
+[source,json]
+----
+Q6:  SELECT * FROM `travel-sample`
+     WHERE faa = "SFO"
+     AND city IS NOT MISSING;
+----
++
+The problem is not just the addition of an extraneous predicate, but the performance.
+The predicate on the first index key `city IS NOT MISSING` is highly selective (i.e.
+most of the index entries in the index will match it) and hence, it will result in almost a full index scan.
+
+. *Complication in Queries.*  If a document has many fields to index, then the composite index will end up with all those fields as index keys.
+Subsequently, queries that only need to use index keys farther in the index key order will need many unnecessary predicates referring to all the preceding index keys.
+For example, if the index is:
++
+----
+CREATE INDEX idx_name ON `travel-sample`(field1, field2, ..., field9);
+----
++
+A query that has a predicate on [.var]`field9` will get unnecessarily complicated, as it needs to use all preceding index keys from [.var]`field1` to [.var]`field8`.
+
+. *Explosion of number of indexes for ad hoc queries.* At some point, this becomes highly unnatural and overly complicated to write ad hoc queries using composite indexes.
+For instance, consider a user profile or inventory search use case where a person or item may need to be searched based on many criteria.
++
+One approach is to create indexes on all possible attributes.
+If that query can include any of the attributes, then it may require creation of innumerable indexes.
+For example, a modest 20 attributes will result in 20 factorial (2.43x10^18^) indexes in order to consider all combinations of sort orders of the 20 attributes.
+
+== Performance Implications
+
+While Adaptive Indexes are very useful, there are performance implications you need to keep in mind:
+
+. *If a query is not covered by a regular index, then an unnested index will not have any elimination of redundant indexes*; and it will instead do an IntersectScan on all the indexes, which can impact performance.
++
+----
+CREATE INDEX idx_name ON `travel-sample`(name);                   / idx_name
+CREATE INDEX idx_self ON `travel-sample`(DISTINCT PAIRS(self));   / whole document
+SELECT * FROM `travel-sample` WHERE TYPE="hotel";                 / IntersectScan of idx_name AND idx_self
+
+EXPLAIN Results:
+{
+  "plan": {
+    "#operator": "Sequence",
+    "~children": [
+      {
+        "#operator": "IntersectScan",
+        "scans": [
+----
++
+Here's another example with a partial Adaptive Index that uses IntersectScan on the index conditions:
++
+----
+CREATE INDEX idx_adpt ON `travel-sample`(DISTINCT PAIRS(self)) WHERE city="Paris";
+CREATE INDEX idx_reg1 ON `travel-sample`(name) WHERE city="Paris";
+CREATE INDEX idx_reg2 ON `travel-sample`(city);
+
+SELECT * FROM `travel-sample` WHERE type="hotel" AND email IS NOT NULL;
+----
++
+The above query requires only a regular index, so it uses index `idx_reg1` and ignores index `idx_reg2`.
+When the adaptive index `idx_adpt` has only the clause `city="Paris"` and is used with the above query, then index `idx_adpt` will still use IntersectScan.
+Here, we have only a single adaptive index instead of a reduction in the number of indexes.
+To fix this, we may need to remove the index condition from the predicate while spanning generations.
+
+[#section_u4c_gzm_5z]
+== Functional Limitations
+
+It is important to understand that adaptive indexes are not a panacea and that they have trade-offs compared to traditional composite indexes:
+
+. *Adaptive Indexes are bound to the limitations of Array Indexes* because they are built over xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing] technology.
+Index Joins can’t use Adaptive Indexes because Index Joins can’t use array indexes, and Adaptive Index is basically an array index.
+. *Indexed entries of the Adaptive Index are typically larger in size compared to the simple index* on respective fields because the indexed items are elements of the PAIRS() array, which are basically name-value pairs of the document fields.
+So, it may be relatively slower when compared with equivalent simple index.
+For example, in the following equivalent queries, C7/Q7 may perform better than C8/Q8.
+Note how the index key values are represented in the spans:
++
+----
+C7: CREATE INDEX `def_city` ON `travel-sample`(`city`);
+Q7: EXPLAIN SELECT city FROM `travel-sample` USE INDEX (def_city) WHERE city = "San Francisco";
+
+C8: CREATE INDEX `ai_city` ON `travel-sample`(pairs({city}));
+Q8: EXPLAIN SELECT city FROM `travel-sample` USE INDEX (ai_city) WHERE city = "San Francisco";
+----
++
+image::n1ql-language-reference/adaptive-indexing_Q7-Q8_Results.png[]
+
+. *Adaptive index requires more storage and memory*, especially in case of Memory Optimized Indexes.
+
+ .. The size of the index and the number of indexed items in an Adaptive Index grow rapidly with the number of fields in the documents, as well as, with the number of different values for various fields in the documents or keyspace.
+ .. Moreover, if the documents have nested sub-objects, then the adaptive index will index the sub-documents and related fields at each level of nesting.
+ .. Similarly, if the documents have array fields, then each of array elements are explored and indexed.
+ .. For example, the following queries show that a single route document in `travel-sample` generates 103 index items and that all route documents produce ~2.3 million items.
++
+[source,json]
+----
+SELECT array_length(PAIRS(self)) FROM `travel-sample`
+WHERE type = "route" LIMIT 1;
+
+Result:
+[
+  {
+    "$1": 103
+  }
+]
+
+SELECT sum(array_length(PAIRS(self))) FROM `travel-sample`
+WHERE type = "route" LIMIT 1;
+[
+  {
+    "$1": 2285464
+  }
+]
+----
+
++
+So, the generic adaptive indexes (with `SELF`) should be employed carefully.
+Whenever applicable, it is recommended to use the following techniques to minimize the size and scope of the adaptive index:
+
+ ** Instead of `SELF`, use selective adaptive indexes by specifying the field names of interest to the PAIRS() function.
+For examples, refer to C4, Q1, Q2, and Q3 above.
+ ** Use partial adaptive indexes with a WHERE clause that will filter the number of documents that will be indexed.
+For examples, refer to C5, Q5, and Q5A above.
+
+. *A generic adaptive index (on SELF) will be qualified for all queries on the keyspace*.
+So, when using with other GSI indexes, this will result in more IntersectScan operations for queries that qualify other non-adaptive indexes.
+This may impact query performance and overall load on query and indexer nodes.
+To alleviate the negative effects, you may want to specify the `USE INDEX` clause in `SELECT` queries whenever possible.
+. *Adaptive Indexes cannot be used as Covered Indexes* for any queries.
+See example Q8 above.
+. *Adaptive Indexes can be created only on document field identifiers*, not on functional expressions on the fields.
+For example, the following query uses the index [.var]`def_city`, instead of the specified adaptive index [.var]`ai_city2`:
++
+[source,json]
+----
+CREATE INDEX `ai_city2` ON `travel-sample`(pairs({"city" : lower(city)}));
+
+EXPLAIN SELECT city FROM `travel-sample`
+USE INDEX (ai_city2)
+WHERE lower(city) = "san francisco";
+
+Result:
+{
+  "plan": {
+    "#operator": "Sequence",
+    "~children": [
+      {
+        "#operator": "IndexScan2",
+        "covers": [
+          "cover ((`travel-sample`.`city`))",
+          "cover ((meta(`travel-sample`).`id`))"
+        ],
+        "index": "def_city",                  / Doesn't use ai_city2
+        "index_id": "931a0fae2fe4ef8",
+...
+----
++
+NOTE: This query uses the [.var]`def_city` index instead of our specified [.var]`ai_city2` index because it’s a functional index expression on the field city.
+
+. *Adaptive Indexes do not work with NOT LIKE predicates with a leading wildcard* (see https://issues.couchbase.com/browse/MB-23981[MB-23981^]).
+For example, the following query uses the index [.var]`def_city`, instead of the specified adaptive index [.var]`ai_city`.
+However, it works fine for LIKE predicates with a leading wildcard.
++
+[source,json]
+----
+SELECT city FROM `travel-sample`
+USE INDEX (ai_city)
+WHERE city NOT LIKE "%Francisco";
+
+Result:
+{
+  "plan": {
+    "#operator": "Sequence",
+    "~children": [
+      {
+        "#operator": "IndexScan2",
+        "covers": [
+          "cover ((`travel-sample`.`city`))",
+          "cover ((meta(`travel-sample`).`id`))"
+        ],
+        "index": "def_city",               / Doesn't use ai_city
+        "index_id": "931a0fae2fe4ef8",
+...
+----
++
+[source,json]
+----
+EXPLAIN SELECT city FROM `travel-sample`
+USE INDEX (ai_city)
+WHERE city  LIKE "%Francisco";
+
+Result:
+{
+"plan": {
+"#operator": "Sequence",
+"~children": [
+{
+"#operator": "DistinctScan",
+"scan": {
+"#operator": "IndexScan2",
+"index": "ai_city",                       / Uses ai_city
+"index_id": "4c3192fc7e5b0f91",
+...
+----
+
+. *Adaptive indexes can't use Covered Scans*.
+An Adaptive Index can't be a Covered Index because it is an adaptive index, as seen in the following example:
++
+[source,json]
+----
+CREATE INDEX `ai_city2` ON `travel-sample`(pairs({"city" : city}));
+
+EXPLAIN SELECT city FROM `travel-sample`
+USE INDEX (ai_city2)
+WHERE city = "san francisco";
+
+Result:
+{
+  "plan": {
+    "#operator": "Sequence",
+    "~children": [
+      {
+        "#operator": "IndexScan2",
+        "covers": [
+          "cover ((`travel-sample`.`city`))",
+          "cover ((meta(`travel-sample`).`id`))"
+        ],
+        "index": "def_city",                  / Doesn't use ai_city2
+        "index_id": "931a0fae2fe4ef8",
+...
+----
