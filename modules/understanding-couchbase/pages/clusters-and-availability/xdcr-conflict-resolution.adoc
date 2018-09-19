@@ -7,17 +7,16 @@ document that have been modified in different ways at different locations.
 [#conflicts_and_conflict_resolution]
 == Conflicts and Conflict Resolution
 
-A conflict is where the same document is modified in two different locations
-before the document has been synchronized between the locations.
-To maintain consistency between these two locations, one version has to be
-chosen as the correct version: this task is performed automatically by
-_conflict resolution_.
+A _conflict_ is the modification of a document in two different
+locations: the conflict must be _resolved_ by determining which
+of the variants should prevail, and then saving both
+documents identically, in the prevailing form. XDCR _conflict
+resolution_ automates this process.
 
-Couchbase Server supports two forms of conflict resolution:
+Two forms of conflict resolution are supported:
 <<revision-id-based-conflict-resolution,_revision-based_>> (which is
 the default),
 and <<timestamp-based-conflict-resolution,_timestamp-based_>>.
-
 Note that _timestamp-based_ conflict resolution is only available in the
 Enterprise Edition of Couchbase Server.
 
@@ -59,22 +58,10 @@ correction or selection of documents.
 
 Revision-based conflict resolution uses the document's _revision ID_
 as the first field to
-resolve conflicts between two writes across clusters. Revision IDs are
-maintained per document and are incremented with every update to the document.
-The revision ID monotonically keeps track of the number of mutations to a
-document, thus revision ID-based conflict resolution can be best characterized
-as 'the most updates wins'.
-XDCR initially compares the revision ID of the source document with the
-revision ID of the equivalent destination document.
-The document with more revisions is considered the 'winner'.
-
-In the event that both document-versions have the same revision ID, the
-conflict is resolved by comparing the following metadata-elements, in the
-order shown:
-
-. CAS value
-. Expiration (TTL) value
-. Document flags
+resolve conflicts. Revision IDs are
+maintained per document, and are incremented on every document-update.
+Revision ID-based conflict resolution compares the revision IDs of the
+source and target documents. The document with more revisions prevails.
 
 For conflict resolution between an incoming mutation from another cluster and
 a local mutation in the current cluster: if the incoming mutation does not
@@ -83,27 +70,36 @@ will not be stored.
 In the case of bidirectional replication, this process results in the mutation
 with the highest revision ID taking precedence on both clusters.
 
-The key point is that the number of document mutations is the main factor that
-determines whether XDCR keeps a document version or not.
-This means that the document that has the most recent mutation may not be
-necessarily the one that wins conflict resolution using revision ID.
+Use of revision-based conflict resolution means that the document with
+the more recent mutation may not prevail.
+
+If both document-versions have the same revision ID, the
+conflict is resolved by comparing the following metadata-elements, in the
+order shown:
+
+. CAS value
+. Expiration (TTL) value
+. Document flags
 
 [#timestamp-based-conflict-resolution]
 == Timestamp-Based Conflict Resolution
 
-Timestamp-based conflict resolution uses the document timestamp (stored in the
-CAS) as the first field to resolve conflicts between two writes across clusters.
-Couchbase Server uses a hybrid logical clock (HLC), a combination of a physical
-clock and a logical clock, to store the timestamp and keep consistent ordering
-of mutations.
+Timestamp-based conflict resolution uses the document _timestamp_
+(stored in the
+CAS) as the first field to resolve conflicts. The timestamps associated
+with the most recent updates of source and target documents are compared.
+The document whose updates bear the more
+recent timestamp prevails.
 
-Using timestamp-based conflict resolution, document-updates with the most
-recent timestamp will 'win' conflict resolution.
-As such timestamp-based conflict resolution can be best characterized as
-'last write wins'.
-XDCR initially compares the timestamp of the source document with the timestamp
-of the equivalent destination document.
-The document with a higher timestamp value is considered the 'winner'.
+For conflict resolution between an incoming mutation from another cluster and
+a local mutation in the current cluster, if the incoming mutation does not have
+a higher timestamp value than the local mutation, it will be discarded and will
+not be stored.
+In the case of bidirectional replication, this process results in the mutation
+with the highest timestamp value taking precedence on both clusters.
+
+Use of timestamp-based conflict resolution means that the document with
+the greater number of mutations may not prevail.
 
 In the event that both document versions have the same timestamp value, the
 conflict is resolved by comparing the following metadata-elements, in the
@@ -113,23 +109,11 @@ order shown:
 . Expiration (TTL) value
 . Document flags
 
-For conflict resolution between an incoming mutation from another cluster and
-a local mutation in the current cluster, if the incoming mutation does not have
-a higher timestamp value than the local mutation, it will be discarded and will
-not be stored.
-In the case of bidirectional replication, this process results in the mutation
-with the highest timestamp value taking precedence on both clusters.
-
-The key point is that the timestamp of the most recent mutation is the main
-factor that determines whether XDCR keeps a document version or not.
-This means that the document has received the most mutations may not be
-necessarily the one that wins conflict resolution using the timestamp.
-
 [#time-synchronization]
 ==== Time Synchronization
 
 Timestamp-based conflict resolution requires the use of _synchronized clocks_
-across all nodes in all clusters intended to participate in XDCR..
+across all nodes in all clusters intended to participate in XDCR.
 If clocks are not so synchronized, document
 mutations may improperly prevail as a consequence of conflict resolution.
 To achieve such synchronicity, an
@@ -217,41 +201,33 @@ For both use cases described above, timestamp-based conflict
 resolution ensures that the most recent version of each document is
 preserved.
 
-[#choosing_a_conflict_resolution_method]
-== Choosing a Conflict Resolution Method
+[#choosing_a_conflict_resolution_policy]
+== Choosing a Conflict Resolution Policy
 
-The conflict resolution policy is configured on a per-bucket basis at bucket
+Conflict resolution policy is configured on a per-bucket basis at bucket
 creation time, it cannot be changed later.
 For more information, see xref:clustersetup:create-bucket.adoc[Create a Bucket].
-It is therefore important to choose the correct conflict resolution method for
-your application requirements to avoid unintended side effects.
-Choosing the correct conflict resolution method requires consideration of the
-application logic as to which version of the document is the most useful as
-the data in 'losing' version is discarded.
+Choosing a conflict resolution method requires consideration of
+the logic of the applications that require the data.
+This is illustrated by the following examples:
 
-To illustrate how application logic affects the choice of conflict resolution
-method, two simple examples are provided.
+* _Most Updates Wins_: A hit-counter, for a website, is stored as a
+document within Couchbase Server; a value within the document is
+incremented each time the website is accessed. In the event of
+conflict, the document-version that contains the higher count is the
+more useful, since more closely reflective of the actual count. Therefore,
+in this instance, revision-based conflict resolution is preferable, since
+it ensure that the more mutated document prevails.
 
-*Example 1 - Most Updates is Best*
+* _Most Recently Updated Wins_: A thermometer device store the current
+temperature as a document within Couchbase Server, writing new values
+continuously to the same key. In the event of conflict, the document-version
+more recently updated is the more useful, since more closely reflective of
+the current temperature. Therefore, in this instance, timestamp-based
+conflict resolution ensures that the most recent version of the document
+prevails.
 
-Consider a hit counter for a website, stored as a counter document within
-Couchbase Server which is incremented on every access.
-In the event of a conflict occurring, you would want the version of the
-document has been incremented the most, as that will more closely reflect
-the actual count.
-Revision ID-based conflict resolution would be preferable in this instance
-as it ensures that the document which has been mutated the most 'wins'.
-
-*Example 2 - Most Recent Update is Best*
-
-Consider a thermometer device which stores the current temperature in
-Couchbase Server, writing to the same key repeatedly.
-In the event of a conflict occurring, you would want to keep the version
-of the document which was captured most recently, as that is the most
-accurate 'current' temperature.
-Timestamp-based conflict resolution ensures that the most recent version
-of the document would be used.
-
+[#aligning_source_and_target_conflict_resolution_policies]
 == Aligning Source and Target Conflict Resolution Policies
 
 XDCR replications cannot be created between buckets with
