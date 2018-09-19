@@ -9,50 +9,47 @@ document that have been modified in different ways at different locations.
 
 A conflict is where the same document is modified in two different locations
 before the document has been synchronized between the locations.
-
 To maintain consistency between these two locations, one version has to be
-chosen as the 'correct' version.
+chosen as the correct version: this task is performed automatically by
+_conflict resolution_.
 
-Conflict resolution provides a method to consistently and deterministically
-select which version of the document to use.
-
-In the case of XDCR, if the same documents are being mutated on both ends of an
-XDCR replication (source and destination), then there is a high probability that
-conflicts could occur.
-
-XDCR automatically performs conflict resolution between different document
-versions on the source and destination clusters to ensure that both clusters
-remain in sync.
-
-Couchbase Server supports two distinct conflict resolution strategies -
-<<revision-id-based-conflict-resolution,_revision-based_ (which is
-the default)>>
+Couchbase Server supports two forms of conflict resolution:
+<<revision-id-based-conflict-resolution,_revision-based_>> (which is
+the default),
 and <<timestamp-based-conflict-resolution,_timestamp-based_>>.
 
 Note that _timestamp-based_ conflict resolution is only available in the
 Enterprise Edition of Couchbase Server.
 
-== How Conflict Resolution Works
+[#the_conflict_resolution_process]
+== The Conflict Resolution Process
 
-When a document is modified at an XDCR source, it determines if this revision
-of the document should be applied to the destination. XDCR fetches metadata for
-the document from the destination cluster before it replicates the document.
-XDCR compares the destination metadata with the metadata of the updated document
-on the source cluster to pick the 'winner'. The metadata used depends on the
-source bucket's conflict resolution policy. If XDCR determines a document from
-a source cluster will 'win' conflict resolution, it replicates that document
-to the target cluster.
+When a source document is modified, XDCR determines whether this revision
+of the document should be applied to the destination. For documents
+above 256 bytes in size, XDCR fetches metadata
+from the target cluster before replicating.
+The target cluster metadata is compared with the metadata of the updated
+document
+on the source cluster, in order to choose which
+should prevail (the exact subset of metadata used in this comparison
+depends on the
+source bucket's _conflict resolution_ policy). If the source
+document prevails, it is replicated to the target; if the target document
+prevails, the source document is not replicated.
 
-Once the document reaches the destination, the destination cluster will also
-compare metadata to confirm the document from the source cluster is still the
-'winner'. If the document from the source cluster is still the 'winner' it is
-applied to the destination cluster. The destination cluster discards the
-document version that 'loses' conflict resolution.
+Once a replicated document reaches the target, the target cluster also
+performs a metadata comparison as described, in order
+to confirm that the document from the source cluster should indeed
+prevail. If this is confirmed, the document from the source cluster is
+applied to the target cluster, and the target cluster's previous version
+of the document is discarded.
 
-XDCR optimizes this process for small documents (default 256 bytes),
-by skipping the fetching of metadata from the destination cluster
-and, instead, immediately sending the document to the destination, to
-undergo conflict resolution.
+As a performance optimization, XDCR makes no metadata comparison on
+the source for
+documents of 256 bytes or less, thus making unnecessary
+a metadata-fetch from the
+target cluster: instead, the document is replicated
+immediately to the target, and conflict resolution is performed there.
 
 Conflict resolution is an automatic process and does not require any manual
 correction or selection of documents.
@@ -131,40 +128,33 @@ necessarily the one that wins conflict resolution using the timestamp.
 [#time-synchronization]
 ==== Time Synchronization
 
-Timestamp-based conflict resolution requires the use of synchronized clocks.
-Failing successfully to synchronize clocks across nodes can result in document
-mutations incorrectly winning conflicts, which could lead to undesirable
-application behavior.
-
-Accurate time synchronization across all nodes in all XDCR clusters is a strong
-requirement for timestamp-based conflict resolution.
-Couchbase Server requires an external entity to synchronize the clocks among the
-nodes in the clusters such as NTP (Network Time Protocol) or other methods.
-For more information on using NTP to synchronize clocks, see
+Timestamp-based conflict resolution requires the use of _synchronized clocks_
+across all nodes in all clusters intended to participate in XDCR..
+If clocks are not so synchronized, document
+mutations may improperly prevail as a consequence of conflict resolution.
+To achieve such synchronicity, an
+external entity such as NTP (Network Time Protocol) is required.
+For information, see
 xref:install:synchronize-clocks-using-ntp.adoc[Clock Sync with NTP].
 
-Even with time synchronization in place, it is expected that there may be small
-differences in the clocks between different nodes (time skew).
-You must also actively monitor this time skew between clusters to ensure that
+Even with optimal clock synchronicity, small
+differences may persist between the clock-settings on different nodes and
+clusters:
+this is known as _time skew_.
+Time skew between clusters should always be closely monitored, to ensure that
 timestamp-based conflict resolution functions correctly.
-See xref:xdcr-monitor-timestamp-conflict-resolution.adoc[Monitoring XDCR
-Timestamp-based Conflict Resolution] for more details.
+For more details, see
+xref:xdcr-monitor-timestamp-conflict-resolution.adoc[Monitoring XDCR
+Timestamp-based Conflict Resolution].
 
-To compensate for these small differences in time and to allow for updates that
+To compensate for time skew, and and to allow for updates that
 could theoretically be received on the same clock tick, Couchbase Server records
 time stamps using a _Hybrid Logical Clock_ (HLC).
-This is a combination of a physical and a logical clock.
-
-The physical clock is the time returned by the system, in nanoseconds.
-The logical clock is a counter, which increments when the physical clock yields
-a value that is smaller or equal to the currently stored physical clock value.
-
-The CAS of a document is used to store the hybrid logical clock timestamp.
-It is a 64-bit value, with the most significant 48 bits representing the
-physical clock and the least significant 16 bits representing the logical clock.
-Each mutation has its own hybrid logical clock timestamp.
-
-A Hybrid Logical Clock:
+This is a combination of a physical and a logical clock: the physical clock is
+the time returned by the system, in nanoseconds; the logical clock is a counter,
+which is incremented when the physical clock yields
+a value either smaller or equal to the currently stored physical clock value.
+The HLC:
 
 * Is monotonic through its use of a logical clock.
 This ensures that it does not suffer from the potential leap-back of a purely
@@ -172,11 +162,18 @@ physical clock.
 * Captures the ordering of mutations.
 * Is close to physical time.
 
+The CAS of a document is used to store the hybrid logical clock timestamp.
+It is a 64-bit value, with the most significant 48 bits representing the
+physical clock, and the least significant 16 bits representing the logical clock.
+Each mutation has its own hybrid logical clock timestamp.
+
 [#use-cases]
 ==== Use Cases Supported by Timestamp-based Conflict Resolution
 
-Timestamp-based conflict resolution only supports the following deployments.
+Timestamp-based conflict resolution only supports the following
+use cases.
 
+[#high_availability_with_cluster_failover]
 ==== High Availability with Cluster Failover
 
 All database operations go to data center A, and are replicated to data
@@ -184,8 +181,9 @@ center B.
 If the cluster located in data center A fails, the application redirects all
 traffic to data center B.
 
-image::xdcr/timestamp_clusterfailover.png[,570]
+image::xdcr/timestamp_clusterfailover.png[,470]
 
+[#datacenter_locality]
 ==== Datacenter Locality
 
 Two active clusters operate on discrete sets of documents.
@@ -195,31 +193,32 @@ replicates its updates to the other.
 When one cluster fails, application traffic is failed over to the other,
 still-available cluster.
 
-image::xdcr/timestamp_datacenter_locality.png[,570]
+image::xdcr/timestamp_datacenter_locality.png[,470]
 
+[#ensuring_safe_failover]
 === Ensuring Safe Failover
 
 When failover is required,
 timestamp-based conflict resolution requires that applications
 redirect traffic to the still-available
-cluster only after the maximum of the following two time periods has
+cluster only after the greater of the following two time-periods has
 elapsed:
 
 * The replication latency between data centers A and B.
 This provides sufficient time for any _in-flight_ mutations
-to be received by Datacenter B.
+to be received by data center B.
 * The absolute time skew between data centers A and B.
-This ensures that any writes to Datacenter B commence after the last write to
+This ensures that any writes to data center B commence after the last write to
 data center A.
 
 When availability is restored to data center A, applications must observe the
-same time period before again redirecting their traffic.
-For both of the use cases described above, using timestamp-based conflict
+same time period, before again redirecting their traffic.
+For both use cases described above, timestamp-based conflict
 resolution ensures that the most recent version of each document is
 preserved.
 
-
-== Choosing the Right Conflict Resolution Method
+[#choosing_a_conflict_resolution_method]
+== Choosing a Conflict Resolution Method
 
 The conflict resolution policy is configured on a per-bucket basis at bucket
 creation time, it cannot be changed later.
@@ -255,10 +254,9 @@ of the document would be used.
 
 == Aligning Source and Target Conflict Resolution Policies
 
-It is not possible to create XDCR replications between buckets with
-different conflict resolution policies. Therefore, source and target
-buckets intended for use in replication should always be configured with
-the same policy.
+XDCR replications cannot be created between buckets with
+different conflict resolution policies: source and target
+buckets must always be configured with the same policy.
 
-Note that when using XDCR with a source cluster running a pre-4.6 version of
+When using XDCR with a source cluster running a pre-4.6 version of
 Couchbase Server, only revision-based conflict resolution can be used.
