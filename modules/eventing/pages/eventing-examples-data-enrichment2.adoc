@@ -1,0 +1,98 @@
+= Data Enrichment Examplecd
+
+[#example-1]
+
+*Goal*: This example illustrates how to leverage the Eventing Service to perform a cascade delete operation.
+When a user is deleted, Couchbase Functions provide a reliable method to delete all the associated documents with the deleted user.
+
+This example requires you to create three buckets: users, metadata and transactions buckets.
+
+For steps to create buckets, see https://developer.couchbase.com/documentation/server/5.1/clustersetup/create-bucket.html[[.underline]#Create Bucket#^].
+
+*Implementation*: Create a JavaScript Function that contains an *OnDelete* handler.
+The handler listens to data-changes within a specified, *users* source bucket.
+When a user within the source bucket gets deleted, the handler executes a routine to remove the deleted user.
+When the delete operation is complete, all associated documents of the delete users get removed.
+
+Proceed as follows:
+
+. From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*,to add a new Function.
++
+image::functions_add_4exp3.png[,400]
+
+. In the *ADD FUNCTION* dialog, for individual Function elements, provide the below information:
+ ** For the *Source Bucket* drop-down, select the *Users* that was created for this purpose.
+ ** For the *Metadata Bucket* drop-down, select the *metadata* that was created for this purpose.
+ ** Enter *delete_orphaned_txns* as the name of the Function you are creating in the *Function**Name* text-box.
+ ** Enter *Delete Orphaned Transactions from the `transactions’ bucket when user_id is less than 10* in the *Description* text-box.
+ ** For the *Settings* option, use the default values.
+ ** For the *Bindings* option, specify *users* as the *name* of the bucket and specify **src**_**user** as the associated *value*.
+. After providing all the required information in the *ADD FUNCTION* dialog, click *Next*: *Add Code*.
+The *delete_orphaned_txns* dialog appears.
++
+The *delete_orphaned_txns* dialog initially contains a placeholder code block.
+You will substitute your actual *delete_orphaned_txns* code in this block.
++
+image::addfunctions-code_exp3.png[,400]
+
+. Copy the following Function, and paste it in the placeholder code block of the *delete_orphaned_txns* screen:
++
+----
+function OnUpdate(doc, meta) {
+    log('OnUpdate document:', meta.id);
+}
+
+function OnDelete(meta) {
+    log('Document Deleted:', meta.id);
+    if(meta.id < 10)
+    {
+       try
+       {
+            var this_user_id = meta.id;
+            var del = delete from `transactions` where user_id = TONUMBER($this_user_id);
+            del.execQuery();
+            log('Deleted Orphaned Transactions for User:', this_user_id);
+       }
+       catch(e)
+       {
+           log('Exception:', e)
+       }
+    }
+}
+----
++
+After pasting, the screen appears as displayed below:
++
+image::ondelete-functions.png[,600]
++
+The *OnDelete* handler is triggered for user delete transaction.
+The handler checks if the *user_id* is less than 10.
+When this condition is fulfilled, then an N1QL query is triggered to delete all user related information.
+The handler is then configured to record this delete operation in a Function specific application log file.
+.
+
+. To return to the Eventing screen, click *Eventing*.
+The Function *delete_orphaned_txns* is listed as a defined Function.
+Currently, it is listed as *Undeployed* and *Paused*.
+. Click *Deploy*.
+. From the *Confirm Deploy Function* dialog, click *Deploy Function*.
+From this point, the defined Function is executed on all existing documents and on subsequent mutations.
+. Navigate to the *Couchbase Web Console* > *Query* page.
+Before deleting a user, a snapshot of *Query Result* from the *users* bucket is displayed:
++
+image::queryresults_ondelerte.png[,400]
+
+. The *Query Results* display users with **user_id**s from 1 to 10.
+. Navigate to the *Couchbase Web Console* > *Buckets* page.
+Delete two users from the *Users* bucket:
+ ** Select *User4* from the list and click the *delete* icon.
+ ** Select *User10* from the list and click the *delete* icon.
+. From the *Query Editor*, execute an N1QL query to check that all related records for the deleted users are removed from the cluster.
++
+----
+SELECT user_id, COUNT(1) FROM `Users` GROUP BY user_id ORDER BY user_id ASC;
+----
++
+image::query-results-ondelete.png[,400]
+
+. In the *Query Results* pane notice that user_ids, *user_id4* and *user_id 10* are removed as part of the cascade user delete operation.
