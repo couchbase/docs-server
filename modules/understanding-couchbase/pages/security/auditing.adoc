@@ -1,7 +1,340 @@
 = Auditing
 
 [abstract]
-Auditing
+Couchbase Server provides event-auditing, sending corresponding output to target files.
 
 [#introduction-to-auditing]
 == Introduction to Auditing
+
+The Couchbase Server _auditing_ facility recognizes specific _events_, which
+can be configured to produce logged output: the output is written to a
+specific target file, which is periodically rotated.
+
+=== List of Audit Events
+
+Events audited by Couchbase Server include successful and failed logins, events associated with cluster and bucket configuration, and the use of tools that require administrative privileges.
+Corresponding information is captured in _output targets_, which are files in JSON format.
+
+Couchbase Server generates audit events whenever the following actions occur:
+
+.Administrative Audit Events
+[cols=3*]
+|===
+| Login succeeded or failed
+| Audit configuration changed
+| Auditing enabled or disabled
+
+| Node added to cluster
+| Node removed from cluster
+| Node failed over
+
+| Cluster rebalanced
+| System started or shut down
+| Bucket created
+
+| Bucket deleted
+| Bucket flushed
+| Bucket-settings modified
+
+| Disk or index path changed
+| Remote cluster-reference established
+| Remote cluster-reference updated
+
+| Remote cluster-reference deleted
+| User added
+| User removed
+
+| XDCR reference created
+| XDCR reference updated
+| XDCR reference deleted
+
+| XDCR replication paused or resumed
+| XDCR replication-settings updated
+| XDCR replication created
+
+| XDCR replication canceled
+| Auto failover enabled
+| Auto failover disabled
+
+| Auto failover-count reset
+| Cluster alerts enabled
+| Cluster alerts disabled
+
+| Index-node added or removed
+| Server-group created
+| Node added to server-group
+
+| Node removed from server-group
+| Server-group deleted
+| Password changed or reset
+
+| FTS index created or updated
+| FTS index deleted
+| FTS index control-command issued
+
+| FTS configuration refreshed
+| FTS configuration replanned
+| GC run triggered
+
+| CPU profiling started
+| Memory profiling started
+| Self-signed SSL certificate regenerated
+
+| LDAP authentication-settings modified
+| Encryption key-rotation requested
+| Compaction settings modified
+
+| Bucket compression mode modified
+| Bucket TTL modified
+|
+|===
+
+
+=== Audit Fields
+
+The table below contains some frequently used audit fields with corresponding descriptions.
+Note that different event-types generate different field-subsets.
+
+.Audit record content
+[cols="1,2,4"]
+|===
+| Field | Type | Description
+
+| `type`
+| string
+| The audit-type.
+For example, Login, Startup, Shutdown, Password, AuditStart, AuditStop, AuditTruncate.
+
+| `timestamp`
+| document
+| Contains the date and UTC time of the event in ISO 8601 format.
+For example, http://www.w3.org/TR/NOTE-datetime[^].
+
+| `id`
+| integer
+| A unique identifier for the event-type.
+
+| `local`
+a|
+document
+
+[source,json]
+----
+{ip: <String>,
+port: <int>},
+----
+| A JSON document that contains the local IP-address and the port-number of the running instance.
+
+| `remote`
+a|
+document
+
+[source,json]
+----
+{ip: <String>,
+port: <int>},
+----
+| A JSON document that contains the remote IP-address, the port-number, and additional information on the service used on the incoming connection associated with the event.
+
+Possible services include `cbmcd`, `cbhttp`, `cbmgmt`, `cbxdcr`, `cbn1ql`, and `cbsyncgw`.
+
+| `user`
+| string
+| A string that identifies the user.
+
+| `params`
+| document
+| Information dependent on the event-type.
+For example, for a bucket-operation, the bucket name is captured.
+
+| `result`
+| integer or string
+| An error-code or other message, related to the attempted operation.
+|===
+
+
+
+=== Audit Log Targets
+
+When auditing is enabled, logged events are written to a default file, named `audit.log`.
+After an administrator-specified period — which must be a minimum of 15 minutes and a maximum of 7 days — this file is closed, and is saved under a modified name that features a timestamp corresponding to the time of saving.
+A new, empty `audit.log` file is created and saved when a new audit event is generated.
+Note that this _rotation_ may happen earlier if the file reaches its maximum size of 20MB.
+For instructions on configuring the file's _rotation time_, see xref:security-auditing.adoc[Auditing].
+
+==== Login
+
+An audit-record for a successful login might appear as follows:
+
+[source,json]
+----
+{
+  "timestamp":"2015-02-20T08:48:49.408-08:00",
+  "id":8192,
+  "name":"login success",
+  "description":"Successful login to couchbase cluster",
+  "role":"admin",
+  "real_userid": {
+    "source":"ns_server",
+    "user":"bjones"
+  },
+ "sessionid":"0fd0b5305d1561ca2b10f9d795819b2e",
+ "remote":{
+  "ip":"172.23.107.165", "port":59383
+  }
+}
+----
+
+In this example, a user named `bjones` has successfully logged into a Couchbase cluster using the domain IP address `172.23.107.165.`
+
+==== Login Failure
+
+The following audit-record indicates that a login attempt failed:
+
+[source,json]
+----
+{
+  "real_userid": {
+    "source": "rejected",
+    "user": "auditBucketUser"
+  },
+  "remote": {
+    "ip": "127.0.0.1",
+    "port": 64416
+  },
+  "timestamp": "2017-03-16T15:45:27.420Z",
+    "id": 8193,
+    "name": "login failure",
+    "description": "Unsuccessful attempt to login to couchbase cluster"
+}
+----
+
+This record indicates that a user named `auditBucketUser` incurred an `Unsuccessful attempt to login to couchbase cluster` on `2017-03-16` at `15:45:27`.
+
+==== Bucket Creation
+
+The audit-record below corresponds to the creation of a bucket.
+
+[source,json]
+----
+{
+  "props":{
+    "compression_mode":"off",
+    "max_ttl":12000,
+    "storage_mode":"couchstore",
+    "conflict_resolution_type":"seqno",
+    "eviction_policy":"value_only",
+    "num_threads":3,
+    "flush_enabled":false,
+    "purge_interval":"undefined",
+    "ram_quota":163577856,
+    "replica_index":false,
+    "num_replicas":1
+  },
+  "type":"membase",
+  "bucket_name":"ProductionBucket",
+  "real_userid":{
+    "source":"ns_server",
+    "user":"Administrator"
+  },
+  "sessionid":"5dd53fe63703c7fdc45ff75596e39a35",
+  "remote":{
+    "ip":"127.0.0.1",
+    "port":61908
+  },
+  "timestamp":"2018-02-07T15:22:54.960Z",
+  "id":8201,
+  "name":"create bucket",
+  "description":"Bucket was created"
+}
+----
+
+This record indicates that a `Bucket was created` on `2018-02-07` at `15:22:54`; that the bucket was named `ProductionBucket`; and that its eviction-policy was defined as `value_only`.
+The bucket was created by the system's full `Administrator`.
+
+==== Bucket TTL Modification
+
+The audit-record below corresponds to the modification of Bucket TTL, for the bucket created immediately above.
+
+[source,json]
+----
+{
+  "props":{
+    "max_ttl":15000,
+    "storage_mode":"couchstore",
+    "eviction_policy":"value_only",
+    "num_threads":3,
+    "flush_enabled":false,
+    "purge_interval":"undefined",
+    "ram_quota":163577856,
+    "num_replicas":1
+  },
+  "type":"membase",
+  "bucket_name":"ProductionBucket",
+  "real_userid":{
+    "source":"ns_server",
+    "user":"Administrator"
+  },
+  "sessionid":"12774a2e146c650eeed8c6d9486857ad",
+  "remote":{
+      "ip":"127.0.0.1","port":61966
+  },
+  "timestamp":"2018-02-07T15:23:51.350Z",
+  "id":8202,
+  "name":"modify bucket",
+  "description":"Bucket was modified"
+}
+----
+
+==== User Creation
+
+The audit-record below corresponds to the creation of a user.
+
+[source,json]
+----
+{
+  "roles": [
+    "ro_admin"
+  ],
+  "identity": {
+    "source": "builtin",
+    "user": "auditBucketUser2"
+  },
+  "real_userid": {
+    "source": "ns_server",
+    "user": "Administrator"
+  },
+  "sessionid": "dca284b5efe1937a1a4085ef88c2fbcb",
+  "remote": {
+    "ip": "127.0.0.1",
+    "port": 64416
+  },
+  "timestamp": "2017-03-16T15:44:32.254Z",
+  "id": 8232,
+  "name": "set user",
+  "description": "User was added or updated"
+}
+----
+
+This record indicates that a user named `auditBucketUser2` was created by the full `Administator` on `2017-03-16` at `15:44:32`; and that the user was given the role of `ro_admin`.
+
+==== Index Creation
+
+The following audit-record indicates that an index was created or updated:
+
+[source,json]
+----
+{
+  "timestamp": "2017-03-16T16:12:36.198Z",
+  "real_userid": {
+    "source": "ns_server",
+    "user": "Administrator"
+  },
+  "index_name": "def-airportname",
+  "id": 24577,
+  "name": "Create/Update index",
+  "description": "FTS index was created/Updated"
+}
+----
+
+This record indicates that an `FTS` index named `def-airportname` was created or updated on `201703-16` at `16:12:36`.
