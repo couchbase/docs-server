@@ -1,8 +1,171 @@
-= Manage Certificates
+= Certificate-Based Authentication
 
-[abstract]
-Security ......
+With the growing threat to security from rogue users and/or machines, password-based authentication is no longer a reliable method of authenticating users.
+Couchbase now supports the use of x.509 certificates to authenticate clients which ensures that only approved users (or machines or endpoints) are authenticated.
+This authentication mechanism can be used by the Couchbase SDK to access the Data, Query, and Search Services.
 
-[#xdcr-summary]
-== What is Security?
-....
+Certificate based authentication provides an additional layer of security.
+It relies on a certificate authority, CA, to validate identities and issue certificates.
+The certificate includes information such as the name of the entity it identifies, an expiration date, the name of the CA that issued the certificate, the digital signature of the issuing CA, and so on.
+This information serves as an introduction for users who know and trust the CA but don’t know the entity identified by the certificate.
+All software that supports certificates maintain a collection of trusted CA certificates which help them determine which certificate issuers can be trusted.
+In cases where the CA is a part of a hierarchy, the software can verify that the certificate is signed by the same root CA.
+
+. When authenticating a client using x.509 certificates, Couchbase Server requests the client to present a client certificate during the handshake.
+. When the client presents the certificate, the server checks for the validity of the certificate.
+. If the certificate is valid and not expired, then it parses the certificate to obtain the user name specified in the certificate.
+. The server then verifies the user and the roles assigned to the user.
+If the user has appropriate roles, then it authenticates the user and completes the handshake.
+. If any of the checks fail, the handshake is not completed.
+
+Since the identity in client certificates can be encoded in different ways for different kinds of users, Couchbase provides a flexible scheme to extract the identity from different certificates.
+Starting version 5.1, Couchbase Server supports multiple prefixes to be specified for client certificate authentication, as shown below.
+
+----
+"client_cert_auth": {
+  "state": "enable",
+  "prefixes": [
+    {
+      "path": "san.dnsname",
+      "prefix": "www.",
+      "delimiters": ".,;"
+     },
+     {},
+     ...
+  ]
+}
+----
+
+The "prefixes" field is an array of `{path, prefix, delimiters}` tuples, where:
+
+* `path` can be one of the following values: "[.code]``subject.cn``", "[.code]``san.uri``", "[.code]``san.email``", "[.code]``san.dns``"
+* `prefix` specifies the client certificate prefix value.
+* `delimiters` is a list of characters that can individually be treated as a delimiter
+
+The following constraints apply when specifying multiple tuples:
+
+* You can specify up to a maximum of 10 `{path, prefix,delimiters}` tuples in the "prefixes" array.
+* No two tuples can have the same "[.code]``path``" and "[.code]``prefix``" fields.
+* All the fields in the tuple must be specified.
+
+== Prerequisites
+
+* x.509 certificate is the official standard for public key certificates and SSL/TLS relies on this standard.
+You must use valid x.509 certificates generated and signed by the same root certificate authority (CA).
+* The x.509 certificates must be in PEM format.
+
+NOTE: Your prior knowledge of TLS/SSL, PKI certificates including X.509 certificates, and Certificate Authorities (CAs) is assumed for this topic and describing them is beyond the scope of this document.
+
+== Enabling x.509 Certificate Based Authentication on the Server
+
+You can enable certificate based authentication on the server using REST API or CLI.
+
+This authentication mechanism is available only for the data service and can be used with SDK/clients as well.
+For query and other services, use the other supported authentication mechanisms.
+
+*Using REST API*
+
+. Create a data file containing the payload for your certificate authentication settings.
+For example, `cb-certauth-setting.json`:
++
+----
+{
+	"state": "enable",
+	"prefixes": [{
+			"path": "san.uri",
+			"prefix": "www.",
+			"delimiter": "."
+		},
+		{
+			"path": "san.email",
+			"prefix": "couchbase.",
+			"delimiter": "."
+		}
+	]
+}
+----
+
+. Run the following command to enable x.509 certificate authentication on the server.
++
+----
+curl -H "Content-Type: application/json" --data-binary @cb-certauth-setting.json http://Administrator:password@127.0.0.1:8091/settings/clientCertAuth
+----
+
+To retrieve the client certificate authentication settings, run the following command:
+
+----
+curl -X GET  Administrator:password@localhost:8091/settings/clientCertAuth
+----
+
+.Result
+----
+{"state":"enable","prefixes":[{"delimiter":".","path":"san.uri","prefix":"www."},{"delimiter":".","path":"san.email","prefix":"couchbase."}]}
+----
+
+*Using CLI*
+
+Use the [.cmd]`couchbase-cli` xref:cli:cbcli/couchbase-cli-ssl-manage.adoc#couchbaseclisslmanage1.idm68744912[ssl-manage] command:
+
+----
+couchbase-cli ssl-manage <options>
+----
+
+[cols="20,20,49"]
+|===
+| Options | Value | Description
+
+| --set-client-auth-state
+| disable {vbar} enable {vbar} mandatory
+a|
+Enable or disable the SSL client certificate authentication.
+
+* [.param]`disable`: Disables client based certificate authentication.
+This is the default value.
+* [.param]`enable`:  When enabled, if the client presents a certificate, then that certificate is used to authenticate.
+If authentication fails, then access is denied.
+However, if the client does not present a certificate, the certificate based authentication will be bypassed.
+* [.param]`mandatory`: The client must present a valid certificate in order to gain access to Couchbase buckets.
+If using XDCR, *do not* use the [.param]`mandatory` state for X.509 Certificate Authentication.
+
+| --set-client-auth-path
+| subject.cn {vbar} san.uri {vbar} san.dnsname {vbar} san.email
+| Set SSL client certificate type value.
+This field will be used to extract the user name from the certificate.
+Currently, only the fields specified in the values column are supported.
+
+| --set-client-auth-prefix
+| set_client_auth_prefix
+| Set SSL client certificate prefix value.
+
+| --set-client-auth-delimiter
+| set_client_auth_delimiter
+| Set SSL client certificate delimiter value.
+The delimiter can either be a string or a character.
+The parsing of the certificate for the user name ends when the delimiter value is found.
+
+| --client-auth
+|
+| Show SSL client certificate authentication value.
+|===
+
+After setting up the server side for client authentication, you should also assign the users to some roles on the server side.
+To do so:
+
+. Create a user with authentication source (domain) 'Couchbase'.
+. Ensure that this user is an internally managed user with a strong password.
+While the password is not used as part of the certificate based authentication, it is required if the user is trying to access the resources through the web console.
+
+For information on assigning roles to users, see xref:security-rbac-for-admins-and-apps.adoc[Creating and Managing Users with the UI].
+
+== Limitations
+
+Note the following limitations to the feature in the current release:
+
+* X.509 Certificate Based Authentication will only work for data service.
+* For Couchbase Server 5.5, X.509 Certificate-based Authentication is suported by all SDK Clients.
+However, only the very latest versions support it - check the https://developer.couchbase.com/server/other-products/release-notes-archives/java-sdk[release notes^] for your SDK version.
+
+== Upgrade
+
+When upgrading from an earlier version to 5.5, the cluster will be in mixed mode and will return client certificate authentication settings in the older format until the cluster is completely upgraded.
+Once the cluster has been upgraded, any existing client certificate authentication settings from earlier versions will be automatically transformed into the new format.
