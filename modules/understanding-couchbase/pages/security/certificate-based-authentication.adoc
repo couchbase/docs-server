@@ -1,282 +1,178 @@
-= Cross Data Center Replication (XDCR)
+= Certificate-Based Authentication
 
 [abstract]
-_Cross Data Center Replication_ (XDCR) allows data to be replicated across clusters
-that are potentially located in different data centers.
+Couchbase supports the use of x.509 certificates
 
-[#introduction-to-xdcr]
-== Introduction to XDCR
+[#introduction-to-certificates]
+== Introduction to Certificates
 
-Cross Data Center Replication (XDCR) replicates data between clusters: this
-provides protection against data center failure, and also provides
-high-performance data-access for globally distributed, mission-critical
-applications.
+Couchbase supports the use of x.509 certificates to authenticate clients which
+ensures that only approved users (or machines or endpoints) are authenticated.
+This authentication mechanism can be used by the Couchbase SDK to access the
+Data, Query, and Search Services.
 
-XDCR replicates data from a specific bucket on the source cluster to a
-specific bucket on the target cluster. Data from the source bucket is pushed
-to the target bucket by means of an XDCR agent, running on the source cluster,
-using the Database Change Protocol. Any bucket (Couchbase or Ephemeral) on any
-cluster can be specified as a source or a target for one or more
-XDCR definitions.
+Certificate based authentication provides an additional layer of security.
+It relies on a certificate authority, CA, to validate identities and issue certificates.
+The certificate includes information such as the name of the entity it identifies, an expiration date, the name of the CA that issued the certificate, the digital signature of the issuing CA, and so on.
+This information serves as an introduction for users who know and trust the CA but don’t know the entity identified by the certificate.
+All software that supports certificates maintain a collection of trusted CA certificates which help them determine which certificate issuers can be trusted.
+In cases where the CA is a part of a hierarchy, the software can verify that the certificate is signed by the same root CA.
 
-Cross Data Center Replication differs from intra-cluster replication in
-the following, principal ways:
+. When authenticating a client using x.509 certificates, Couchbase Server requests the client to present a client certificate during the handshake.
+. When the client presents the certificate, the server checks for the validity of the certificate.
+. If the certificate is valid and not expired, then it parses the certificate to obtain the user name specified in the certificate.
+. The server then verifies the user and the roles assigned to the user.
+If the user has appropriate roles, then it authenticates the user and completes the handshake.
+. If any of the checks fail, the handshake is not completed.
 
-* As indicated by their respective names, _intra-cluster replication_
-replicates data across the nodes
-of a single cluster; while _Cross Data Center Replication_
-replicates data across multiple clusters, each potentially in a different
-data center.
-* Whereas intra-cluster replication creates only _replica_ vBuckets, XDCR
-creates only _active_ vBuckets, which duly become available for the serving of
-data on the target cluster.
-* Whereas intra-cluster replication is configured and performed with
-reference to only a single bucket (to which all active and replica vBuckets
-will correspond), XDCR requires _two_ buckets to be administrator-specified,
-for a replication to occur: one is the bucket on the source cluster, which
-provides the data to be replicated; the other is the bucket on the target
-cluster, which receives the replicated data.
-* Whereas intra-cluster replication is configured at bucket-creation, XDCR
-is configured _following_ the creation of both the source and target buckets.
+Since the identity in client certificates can be encoded in different ways for different kinds of users, Couchbase provides a flexible scheme to extract the identity from different certificates.
+Starting version 5.1, Couchbase Server supports multiple prefixes to be specified for client certificate authentication, as shown below.
 
-The starting, stopping, and pausing of XDCR all occur
-independently of whatever
-intra-cluster replication is in progress
-on either the source or target cluster. While running, XDCR
-continuously
-propagates mutations from the source to the target bucket. The source and
-target clusters can have different node-configurations. The source and
-target buckets can have different intra-cluster replication settings.
+----
+"client_cert_auth": {
+  "state": "enable",
+  "prefixes": [
+    {
+      "path": "san.dnsname",
+      "prefix": "www.",
+      "delimiters": ".,;"
+     },
+     {},
+     ...
+  ]
+}
+----
 
-[#tools-for-managing-xdcr]
-== Tools and Procedures for Managing XDCR
+The "prefixes" field is an array of `{path, prefix, delimiters}` tuples, where:
 
-Prior to XDCR management, source and target
-clusters should be appropriately prepared, as described in
-xref:managing-clusters:managing-xdcr/prepare-for-xdcr.adoc[Prepare for XDCR].
-Then, XDCR is managed in three stages:
+* `path` can be one of the following values: "[.code]``subject.cn``", "[.code]``san.uri``", "[.code]``san.email``", "[.code]``san.dns``"
+* `prefix` specifies the client certificate prefix value.
+* `delimiters` is a list of characters that can individually be treated as a delimiter
 
-. Define a _reference_ to a remote cluster, which will be the target for
-Cross Data Center Replication. See
-xref:managing-clusters:managing-xdcr/create-xdcr-reference.adoc[Create a
-Reference].
-. Define and start a _replication_, which continuously transfers mutations
-from a specified source bucket to a specified target bucket. See
-xref:managing-clusters:managing-xdcr/create-xdcr-replication[Create a
-Replication].
-. Monitor the ongoing replication, pausing and resuming
-the replication if and when appropriate. See
-xref:managing-clusters:managing-xdcr/monitor-xdcr-replication.adoc[Monitor a
-Replication],
-xref:managing-clusters:managing-xdcr/pause-xdcr-replication.adoc[Pause a
-Replication], and
-xref:managing-clusters:managing-xdcr/resume-xdcr-replication.adoc[Resume a
-Replication].
+The following constraints apply when specifying multiple tuples:
 
-Couchbase provides three options for managing these stages, which are
-by means of:
+* You can specify up to a maximum of 10 `{path, prefix,delimiters}` tuples in the "prefixes" array.
+* No two tuples can have the same "[.code]``path``" and "[.code]``prefix``" fields.
+* All the fields in the tuple must be specified.
 
-* _Couchbase Web Console_, which provides a graphical user interface for
-interactive configuration and management of replications.
-* _CLI_, which provides commands and flags that allow replications to be
-managed from the command line.
-* _REST API_, which underlies both the Web Console and CLI, and can be
-expressed either as a `curl` command on the command line, or within a
-program or script.
+== Prerequisites
 
-For procedures that cover all main XDCR management tasks, performed with
-all three of the principal tools, see
-xref:managing-clusters:managing-xdcr/xdcr-management-overview.adoc[XDCR
-Management Overview].
+* x.509 certificate is the official standard for public key certificates and SSL/TLS relies on this standard.
+You must use valid x.509 certificates generated and signed by the same root certificate authority (CA).
+* The x.509 certificates must be in PEM format.
 
-[#xdcr-direction-and-topology]
-== XDCR Direction and Topology
+NOTE: Your prior knowledge of TLS/SSL, PKI certificates including X.509 certificates, and Certificate Authorities (CAs) is assumed for this topic and describing them is beyond the scope of this document.
 
-XDCR allows replication to occur between source and target clusters in
-either of the following ways:
+== Enabling x.509 Certificate Based Authentication on the Server
 
-* _Unidirectionally_: The data contained in a specified source bucket is
-replicated to a specified target bucket. Although the replicated data on
-the source _could_ be used for the routine serving of
-data, it is in fact intended
-principally as
-a backup, to support disaster recovery.
+You can enable certificate based authentication on the server using REST API or CLI.
 
-[#unidirectional_replication]
-image::xdcr/unidirectional-xdcr.png[,500,align=left]
+This authentication mechanism is available only for the data service and can be used with SDK/clients as well.
+For query and other services, use the other supported authentication mechanisms.
 
-* _Bidirectionally_: The data contained in a specified source bucket is
-replicated to a specified target bucket; and the data contained in the
-target bucket is, in turn, replicated back to the source
-bucket. This allows both buckets to be used for the serving of data, which
-may provide faster data-access for users and applications in remote
-geographies.
+*Using REST API*
 
-[#bidirectional_replication]
-image::xdcr/bidirectional-xdcr.png[,620,align=left]
+. Create a data file containing the payload for your certificate authentication settings.
+For example, `cb-certauth-setting.json`:
++
+----
+{
+	"state": "enable",
+	"prefixes": [{
+			"path": "san.uri",
+			"prefix": "www.",
+			"delimiter": "."
+		},
+		{
+			"path": "san.email",
+			"prefix": "couchbase.",
+			"delimiter": "."
+		}
+	]
+}
+----
 
-Note that XDCR provides only a single basic mechanism from which
-replications are built: this is the _unidirectional_ replication.
-A _bidirectional_ topology
-is created by implementing two _unidirectional_ replications, in
-opposite directions, between two clusters; such that a bucket on each
-cluster functions as both source and target.
+. Run the following command to enable x.509 certificate authentication on the server.
++
+----
+curl -H "Content-Type: application/json" --data-binary @cb-certauth-setting.json http://Administrator:password@127.0.0.1:8091/settings/clientCertAuth
+----
 
-Used in different combinations,
-unidirectional and bidirectional replication can support
-complex topologies; an example being the _ring_ topology, where
-multiple clusters each connect to exactly two peers, so that a complete
-ring of connections is formed:
+To retrieve the client certificate authentication settings, run the following command:
 
-[#ring_topology_replication]
-image::xdcr/ring-topology-xdcr.png[,720,align=left]
+----
+curl -X GET  Administrator:password@localhost:8091/settings/clientCertAuth
+----
 
-Note that when a bucket is specified as the source for an XDCR replication,
-_all_ data in the bucket is replicated. Thus, if replication is
-started between source and target buckets that initially contain
-different data-sets, the replication-process eventually establishes a complete
-data-superset within each bucket.
+.Result
+----
+{"state":"enable","prefixes":[{"delimiter":".","path":"san.uri","prefix":"www."},{"delimiter":".","path":"san.email","prefix":"couchbase."}]}
+----
 
-[#xdcr-filtering]
-== XDCR Filtering
+*Using CLI*
 
-_Filtering Expressions_ can be used in XDCR replications. Each is
-a regular expression that is applied to the
-document keys on the source cluster: those document keys returned by
-the filtering process correspond to the documents that will be replicated
-to the target. For information, See
-xref:clusters-and-availability/xdcr-filtering.adoc[XDCR Filtering].
+Use the [.cmd]`couchbase-cli` xref:cli:cbcli/couchbase-cli-ssl-manage.adoc#couchbaseclisslmanage1.idm68744912[ssl-manage] command:
 
-[#xdcr-payloads]
-== XDCR Payloads
+----
+couchbase-cli ssl-manage <options>
+----
 
-XDCR only replicates data: it does not replicate views or indexes. Views and
-indexes can only be replicated manually, or by administrator-provided
-automation: when the definitions are pushed to the target server, the
-views and indexes are regenerated there.
+[cols="20,20,49"]
+|===
+| Options | Value | Description
 
-When encountered on the source cluster, non-UTF-8 encoded document IDs
-are automatically filtered
-out of replication: they are therefore not transferred to the target
-cluster. For each such ID, the warning output `xdcr_error.*` is written to
-the log files of the source cluster.
+| --set-client-auth-state
+| disable {vbar} enable {vbar} mandatory
+a|
+Enable or disable the SSL client certificate authentication.
 
-[#xdcr-conflict-resolution]
-== XDCR Conflict Resolution
+* [.param]`disable`: Disables client based certificate authentication.
+This is the default value.
+* [.param]`enable`:  When enabled, if the client presents a certificate, then that certificate is used to authenticate.
+If authentication fails, then access is denied.
+However, if the client does not present a certificate, the certificate based authentication will be bypassed.
+* [.param]`mandatory`: The client must present a valid certificate in order to gain access to Couchbase buckets.
+If using XDCR, *do not* use the [.param]`mandatory` state for X.509 Certificate Authentication.
 
-In some cases, especially when bidirectionally replicated data is being
-modified by applications in different locations, _conflicts_ may arise:
-meaning that the data of one or more documents has been differently
-modified more or less simultaneously, requiring resolution.
-XDCR provides options for
-_conflict resolution_, based on either _revision ID_ or _timestamp_,
-whereby conflicted data can be saved consistently on source and target.
-For more information, See
-xref:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution].
+| --set-client-auth-path
+| subject.cn {vbar} san.uri {vbar} san.dnsname {vbar} san.email
+| Set SSL client certificate type value.
+This field will be used to extract the user name from the certificate.
+Currently, only the fields specified in the values column are supported.
 
-[xdcr-based-data-recovery]
-== XDCR-Based Data Recovery
+| --set-client-auth-prefix
+| set_client_auth_prefix
+| Set SSL client certificate prefix value.
 
-In the event of data-loss, the *cbrecovery* tool can be used to restore data.
-The tool accesses remotely replicated buckets, previously created with XDCR,
-and copies appropriate subsets of their data back onto the original
-source cluster.
+| --set-client-auth-delimiter
+| set_client_auth_delimiter
+| Set SSL client certificate delimiter value.
+The delimiter can either be a string or a character.
+The parsing of the certificate for the user name ends when the delimiter value is found.
 
-By means of intra-cluster replication, Couchbase Server allows one or more
-replicas to be created for each vBucket on
-the cluster. This helps to ensure continued data-availability in the event of
-node-failure.
+| --client-auth
+|
+| Show SSL client certificate authentication value.
+|===
 
-However, if multiple nodes within a single cluster fail simultaneously, one or
-more active vBuckets and all their replicas may be affected; meaning that lost
-data cannot be recovered locally.
+After setting up the server side for client authentication, you should also assign the users to some roles on the server side.
+To do so:
 
-In such cases, provided that a bucket affected by such failure has already been
-established as a source bucket for XDCR, the lost data may be retrieved from the
-bucket defined on the remote server as the corresponding replication-target.
-This retrieval is achieved from the command-line, by means of the Couchbase
-*cbrecovery* tool.
+. Create a user with authentication source (domain) 'Couchbase'.
+. Ensure that this user is an internally managed user with a strong password.
+While the password is not used as part of the certificate based authentication, it is required if the user is trying to access the resources through the web console.
 
-For a sample step-by-step procedure, see
-xref:managing-clusters:managing-xdcr/recover-data-with-xdcr.adoc[Recover Data
-with XDCR].
+For information on assigning roles to users, see xref:security-rbac-for-admins-and-apps.adoc[Creating and Managing Users with the UI].
 
-[xdcr-security]
-== XDCR Security
+== Limitations
 
-XDCR configuration requires that the administrator provide a
-username and password appropriate for access to the target cluster. When
-replication occurs, the password is automatically supplied, along with
-the data.
-By default, XDCR transmits both password and
-data in non-secure form.
-Optionally however, a secure connection can be enabled between clusters,
-in order to
-secure either password alone, or both password and data.
+Note the following limitations to the feature in the current release:
 
-Note that if the password received by the destination cluster requires
-authentication by an LDAP server, the destination cluster communicates with the
-LDAP server in plain text, using `saslauthd`.
-This is described in
-xref:security:security-saslauthd-new.adoc[Setting Up saslauthd].
+* X.509 Certificate Based Authentication will only work for data service.
+* For Couchbase Server 5.5, X.509 Certificate-based Authentication is suported by all SDK Clients.
+However, only the very latest versions support it - check the https://developer.couchbase.com/server/other-products/release-notes-archives/java-sdk[release notes^] for your SDK version.
 
-A secure XDCR connection is enabled either by SCRAM-SHA or by TLS — depending
-on the administrator-specified connection-type, and the server-version of
-the destination cluster.
-Use of TLS involves certificate management: for information on preparing and
-using certificates, see
-xref:security:security-certs-auth.adoc[Certificate-Based Authentication].
+== Upgrade
 
-Two administrator-specified connection-types are possible:
-
-* _Half_ Secure: Secures the specified password
-only: it does not secure data. The password is secured
-by hashing with SCRAM-SHA, when the destination cluster is running
-Couchbase Enterprise Server 5.5 or later; and by
-TLS encryption, when the destination cluster is running a pre-5.5
-Couchbase Enterprise Server. The root certificate of the destination cluster
-must be provided, for a successful TLS connection to be achieved.
-* _Full_ Secure: Handles both authentication and data-transfer via TLS.
-
-For step-by-step procedures, see
-xref:managing-clusters:managing-xdcr/secure-xdcr-replication.adoc[Secure a
-Replication].
-
-[#xdcr-advanced-settings]
-== XDCR Advanced Settings
-
-The performance of XDCR can be fine-tuned, by means
-of configuration-settings, specified when a replication is defined.
-These settings modify _compression_, source and target _nozzles_
-(worker threads), _checkpoints_, _counts_, _sizes_, _network
-usage limits_, and more. For detailed information, See
-xref:clusters-and-availability/xdcr-advanced-settings.adoc[XDCR Advanced
-Settings].
-
-[#xdcr-bucket-flush]
-== XDCR Bucket Flush
-
-The *flush* operation deletes data on a local bucket: this operation is
-disabled if the bucket is currently the source for an ongoing replication.
-If the target bucket is flushed during replication, the bucket becomes
-temporarily inaccessible, and replication is suspended.
-
-If either a source or a target bucket needs to be flushed after a
-replication has been started, the replication must be deleted, the
-bucket flushed, and the replication then recreated.
-
-[#xdcr-and-bucket-expiration]
-== XDCR and Expiration
-Buckets and documents have a _TTL_ setting, which determines the
-maximum expiration times of individual items. This is explained in detail in
-xref:buckets-memory-and-storage/expiration.adoc[Expiration]. For specific
-information on how TTL is affected by XDCR, see the section
-xref:buckets-memory-and-storage/expiration.adoc#bucket-expiration-and-xdcr[Bucket-Expiration and XDCR].
-
-[#monitoring-xdcr-replication]
-== Monitoring XDCR
-Couchbase Server provides the ability to monitor ongoing XDCR replications, by
-means of the Couchbase Web Console. Detailed
-information is provided in
-xref:managing-clusters:managing-xdcr/monitor-xdcr-replication.adoc[Monitor a
-Replication].
+When upgrading from an earlier version to 5.5, the cluster will be in mixed mode and will return client certificate authentication settings in the older format until the cluster is completely upgraded.
+Once the cluster has been upgraded, any existing client certificate authentication settings from earlier versions will be automatically transformed into the new format.
