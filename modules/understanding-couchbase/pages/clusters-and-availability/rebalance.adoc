@@ -1,0 +1,53 @@
+= Rebalancing a Cluster
+
+[abstract]
+Rebalance is a process of re-distributing data and indexes among the available nodes.
+
+As you operate your Couchbase Server cluster, you might need to alter the number of nodes in the cluster to cope with changes in application load, RAM, disk I/O and network performance requirements.
+
+When you add or remove nodes from your Couchbase Server cluster, the data and indexes are redistributed among the available nodes, and the corresponding internal data is updated to reflect the new distribution.
+This process is called [.term]_rebalancing_.
+
+The rebalancing process can take place while the cluster is running and servicing requests.
+Clients using the cluster read and write to the existing structure while the data is moving in the background among nodes.
+Once the moving process is completed, the updated distribution is communicated to connected applications (via a smart client) and other relevant consumers.
+
+The way that rebalance works differs between services, primarily affecting the Index, Data, and Search services.
+
+== Rebalancing the Data Service
+
+As explained in xref:understanding-couchbase:clusters-and-availability/clusters-and-availability.adoc[Clusters and Availability],  data is logically partitioned between all of the nodes running the Data Service in the cluster.
+When these nodes are rebalanced, the vBuckets are redistributed evenly between all of the Data service nodes in the cluster.
+In the case of nodes being removed from the cluster, each vBucket from the removed node is replicated to the new active node for that vBucket, which may be different for each vBucket.
+A special case of this a _swap rebalance_ where the number of nodes coming into the cluster is equal to the number of nodes leaving the cluster, ensuring that data is only moved between these nodes.
+Once all the data in the vBucket has been transferred, the new vBucket is made 'active' so that all operations are directed to the new node.
+This process results in uninterrupted data access from the application's perspective while the rebalance is ongoing.
+
+Each vBucket is transferred sequentially so if rebalance stops for any reason, it can be restarted and it will continue from the point it reached previously.
+
+== Rebalancing the Index Service
+
+The Index service maintains a cluster-wide set of index definitions and metadata which allows it to redistribute indexes and index replicas (if they are used) from ejected nodes to other nodes in the cluster.
+However, indexes already residing on nodes in the cluster will not be redistributed as part of rebalance, even if it would mean creating a more desirable distribution of indexes.
+This distribution is based on balancing the CPU and RAM utilization of the nodes, aiming to balance this across all index nodes where possible.
+When these indexes are moved, the actual index data is not sent directly to the new node, the indexes are instead created and then built from scratch using the data from the Data service.
+While the rebalance process does recreate missing replicas and move them if necessary, if there are more replicas of an index than available nodes, the Index service will drop the replicas instead of creating duplicate indexes on a node.
+If later, more index nodes are added to the cluster, then the Index service will then intelligently be able to bring the number of replicas up to the desired value.
+
+The Index service ensures uninterrupted index access within the cluster by not removing index nodes as part of the rebalance operation until the indexes residing on those nodes have finished building on the new nodes.
+This means that the time that it takes to rebalance the Index service is highly dependent on the overall data set size and size of the indexes on the ejected nodes.
+
+== Rebalancing the Search Service
+
+Similarly to the Data service, the Search service automatically partitions its indexes across all search nodes in the cluster, ensuring that during rebalance the distribution across all nodes is balanced.
+
+== Rebalancing the Query Service
+
+When adding or removing nodes running the Query service during rebalance, the changes are immediately effective.
+If adding a node, this means that it will be immediately available to serve queries.
+When removing a node, this means that it will immediately stop serving queries and any ongoing queries running on the node will be terminated, so you may have to handle this within your application.
+
+== Rebalancing Multiple Services
+
+Frequently, Couchbase Server production-deployments have no more than one service deployed on each node, see xref:understanding-couchbase:services-and-indexes/services/services.adoc[Services].
+In instances where this is not the case, the rebalance behavior will be the combination of all services deployed on the node.
