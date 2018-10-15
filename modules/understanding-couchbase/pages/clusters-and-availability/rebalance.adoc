@@ -14,7 +14,11 @@ reads and writes continue to be made to an existing structure, while the
 data is moved in the background among nodes.
 
 The rebalance is performed differently, depending on which services are
-deployed.
+deployed. The principal characteristics per service are described below.
+In cases where multiple services are resident on a node that is being
+added or removed,
+the rebalance behavior will be the
+combination of the per service characteristics.
 
 [#rebalancing-the-data-service]
 == Rebalancing the Data Service
@@ -39,27 +43,36 @@ reason, it can be restarted from the point at which it was stopped.
 [#rebalancing-the-index-service]
 == Rebalancing the Index Service
 
-The Index service maintains a cluster-wide set of index definitions and metadata which allows it to redistribute indexes and index replicas (if they are used) from ejected nodes to other nodes in the cluster.
-However, indexes already residing on nodes in the cluster will not be redistributed as part of rebalance, even if it would mean creating a more desirable distribution of indexes.
-This distribution is based on balancing the CPU and RAM utilization of the nodes, aiming to balance this across all index nodes where possible.
-When these indexes are moved, the actual index data is not sent directly to the new node, the indexes are instead created and then built from scratch using the data from the Data service.
-While the rebalance process does recreate missing replicas and move them if necessary, if there are more replicas of an index than available nodes, the Index service will drop the replicas instead of creating duplicate indexes on a node.
-If later, more index nodes are added to the cluster, then the Index service will then intelligently be able to bring the number of replicas up to the desired value.
+The Index Service maintains a cluster-wide set of index definitions and
+metadata, which allows the redistribution of indexes and index replicas
+from ejected nodes to nodes that continue as part of the cluster.
+However, indexes that reside on non-ejected nodes are unaffected by
+rebalance.
 
-The Index service ensures uninterrupted index access within the cluster by not removing index nodes as part of the rebalance operation until the indexes residing on those nodes have finished building on the new nodes.
-This means that the time that it takes to rebalance the Index service is highly dependent on the overall data set size and size of the indexes on the ejected nodes.
+When it occurs, the redistribution taken account of nodes' CPU and RAM
+utilization, and achieves the best resource-balance possible. The
+redistribution does not _move_ indexes or replicas: instead, it _rebuilds_
+them in their new locations, using the latest data from the Data Service.
+If more index replicas exist than can be handled by the number of
+existing nodes, replicas are dropped: the numbers are automatically made
+up subsequently, if additional Index Service nodes are added to the cluster.
 
+During rebalance, no index node is removed until index-building has
+completed on alternative nodes. This ensures uninterrupted access to
+indexes.
+
+[#rebalancing-the-search-service]
 == Rebalancing the Search Service
 
-Similarly to the Data service, the Search service automatically partitions its indexes across all search nodes in the cluster, ensuring that during rebalance the distribution across all nodes is balanced.
+The Search Service automatically partitions its indexes across all
+Search nodes in the cluster, ensuring that during rebalance the distribution
+across all nodes is balanced.
 
+[#rebalancing-the-query-service]
 == Rebalancing the Query Service
 
-When adding or removing nodes running the Query service during rebalance, the changes are immediately effective.
-If adding a node, this means that it will be immediately available to serve queries.
-When removing a node, this means that it will immediately stop serving queries and any ongoing queries running on the node will be terminated, so you may have to handle this within your application.
-
-== Rebalancing Multiple Services
-
-Frequently, Couchbase Server production-deployments have no more than one service deployed on each node, see xref:understanding-couchbase:services-and-indexes/services/services.adoc[Services].
-In instances where this is not the case, the rebalance behavior will be the combination of all services deployed on the node.
+The addition or removal of Query Service nodes during rebalance is
+immediately effective: an added node is immediately available to serve
+queries; while a removed node is immediately unavailable, such that
+ongoing queries are interrupted, requiring the handling of errors or
+timeouts at application-level.
