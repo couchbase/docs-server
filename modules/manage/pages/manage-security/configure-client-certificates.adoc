@@ -1,0 +1,173 @@
+= Configure Client Certificates
+
+[abstract]
+Couchbase Server supports client-authentication by means of X.509
+certificates.
+
+[#couchbase-client-authentication]
+== Couchbase Client Authentication
+
+Couchbase clients can authenticate by means of X.509 certificates. This
+page explains how client certificates can be prepared for a Java client. It
+also provides information on TLS levels, and on supported ciphers.
+
+For a list of Couchbase-Server ports that provide secure connectivity to
+clients, see
+xref:learn:clusters-and-availability/connectivity.adoc[Connectivity].
+
+[#cert_auth_for_java_client]
+== Configure Certificates for a Java Client
+
+Once the root certificate for a Couchbase Server-node has been deployed, a
+Java client can authenticate by means of an appropriately prepared keystore,
+and so gain access to the Data, Query, and Search Services.
+
+Proceed as follows.
+Note that these instructions use the Ubuntu 16 environment previously configured
+in
+xref:manage:manage-security/configure-server-certificates.adoc[Configure
+Server Certificates].
+
+. Define environment variables for the name of the keystore to be created, and its password.
++
+[source,bash]
+----
+export KEYSTORE_FILE=my.keystore
+export STOREPASS=storepass
+----
+
+. If necessary, install a package containing the `keytool` utility:
++
+[source,bash]
+----
+sudo apt install openjdk-9-jre-headless
+----
+
+. Within the top-level, `SSLCA` directory that you created, generate the keystore:
++
+[source,bash]
+----
+keytool -genkey -keyalg RSA -alias selfsigned \
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -validity 360 -keysize 2048 \
+-noprompt  -dname "CN=${USERNAME}, OU=None, O=None, L=None, S=None, C=US" -keypass ${STOREPASS}
+----
+
+. Generate the certificate signing-request:
++
+[source,bash]
+----
+keytool -certreq -alias selfsigned -keyalg RSA -file my.csr \
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
+
+. Generate the client certificate, signing it with the intermediate private key:
++
+[source,bash]
+----
+openssl x509 -req -in my.csr -CA ./${INT_DIR}/${INTERMEDIATE}.pem \
+-CAkey ./${INT_DIR}/${INTERMEDIATE}.key -CAcreateserial -out clientcert.pem -days 365
+----
+
+. Add the root certificate to the keystore:
++
+[source,bash]
+----
+keytool -import -trustcacerts -file ./${ROOT_DIR}/${ROOT_CA}.pem \
+-alias root -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
+
+. Add the intermediate certificate to the keystore:
++
+[source,bash]
+----
+keytool -import -trustcacerts -file ./${INT_DIR}/${INTERMEDIATE}.pem \
+-alias int -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
+
+. Add the client certificate to the keystore:
++
+[source,bash]
+----
+keytool -import -keystore ${KEYSTORE_FILE} -file clientcert.pem \
+-alias selfsigned -storepass ${STOREPASS} -noprompt
+----
+
+This concludes preparation of the Java client's keystore.
+Copy the file (in this case, `my.keystore`) to a location on a local filesystem
+from which the Java client can access it.
+
+[#working-with-supported-protocols]
+== Working with Supported Protocols
+
+Couchbase Server client-libraries support client-side encryption, using the
+Secure Sockets Layer (SSL) and Transport Layer Security (TLS).
+TLS versions 1.0 to 1.2 are supported by default.
+The highest-supported version of TLS is recommended.
+
+Optionally, the minimum version of TLS can be set to be 1.2 or higher per
+cluster, using
+the following command:
+
+----
+curl -X POST -u Administrator:password http://127.0.0.1:8091/diag/eval -d "ns_config:set(ssl_minimum_protocol, 'tlsv1.2')"
+----
+
+[#enabling-client-security]
+== Securing Client-Application Access
+
+For an application to communicate securely with Couchbase Server, SSL/TLS must
+be enabled on the client side.
+To perform enablement, you must acquire a copy of the certificate used by
+Couchbase Server, and then follow the steps appropriate for your client.
+Access the certificate from the Couchbase Web Console: see
+xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Root
+Certificate].
+Note that if, at some point, this certificate gets regenerated on the
+server-side, you must obtain a copy of the new version, and re-enable the client.
+
+When a TLS connection is established between a client application and Couchbase
+Server running on port 18091, a _handshake_ occurs, as defined by the _TLS
+Handshake Protocol_.
+As part of this exchange, the client must send to the server a
+_cipher-suite list_; which indicates the cipher-suites that the client
+supports, in order of preference.
+The server replies with a notification of the cipher-suite it has duly
+selected from the list.
+Additionally, symmetric keys to be used by client and server are selected
+by means of the _RSA key-exchange_ algorithm.
+
+[#overriding-supported-ciphers]
+== Overriding Supported Ciphers
+
+Couchbase Server uses ciphers that are accepted by default by OpenSSL. The
+default behavior employs _high_-security ciphers, built into OpenSSL.
+
+You can override this selection, by setting the `COUCHBASE_SSL_CIPHER_LIST`
+environment variable — this must be performed _before_ starting Couchbase Server.
+The environment variable can be set in either of the following ways:
+
+* Specify an explicit list of ciphers to be used.
+For example:
++
+----
+COUCHBASE_SSL_CIPHER_LIST="DHE-DSS-AES128-SHA,CAMELLIA128-SHA"
+----
+
+* Specify ciphers by security-level.
+For example, to specify that all ciphers in both _medium_ and _high_ categories
+be used, enter the following:
++
+----
+COUCHBASE_SSL_CIPHER_LIST="MEDIUM,HIGH"
+----
+
+To display the ciphers available on your Linux platform for a particular security level, use the `openssl` command.
+For example, to display the _high_-level ciphers, enter the following:
+
+----
+openssl ciphers -v 'HIGH'
+----
+
+To check the current value of the `COUCHBASE_SSL_CIPHER_LIST` environment
+variable, type `printenv` at the Linux prompt: this returns a list of all
+currently set environment variables.
