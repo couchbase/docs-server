@@ -1,0 +1,234 @@
+= Configure Server Certificates
+
+[abstract]
+Couchbase Server Enterprise Edition supports X.509 certificates, for
+the encryption of communications between the server and
+networked clients.
+
+[#certificate-management-preparation]
+== Certificate-Management Preparation
+
+Before configuring certificates for Couchbase Server, see the
+conceptual and architectural information provided in
+xref:learn:security/certificates.adoc[Certificates].
+Additionally,
+perform the following assessments:
+
+* _Where should the configured CA, intermediate, and node keys reside?_ The
+procedure below generates all keys and certificates in a directory named
+`SSLCA`, which you can put anywhere on your filesystem.
++
+The generated private node key (`pkey.key`) and chain certificate (`chain.pem`)
+must be posted in a specific place that is in the certificate trust path
+(such as [.path]_/Users/<username>/Library/Application\ Support/Couchbase/var/lib/couchbase/inbox/_
+on MacOSX, or [.path]_/opt/couchbase/var/lib/couchbase/inbox/_) on Linux.
+
+* _Does your cluster contain one node only, or multiple nodes?_ With one node,
+you will generate one node directory inside the directory SSLCA that will
+contain the private node key (`pkey.key`) and the certificate chain file
+(`chain.pem`). The node public key (`pkey.pem`) is included in the chain file.
++
+With multiple nodes, you need to add an appropriate number of node directories
+with distinctive names, such as `node-sales`, `node-hr,` or whatever your
+situation requires.
+
+* _Does your trust path contain a single intermediate CA, or multiple
+intermediate CAs?_ With only one CA, create one directory named `int`.
++
+If you have multiple intermediate CAs, be sure to name them in a way that will
+allow you to stack them properly in the chain file, such as `int1`, `int2`,
+and so on.
+This order will show that the intermediate CA closest to the node (which signed
+the node certificate) has the higher number`.
+
+[#configure-server-side-certificates]
+== Configure Server-Side Certificates
+
+The following steps configure X.509 certificates for Couchbase
+Server on Ubuntu 16: a root certificate is created with a single intermediate
+certificate and a single node certificate; and a chain certificate is created
+from the intermediate and node certificates.
+The chain certificate and node private key are then made active for the current
+Couchbase Server-node.
+
+Proceed as follows, using the `sudo` command where appropriate.
+
+. Create environment variables for the naming of a directory-structure, within
+which will reside the certificates you create for root, intermediate, and node.
++
+[source,bash]
+----
+export TOPDIR=SSLCA
+export ROOT_DIR=rootdir
+export NODE_DIR=nodedir
+export INT_DIR=intdir
+----
++
+Note that in cases where multiple intermediate and/or node certificates are to
+be included in the certificate-chain, multiple intermediate and/or directories
+are required — one for each intermediate or node certificate.
+
+. Create environment variables for each of the certificate-files to be created.
++
+[source,bash]
+----
+export ROOT_CA=ca
+export INTERMEDIATE=int
+export NODE=pkey
+export CHAIN=chain
+----
++
+Note that in cases where multiple intermediate and/or node certificates are to
+be included in the certificate-chain, additional environment-variable
+definitions — one for each of the additional intermediate and/or node
+certificates — are required.
+
+. Create environment variables for the administrator-credentials to be used for
+certificate management, the IP address at which the Couchbase Server-node is
+located, and the username required for role-based access to a particular
+resource.
++
+[source,bash]
+----
+export ADMINCRED=Administrator:password
+export ip=10.143.173.101
+export USERNAME=travel-sample
+----
++
+Note that in this example, the username is specified as `travel-sample`,
+which is typically associated with the *Bucket Full Access* role, on the
+bucket _travel-sample_.
+For access to be fully tested, ensure that the `travel-sample` user has
+indeed been defined on the Couchbase Server-node, and is associated with the *Bucket Full Access* role.
+(See xref:learn:security/authorization-overview.adoc[Authorization] for more information on
+RBAC.)
+
+. Create a directory-structure in which, within a top-level directory
+named `SSLCA`, three subdirectories reside — `rootdir`, `intdir`, and
+`nodedir` — respectively to hold the certificates you create for root,
+intermediate, and node.
++
+[source,bash]
+----
+mkdir ${TOPDIR}
+cd ${TOPDIR}
+mkdir ${ROOT_DIR}
+mkdir ${INT_DIR}
+mkdir ${NODE_DIR}
+----
+
+. Generate the root private key file (`ca.key`) and the public key file (`ca.pem`):
++
+[source,bash]
+----
+cd ${ROOT_DIR}
+openssl genrsa -out ${ROOT_CA}.key 2048
+openssl req -new -x509 -days 3650 -sha256 -key ${ROOT_CA}.key \
+-out ${ROOT_CA}.pem -subj '/C=UA/O=MyCompany/CN=MyCompanyRootCA'
+----
+
+. Generate, first, the intermediate private key (`int.key`); and secondly,
+the intermediate certificate signing-request (`int.csr`):
++
+[source,bash]
+----
+cd ../${INT_DIR}
+openssl genrsa -out ${INTERMEDIATE}.key 2048
+openssl req -new -key ${INTERMEDIATE}.key -out ${INTERMEDIATE}.csr \
+-subj '/C=UA/O=MyCompany/CN=MyCompanyIntermediateCA'
+----
+
+. Create the extension-file `v3_ca.ext`; in order to add extensions to the
+certificate, and to generate the certificate signing-request:
++
+[source,bash]
+----
+cat <<EOF>> ./v3_ca.ext
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always
+basicConstraints = CA:true
+EOF
+----
+
+. Generate the intermediate public key (`int.pem`), based on the intermediate
+certificate signing-request (`int.csr`), and signed by the root public key
+(`ca.pem`).
++
+[source,bash]
+----
+openssl x509 -req -in ${INTERMEDIATE}.csr \
+-CA ../${ROOT_DIR}/${ROOT_CA}.pem -CAkey ../${ROOT_DIR}/${ROOT_CA}.key \
+-CAcreateserial -CAserial ../${ROOT_DIR}/rootCA.srl -extfile ./v3_ca.ext \
+-out ${INTERMEDIATE}.pem -days 365
+----
+
+. Generate, first, the node private key (`pkey.key`); secondly, the node
+certificate signing-request (`pkey.csr`); and thirdly, the node public key
+(`pkey.pem`).
++
+[source,bash]
+----
+cd ../${NODE_DIR}
+openssl genrsa -out ${NODE}.key 2048
+openssl req -new -key ${NODE}.key -out ${NODE}.csr \
+-subj "/C=UA/O=MyCompany/CN=${USERNAME}"
+openssl x509 -req -in ${NODE}.csr -CA ../${INT_DIR}/${INTERMEDIATE}.pem \
+-CAkey ../${INT_DIR}/${INTERMEDIATE}.key -CAcreateserial \
+-CAserial ../${INT_DIR}/intermediateCA.srl -out ${NODE}.pem -days 365
+----
+
+. Generate the certificate chain-file, by concatenating the node and
+intermediate certificates.
+This allows the client to verify the intermediate certificate against
+the root certificate.
++
+[source,bash]
+----
+cd ..
+cat ./${NODE_DIR}/${NODE}.pem ./${INT_DIR}/${INTERMEDIATE}.pem > ${CHAIN}.pem
+----
++
+Note that if multiple intermediate certificates are specified for concatenation in this way, the concatenation-order must correspond to the order of signing.
+Thus, the node certificate, which appears in the first position, has been signed by the intermediate certificate, which therefore appears in the second position: and in cases where this intermediate certificate has itself been signed by a second intermediate certificate, the second intermediate certificate must appear in the third position, and so on.
++
+Note also that the root certificate is never included in the chain.
+
+. Manually copy the node private key (`pkey.key`) and the chain file (`chain.pem`) to the `inbox` folder of the Couchbase Server-node:
++
+[source,bash]
+----
+mkdir /opt/couchbase/var/lib/couchbase/inbox/
+cp ./${CHAIN}.pem /opt/couchbase/var/lib/couchbase/inbox/${CHAIN}.pem
+chmod a+x /opt/couchbase/var/lib/couchbase/inbox/${CHAIN}.pem
+cp ./${NODE_DIR}/${NODE}.key /opt/couchbase/var/lib/couchbase/inbox/${NODE}.key
+chmod a+x /opt/couchbase/var/lib/couchbase/inbox/${NODE}.key
+----
+
+. Upload the root certificate, and activate it:
++
+[source,bash]
+----
+curl -X POST --data-binary "@./${ROOT_DIR}/${ROOT_CA}.pem" \
+http://${ADMINCRED}@${ip}:8091/controller/uploadClusterCA
+curl -X POST http://${ADMINCRED}@${ip}:8091/node/controller/reloadCertificate
+----
++
+Note that alternatively, the following command-line interfaces can be used:
++
+[source,bash]
+----
+couchbase-cli ssl-manage -c ${ip}:8091:8091 -u Administrator -p password \
+--upload-cluster-ca=./${ROOT_DIR}/${ROOT_CA}.pem
+couchbase-cli ssl-manage -c ${ip}:8091 -u Administrator -p password \
+--set-node-certificate
+----
+
+. For the current Couchbase Server-node, enable the client certificate:
++
+[source,bash]
+----
+curl -u ${ADMINCRED} -v -X POST http://${ip}:8091/settings/clientCertAuth \
+-d '{"state": "enable","prefixes": [{"path": "subject.cn","prefix": "","delimiter": ""}]}'
+----
++
+For further information on certificate-deployment, see xref:cli:cbcli/couchbase-cli-ssl-manage.adoc[ssl-manage] and xref:rest-api:rest-encryption.adoc[Encryption On-the-Wire API].

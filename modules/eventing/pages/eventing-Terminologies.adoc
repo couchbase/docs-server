@@ -17,37 +17,46 @@ A handler must execute from start to finish, before a specified timeout-duration
 Currently, *OnUpdate* and *OnDelete* are the two supported handlers.
 Couchbase Functions support multiple *OnUpdate*/*OnDelete* handlers during the Function definition process.
 
-NOTE: In the Couchbase Server 5.5 release, the handler code size is limited to 128KB.
+NOTE: In the Couchbase Server 6.0 BETA release, the handler code size is limited to 128KB.
 
 == Statelessness
 
 The persistent state of a Function is captured by entities listed below, while any state that appears on the execution stack is ephemeral.
 
-* The metadata bucket (which will eventually be a system collection).
+* The metadata bucket.
 * The document being observed and its Extended Attributes.
 
 == Buckets
 
-Every Function definition needs two distinct buckets: source bucket and metadata bucket.
+There are two distinct buckets: source bucket and metadata bucket.
 
-The Functions use a source bucket to listen to data changes.
-The Function handler code polls the source bucket for data mutations.
-Multiple Functions can use the same source bucket.
+*Source Bucket*
 
-Metadata bucket stores internal artifacts and checkpoint information.
-The metadata bucket provides better restartability semantics when the eventing nodes is offline.
-Ensure that your Function handler code does not write any data to this bucket.
+Couchbase Functions use a bucket to track data mutations. This bucket is termed as the source bucket. The source bucket can be either Couchbase or Ephemeral bucket type. However, memcached bucket types are not supported.
 
-The Functions can in turn trigger data mutations, to avoid a cyclic generation of events, ensure that you carefully consider options when you select the source and destination buckets.
-When you are using a series of handlers, ensure that:
+When you are creating a function, you need to specify a source bucket. The handler code polls this bucket to track data mutations.
 
-* The source bucket can be either Couchbase or Ephemeral bucket.
-However, memcached buckets are not supported.
-* Metadata bucket is used by the Eventing Service to store some critical checkpoint information.
-Avoid writing to the metadata bucket or flushing it.
-It is recommended that a separate bucket be kept destined as a metadata bucket.
-* A read operation from the source bucket is allowed but operations such as delete, set and update are not supported.
-* The destination buckets to which event handlers perform a write operation, do not have other event handlers configured to listen and track data mutations.
+NOTE: You can use a common source bucket to listen to multiple Functions running different code.
+
+When a source bucket is deleted, all deployed functions associated with this source +
+bucket, are undeployed.
+
+
+After processing the handler code, documents can be stored in a different bucket. For understanding purposes, this bucket can be termed as a destination bucket.
+
+At times, the handler code can trigger data mutations. To avoid cyclic generation of data changes, refer to xref:troubleshooting-best-practices.adoc#cyclicredun[Bucket Allocation Considerations].
+
+*Metadata Bucket*
+
+Metadata bucket stores artifacts such as timers, DCP streams, worker allocations along with internal checkpoint information.
+
+When you are creating a Function, ensure that a separate bucket is destined as a +
+metadata bucket. You can use a common metadata bucket across multiple Functions.
+
+NOTE: At any point, refrain from deleting the metadata bucket. Also, ensure that the Function handler code does not perform a write operation on the metadata bucket.
+
+If a metadata bucket gets accidentally deleted, then all deployed functions are +
+undeployed and associated indexes get dropped.
 
 == Workers
 
@@ -57,11 +66,14 @@ The worker units are used mostly during Function execution.
 [#section_mzd_l1p_m2b]
 == Bindings
 
-Bindings are constructs that allow the separating of environment-specific variables from the handler source code such as bucket-names, external endpoint URLs, and credentials.
-Bindings allow Functions to be developed without source-code changes while working on different workflows.
-Using bindings, you can port source code from different environments such as Test-to-Test, Test-to-Production, or Production-to-Production environments without making code changes.
+A binding allows separating of environment specific variables from the handler code.
 
-During Function definition when you are creating a bindings name-value pair, for a source bucket, ensure that only read operation is performed in the Function handler code.
+You can add bindings as a name-value pair, where name is the actual name of the bucket in the cluster, and value is the alias that you can use to refer to the bucket from your +
+handler code.
+
+NOTE: Bindings are mandatory when your handler code performs any bucket related operations.
+
+Bindings ensure easy porting of source code across different environments. You can export-import Functions from test-to-test, test-to-production, or production-to-production environments, without making code changes.
 
 == Function Settings
 
@@ -91,7 +103,7 @@ To edit a deployed Function, you must first un-deploy the Function.
 == Feed Boundary
 
 Feed Boundary is a time milestone used during a Function configuration.
-Using the Feed Boundary option, you can either invoke a Function on all the data present in the cluster or choose to invoke a Function during future instances of data mutation, post Function deployment.
+Using the Feed Boundary option, you can either invoke a Function on all data mutations available in the cluster or choose to invoke a Function during future instances of data mutation, post Function deployment.
 
 == Undeploy
 

@@ -1,0 +1,132 @@
+= Rotate Server Certificates
+
+[abstract]
+Server-side X.509 certificates should periodically be rotated, to ensure
+optimal security.
+
+[#rotating-server-certificates]
+== Rotating Server Certificates
+
+Certificate rotation is needed when:
+
+* A certificate expires
+* You move from an old CA authority to a new
+* There is a change in the policy of the certificates issued by the CA
+* A widespread breach of security has occurred in your system
+
+Certificate-renewal should be planned well before a certificate expires.
+X.509 certificate-rotation in Couchbase is an online operation that does not
+require a node or cluster restart: applications maintain continued access to
+Couchbase Server, experiencing no downtime due to the rotation operation.
+
+[#certificate-rotation]
+=== Certificate Rotation
+
+. Generate a new certificate.
++
+Before you rotate a certificate, you need to generate a new certificate.
++
+Typically, your Certificate Authority will give you a self-service option to re-issue certificates.
+If this is not the case, you can manually regenerate a new X509 certificate.
+
+ .. Renew the root CA certificate
++
+The root certificate authority is the topmost CA in a CA hierarchy.
+Its validity period is typically the longest in the hierarchy: between 10 and 20 years.
++
+Note that when you renew the root CA, you have the option of reusing its
+existing private key.
+If you keep the same private key on your root CA, all certificates can continue
+to validate successfully against the new root; all that is required of you
+is to trust the new root.
+
+ .. Generate the root CA for the first time
++
+[source,bash]
+----
+openssl genrsa -out ca.key 2048
+openssl req -new -x509  -days 3650 -sha256 -key ca.key -out ca.pem \
+-subj '/C=UA/O=My Company/CN=My Company Root CA'
+----
+
+ .. After ten years, the renewal time for the root CA comes up.
+  *** Renew the root CA using the existing `ca.key`:
++
+[source,bash]
+----
+openssl req -new -key ca.key -out newcsr.csr
+openssl x509 -req -days 3650 -sha256 -in newcsr.csr \
+-signkey newca.key -out newca.pem
+----
+
+  *** Generate a completely new root CA:
++
+[source,bash]
+----
+openssl genrsa -out newca.key 2048
+openssl req -new -x509  -days 3650 -sha256 -key newca.key \
+-out newca.pem -subj '/C=UA/O=My Company/CN=My Company Root CA'
+----
+ .. Renew the intermediate certificates.
++
+For the intermediate CAs, a possible strategy might be to renew them for a year to six months before they expire, and reuse the existing key.
++
+By replacing the old chain file with the new chain file (which contains the updated intermediate certificates), rotation of the intermediate certificates can be performed:
++
+[source,bash]
+----
+cat pkey.pem ../int/newint.pem \
+<possibly other intermediate CAs> > chain.pem
+----
+
+. Deploy the CA public key and intermediate certificates
++
+Before modifying anything on the server-side, deploy the CA public key and intermediate certificates in the certificate-stores used by your client browser and the SDK language.
++
+For example, here are steps to do that for http://www.cyberciti.biz/faq/firefox-adding-trusted-ca/[Firefox^] and http://blogmines.com/blog/how-to-import-a-certificate-in-google-chrome/[Chrome^].
+
+. *Rotate certificates on the server*
+ .. Configure the new root CA certificate (`newca.pem` is the new root CA certificate).
+  *** Using CLI:
++
+[source,bash]
+----
+couchbase-cli ssl-manage -c <node-name>:8091 -u Administrator \
+-p password --upload-cluster-ca=newca.pem
+----
+
+  *** Using REST:
++
+[source,bash]
+----
+curl -X POST \
+--data-binary "@newca.pem" http://Administrator:password@127.0.0.1:8091/controller/uploadClusterCA
+----
+ .. Configure the new intermediate and node certificate.
++
+For each node, copy over new `chain.pem` file, and per node private key (new `pkey.pem` file, if the node certificate is rotated) to the `inbox` folder.
+
+  *** Using CLI:
++
+[source,bash]
+----
+couchbase-cli ssl-manage -c <node-name>:8091 -u Administrator \
+-p password --set-node-certificate
+----
+
+  *** Using REST:
++
+[source,bash]
+----
+curl -X \
+POST http://Administrator:password@[node-name]:8091/node/controller/reloadCertificate
+----
+. Test the server CA certificate
++
+You can also use OpenSSL's `s_client` by trying to connect to a server that you know is using a certificate signed by the CA that you just installed:
++
+[source,bash]
+----
+openssl s_client \
+-connect https://<hostname>:8091 -CApath <root ca public key>
+----
