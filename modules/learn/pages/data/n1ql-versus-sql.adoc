@@ -1,0 +1,154 @@
+= N1QL versus SQL
+:page-topic-type: concept
+
+[abstract]
+The most important difference between N1QL and SQL is the _data model_.
+Other notable differences relate to the _projection_, _selection_, and _filtering_ of data.
+
+== Data Model
+
+In a relational database, data is constrained to tables with uniform structure.
+The following example consists of two tables, _Employee_ and _Employers_, with
+_Name_ as the primary key.
+
+----
+EMPLOYEE
+Name | SSN | Wage
+-----------------------------------------------------------------------
+Jamie | 234 | 123
+Steve | 123 | 456
+
+SCHEMA:
+Name -> String of width 100
+SSN -> Number of width 9
+Wage -> Number of width 10
+
+EMPLOYERS:
+-----------------------------------------------------------------------
+ Name_Key  | Company   | Start | End
+ Jamie     | Yahoo     | 2005  | 2006
+ Jamie     | Oracle    | 2006  | 2012
+ Jamie     | Couchbase | 2012  | NULL
+----
+
+By contrast, N1QL handles data as free-form documents, gathered into large collections called _keyspaces_.
+There is no uniformity; nor is there any logical proximity shared by objects of the same _data shape_ within the keyspace.
+The relational data from the above example might therefore appear as follows:
+
+----
+ (HRData keyspace)
+ {
+     'Name': 'Jamie'
+     'SSN': 234
+     'Wage': 123
+     'History':
+      [
+       ['Yahoo', 2005, 2006],
+       ['Oracle', 2006, 2012],
+     ]
+ },
+
+ {
+     'Name': Steve
+     'SSN':  123,
+     'Wage': 456,
+ }
+----
+
+== Data Projection
+
+In a relational database, when an SQL query is run, a set of rows is returned; each row consisting of one or more columns, and the columns being the same for each row.
+A header can be retrieved, to obtain metadata about each column.
+
+.Query:
+----
+SELECT Name, Company
+    FROM Employee, Employers
+    WHERE Name_Key = Name
+----
+
+.Result:
+----
+	Name | Company
+	----------------
+	Jamie | Oracle
+	Jamie | Yahoo
+	Jamie | Couchbase
+	----------------
+----
+
+By contrast, N1QL permits _data reshaping_, by embedding statement-attributes in the desired result-object shape.
+Like SQL, N1QL allows fields to be renamed; using the `AS` keyword.
+
+.Query:
+----
+ SELECT Name, History, {'FullTime': true} AS 'Status'
+      FROM HRData
+----
+
+.Result:
+----
+	{
+	'Name': 'Jamie',
+	'History':
+		[
+		['Yahoo', 2005, 2006],
+		['Oracle', 2006, 2012],
+		['Couchbase', 2012, null]
+		],
+	'Status': { 'FullTime': true }
+	}
+	{
+	'Name': 'Steve',
+	'Status': { 'FullTime': true }
+	}
+----
+
+== Data Selection
+
+In N1QL, the `FROM` clause is used to select between data sources (keyspaces).
+If HRData is a keyspace, the following statement selects the `Name` attribute from all documents in the HRData keyspace that have a `Name` attribute defined.
+
+----
+SELECT Name FROM HRData
+----
+
+Each document can also regard itself as a data source, and run a query over its nested elements.
+Such nested elements are addressed using the dot (.) operator to descend a level, and the square-bracket ( [ ] ) operator to index into an array element.
+
+----
+  SELECT FullTime FROM HRData.Status
+{
+     'FullTime': true
+}
+----
+
+The selected fields can also be renamed using the `AS` operator, as in SQL:
+
+----
+SELECT firstjob FROM HRData.History[0] AS firstjob
+{
+     'firstjob': ['Yahoo', 2005, 2006]
+}
+
+SELECT firstjob[2] FROM HRData.History[0] AS firstjob
+{
+     'firstjob[2]': 2006
+}
+----
+
+== Data Filtering
+
+N1QL supports the `WHERE` clause, but with slight differences from SQL.
+
+Similarly to SQL, the dot ( .
+) and the square bracket ( [] ) operators can be used to access nested elements as they are used in `SELECT` clauses.
+
+N1QL data can be irregularly shaped: hence, undefined values are recognized as distinct from null.
+N1QL provides a complementary set of operators like `IS MISSING`, in addition to standard operators like `IS NULL`.
+New conversions, for example from non-zero integer-values to Boolean value true, are also supported.
+
+Most standard SQL functions (for example, [.api]`LOWER()`) are defined.
+In addition to the standard filtering-predicates, N1QL provides new operators to work with arrays in documents: `ANY`, `SOME`, and `EVERY`.
+`ANY` and `SOME` evaluate a condition for each element, and return [.out]`true` if any element meets the condition.
+`EVERY` also evaluates a condition for each element; except that it returns [.out]`true` only if all elements matched the condition.
