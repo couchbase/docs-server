@@ -26,7 +26,11 @@ To read more about this, see xref:automatic-failover.adoc[Using Automatic Failov
 
 Hard failover affects each of the services slightly different, depending whether they are on the same server or instance or whether they are using Multi-Dimensional Scaling and are on different servers or instances.
 
-== Hard Failover Effect on Nodes Running the Data Service
+== Effect of Hard Failover on Services
+
+Hard failover has a different effect on each Couchbase Service.
+
+=== Data Service
 
 If the failed-over node is running the Data service, the cluster initiates multiple operations to make an active set of vBuckets available as soon as possible.
 Perform a hard failover _only_ when there is a full compliment of replica vBuckets available to promote for each Bucket.
@@ -56,7 +60,7 @@ The cluster does not auto-regenerate missing vBuckets, and once it is degraded i
 The cluster also must avoid to introduce a cascading failure and potentially make a minor problem more severe.
 Therefore, the cluster needs to be returned to a [.term]_stable state_ as soon as possible.
 
-== Hard Failover Effect on Nodes Running the Index Service
+=== Index Service
 
 When Global Secondary Indexes (GSI) are defined, each is created on only one node running the Index service unless it is specified otherwise.
 If that node fails, those indexes and their definitions on that node are unavailable.
@@ -67,14 +71,14 @@ To rebalance a new node into the cluster, you must first eject the failed node u
 The best practices suggest the secondary indexes on at least two nodes running the Index service to mitigate the situation when the indexes are unavailable.
 For more information, see the documentation on xref:indexes:indexing-overview.adoc[Indexing].
 
-== Hard Failover Effect on Nodes Running the Query Service
+=== Query Service
 
 For the Query service, the nodes are stateless and can be added and removed from the cluster with no consequence to data.
 However, any in-flight queries on those node(s) will error.
 As long as the node to be removed is not the last Query service's node, the cluster will continue to function.
 As one might expect, when node capacity is reduced the cluster can experience higher load on the remaining node(s) which can lead to performance issues on queries.
 
-== Hard Failover Effect on Nodes Running the Search Service
+=== Search Service
 
 Full text indexes are partitioned and automatically distributed across nodes if multiple nodes are running the Search service.
 When a node running the Search service is failed over, it stops taking traffic.
@@ -88,9 +92,24 @@ When the administrator rebalances the cluster, it performs multiple operations d
 
 The Search service does not perform Delta Node Recovery.
 
+=== Eventing Service
+
+If a node hosting the Eventing Service undergoes hard failover, the service on that node stops, and ongoing mutations on the node are interrupted: this potentially results in data loss.
+If the node is restored to the cluster, and the Eventing Service is restarted, mutations resume: however, this may result in the processing of mutations that are duplicates of mutations made prior to failover, leading to inappropriate changes to data.
+
+If multiple cluster-nodes host the Eventing Service, the Eventing Service on each of the remaining nodes continues to function in the absence of a failed-over Eventing-Service node.
+Note that under these conditions, vBucket reallocations that occur due to failover may lead to mutations being interrupted, and therefore potentially to data loss.
+
+=== Analytics Service (Developer Preview)
+
+The Analytics Service uses _shadow data_, which is a single copy of a subset of the data maintained by the Data Service.
+The shadow data is not replicated; however, its single copy is partitioned across all cluster nodes that run the Analytics Service.
+
+If any single Analytics-Service node undergoes hard failover, the Analytics Service and all analytics processing stop, cluster-wide. If the lost Analytics-Service node is restored to the cluster, and the service is restarted, no rebuilding of shadow data is necessary, and analytics processing resumes across the Analytics-Service nodes of the cluster. However, if a lost Analytics-Service node is permanently removed or replaced, all shadow data must be rebuilt, if and when the Analytics Service is restarted.
+
 == Returning the Cluster to a Stable State
 
-If or when the failed node is repaired and ready, it can be added back to the cluster via Delta Node Recovery, Full Recovery, or an entirely new node could be added.
+If or when a failed Data Service node is repaired and ready, it can be added back to the cluster via Delta Node Recovery or Full Recovery; or, an entirely new node could be added.
 
 * If Delta Node Recovery is an option, the Cluster Manager recognizes this node as a previous member of the cluster.
 If using the Couchbase Web Console, it will prompt the administrator to perform the Delta Node Recovery.
