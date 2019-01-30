@@ -1,60 +1,77 @@
 = Hard Failover
 
 [abstract]
-Hard failover can be used to take a node out of a cluster when the node is unavailable or unstable.
+Hard failover takes an unavailable or unstable node out of the cluster.
 
 [#understanding-hard-failover]
 == Understanding Hard Failover
 
-Hard failover is the process of taking a node out of a cluster when the node has become unavailable or unstable.
-The exact sequence of actions taken by the Cluster Manager depends on which services are running on the node that is to be taken out.
+Hard failover takes an unavailable or unstable node out of the cluster.
+Hard failover can be performed on any node in the cluster: slightly different actions are taken for each affected service, as described below.
 
-Hard failover can be performed on any node in the cluster.
-However, if all cluster-nodes are available, either _graceful_ failover or node _removal_ should be used instead.
+Hard failover should _only_ be used when a node has become unavailable or unstable: it should not be used as part of regular, planned maintenance activities that can be conducted with all cluster-nodes available.
+For information on taking nodes out of the cluster in such circumstances, see
+xref:manage:manage-nodes/remove-node-and-rebalance.adoc[Remove a Node and Rebalance] and xref:learn:clusters-and-availability/graceful-failover.adoc[Graceful Failover].
 
-Hard failover can be initiated manually by means of Couchbase Web Console, the CLI, or the REST API.
-It can also be initiated by means of _automatic_
-failover.
+Hard failover can be initiated by means of:
 
-[#hard-failover-on-data-nodes]
-== Hard Failover on Data Nodes
+* Couchbase Web Console, manually.
+* The CLI or REST API; either manually, or from a [.path]_script/program/ops_ platform.
+* _Automatic Failover_, triggered by the Cluster Manager: see xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover].
+
+For further information on initiating hard failover, see xref:manage:manage-nodes/failover-hard.adoc[Perform Hard Failover].
+
+== Effect of Hard Failover on Services
+
+Hard failover has a different effect on each Couchbase Service.
+
+=== Data Service
 
 If the node to be failed over has been running the Data Service, and active vBuckets have therefore become unavailable, the Cluster Manager promotes replica vBuckets to active status on the remaining cluster-nodes.
 A revised cluster-map is then communicated to all clients.
 
 When the process is complete, no vBuckets remain on the failed-over node, but the node has not yet been fully taken out of the cluster.
+
 The cluster is at this point considered to be in a _degraded state_, in terms of availability; as is now contains a reduced number of replica vBuckets, and so lacks resources to handle a further node-outage.
 
-[#hard-failover-on-index-nodes]
-== Hard Failover on Index Nodes
+=== Index Service
 
 When Global Secondary Indexes (GSI) are defined, each is by default created on only one node, which is running the Index Service.
 If that node fails, the indexes therefore become unavailable.
-If the node is subsequently repaired and added back into the cluster by means of _Delta_ node recovery, the indexes are updated, and become available again.
+
+If the node is subsequently repaired and added back into the cluster by means of Delta Recovery, the indexes are updated, and become available again.
+
 If the node is replaced, the indexes need to be recreated: in this case, before rebalance of the new node into the cluster, the failed node must be taken out of the cluster by means of hard failover.
 
-[#hard-failover-on-query-nodes]
-== Hard Failover on Query Nodes
+=== Query Service
 
 Query Service nodes are stateless, and can be added to and removed from the cluster with no consequence to data.
 However, ongoing queries on those nodes are interrupted by hard failover, and therefore produce errors.
 
 As long as one Query Service node continues to be available, the cluster continues to support querying, although potentially with reduced performance.
 
-[#hard-failover-on-search-nodes]
-== Hard Failover on Search Nodes
+=== Search Service
 
 If multiple nodes run the Search Service, Full Text Indexes are partitioned, and are automatically distributed across those nodes.
 If a Search Service node is failed over, it stops taking traffic.
 If no other nodes run the Search Service, all building of Full Text Indexes stops, and searches fail.
 If at least one other node is running the Search Service, this continues to handle queries and return partial results.
 
-When rebalance occurs following failover:
+When rebalance occurs:
 
 * If replica Full Text Indexes have been configured, the Search Service promotes the replicas to active on the remaining nodes of the cluster.
-* If replica Full Text Indexes have not been configured, the Search Service rebuilds the indexes on the remaining nodes of the cluster, using stored index definitions.
 
-Note that the Search Service is not supported by Delta Node Recovery.
+* If replica Full Text Indexes have _not_ been configured, the Search Service rebuilds the indexes on the remaining nodes of the cluster, using stored index definitions.
+
+Note that the Search Service is not supported by Delta Recovery.
+
+=== Eventing Service
+
+If a node hosting the Eventing Service undergoes hard failover, the service on that node stops, and ongoing mutations on the node are interrupted: this potentially results in data loss.
+If the node is restored to the cluster, and the Eventing Service is restarted, mutations resume: however, this may result in the processing of mutations that are duplicates of mutations made prior to failover, leading to inappropriate changes to data.
+
+If multiple cluster-nodes host the Eventing Service, the Eventing Service on each of the remaining nodes continues to function in the absence of a failed-over Eventing-Service node.
+Note that under these conditions, vBucket reallocations that occur due to failover may lead to mutations being interrupted, and therefore potentially to data loss.
 
 [#hard-failover-on-analytics-nodes]
 == Hard Failover on Analytics Nodes
@@ -68,25 +85,23 @@ If the lost Analytics-Service node is restored to the cluster, and the service i
 [#returning-cluster-to-stable-state]
 == Returning the Cluster to a Stable State
 
-If or when the failed node is repaired and ready, it can be added back to the cluster via _Delta_ or _Full_ recovery.
+If or when the failed node is repaired and ready, it can be added back to the cluster via Delta or Full Recovery.
 Alternatively, an entirely new node can be added instead.
 
-* If Delta Node Recovery can be performed, the Cluster Manager recognizes the node as a previous member of the cluster.
-If the administrator is using the Couchbase Web Console, they are prompted to perform the Delta Node Recovery.
-In CLI is being used, the operation is either performed successfully; or fails, and inform the administrator that _Full_ recovery is required.
+* Delta Recovery can be performed when the Cluster Manager recognizes the node as a previous member of the cluster.
+If Delta Recovery fails, Full Recovery must be performed.
 +
-When a node is added back to the cluster using _Delta_ recovery, the replica vBuckets on the failed-over node are considered to be trusted but _behind_ on data.
+When a node is added back to the cluster using Delta Recovery, the replica vBuckets on the failed-over node are considered to be _trusted_, but _behind on data_.
 The Cluster Manager therefore resynchronizes the vBuckets, so that their data becomes current.
 When this operation is complete, vBuckets are promoted to active status as appropriate, and the cluster map is updated.
 
-* If the node is added back using _Full_ recovery, the node is treated as an entirely new node: it is reloaded with data, and requires rebalance.
+* If the node is added back using Full Recovery, the node is treated as an entirely new node: it is reloaded with data, and requires rebalance.
 
 * If the node cannot be added back, a new node can be added, and the cluster rebalanced.
 
 Prior to rebalance, a cluster should always be restored to an appropriate size and topology.
-Note that a rebalance performed prior to re-adding a failed over node prevents Delta recovery.
+Note that a rebalance performed prior to the re-adding of a failed over node prevents Delta Recovery.
 
-[#hard-failover-example]
 == Hard Failover Example
 
 Given:
@@ -103,21 +118,20 @@ The following occur:
 
 . Hard failover is initiated, either manually or automatically, to remove node 4.
 
-. The Cluster Manager promotes the replica vBucket 762 to _active_ status,  on node 2.
+. The Cluster Manager promotes the replica vBucket 762 to active status, on node 2.
 The cluster now has no replica for vBucket 762.
 
 . The Cluster Cap is updated, so that clients' subsequent reads and writes will go to the correct location for vBucket 762, now node #2.
 
-. The same process is repeated for the remaining 255 vBuckets.
+The same process is repeated for the remaining 255 vBuckets.
 It is then repeated for the remaining 255 vBuckets of the bucket, one bucket at a time.
 
-[#hard-failover-and-multiple-nodes]
 == Hard Failover and Multiple Nodes
 
-Unless xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness] is in operation, multiple nodes should not be failed over simultaneously unless enough replica vBuckets exist on the remaining nodes to support required promotions to active status, and the number and capacity of the remaining nodes allow continued cluster-operation.
+Unless xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness] is in operation, multiple nodes should not be failed over simultaneously; unless enough replica vBuckets exist on the remaining nodes to support required promotions to active status, and the number and capacity of the remaining nodes allow continued cluster-operation.
+
 If two nodes are to be failed over, two replicas per bucket are required, to prevent data-loss.
 
-[#hard-failover-and-unrecognized-non-availability]
 == Unrecognized Non-Availability
 
 In rare cases, the Cluster Manager fails to recognize the unavailability of a node.
