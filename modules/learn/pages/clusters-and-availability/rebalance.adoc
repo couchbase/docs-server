@@ -2,49 +2,69 @@
 :page-aliases: clustersetup:rebalance
 
 [abstract]
-Rebalance is a process of re-distributing data and indexes among the available nodes.
+_Rebalance_ re-distributes data and indexes among available nodes.
 
 [#understanding-rebalance]
 == Understanding Rebalance
 
-When one or nodes have been added to or removed from a cluster, _rebalance_ redistributes data and indexes among the available nodes, and the Cluster Map is appropriate updated and distributed to clients.
-The process can occur while the cluster continues to run and service requests: reads and writes continue to be made to an existing structure, while the data is moved in the background among nodes.
+When one or more nodes have been added to or removed from a cluster, _rebalance_ redistributes data and indexes among available nodes.
+The _cluster map_ is correspondingly updated and distributed to clients.
+(See xref:learn:clusters-and-availability/cluster-manager.adoc[Cluster Manager], for information on the cluster map.)
+The process occurs while the cluster continues to service requests.
 
-The rebalance is performed differently, depending on which services are deployed.
-The principal characteristics per service are described below.
-In cases where multiple services are resident on a node that is being added or removed, the rebalance behavior will be the combination of the per service characteristics.
+[#rebalance-and-services]
+== Rebalance and Services
+
+Rebalance affects different services differently, as described below.
 
 [#rebalancing-the-data-service]
-== Rebalancing the Data Service
+=== Data Service
 
-As explained in xref:learn:clusters-and-availability/clusters-and-availability.adoc[Clusters and Availability], data is logically partitioned across the cluster-nodes running the Data Service.
-On rebalance, vBuckets are redistributed evenly among those nodes.
-If nodes are removed, each vBucket from the removed node is replicated to the new active node for that vBucket.
-A special case of this a _swap rebalance_ where the number of nodes coming into the cluster is equal to the number of nodes leaving the cluster, ensuring that data is only moved between these nodes.
-Once vBucket data-transfer is complete, the new vBucket is made active, and operations are directed to it as appropriate.
-This process ensures uninterrupted data-access for applications.
+On rebalance, vBuckets are redistributed evenly among currently available Data Service nodes.
+(Note the special case provided by xref:install:upgrade-online.adoc#swap-rebalance-example[Swap Rebalance], where the number of nodes coming into the cluster is equal to the number of nodes leaving the cluster, ensuring that data is only moved between these nodes.)
+If nodes have been removed such that the desired number of replicas can no longer be supported, rebalance provides as many replicas as possible.
+After rebalance, operations are directed to active vBuckets in their updated locations.
+Rebalance does not interrupt applications' data-access.
 
 vBucket data-transfer occurs sequentially: therefore, if rebalance stops for any reason, it can be restarted from the point at which it was stopped.
 
+See xref:learn:clusters-and-availability/clusters-and-availability.adoc[Clusters and Availability], for information on how data is logically partitioned across Data Service cluster-nodes.
+
 [#rebalancing-the-index-service]
-== Rebalancing the Index Service
+== Index Service
 
-The Index Service maintains a cluster-wide set of index definitions and metadata, which allows the redistribution of indexes and index replicas from ejected nodes to nodes that continue as part of the cluster.
-However, indexes that reside on non-ejected nodes are unaffected by rebalance.
+The Index Service maintains a cluster-wide set of index definitions and metadata, which allows the redistribution of indexes and index replicas from removed nodes to nodes that continue as part of the cluster.
+Indexes that reside on non-removed nodes are unaffected by rebalance.
 
-When it occurs, the redistribution taken account of nodes' CPU and RAM utilization, and achieves the best resource-balance possible.
-The redistribution does not _move_ indexes or replicas: instead, it _rebuilds_ them in their new locations, using the latest data from the Data Service.
+The rebalance process takes account of nodes' CPU and RAM utilization, and achieves the best resource-balance possible.
+Note that rebalance does not _move_ indexes or replicas: instead, it _rebuilds_ them in their new locations, using the latest data from the Data Service.
 If more index replicas exist than can be handled by the number of existing nodes, replicas are dropped: the numbers are automatically made up subsequently, if additional Index Service nodes are added to the cluster.
 
 During rebalance, no index node is removed until index-building has completed on alternative nodes.
 This ensures uninterrupted access to indexes.
 
 [#rebalancing-the-search-service]
-== Rebalancing the Search Service
+== Search Service
 
-The Search Service automatically partitions its indexes across all Search nodes in the cluster, ensuring that during rebalance the distribution across all nodes is balanced.
+The Search Service automatically partitions its indexes across all Search nodes in the cluster, ensuring that during rebalance, the distribution across all nodes is balanced.
 
 [#rebalancing-the-query-service]
-== Rebalancing the Query Service
+== Query Service
 
 The addition or removal of Query Service nodes during rebalance is immediately effective: an added node is immediately available to serve queries; while a removed node is immediately unavailable, such that ongoing queries are interrupted, requiring the handling of errors or timeouts at application-level.
+
+[#rebalancing-the-eventing-service]
+== Eventing Service
+
+When an Eventing Service node has been added or removed, rebalance causes _vBucket processing ownership_ to be redistributed among available Eventing Service nodes.
+After rebalance, the service continues to process mutations: checkpoint information ensures that no mutations are lost.
+
+[#rebalancing-the-analytics-service]
+== Analytics Service
+
+The Analytics Service uses _shadow data_, which is a single copy of a subset of the data maintained by the Data Service.
+The shadow data is not replicated; however, its single copy is partitioned across all cluster nodes that run the Analytics Service.
+If an Analytics node is permanently removed or replaced, all shadow data must be rebuilt, if and when the Analytics Service is restarted.
+
+If no Analytics Service node has been removed or replaced, shadow data is not affected by rebalance.
+In consequence of rebalance, the Analytics Service receives an updated _cluster map_, and continues to work with the modified vBucket-topology.
