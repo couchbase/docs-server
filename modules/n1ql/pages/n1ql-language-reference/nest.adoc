@@ -7,7 +7,8 @@ The `NEST` clause creates an input object by producing a single result of nestin
 
 == Purpose
 
-Create an input object by producing a single result of nesting keyspaces via <<section_tc1_nnx_1db,ANSI NEST>>, <<nest,Lookup NEST>>, or <<section_rgr_rnx_1db,Index NEST>>.
+The `NEST` clause is used within the xref:n1ql-language-reference/from.adoc[FROM] clause.
+It enables you to create an input object by producing a single result of nesting keyspaces via <<section_tc1_nnx_1db,ANSI NEST>>, <<nest,Lookup NEST>>, or <<section_rgr_rnx_1db,Index NEST>>.
 
 == Prerequisites
 
@@ -19,10 +20,65 @@ xref:learn:security/authorization-overview.adoc[Authorization].
 
 [subs="normal"]
 ----
-nest-clause ::= join-type? 'NEST' from-keyspace ('AS'? alias)? join-predicate
+nest-clause ::= <<from-term,from-term>> ( <<section_ek1_jnx_1db,ansi-nest-clause>> | <<lookup-nest-clause,lookup-nest-clause>> | <<index-nest-clause,index-nest-clause>> )
 ----
 
+image::n1ql-language-reference/nest-clause.png[]
 
+[#from-term]
+=== FROM Term
+
+The *FROM term* is a keyspace reference or expression which defines the input object(s) for the query, representing the left-hand side of the `NEST` clause.
+
+The FROM term is recursive, which enables you to chain the `NEST` clause with any of the terms which are permitted in the `FROM` clause, including other `NEST` clauses.
+For more information, see the page on the xref:n1ql-language-reference/from.adoc[FROM] clause.
+
+There are restrictions on what types of FROM terms may be chained and in what order -- see the descriptions on this page for more details.
+
+A summary of the different types of FROM term is given in the following table.
+
+[#table_vrv_nxx_1db,cols="1,3"]
+|===
+| Type | Example
+
+| xref:n1ql-language-reference/from.adoc#sec_from-keyspace[keyspace identifier]
+a|
+[source,N1QL]
+----
+`travel-sample`
+----
+| xref:n1ql-language-reference/from.adoc#generic-expr[generic expression]
+a|
+[source,N1QL]
+----
+20+10 AS Total
+----
+| xref:n1ql-language-reference/from.adoc#select-expr[subquery]
+a|
+[source,N1QL]
+----
+SELECT t1.country, ARRAY_AGG(t1.city), SUM(t1.city_cnt) AS apnum
+FROM (
+  SELECT city, city_cnt, ARRAY_AGG(airportname) AS apnames, country
+  FROM `travel-sample`
+  WHERE type = "airport"
+  GROUP BY city, country
+  LETTING city_cnt = COUNT(city)
+) AS t1
+WHERE t1.city_cnt > 5;
+----
+| previous xref:n1ql-language-reference/join.adoc[join], xref:n1ql-language-reference/nest.adoc[nest], or xref:n1ql-language-reference/from.adoc#unnest[unnest]
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` AS rte
+JOIN `travel-sample` AS aln
+  ON rte.airlineid = META(aln).id
+NEST `travel-sample` AS lmk
+  ON aln.landmarkid = META(lmk).id;
+----
+|===
 
 [#section_tc1_nnx_1db]
 == ANSI NEST Clause
@@ -31,53 +87,84 @@ _(Introduced in Couchbase Server Enterprise Edition 5.5)_
 
 NOTE: ANSI NEST (and <<section_ek1_jnx_1db,ANSI JOIN>>) clauses are much faster and have much more flexible functionality than their earlier INDEX and LOOKUP equivalents, so users are strongly recommended to use ANSI NEST (and ANSI JOIN) exclusively, where possible.
 
-ANSI NEST supports more nest types than Couchbase Server version 4.0's NEST could.
-ANSI NEST can nest arbitrary fields of the documents and can be chained together.
+ANSI NEST supports more nest types than Lookup NEST or Index NEXT.
+ANSI NEST can nest arbitrary fields of the documents, and can be chained together.
 
-The key difference between the currently supported nests and ANSI NEST support is the replacement of the current `ON KEYS` or `ON KEY … FOR` clauses with a simple `ON` clause.
+The key difference between ANSI NEST and other supported NEST types is the replacement of the `ON KEYS` or `ON KEY … FOR` clauses with a simple `ON` clause.
 The `ON KEYS` or `ON KEY … FOR` clauses dictate that those nests can only be done on a document key (primary key for a document).
-The `ON` clause can contain any expression, and thus it opens up many more nest possibilities that Couchbase did not previously support.
+The `ON` clause can contain any expression, and thus it opens up many more nest possibilities.
 
 === Syntax
 
-image::n1ql-language-reference/FROM_ansi-nest_RR-clause_5.5.png[,80%]
+[subs="normal"]
+----
+ansi-nest-clause ::= <<ansi-nest-type,ansi-nest-type>>? 'NEST' <<ansi-from-keyspace,from-keyspace>> ('AS'? <<ansi-as-alias,alias>>)? <<ansi-nest-predicate,ansi-nest-predicate>>
+----
 
-`lhs-expr` `[``nest-type``] NEST` `rhs-expr` `ON` `nest-clause`
+image::n1ql-language-reference/ansi-nest-clause.png[]
 
-=== Arguments
+[#ansi-nest-type]
+==== Nest Type
 
-lhs-expr:: [Required] Keyspace reference or expression representing the left-hand side of the nest clause.
+[subs="normal"]
+----
+ansi-nest-type ::= 'INNER' | 'LEFT' 'OUTER'?
+----
 
-nest-type::
-[Optional.
-Default is `INNER`] String representing the type of nest.
+image::n1ql-language-reference/ansi-nest-type.png[]
+
+This clause represents the type of ANSI nest.
+
 `INNER`::
-[Optional.
-Default is `INNER`]
-+
 For each nested object produced, both the left-hand and right-hand source objects must be non-MISSING and non-NULL.
 
 `LEFT [OUTER]`::
-[Optional.
-Query Service interprets `LEFT` as `LEFT OUTER`]
+{startsb}Query Service interprets `LEFT` as `LEFT OUTER`{endsb}
 +
 For each nested object produced, only the left-hand source objects must be non-MISSING and non-NULL.
 
-`NEST` *rhs-expr*:: [Required] Keyspace reference or expression representing the right-hand side of the nest clause.
+This clause is optional.
+If omitted, the default is `INNER`.
 
-`ON` *nest-clause*:: [Required] Boolean expression representing the nest condition between the left-hand side expression and the right-hand side expression, which can be fields, constant expressions or any complex N1QL expression.
+[#ansi-from-keyspace]
+==== FROM Keyspace
+
+Keyspace reference or expression representing the right-hand side of the NEST clause.
+For details, see xref:n1ql-language-reference/from.adoc#sec_from-keyspace[FROM Keyspace].
+
+[#ansi-as-alias]
+==== AS Alias
+
+Assigns another name to the right-hand side of the NEST clause.
+For details, see xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+Assigning an alias to the FROM keyspace is optional.
+If you assign an alias to the FROM keyspace, the `AS` keyword may be omitted.
+
+[#ansi-nest-predicate]
+==== NEST Predicate
+
+[subs="normal"]
+----
+ansi-nest-predicate ::= 'ON' expr
+----
+
+image::n1ql-language-reference/ansi-nest-predicate.png[]
+
+`expr`:: Boolean expression representing the nest condition between the left-hand side <<from-term>> and the right-hand side <<ansi-from-keyspace>>.
+This expression may contain fields, constant expressions, or any complex N1QL expression.
 
 === Limitations
 
 The following nest types are currently not supported:
 
-* Full OUTER NEST
-* Cross NEST
+* Full OUTER NEST.
+* Cross NEST.
 * No mixing of new ANSI NEST syntax with NEST syntax in the same FROM clause.
 * The right-hand-side of any nest must be a keyspace.
 Expressions, subqueries, or other join combinations cannot be on the right-hand-side of a nest.
 * A nest can only be executed when appropriate index exists on the inner side of the ANSI NEST (similar to current NEST support).
-* Adaptive indexes are not considered when selecting indexes on inner side of the nest
+* Adaptive indexes are not considered when selecting indexes on inner side of the nest.
 
 === Examples
 
@@ -130,38 +217,70 @@ But instead of producing a cross-product of the left and right inputs, a single 
 
 === Syntax
 
-image::n1ql-language-reference/FROM_lookup-nest_4.0_RR.png[,80%]
-
+[subs="normal"]
 ----
-[ join-type ] NEST from-path [ [ AS ] alias ] on-keys-clause
+lookup-nest-clause ::= <<lookup-nest-type,lookup-nest-type>>? 'NEST' <<lookup-from-keyspace,from-keyspace>> ('AS'? <<lookup-as-alias,alias>>)? <<lookup-nest-predicate,lookup-nest-predicate>>
 ----
 
-=== Arguments
+image::n1ql-language-reference/lookup-nest-clause.png[]
 
-join-type:: [Optional; default is `INNER`]
-`INNER`;; For each result object produced, both the left-hand and right-hand source objects must be non-`MISSING` and non-`NULL`.
+[#lookup-nest-type]
+==== Nest Type
 
-`LEFT` or `LEFT OUTER`;;
+[subs="normal"]
+----
+lookup-nest-type ::= 'INNER' | 'LEFT' 'OUTER'?
+----
+
+image::n1ql-language-reference/lookup-nest-type.png[]
+
+This clause represents the type of lookup nest.
+
+`INNER`::
+For each result object produced, both the left-hand and right-hand source objects must be non-`MISSING` and non-`NULL`.
+
+`LEFT [OUTER]`::
+{startsb}Query Service interprets `LEFT` as `LEFT OUTER`{endsb}
++
 A left-outer unnest is performed, and at least one result object is produced for each left source object.
 +
 For each joined object produced, only the left-hand source objects must be non-`MISSING` and non-`NULL`.
 
-from-path::
-[Required] Keyspace reference for right-hand side of lookup nest.
-For details, see <<sec_from-keyspace,Keyspaces>>.
+This clause is optional.
+If omitted, the default is `INNER`.
 
-alias (optionally, `AS` alias)::
-[Required] To assign a name for the right-hand side keyspace.
-For details, see <<section_ax5_2nx_1db,AS Keyword>>.
+[#lookup-from-keyspace]
+==== FROM Keyspace
 
-on-keys-clause::
-[Required] String or expression representing the primary keys of the documents for the second keyspace.
-+
-The `ON KEYS` expression produces one or more document keys for the right-hand side document.
-+
-The `ON KEYS` expression can produce an array of document keys.
+Keyspace reference for the right-hand side of the lookup nest.
+For details, see xref:n1ql-language-reference/from.adoc#sec_from-keyspace[FROM Keyspace].
+
+[#lookup-as-alias]
+==== AS Alias
+
+Assigns another name to the right-hand side of the lookup nest.
+For details, see xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+Assigning an alias to the FROM keyspace is optional.
+If you assign an alias to the FROM keyspace, the `AS` keyword may be omitted.
+
+[#lookup-nest-predicate]
+==== Nest Predicate
+
+[subs="normal"]
+----
+lookup-nest-predicate ::= 'ON' 'KEYS' expr
+----
+
+image::n1ql-language-reference/lookup-nest-predicate.png[]
+
+The `ON KEYS` expression produces a document key or array of document keys for the right-hand side of the lookup nest.
+
+expr::
+[Required] String or expression representing the primary keys of the documents for the right-hand side keyspace.
 
 === Return Values
+
 If the right-hand source object is NULL, MISSING, empty, or a non-array value, then the result object's right-side value is MISSING (omitted).
 
 Nests can be chained with other NEST, JOIN, and UNNEST clauses.
@@ -357,95 +476,88 @@ LIMIT 1;
 
 _(Introduced in Couchbase Server 4.0)_
 
-When Lookup NESTs cannot efficiently nest left-hand side documents with right-to-left nests and your situation cannot be flipped because your predicate needs to be on the left-hand side (such as the above <<Lookup-NEST-Example-1>> where airline documents have no reference to route documents), then Index NESTs can be used efficiently.
-Index NESTs allow you to flip the direction of your nest clause.
-
-[#Index-NEST-Example-1]
-.List four
-====
-[source,N1Ql]
-----
-CREATE INDEX idx_ijoin ON `travel-sample`(airlineid) WHERE type="route";
-----
-
-[source,N1Ql]
-----
-SELECT *
-FROM `travel-sample` rte
-  INNER NEST `travel-sample` aline
-  ON KEY rte.airlineid
-  FOR rte
-WHERE rte.type = "route"
-LIMIT 4;
-----
-
-If you generalize the same query, it looks like the following:
-
-[source,N1QL]
-----
-CREATE INDEX on-key-for-index-name rhs-expression (lhs-expression-key);
-----
-
-[source,N1Ql]
-----
-SELECT projection-list
-FROM lhs-expression
-  NEST rhs-expression
-  ON KEY rhs-expression.lhs-expression-key FOR lhs-expression
-[ WHERE predicates ] ;
-----
-====
-
-There are three important changes in the index scan syntax example above:
-
-* `CREATE INDEX` on the `ON KEY` expression `route.airlineid` to access `route` documents using `airlineid` (which are produced on the LHS).
-* The `ON KEY route.airlineid FOR airline` enables N1QL to use the index `route.airlineid`.
-* Create any optional index, such as `route.airline` that can be used on `airline` (LHS).
+Index NESTs allow you to flip the direction of a Lookup NEST clause.
+Index NESTs can be used efficiently when Lookup NESTs cannot efficiently nest left-hand side documents with right-to-left nests, and your situation cannot be flipped because your predicate needs to be on the left-hand side, such as <<Lookup-NEST-Example-1>> above where airline documents have no reference to route documents.
 
 NOTE: For index nests, the syntax uses `ON KEY` (singular) instead of `ON KEYS` (plural).
-This is because Index NESTs' `ON KEY` expression must produce a scalar value; whereas Lookup NESTs' `ON KEYS` expression can produce either a scalar or an array value.
+This is because an Index NEST's `ON KEY` expression must produce a scalar value; whereas a Lookup NEST's `ON KEYS` expression can produce either a scalar or an array value.
 
 === Syntax
 
-image::n1ql-language-reference/FROM_index-nest_5.1_rr.png[]
-
+[subs="normal"]
 ----
-[ nest-type ] NEST from-path [ [ AS ] alias ] ON KEY on-key-clause FOR for-clause
+index-nest-clause ::= <<index-nest-type,index-nest-type>>? 'JOIN' <<index-from-keyspace,from-keyspace>> ('AS'? <<index-as-alias,alias>>)? <<index-nest-predicate,index-nest-predicate>>
 ----
 
-=== Arguments
+image::n1ql-language-reference/index-nest-clause.png[]
 
-nest-type:: [Optional; default is `LEFT INNER`]
-`LEFT` or `LEFT INNER`;; For each nested object produced, both the left-hand and right-hand source objects must be non-MISSING and non-NULL.
+[#index-nest-type]
+==== Nest Type
 
-`LEFT OUTER`;; For each nested object produced, only the left-hand source objects must be non-MISSING and non-NULL.
+[subs="normal"]
+----
+index-nest-type ::= 'INNER' | 'LEFT' 'OUTER'?
+----
 
-from-path::
-Keyspace reference for right-hand side of an index nest.
-For details, see <<sec_from-keyspace,Keyspaces>>.
+image::n1ql-language-reference/index-nest-type.png[]
 
-`AS` alias::
-[Optional] To assign another name.
-For details, see <<section_ax5_2nx_1db,AS Keyword>>.
+This clause represents the type of index nest.
 
-`ON KEY` rhs-expression.lhs-expression-key::
-rhs-expression;; Keyspace reference for the right-hand side of the index nest.
+`INNER`::
+For each nested object produced, both the left-hand and right-hand source objects must be non-MISSING and non-NULL.
 
-lhs-expression-key;; String or expression representing the attribute in `rhs-expression` referencing the document key for `lhs-expression`.
+`LEFT [OUTER]`::
+{startsb}Query Service interprets `LEFT` as `LEFT OUTER`{endsb}
++
+For each nested object produced, only the left-hand source objects must be non-MISSING and non-NULL.
 
-`FOR` lhs-expression:: Keyspace reference for the left-hand side of the index nest.
+This clause is optional.
+If omitted, the default is `INNER`.
+
+[#index-from-keyspace]
+==== FROM Keyspace
+
+Keyspace reference or expression representing the right-hand side of the NEST clause.
+For details, see xref:n1ql-language-reference/from.adoc#sec_from-keyspace[FROM Keyspace].
+
+[#index-as-alias]
+==== AS Alias
+
+Assigns another name to the right-hand side of the NEST clause.
+For details, see xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+Assigning an alias to the FROM keyspace is optional.
+If you assign an alias to the FROM keyspace, the `AS` keyword may be omitted.
+
+[#index-nest-predicate]
+==== NEST Predicate
+
+[subs="normal"]
+----
+index-nest-predicate ::= 'ON' 'KEY' expr 'FOR' alias
+----
+
+image::n1ql-language-reference/index-nest-predicate.png[]
+
+`expr`:: Expression in the form `__rhs-expression__.__lhs-expression-key__`:
+
+`__rhs-expression__`;; Keyspace reference for the right-hand side of the index nest.
+
+`__lhs-expression-key__`;; String or expression representing the attribute in `__rhs-expression__` and referencing the document key for `alias`.
+
+`alias`:: Keyspace reference for the left-hand side of the index nest.
 
 === Examples
 
 [#Index-NEST-Example-1]
-.ON KEY \... FOR.
+.Use INDEX nest to flip the direction of <<Lookup-NEST-Example-1>> above
 ====
 This example nests the airline routes for each airline after creating the following index.
 (Note that the index will not match if it contains a WHERE clause.)
 
 [source,N1QL]
 ----
-CREATE INDEX route_airline ON `travel-sample`(airlineid);
+CREATE INDEX idx_inest ON `travel-sample`(airlineid);
 ----
 
 [source,N1QL]
@@ -704,7 +816,28 @@ LIMIT 1;
   }
 ]
 ----
+If you generalize the same query, it looks like the following:
+
+[subs="normal"]
+----
+CREATE INDEX _on-key-for-index-name_ _rhs-expression_ (__lhs-expression-key__);
+----
+
+[subs="normal"]
+----
+SELECT _projection-list_
+FROM _lhs-expression_
+  NEST _rhs-expression_
+  ON KEY __rhs-expression__.__lhs-expression-key__ FOR _lhs-expression_
+[ WHERE _predicates_ ] ;
+----
 ====
+
+There are three important changes in the index scan syntax example above:
+
+* `CREATE INDEX` on the `ON KEY` expression `route.airlineid` to access `route` documents using `airlineid` (which are produced on the left-hand side).
+* The `ON KEY route.airlineid FOR airline` enables N1QL to use the index `route.airlineid`.
+* Create any optional index, such as `route.airline` that can be used on `airline` (left-hand side).
 
 [#as]
 == Appendix: Summary of NEST Types
