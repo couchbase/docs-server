@@ -1,4 +1,5 @@
 = ORDER BY clause
+:imagesdir: ../../assets/images
 
 [abstract]
 The `ORDER BY` clause sorts the result-set by one or more columns, in ascending or descending order.
@@ -18,39 +19,50 @@ xref:learn:security/authorization-overview.adoc[Authorization].
 [#section_Syntax]
 == Syntax
 
-In the below `SELECT` statement, the `ORDER BY` clause is boldfaced:
-
+[subs="normal"]
 ----
-SELECT select_clause
-[FROM from_clause] [JOIN join_clause]
-[USE INDEX useindex_clause]
-[LET let_clause]
-[WHERE where_clause ( [AND where_clause2] )* ]
-[GROUP BY groupby_clause] [LETTING|HAVING letting_clause]
-[UNION|INTERSECT|EXCEPT union_clause]
-[ORDER BY orderby_clause]
-[LIMIT limit_int]
-[OFFSET offset_clause]
-;
+order-by-clause ::= ORDER BY <<ordering-term>> [ ',' <<ordering-term>> ]*
 ----
 
-*Syntax of the orderby_clause*
+image::n1ql-language-reference/order-by-clause.png[]
 
+[[ordering-term,ordering-term]]
+=== Ordering Term
+
+[subs="normal"]
 ----
-ORDER BYexpr [ASC|DESC] [, expr2 [ASC|DESC] ]*
+ordering-term ::= <<arguments,expr>> [ ASC | DESC ] [ NULLS ( FIRST | LAST ) ]
 ----
 
-image::n1ql-language-reference/order-by-clause.png[,50%]
+image::n1ql-language-reference/ordering-term.png[]
 
+[[collation]]
+=== Collation
+The collation clause determines the order of the search.
+
+`ASC`:: The results are ordered in ascending order.
+
+`DESC`:: The results are ordered in descending order.
+
+If the collation clause is missing, the default is `ASC`.
+
+[[nulls-ordering]]
+=== Nulls Ordering
+_(Introduced in Couchbase Server 6.5)_
+
+The nulls ordering clause determines how NULL or MISSING values are treated when ordering the results:
+
+`NULLS FIRST`:: If any results evaluate to NULL or MISSING, those results ordered first.
+
+`NULLS LAST`:: If any results evaluate to NULL or MISSING, those results are ordered last.
+
+If the nulls ordering clause is omitted, the default is `NULLS FIRST` for an ascending search with `ASC`, or `NULLS LAST` for a descending search with `DESC`.
+
+[[arguments]]
 == Arguments
 
-expr:: [Required] This identifier or expression can be document fields, new expressions, or an alias in the SELECT clause.
-
-`ASC` | `DESC`:: [Optional; default is `ASC`]
-+
-`ASC` orders in ascending order.
-+
-`DESC` orders in descending order.
+expr:: [Required] The identifier or expression by which to order the query results.
+This may be a document field, a new expression, or an alias in the SELECT clause.
 
 == Return Values
 
@@ -60,26 +72,44 @@ Objects are sorted first by the left-most expression in the list of expressions.
 Any items with the same sort value will be sorted with the next expression in the list.
 This process repeats until all items are sorted and all expressions in the list are evaluated.
 
-When a field has a mix of data types, the different JSON types are sorted in the following order (from lowest to highest):
+When a field has a mix of data types, the different JSON types are sorted in the following order, from first to last:
 
-* `MISSING`
-* `NULL` (including JSON NULL)
-* `FALSE`
-* `TRUE`
-* number
-* string (string comparison is done using a raw byte collation of UTF8 encoded strings)
-* array (element by element comparison is performed until the end of the shorter array; if all the elements so far are equal, then longer arrays sort after)
-* object (larger objects sort after; for objects of equal length, key/value by key/value comparison is performed; keys are examined in sorted order using the normal ordering for strings)
+|===
+| ASC NULLS FIRST | ASC NULLS LAST | DESC NULLS FIRST | DESC NULLS LAST
 
-NOTE: Among string values, the ascending order is lowercase, then uppercase, then accented letters.
+| MISSING | FALSE | NULL | BINARY
+| NULL | TRUE | MISSING | OBJECT
+| FALSE | NUMBER | BINARY | ARRAY
+| TRUE | STRING | OBJECT | STRING
+| NUMBER | ARRAY | ARRAY | NUMBER
+| STRING | OBJECT | STRING | TRUE
+| ARRAY | BINARY | NUMBER | FALSE
+| OBJECT | MISSING | TRUE | NULL
+| BINARY | NULL | FALSE | MISSING
+|===
+
+[NOTE]
+====
+* NULL values include JSON NULL.
+* String comparison is done using a raw byte collation of UTF8 encoded strings.
+The ascending order is lowercase, then uppercase, then accented letters.
+* Arrays are sorted in order of the first element in each array, then the second element in each array, and so on.
+In an ascending sort, longer arrays are sorted after shorter arrays, where all the elements are equal as far as the end of the shorter array.
+* Objects are first sorted in order of size.
+In an ascending sort, larger objects are sorted after shorter objects.
+Where objects are the same size, objects are sorted in order of the first key in each object, then the first value in each object, then the second key in each object, then the second value in each object, and so on.
+* N1QL always sorts the key-value pairs _within each object_ by key in ascending string order before comparison or ordering.
+====
 
 == Examples
 
-* <<Ex1,Ex 1: List cities in descending order and then landmarks in ascending order.>>
-* <<Ex2,Ex 2: List names resulting from a UNION clause.>>
+. <<Ex1,List cities in descending order and then landmarks in ascending order>>
+. <<Ex2,List the names of hotels and landmarks resulting from a UNION query>>
 
-*Example 1:* List cities in descending order and then landmarks in ascending order.
-
+[[Ex1]]
+.List cities in descending order and then landmarks in ascending order
+====
+[source,n1ql]
 ----
 SELECT city, name
 FROM `travel-sample`
@@ -87,8 +117,8 @@ WHERE type = "landmark"
 ORDER BY city DESC, name ASC;
 ----
 
-Results:
-
+.Results:
+[source,json]
 ----
 [
   {
@@ -113,9 +143,12 @@ Results:
   },
 ...
 ----
+====
 
-*Example 2:* List the names of hotels and landmarks resulting from a UNION query.
-
+[[Ex2]]
+.List the names of hotels and landmarks resulting from a UNION query
+====
+[source,n1ql]
 ----
 SELECT name
   FROM `travel-sample`
@@ -126,8 +159,8 @@ UNION SELECT name
 ORDER BY name ASC;
 ----
 
-Results:
-
+.Results
+[source,json]
 ----
 {
     "name": "'La Mirande Hotel"
@@ -146,3 +179,4 @@ Results:
   },
 ...
 ----
+====
