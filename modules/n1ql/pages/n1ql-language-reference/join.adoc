@@ -142,10 +142,16 @@ For details, see xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspa
 Use parentheses to specify a subquery for the right-hand side of the ANSI join.
 For details, see xref:n1ql-language-reference/from.adoc#select-expr-clause[Subquery Expression].
 
+NOTE: A subquery on the right-hand side of the ANSI join cannot be correlated, i.e. it cannot refer to a keyspace in the outer query block.
+This will lead to an error.
+
 [#ansi-generic-expr]
 ===== Generic Expression
 
 A N1QL xref:n1ql-language-reference/index.adoc[expression] generating JSON documents or objects for the right-hand side of the ANSI join.
+
+NOTE: An expression on the right-hand side of the ANSI join may be correlated, i.e. it may refer to a keyspace on the left-hand side of the join.
+In this case, only a <<ansi-join-hints,nested-loop join>> may be used.
 
 [#ansi-as-alias]
 ==== AS Alias
@@ -168,6 +174,15 @@ image::n1ql-language-reference/ansi-join-predicate.png[]
 
 `expr`:: Boolean expression representing the join condition between the left-hand side <<section_nkd_3nx_1db>> and the <<ansi-rhs-expr>>.
 This expression may contain fields, constant expressions, or any complex N1QL expression.
+
+=== Limitations
+
+The following join types are currently not supported:
+
+* `RIGHT OUTER JOIN` is only supported when it’s the only join in the query; or in a chain of joins, the `RIGHT OUTER JOIN` must be the first join in the chain.
+* No mixing of new ANSI Join syntax with Lookup/Index Join syntax in the same FROM clause.
+* A join can only be executed when appropriate index exists on the inner side of the join.
+* Adaptive indexes are not considered when selecting indexes on inner side of the join.
 
 === Examples
 
@@ -438,15 +453,6 @@ WHERE type = "beer"
 image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual2.png[]
 ====
 
-=== Limitations
-
-The following Join types are currently not supported:
-
-* `RIGHT OUTER JOIN` is only supported when it’s the only join in the query; or in a chain of joins, the `RIGHT OUTER JOIN` must be the first join in the chain.
-* No mixing of new ANSI Join syntax with Lookup/Index Join syntax in the same FROM clause.
-* A join can only be executed when appropriate index exists on the inner side of the join.
-* Adaptive indexes are not considered when selecting indexes on inner side of the join.
-
 [#ansi-join-hints]
 == ANSI JOIN Hints
 
@@ -459,17 +465,31 @@ ansi-join-hints ::= <<use-hash-hint,use-hash-hint>> | <<use-nl-hint,use-nl-hint>
 
 image::n1ql-language-reference/ansi-use-clause.png[]
 
-Couchbase Server Enterprise Edition supports two join methods for performing ANSI Join: nested-loop join and hash join.
-The default join method is nested-loop join.
+Couchbase Server Enterprise Edition supports two join methods for performing ANSI join: nested-loop join and hash join.
 Two corresponding join hints are introduced: `USE HASH` and `USE NL`.
 
-Hash join is only considered when the `USE HASH` hint is specified, and it requires at least one equality predicate between the left-hand side and right-hand side.
-In such cases, if a hash join is chosen successfully, then that’ll be the join method used for this join.
-If the hash join cannot be generated, then the planner will further consider nested-loop join and will either generate a nested-loop join or return an error for the join.
+In Enterprise Edition, for an ANSI join with a subquery or an expression as the right-hand side, the default method is hash.
+In this case:
 
-If no join hint is specified or USE NL hint is specified, then nested-loop join is considered.
+* The subquery or expression on the right-hand side of the join is used as the build side of the hash join.
+If `USE HASH(PROBE)` is specified, then the expression or subquery will be used as probe side of the hash join.
 
-NOTE: For Community Edition (CE), any specified `USE HASH` hint will be silently ignored and only nested-loop join is considered by the planner.
+* If an expression on the right-hand side is <<ansi-generic-expr,correlated>>, a nested-loop join is used.
+(If a subquery on the right-hand side is <<ansi-subquery-expr,correlated>>, the query returns an error.)
+
+* If a hash join is not feasible or not supported, or if the `USE NL` hint is specified, a nested-loop join is used.
+
+For other types of join, the default method is nested-loop.
+In this case:
+
+* Hash join is only considered when the `USE HASH` hint is specified, and it requires at least one equality predicate between the left-hand side and right-hand side.
+
+* If the join meets these conditions, hash join is used.
+If the hash join cannot be generated, then the planner will further consider nested-loop join, and will either generate a nested-loop join or return an error for the join.
+
+* If no join hint is specified, or the `USE NL` hint is specified, then nested-loop join is considered.
+
+NOTE: For Community Edition (CE), only nested-loop join is considered by the planner, and any specified `USE HASH` hint will be silently ignored.
 
 [#use-hash-hint]
 === USE HASH hint
