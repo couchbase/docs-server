@@ -1,0 +1,1395 @@
+= JOIN Clause
+:page-status: Couchbase Server 4.0
+:imagesdir: ../../assets/images
+:clause: JOIN
+
+[abstract]
+The `JOIN` clause enables you to create new input objects by combining two or more source objects.
+
+== Purpose
+
+The `JOIN` clause is used within the xref:n1ql-language-reference/from.adoc[FROM] clause.
+It creates an input object by combining two or more source objects.
+Couchbase Server supports three types of `JOIN` clause, which are described in the sections below: <<section_ek1_jnx_1db,ANSI JOIN>>, <<lookup-join-clause,Lookup JOIN>>, and <<index-join-clause,Index JOIN>>.
+
+== Prerequisites
+
+For you to select data from keyspace or expression, you must have the [.param]`query_select` privilege on that keyspace.
+For more details about user roles, see
+xref:learn:security/authorization-overview.adoc[Authorization].
+
+== Syntax
+
+[subs="normal"]
+----
+join-clause ::= <<section_nkd_3nx_1db,from-term>> ( <<section_ek1_jnx_1db,ansi-join-clause>> | <<lookup-join-clause,lookup-join-clause>> | <<index-join-clause,index-join-clause>> )
+----
+
+image::n1ql-language-reference/join-clause.png[]
+
+[#section_nkd_3nx_1db]
+include::partial$n1ql-language-reference/from-term.adoc[]
+
+[#section_ek1_jnx_1db]
+== ANSI JOIN Clause
+
+_(Introduced in Couchbase Server Enterprise Edition 5.5)_
+
+=== Purpose
+
+To be closer to standard SQL syntax, ANSI JOIN can join arbitrary fields of the documents and can be chained together.
+
+include::partial$n1ql-language-reference/ansi-join-nest.adoc[]
+
+=== Syntax
+
+[subs="normal"]
+----
+ansi-join-clause ::= [ <<ansi-join-type,ansi-join-type>> ] JOIN <<ansi-join-rhs,ansi-join-rhs>> [ <<ansi-join-hints,ansi-join-hints>> ] <<ansi-join-predicate,ansi-join-predicate>>
+----
+
+image::n1ql-language-reference/ansi-join-clause.png["ansi-join-type? 'JOIN' ansi-join-rhs ansi-join-hints? ansi-join-predicate"]
+
+[#ansi-join-type]
+==== Join Type
+
+[subs="normal"]
+----
+ansi-join-type ::= INNER | ( LEFT [ OUTER ] ) | ( RIGHT [ OUTER ] )
+----
+
+image::n1ql-language-reference/ansi-join-type.png[]
+
+This clause represents the type of ANSI join.
+
+`INNER`::
+For each joined object produced, both the left-hand side and right-hand side source objects of the `ON` clause must be non-MISSING and non-NULL.
+
+`LEFT [OUTER]`::
+{startsb}Query Service interprets `LEFT` as `LEFT OUTER`{endsb}
++
+For each joined object produced, only the left-hand source objects of the `ON` clause must be non-MISSING and non-NULL.
+
+`RIGHT [OUTER]`::
+{startsb}Query Service interprets `RIGHT` as `RIGHT OUTER`{endsb}
++
+For each joined object produced, only the right-hand source objects of the `ON` clause must be non-MISSING and non-NULL.
+
+This clause is optional.
+If omitted, the default is `INNER`.
+
+The following table summarizes the ANSI join types currently supported, and describes how you may chain them together.
+
+[cols="2,1,3"]
+|===
+| Join Type | Remarks | Example
+
+| *[INNER] JOIN \... ON*
+.2+.^| INNER JOIN and LEFT OUTER JOIN can be mixed in any number and/or order.
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` r
+JOIN `travel-sample` a
+ON r.airlineid = META(a).id
+WHERE a.country = "France"
+----
+| *LEFT [OUTER] JOIN \... ON*
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` r
+LEFT JOIN `travel-sample` a
+ON r.airlineid = META(a).id
+WHERE r.sourceairport = "SFO"
+----
+| *RIGHT [OUTER] JOIN \... ON*
+| RIGHT OUTER JOIN can only be the first join specified in a FROM clause.
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` r
+RIGHT JOIN `travel-sample` a
+ON r.airlineid = META(a).id
+WHERE r.sourceairport = "SFO"
+----
+|===
+
+[#ansi-join-rhs]
+==== Join Right-Hand Side
+
+[subs="normal"]
+----
+ansi-join-rhs ::= <<ansi-keyspace-ref,keyspace-ref>> [ [ AS ] <<ansi-keyspace-alias,alias>> ]
+----
+
+image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+
+[#ansi-keyspace-ref]
+===== Keyspace Reference
+
+Keyspace reference for the right-hand side of the ANSI join.
+For details, see xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+[#ansi-keyspace-alias]
+===== AS Alias
+
+Assigns another name to the keyspace reference.
+For details, see xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[#ansi-join-predicate]
+==== Join Predicate
+
+[subs="normal"]
+----
+ansi-join-predicate ::= ON expr
+----
+
+image::n1ql-language-reference/ansi-join-predicate.png[]
+
+`expr`:: Boolean expression representing the join condition between the left-hand side <<section_nkd_3nx_1db>> and the <<ansi-join-rhs>>.
+This expression may contain fields, constant expressions, or any complex N1QL expression.
+
+=== Limitations
+
+The following join types are currently not supported:
+
+* `RIGHT OUTER JOIN` is only supported when it’s the only join in the query; or in a chain of joins, the `RIGHT OUTER JOIN` must be the first join in the chain.
+* No mixing of new ANSI Join syntax with Lookup/Index Join syntax in the same FROM clause.
+* The right-hand side of any join must be a keyspace.
+Expressions, subqueries, or other join combinations cannot be on the right-hand side of a join.
+* A join can only be executed when appropriate index exists on the inner side of the join.
+* Adaptive indexes are not considered when selecting indexes on inner side of the join.
+
+=== Examples
+
+[#ANSI-Join-Example-1]
+.Inner Join
+====
+List the source airports and airlines that fly into SFO, where only the non-null `route` documents join with matching `airline` documents.
+
+[source,N1QL]
+----
+SELECT route.airlineid, airline.name, route.sourceairport, route.destinationairport
+FROM `travel-sample` route
+INNER JOIN `travel-sample` airline
+ON route.airlineid = META(airline).id
+WHERE route.type = "route"
+AND route.destinationairport = "SFO"
+ORDER BY route.sourceairport;
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "airlineid": "airline_5209",
+    "destinationairport": "SFO",
+    "name": "United Airlines",
+    "sourceairport": "ABQ"
+  },
+  {
+    "airlineid": "airline_5209",
+    "destinationairport": "SFO",
+    "name": "United Airlines",
+    "sourceairport": "ACV"
+  },
+  {
+    "airlineid": "airline_5209",
+    "destinationairport": "SFO",
+    "name": "United Airlines",
+    "sourceairport": "AKL"
+  },
+...
+]
+----
+====
+
+[#ANSI-Join-Example-2]
+.Left Outer Join of U.S. airports in the same city as a landmark
+====
+List the airports and landmarks in the same city, ordered by the airports.
+
+[source,N1QL]
+----
+SELECT DISTINCT  MIN(aport.airportname) AS Airport__Name,
+                 MIN(lmark.name) AS Landmark_Name,
+                 MIN(aport.tz) AS Landmark_Time
+FROM `travel-sample` aport
+LEFT JOIN `travel-sample` lmark
+  ON aport.city = lmark.city
+  AND lmark.country = "United States"
+  AND lmark.type = "landmark"
+WHERE aport.type = "airport"
+GROUP BY lmark.name
+ORDER BY lmark.name;
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "Airport__Name": "San Francisco Intl",
+    "Landmark_Name": "&quot;Hippie Temptation&quot; house",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+  {
+    "Airport__Name": "Los Angeles Intl",
+    "Landmark_Name": "101 Coffee Shop",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+  {
+    "Airport__Name": "San Francisco Intl",
+    "Landmark_Name": "1015",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+  {
+    "Airport__Name": "San Francisco Intl",
+    "Landmark_Name": "1235 Masonic Ave",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+...
+]
+----
+====
+
+[#ANSI-Join-Example-3]
+.RIGHT OUTER JOIN of <<ANSI-Join-Example-2>>
+====
+List the airports and landmarks in the same city, ordered by the landmarks.
+
+NOTE: The LEFT OUTER JOIN will list all left-side results regardless of matching right-side documents; while the RIGHT OUTER JOIN will list all right-side results regardless of matching left-side documents.
+
+[source,N1QL]
+----
+SELECT DISTINCT  MIN(aport.airportname) AS Airport_Name,
+                 MIN(lmark.name) AS Landmark_Name,
+                 MIN(aport.tz) AS Landmark_Time
+FROM `travel-sample` aport
+RIGHT JOIN `travel-sample` lmark
+  ON aport.city = lmark.city
+  AND aport.type = "airport"
+  AND aport.country = "United States"
+WHERE lmark.type = "landmark"
+GROUP BY lmark.name
+ORDER BY lmark.name;
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "Airport_Name": "San Francisco Intl",
+    "Landmark_Name": "&quot;Hippie Temptation&quot; house",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+  {
+    "Airport_Name": "London-Corbin Airport-MaGee Field",
+    "Landmark_Name": "02 Shepherd's Bush Empire",
+    "Landmark_Time": "America/New_York"
+  },
+  {
+    "Airport_Name": "Los Angeles Intl",
+    "Landmark_Name": "101 Coffee Shop",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+  {
+    "Airport_Name": "San Francisco Intl",
+    "Landmark_Name": "1015",
+    "Landmark_Time": "America/Los_Angeles"
+  },
+...
+]
+----
+====
+
+[#ANSI-Join-Example-4]
+.Inner Join with Covering Index
+====
+In the `{backtick}beer-sample{backtick}` bucket, use an ANSI JOIN to list the beer names and breweries that are in the state Wisconsin (`WI`).
+First, create an index with `beer.brewery_id` as the leading key.
+
+[source,N1QL]
+----
+CREATE INDEX beer_brewery ON `beer-sample` (brewery_id)
+WHERE type = "beer"
+----
+
+[source,N1QL]
+----
+SELECT META(brewery).id bid, META(beer).id, brewery.name brewery_name,
+       beer.name beer_name
+FROM `beer-sample` brewery
+JOIN `beer-sample` beer
+  ON beer.brewery_id = LOWER(REPLACE(brewery.name, " ", "_"))
+WHERE beer.type = "beer"
+  AND brewery.type = "brewery"
+  AND brewery.state = "WI";
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "beer_name": "Dank",
+    "bid": "oso",
+    "brewery_name": "Oso",
+    "id": "oso-dank"
+  }
+]
+----
+
+Visual Explain Plan:
+
+image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual1.png[]
+
+If you add `name` as the second index key to the `beer_brewery` index:
+
+[source,N1QL]
+----
+CREATE INDEX beer_brewery_name ON `beer-sample` (brewery_id, name)
+WHERE type = "beer"
+----
+
+\... then you will get covering index scan, as shown in the Visual Explain Plan:
+
+image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual2.png[]
+====
+
+[#ansi-join-hints]
+== ANSI JOIN Hints
+
+_(Introduced in Couchbase Server Enterprise Edition 5.5)_
+
+[subs="normal"]
+----
+ansi-join-hints ::= <<use-hash-hint,use-hash-hint>> | <<use-nl-hint,use-nl-hint>> | <<multiple-hints,multiple-hints>>
+----
+
+image::n1ql-language-reference/ansi-use-clause.png[]
+
+Couchbase Server Enterprise Edition supports two join methods for performing ANSI Join: nested-loop join and hash join.
+The default join method is nested-loop join.
+Two corresponding join hints are introduced: `USE HASH` and `USE NL`.
+
+The ANSI join hints are similar to the xref:n1ql-language-reference/hints.adoc#use-index-clause[USE INDEX] or xref:n1ql-language-reference/hints.adoc#use-keys-clause[USE KEYS] hints.
+The ANSI join hints can be specified after the right-hand side of an ANSI join specification.
+
+NOTE: The join hint for the first join should be specified on the first join's right-hand side, and the join hint for the second join should be specified on the second join's right-hand side, etc.
+If a join hint is specified on the first FROM term, i.e. the first join's left-hand side, an error is returned.
+
+Hash join is only considered when the `USE HASH` hint is specified, and it requires at least one equality predicate between the left-hand side and right-hand side.
+In such cases, if a hash join is chosen successfully, then that’ll be the join method used for this join.
+If the hash join cannot be generated, then the planner will further consider nested-loop join and will either generate a nested-loop join or return an error for the join.
+
+If no join hint is specified or USE NL hint is specified, then nested-loop join is considered.
+
+NOTE: For Community Edition (CE), any specified `USE HASH` hint will be silently ignored and only nested-loop join is considered by the planner.
+
+[#use-hash-hint]
+=== USE HASH Hint
+
+[subs="normal"]
+----
+use-hash-hint ::= USE <<use-hash-term,use-hash-term>>
+----
+
+image::n1ql-language-reference/use-hash-hint.png[]
+
+[#use-hash-term]
+--
+[subs="normal"]
+----
+use-hash-term ::= HASH '(' ( BUILD | PROBE ) ')'
+----
+
+image::n1ql-language-reference/use-hash-predicate.png[]
+--
+
+There are two versions of the `USE HASH` hint:
+
+* `USE HASH(BUILD)` -- The right-hand side of the join is to be used as the build side.
+* `USE HASH(PROBE)` -- The right-hand side of the join is to be used as the probe side.
+
+A hash join has two sides: a *build* side and a *probe* side.
+The build side of the join will be used to create an in-memory hash table.
+The probe side will use that table to find matches and perform the join.
+Typically, this means you want the build side to be used on the smaller of the two sets.
+However, you can only supply one hash hint, and only to the right side of the join.
+So if you specify `BUILD` on the right side, then you are implicitly using `PROBE` on the left side (and vice versa).
+
+[#USE-HASH-Example-1]
+.USE HASH with PROBE
+====
+The keyspace `aline` is to be joined (with `rte`) using hash join, and `aline` is used as the probe side of the hash join.
+
+[source,N1QL]
+----
+SELECT COUNT(1) AS Total_Count
+FROM `travel-sample` rte
+INNER JOIN `travel-sample` aline
+USE HASH (PROBE)
+ON (rte.airlineid = META(aline).id)
+WHERE rte.type = "route";
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "Total_Count": 17629
+  }
+]
+----
+====
+
+[#USE-HASH-Example-2]
+.USE HASH with BUILD
+====
+This is effectively the same query as the previous example, except the two keyspaces are switched, and here the `USE HASH(BUILD)` hint is used, indicating the hash join should use `rte` as the build side.
+
+[source,N1QL]
+----
+SELECT COUNT(1) AS Total_Count
+FROM `travel-sample` aline
+INNER JOIN `travel-sample` rte
+USE HASH (BUILD)
+ON (rte.airlineid = META(aline).id)
+WHERE rte.type = "route";
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "Total_Count": 17629
+  }
+]
+----
+====
+
+[#use-nl-hint]
+=== USE NL Hint
+
+[subs="normal"]
+----
+use-nl-hint ::= USE <<use-nl-term,use-nl-term>>
+----
+
+image::n1ql-language-reference/use-nl-hint.png[]
+
+[#use-nl-term]
+--
+[subs="normal"]
+----
+use-nl-term ::= NL
+----
+
+image::n1ql-language-reference/use-nl-predicate.png[]
+--
+
+This join hint instructs the planner to use nested-loop join (NL join) for the join being considered.
+Since nested-loop join is the default path, the `USE NL` hint is not required.
+
+.USE NL
+====
+[source,N1QL]
+----
+SELECT COUNT(1) AS Total_Count
+FROM `travel-sample` rte
+INNER JOIN `travel-sample` aline
+USE NL
+ON (rte.airlineid = META(aline).id)
+WHERE rte.type = "route";
+----
+====
+
+[#multiple-hints]
+=== Multiple Hints
+
+[subs="normal"]
+----
+multiple-hints ::= USE ( <<ansi-hint-terms,ansi-hint-terms>> <<other-hint-terms,other-hint-terms>> ) | ( <<other-hint-terms,other-hint-terms>> <<ansi-hint-terms,ansi-hint-terms>> )
+----
+
+image::n1ql-language-reference/multiple-hints.png[]
+
+[#ansi-hint-terms]
+--
+[subs="normal"]
+----
+ansi-hint-terms ::= <<use-hash-term,use-hash-term>> | <<use-nl-term,use-nl-term>>
+----
+
+image::n1ql-language-reference/ansi-hint-predicates.png[]
+--
+
+[#other-hint-terms]
+--
+[subs="normal"]
+----
+other-hint-terms ::= xref:n1ql-language-reference/hints.adoc#use-index-term[use-index-term] | xref:n1ql-language-reference/hints.adoc#use-keys-term[use-keys-term]
+----
+
+image::n1ql-language-reference/other-hint-predicates.png[]
+--
+
+You can use only one join hint (USE HASH or USE NL) together with only one other hint (USE INDEX or USE KEYS) for a total of two hints.
+The order of the two hints doesn't matter.
+
+When multiple hints are being specified, use only one `USE` keyword with one following the other, as in the following examples.
+
+[#Multiple-hint-Example-1]
+.USE INDEX with USE HASH
+====
+[source,N1QL]
+----
+SELECT COUNT(1) AS Total_Count
+FROM `travel-sample` rte
+INNER JOIN `travel-sample` aline
+USE INDEX idx1 HASH (PROBE)
+ON (rte.airlineid = META(aline).id)
+WHERE rte.type = "route";
+----
+====
+
+[#Multiple-hint-Example-2]
+.USE HASH with USE KEYS
+====
+[source,N1QL]
+----
+SELECT COUNT(1) AS Total_Count
+FROM `travel-sample` rte
+INNER JOIN `travel-sample` aline
+USE HASH (PROBE) KEYS ["airline_key1", "airline_key2", "airline_key3"]
+ON (rte.airlineid = META(aline).id)
+WHERE rte.type = "route";
+----
+====
+
+When chosen, the hash join will always work; the restrictions are on any USE KEYS hint clause:
+
+* Must not depend on any previous keyspaces.
+* The expression must be constants, host variables, etc.
+* Must not contain any subqueries.
+
+NOTE: If the USE KEYS hint contains references to other keyspaces or subqueries, then the USE HASH hint will be ignored and nested-loop join will be used instead.
+
+== ANSI JOIN and Arrays
+
+ANSI JOIN provides great flexibility since the `ON` clause of an ANSI JOIN can be any expression as long as it evaluates to TRUE or FALSE.
+Below are different join scenarios involving arrays and ways to handle each scenario.
+
+[NOTE]
+====
+These buckets and indexes will be used throughout this section's array scenarios.
+As a convention, when a field name starts with `a` it is an array, so each bucket has two array fields and two regular fields.
+Also, both `_idx1` indexes index each element of its array, while both `_idx2` indexes use its entire array as the index key.
+
+`bucket b1 (a11, a12, c11, c12)`
+
+`bucket b2 (a21, a22, c21, c22)`
+
+[source,N1QL]
+----
+CREATE INDEX b1_idx1 ON b1 (c11, c12, DISTINCT a11);
+CREATE INDEX b1_idx2 ON b1 (a12);
+CREATE INDEX b2_idx1 ON b2 (c21, c22, DISTINCT a21);
+CREATE INDEX b2_idx2 ON b2 (a22);
+----
+====
+
+=== ANSI JOIN with No Arrays
+
+In this scenario, there is no involvement of arrays in the join.
+These are just straight-forward joins:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b1.c11 = b2.c21
+  AND b2.c22 = 100
+WHERE b1.c12 = 10;
+----
+
+Here the joins are using non-array fields of each keyspace.
+
+The following case also falls in this scenario:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b1.c11 = b2.c21
+  AND b2.c22 = 100
+  AND ANY v IN b2.a21 SATISFIES v = 10 END
+WHERE b1.c12 = 10;
+----
+
+In this example, although there is an ANY predicate on the right-hand side array `b2.a21`, the ANY predicate does not involve any joins, and thus, as far as the join is concerned, it is still a 1-to-1 join.
+Similarly:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b1.c11 = b2.c21
+WHERE b1.c11 = 10
+  AND b1.c12 = 100
+  AND ANY v IN b1.a11 SATISFIES v = 20 END;
+----
+
+In this case the ANY predicate is on the left-hand side array `b1.a11`; however, similar to above, the ANY predicate does not involve any joins, and thus the join is still 1-to-1.
+We can even have ANY predicates on both sides:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b1.c11 = b2.c21
+  AND b2.c22 = 100
+  AND ANY v IN b2.a21 SATISFIES v = 10 END
+WHERE b1.c11 = 10
+  AND b1.c12 = 100
+  AND ANY v IN b1.a11 SATISFIES v = 10 END;
+----
+
+Again, the ANY predicates do not involve any join, and the join is still 1-to-1.
+
+=== ANSI JOIN with Entire Array as Index Key
+
+As a special case, it is possible to perform ANSI JOIN on an entire array as a join key:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b1.a21 = b2.a22
+WHERE b1.c11 = 10
+  AND b1.c12 = 100;
+----
+
+In this case, the entire array must match each other for the join to work.
+For all practical purposes, the array here is treated as a scalar since there is no logic to iterate through elements of an array here.
+The entire array is used as an index key (`b2_idx2`) and as such, an entire array is used as an index span to probe the index.
+The join here can also be considered as 1-to-1.
+
+=== ANSI JOIN Involving Right-Hand Side Arrays
+
+In this scenario, the join involves an array on the right-hand side keyspace:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b2.c21 = 10
+  AND b2.c22 = 100
+  AND ANY v IN b2.a21 SATISFIES v = b1.c12 END
+WHERE b1.c11 = 10;
+----
+
+In this case, the ANY predicate involves a join, and thus, effectively we are joining `b1` with elements of the `b2.a21` array.
+This now becomes a 1-to-many join.
+Note that we use an ANY clause for this scenario since it’s a natural extension of the existing support for array indexes; the only difference is for index span generation, we now can have a potential join expression.
+Array indexes can be used for join in this scenario.
+
+=== ANSI JOIN Involving Left-Hand Side Arrays
+
+This is a slightly more complex scenario, where the array reference is on the left-hand side of the join, and it’s a many-to-1 join.
+There are two alternative ways to handle the scenario where the array appears on the left-hand side of the join.
+
+==== Use UNNEST
+
+This alternative will flatten the left-hand side array first, before performing the join:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1 UNNEST b1.a12 AS ba1
+JOIN b2
+  ON ba1 = b2.c22
+  AND b2.c21 = 10
+WHERE b1.c11 = 10
+  AND b1.c12 = 100;
+----
+
+The <<unnest,UNNEST>> operation is used to flatten the array, turning one left-hand side document into multiple documents; and then for each one of them, join with the right-hand side.
+This way, by the time join is being performed, it is a regular join, since the array is already flattened in the UNNEST step.
+
+==== Use IN clause
+
+This alternative uses the IN clause to handle the array:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON b2.c22 IN b1.a12 AND b2.c21 = 10
+WHERE b1.c11 = 10 AND b1.c12 = 100;
+----
+
+By using the xref:n1ql-language-reference/indexing-arrays.adoc[IN] clause, the right-hand side field value can match any of the elements of the left-hand side array.
+Conceptually, we are using each element of the left-hand side array to probe the right-hand side index.
+
+==== Differences Between the Two Alternatives
+
+There is a semantical difference between the two alternatives.
+With UNNEST, we are first turning one left-hand side document into multiple documents and then performing the join.
+With IN-clause, there is still only one left-hand side document, which can then join with one or more right-hand side documents.
+Thus:
+
+* If the array contains duplicate values,
+ ** the UNNEST method treats each duplicate as an individual value and thus duplicated results will be returned;
+ ** the IN clause method will not duplicate the result.
+
+* If no duplicate values exists and we are performing inner join,
+ ** then the two alternatives will likely give the same result.
+
+* If outer join is performed, assuming there are N elements in the left-hand side array, and assuming there is at most one matching document from the right-hand side for each element of the array,
+ ** the UNNEST method will produce N result documents;
+ ** the IN clause method may produce < N result documents if some of the array elements do not have matching right-hand side documents.
+
+=== ANSI JOIN with Arrays on Both Sides
+
+If the join involves arrays on both sides, then we can combine the approaches above, i.e., using ANY clause to handle the right-hand side array and either UNNEST or IN clause to handle the left-hand side array.
+For example:
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+UNNEST b1.a12 AS ba1
+  JOIN b2
+    ON ANY v IN b2.a21 SATISFIES v = ba1 END
+    AND b2.c21 = 10
+    AND b2.c22 = 100
+WHERE b1.c11 = 10
+  AND b1.c12 = 100;
+----
+
+or
+
+[source,N1QL]
+----
+SELECT *
+FROM b1
+JOIN b2
+  ON ANY v IN b2.a21 SATISFIES v IN b1.a12 END
+  AND b2.c21 = 10
+  AND b2.c22 = 100
+WHERE b1.c11 = 10
+  AND b1.c12 = 100;
+----
+
+[#lookup-join-clause]
+== Lookup JOIN Clause
+
+_(Introduced in Couchbase Server 4.0)_
+
+=== Purpose
+
+Lookup joins allow only left-to-right joins, which means the ON KEYS expression must produce a document key which is then used to retrieve documents from the right-hand side keyspace.
+Couchbase Server version 4.1 and earlier supported only lookup joins.
+
+=== Syntax
+
+[subs="normal"]
+----
+lookup-join-clause ::= [ <<lookup-join-type,lookup-join-type>> ] JOIN <<lookup-join-rhs,lookup-join-rhs>> <<lookup-join-predicate,lookup-join-predicate>>
+----
+
+image::n1ql-language-reference/lookup-join-clause.png["lookup-join-type? 'JOIN' lookup-join-rhs lookup-join-predicate"]
+
+[#lookup-join-type]
+==== Join Type
+
+[subs="normal"]
+----
+lookup-join-type ::= INNER | ( LEFT [ OUTER ] )
+----
+
+image::n1ql-language-reference/lookup-join-type.png[]
+
+This clause represents the type of join.
+
+`INNER`::
+For each joined object produced, both the left-hand and right-hand source objects must be non-`MISSING` and non-`NULL`.
+
+`LEFT [OUTER]`::
+{startsb}Query Service interprets `LEFT` as `LEFT OUTER`{endsb}
++
+For each joined object produced, only the left-hand source objects must be non-`MISSING` and non-`NULL`.
+
+This clause is optional.
+If omitted, the default is `INNER`.
+
+[#lookup-join-rhs]
+==== Join Right-Hand Side
+
+[subs="normal"]
+----
+lookup-join-rhs ::= <<lookup-keyspace-ref,keyspace-ref>> [ [ AS ] <<lookup-as-alias,alias>> ]
+----
+
+image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+
+[#lookup-keyspace-ref]
+===== Keyspace Reference
+
+Keyspace reference for the right-hand side of the lookup join.
+For details, see xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+[#lookup-as-alias]
+===== AS Alias
+
+Assigns another name to the right-hand side of the lookup join.
+For details, see xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[#lookup-join-predicate]
+==== Join Predicate
+
+[subs="normal"]
+----
+lookup-join-predicate ::= ON [ PRIMARY ] KEYS expr
+----
+
+image::n1ql-language-reference/lookup-join-predicate.png[]
+
+The `ON KEYS` expression produces a document key or array of document keys for the right-hand side of the lookup join.
+
+expr::
+[Required] String or expression representing the primary keys of the documents for the right-hand side keyspace.
+
+=== Return Values
+
+If `LEFT` or `LEFT OUTER` is specified, then a left outer join is performed.
+
+At least one joined object is produced for each left-hand source object.
+
+If the right-hand source object is `NULL` or `MISSING`, then the joined object's right-hand side value is also `NULL` or `MISSING` (omitted), respectively.
+
+=== Limitations
+
+Lookup JOINs can be chained with other lookup joins/nests or index joins/nests, but they cannot be mixed with an ANSI JOIN or ANSI NEST.
+
+=== Examples
+
+[#Lookup-JOIN-Example-1]
+.Route JOIN airline ON KEYS route.airlineid
+====
+List all airlines and non-stop routes from SFO in the `travel-sample` keyspace.
+
+[source,N1QL]
+----
+SELECT DISTINCT airline.name, airline.callsign, route.destinationairport, route.stops, route.airline
+FROM `travel-sample` route
+  JOIN `travel-sample` airline
+  ON KEYS route.airlineid
+WHERE route.type = "route"
+AND airline.type = "airline"
+AND route.sourceairport = "SFO"
+AND route.stops = 0
+LIMIT 4;
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "airline": "VX",
+    "callsign": "REDWOOD",
+    "destinationairport": "SAN",
+    "name": "Virgin America",
+    "stops": 0
+  },
+  {
+    "airline": "VX",
+    "callsign": "REDWOOD",
+    "destinationairport": "PHL",
+    "name": "Virgin America",
+    "stops": 0
+  },
+  {
+    "airline": "B6",
+    "callsign": "JETBLUE",
+    "destinationairport": "FLL",
+    "name": "JetBlue Airways",
+    "stops": 0
+  },
+  {
+    "airline": "UA",
+    "callsign": "UNITED",
+    "destinationairport": "IND",
+    "name": "United Airlines",
+    "stops": 0
+  }
+]
+----
+====
+
+[#Lookup-JOIN-Example-2]
+.Route JOIN airline ON KEYS route.airlineid
+====
+List the schedule of flights from Boston to San Francisco on JETBLUE in the `travel-sample` keyspace.
+
+[source,N1QL]
+----
+SELECT DISTINCT airline.name, route.schedule
+FROM `travel-sample` route
+  JOIN `travel-sample` airline
+  ON KEYS route.airlineid
+WHERE route.type = "route"
+AND airline.type = "airline"
+AND route.sourceairport = "BOS"
+AND route.destinationairport = "SFO"
+AND airline.callsign = "JETBLUE";
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "name": "JetBlue Airways",
+    "schedule": [
+      {
+        "day": 0,
+        "flight": "B6076",
+        "utc": "10:15:00"
+      },
+      {
+        "day": 0,
+        "flight": "B6321",
+        "utc": "00:06:00"
+      },
+      {
+        "day": 1,
+        "flight": "B6536",
+        "utc": "22:45:00"
+      },
+      {
+        "day": 1,
+        "flight": "B6194",
+        "utc": "00:51:00"
+      },
+      {
+        "day": 2,
+        "flight": "B6918",
+        "utc": "23:45:00"
+      },
+      {
+        "day": 2,
+        "flight": "B6451",
+        "utc": "18:09:00"
+      },
+      {
+        "day": 2,
+        "flight": "B6868",
+        "utc": "22:04:00"
+      },
+      {
+        "day": 2,
+        "flight": "B6621",
+        "utc": "11:04:00"
+      },
+      {
+        "day": 3,
+        "flight": "B6015",
+        "utc": "16:59:00"
+      },
+      {
+        "day": 3,
+        "flight": "B6668",
+        "utc": "07:22:00"
+      },
+      {
+        "day": 3,
+        "flight": "B6188",
+        "utc": "01:41:00"
+      },
+      {
+        "day": 3,
+        "flight": "B6215",
+        "utc": "19:35:00"
+      },
+      {
+        "day": 4,
+        "flight": "B6371",
+        "utc": "21:37:00"
+      },
+      {
+        "day": 4,
+        "flight": "B6024",
+        "utc": "10:24:00"
+      },
+      {
+        "day": 4,
+        "flight": "B6749",
+        "utc": "01:12:00"
+      },
+      {
+        "day": 4,
+        "flight": "B6170",
+        "utc": "01:14:00"
+      },
+      {
+        "day": 5,
+        "flight": "B6613",
+        "utc": "08:59:00"
+      },
+      {
+        "day": 5,
+        "flight": "B6761",
+        "utc": "15:24:00"
+      },
+      {
+        "day": 5,
+        "flight": "B6162",
+        "utc": "02:42:00"
+      },
+      {
+        "day": 5,
+        "flight": "B6341",
+        "utc": "21:26:00"
+      },
+      {
+        "day": 5,
+        "flight": "B6347",
+        "utc": "08:43:00"
+      },
+      {
+        "day": 6,
+        "flight": "B6481",
+        "utc": "22:08:00"
+      },
+      {
+        "day": 6,
+        "flight": "B6549",
+        "utc": "21:48:00"
+      },
+      {
+        "day": 6,
+        "flight": "B6994",
+        "utc": "11:30:00"
+      },
+      {
+        "day": 6,
+        "flight": "B6892",
+        "utc": "13:27:00"
+      }
+    ]
+  }
+]
+----
+====
+
+[#index-join-clause]
+== Index JOIN Clause
+
+_(Introduced in Couchbase Server 4.0)_
+
+=== Purpose
+
+Index JOINs allow you to flip the direction of your join clause.
+When Lookup JOINs cannot efficiently join left-hand side documents with right-to-left joins, and your situation cannot be flipped because your predicate needs to be on the left-hand side (such as <<Lookup-JOIN-Example-1>> above where airline documents have no reference to route documents), then Index JOINs can be used efficiently without making a Cartesian product of all route documents.
+
+NOTE: For index joins, the syntax uses `ON KEY` (singular) instead of `ON KEYS` (plural).
+This is because an Index JOIN's `ON KEY` expression must produce a scalar value; whereas a Lookup JOIN's `ON KEYS` expression can produce either a scalar or an array value.
+
+=== Syntax
+
+[subs="normal"]
+----
+index-join-clause ::= [ <<index-join-type,index-join-type>> ] JOIN <<index-join-rhs,index-join-rhs>> <<index-join-predicate,index-join-predicate>>
+----
+
+image::n1ql-language-reference/index-join-clause.png["index-join-type? 'JOIN' index-join-rhs index-join-predicate"]
+
+[#index-join-type]
+==== Join Type
+
+[subs="normal"]
+----
+index-join-type ::= INNER | ( LEFT [ OUTER ] )
+----
+
+image::n1ql-language-reference/index-join-type.png[]
+
+This clause represents the type of join.
+
+`INNER`:: For each joined object produced, both the left-hand and right-hand source objects must be non-`MISSING` and non-`NULL`.
+
+`LEFT [OUTER]`::
+{startsb}Query Service interprets `LEFT` as `LEFT OUTER`{endsb}
++
+For each joined object produced, only the left-hand source objects must be non-`MISSING` and non-`NULL`.
+
+This clause is optional.
+If omitted, the default is `INNER`.
+
+[#index-join-rhs]
+==== Join Right-Hand Side
+
+[subs="normal"]
+----
+index-join-rhs ::= <<index-keyspace-ref,keyspace-ref>> [ [ AS ] <<index-as-alias,alias>> ]
+----
+
+image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+
+[#index-keyspace-ref]
+===== Keyspace Reference
+
+Keyspace reference for right-hand side of an index join.
+For details, see xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+[#index-as-alias]
+===== AS Alias
+
+Assigns another name to the right-hand side of the index join.
+For details, see xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[#index-join-predicate]
+==== Join Predicate
+
+[subs="normal"]
+----
+index-join-predicate ::= ON [ PRIMARY ] KEY expr FOR alias
+----
+
+image::n1ql-language-reference/index-join-predicate.png[]
+
+`expr`:: Expression in the form `__rhs-expression__.__lhs-expression-key__`:
+
+`__rhs-expression__`;; Keyspace reference for the right-hand side of the index join.
+
+`__lhs-expression-key__`;; String or expression representing the attribute in `__rhs-expression__` and referencing the document key for `alias`.
+
+`alias`:: Keyspace reference for the left-hand side of the index join.
+
+=== Examples
+
+[#Index-JOIN-Example-0]
+.Use INDEX join to flip the direction of <<Lookup-JOIN-Example-1>> above
+====
+Consider the query below, similar to <<Lookup-JOIN-Example-1>> above with route and airline documents, where `route.airlineid` is the document key of route documents and airline documents have no reference to route documents:
+
+[source,N1QL]
+----
+SELECT DISTINCT airline.name, airline.callsign, route.destinationairport,
+ route.stops, route.airline
+FROM `travel-sample` route
+  JOIN `travel-sample` airline
+  ON KEYS route.airlineid
+WHERE route.type = "route"
+AND airline.type = "airline"
+AND airline.icao = "SEA"
+LIMIT 4;
+----
+
+This query gets a list of Seattle (`SEA`) flights, but getting `SEA` flights cannot be efficiently executed without making a Cartesian product of all route documents (left-hand side) with all airline documents (right-hand side).
+
+This query cannot use any index on airline to directly access SEA flights because airline is on the right-hand side.
+
+Also, you cannot rewrite the query to put the airline document on the left-hand side (to use any index) and the route document on the right-hand side because the airline documents (on the left-hand side) have no primary keys to access the route documents (on the right-hand side).
+
+Using index joins, the same query can be written as:
+
+.Required Index
+[source,N1QL]
+----
+CREATE INDEX route_airlineid ON `travel-sample`(airlineid) WHERE type="route";
+----
+
+.Optional Index
+[source,N1QL]
+----
+CREATE INDEX airline_icao ON `travel-sample`(icao) WHERE type="airline";
+----
+
+.Query
+[source,N1QL]
+----
+SELECT * FROM `travel-sample` airline
+  JOIN `travel-sample` route
+  ON KEY route.airlineid FOR airline
+WHERE route.type="route"
+AND airline.type="airline"
+AND airline.icao = "SEA";
+----
+
+If you generalize the same query, it looks like the following:
+
+[subs="normal"]
+----
+CREATE INDEX _on-key-for-index-name_ _rhs-expression_ (__lhs-expression-key__);
+----
+
+[subs="normal"]
+----
+SELECT _projection-list_
+FROM _lhs-expression_
+JOIN _rhs-expression_
+  ON KEY __rhs-expression__.__lhs-expression-key__ FOR _lhs-expression_
+[ WHERE _predicates_ ] ;
+----
+====
+
+There are three important changes in the index scan syntax example above:
+
+* `CREATE INDEX` on the `ON KEY` expression `route.airlineid` to access `route` documents using `airlineid`, which are produced on the left-hand side.
+* The `ON KEY route.airlineid FOR airline` enables N1QL to use the index `route.airlineid`.
+* Create any optional index such as `route.airline` that can be used on airline (left-hand side).
+
+[#Index-JOIN-Example-1]
+.`+ON KEY ... FOR+`
+====
+The following example counts the number of distinct "AA" airline routes for each airport after creating the following index, if not already created.
+
+[source,N1QL]
+----
+CREATE INDEX route_airlineid ON `travel-sample`(airlineid) WHERE type="route";
+----
+
+[source,N1QL]
+----
+SELECT Count(DISTINCT route.sourceairport) AS DistinctAirports
+FROM `travel-sample` airline
+  JOIN `travel-sample` route
+  ON KEY route.airlineid FOR airline
+WHERE route.type = "route"
+AND airline.type = "airline"
+AND airline.iata = "AA";
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "DistinctAirports": 429
+  }
+]
+----
+====
+
+== Appendix: Summary of JOIN Types
+
+=== ANSI
+
+[cols="1h,3"]
+|===
+| Left-Hand Side (lhs)
+| Any field or expression that produces a value that will be matched on the right-hand side.
+
+| Right-Hand Side (rhs)
+| Anything that can have a proper index on the join expression.
+
+| Syntax
+a|
+[subs="normal"]
+----
+_lhs-expr_
+JOIN _rhs-keyspace_
+ON _any join condition_
+----
+
+| Example
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` r
+JOIN `travel-sample` a
+ON r.airlineid = META(a).id
+----
+|===
+
+=== Lookup
+
+[cols="1h,3"]
+|===
+| Left-Hand Side (lhs)
+| Must produce a Document Key for the right-hand side.
+
+| Right-Hand Side (rhs)
+| Must have a Document Key.
+
+| Syntax
+a|
+[subs="normal"]
+----
+_lhs-expr_
+JOIN _rhs-keyspace_
+ON KEYS _lhs-expr.foreign_key_
+----
+
+| Example
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` r
+JOIN `travel-sample`
+ON KEYS r.airlineid
+----
+|===
+
+=== Index
+
+[cols="1h,3"]
+|===
+| Left-Hand Side (lhs)
+| Must produce a key for the right-hand side index.
+
+| Right-Hand Side (rhs)
+| Must have a proper index on the field or expression that maps to the Document Key of the left-hand side.
+
+| Syntax
+a|
+[subs="normal"]
+----
+_lhs-keyspace_
+JOIN _rhs-keyspace_
+ON KEY _rhs-kspace.idx_key_
+FOR _lhs-keyspace_
+----
+
+| Example
+a|
+[source,N1QL]
+----
+SELECT *
+FROM `travel-sample` a
+JOIN `travel-sample` r
+ON KEY r.airlineid
+FOR a
+----
+|===
