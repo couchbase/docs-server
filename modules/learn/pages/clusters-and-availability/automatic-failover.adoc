@@ -1,18 +1,18 @@
 = Automatic Failover
 
 [abstract]
-A node or group can be failed over automatically, when it either becomes unavailable or experiences continuous disk-access problems.
+A node or group can be failed over automatically when it either becomes unresponsive or experiences continuous disk-access problems.
 
 == Understanding Automatic Failover
 
 _Automatic Failover_ — or _auto-failover_ — can be configured to fail over a node or group automatically: no immediate administrator intervention is required.
-Specifically, the Cluster Manager autonomously detects and verifies that the node or group is unavailable, and then initiates the _hard_ failover process.
+Specifically, the Cluster Manager autonomously detects and verifies that the node or group is unresponsive, and then initiates the _hard_ failover process.
 Auto-failover does not fix or identify problems that may have occurred.
 Once appropriate fixes have been applied to the cluster by the administrator, a rebalance is required.
 Auto-failover is always _hard_ failover.
 For information on how services are affected by hard failover, see xref:learn:clusters-and-availability/hard-failover.adoc[Hard Failover].
 
-This page describes auto-failover concepts and architecture.
+This page describes auto-failover concepts and policy.
 For information on managing auto-failover, see the information provided for Couchbase Web Console at xref:manage:manage-settings/change-failover-settings.adoc[Node Availability], for the REST API at xref:rest-api:rest-cluster-autofailover-intro.adoc[Managing Auto-Failover], and for the CLI at xref:cli:cbcli/couchbase-cli-setting-autofailover.adoc[setting-autofailover].
 
 == Failover Events
@@ -21,47 +21,133 @@ Auto-failover occurs in response to failover events.
 Events are of three kinds:
 
 * _Node failure_.
-A server-node within the cluster is unavailable (due to a network failure, out-of-memory problem, or other node-specific issue).
+A server-node within the cluster is unresponsive (due to a network failure, out-of-memory problem, or other node-specific issue).
 * _Disk read/write failure_.
 Attempts to read from or write to disk on a particular node have resulted in a significant rate of failure, for longer than a specified time-period.
 The node is removed by auto-failover, even though the node continues to be contactable.
 * _Group failure_.
-An administrator-defined group of server-nodes within the cluster is unavailable (perhaps due to a network or power failure that has affected an individual, physical rack of machines, or a specific subnet).
+An administrator-defined group of server-nodes within the cluster is unresponsive (perhaps due to a network or power failure that has affected an individual, physical rack of machines, or a specific subnet).
 
 [#auto-failover-constraints]
 == Auto-Failover Constraints
 
-Couchbase Server applies the following constraints to auto-failover’s handling of events:
+Auto-failover is triggered:
 
-* Auto-failover is triggered only on the occurrence of one event at a time.
-If multiple events occur concurrently, or if a second event follows the first prior to auto-failover’s completion, auto-failover is not triggered.
-* Auto-failover may be triggered sequentially up to an administrator-specified maximum number of events.
+* Only on the occurrence of one event at a time.
+If multiple events are concurrent, auto-failover is not triggered.
+* Sequentially, only up to an administrator-specified maximum number of events.
 The highest permitted maximum is 3.
-After this maximum number of auto-failovers has been triggered, no further auto-failover occurs, until the count is manually reset by the administrator.
-* Auto-failover is never triggered by Couchbase Server when data-loss might result: for example, when a bucket has no replicas.
+After this maximum number of auto-failovers has been reached, no further auto-failover occurs, until the count is manually reset by the administrator.
+Note, however, that the count can be manually reset prior to the maximum number being reached.
+* In no circumstances where data-loss might result: for example, when a bucket has no replicas.
 Therefore, even a single event may not be responded to; and an administrator-specified maximum number of events may not be reached.
-* Auto-failover is never triggered when the resulting number of available nodes within the cluster would not constitute a majority of the number available before the problem-occurrence.
-For example, if one of three nodes or groups were to go offline, auto-failover could be triggered by the cluster of two remaining; but if one of two nodes or groups were to go offline, auto-failover could not be triggered.
-(This prevents the situation where functioning nodes or groups, finding they cannot intercommunicate, fail each other over, and then attempt to continue independently of one another, each representing itself as the cluster.)
+* Only in accordance with the xref:learn:clusters-and-availability/automatic-failover.adoc#failover-policy[Service-Specific Auto-Failover Policy] for the service or services on the unresponsive node.
+* For nodes, only when a majority of nodes can still be contacted, following a node's becoming unresponsive.
+* For groups, only when a majority of groups can still be contacted, following a group's becoming unresponsive.
 
-Auto-failover can be triggered only when the cluster contains a minimum of three nodes; and should be configured for groups only when a minimum of three groups have been defined.
-Additionally, auto-failover should be configured only when the cluster contains sufficient resources to handle all possible results: workload-intensity on remaining nodes may increase significantly.
+Note that auto-failover should be configured only when the cluster contains sufficient resources to handle all possible consequences: workload-intensity on remaining nodes may increase significantly.
+
 Auto-failover is for intra-cluster use only: it does not work with Cross Data Center Replication (XDCR).
 
-Auto-failover may take significantly longer if the non-available node is that on which the _orchestrator_ is running, since _time-outs_ must occur before available nodes can elect a new orchestrator-node and thereby continue.
+Auto-failover may take significantly longer if the unresponsive node is that on which the _orchestrator_ is running; since _time-outs_ must occur, before available nodes can elect a new orchestrator-node and thereby continue.
 
 See xref:manage:manage-settings/configure-alerts.adoc[Email Alerts], for
 details on configuring email alerts related to failover.
 
 See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness], for information on server groups and group failover.
 
+[#failover-policy]
+== Service-Specific Auto-Failover Policy
+
+The auto-failover policy for Couchbase Services requires that a service be running on a minimum number of nodes, for auto-failover to be applied to one of those nodes, in the event of the node's becoming unresponsive.
+
+Note, however, that xref:learn:clusters-and-availability/automatic-failover.adoc#data-service-preference[Data Service Preference] is always applied.
+This allows, in some cases, failover of a Data Service node even when auto-failover policy is thereby violated for one or more other, co-hosted services.
+
+The policy-basics are provided in the following table:
+
+[cols="2,2"]
+|===
+| Service | Nodes Required
+
+| Data
+| >= 3
+
+| Query
+| >= 2
+
+| Index
+| Not supported
+
+| Search
+| >= 2
+
+| Analytics
+| >= 2
+
+| Eventing
+| >= 2
+|===
+
+As the table indicates, auto-failover is not supported for the Index Service.
+
+The figures in the _Nodes Required_ column indicate the number of nodes on which the corresponding service must be running for auto-failover to be triggered, unless xref:learn:clusters-and-availability/automatic-failover.adoc#data-service-preference[Data Service Preference] applies.
+
+This is illustrated as follows:
+
+* A cluster has the following five nodes:
++
+[cols="1,2"]
+|===
+| Node | Services Hosted
+
+| 1
+| Data
+
+| 2
+| Data
+
+| 3
+| Search & Query
+
+| 4
+| Search & Query
+
+| 5
+| Analytics & Query
+|===
++
+If Node 4 becomes unresponsive, auto-failover can be triggered, since prior to unavailability, the Search Service was on two nodes (3 and 4), and the Query Service on three (3, 4, and 5): both of which figures meet the auto-failover policy requirement (for each service, >= 2).
++
+However, if instead, Node 5 becomes unresponsive, auto-failover is not triggered; since prior to unavailability, the Analytics Service was running only on one node (5), which is below the auto-failover policy requirement for Analytics (which is >= 2).
+
+[#data-service-preference]
+* A cluster has the following three nodes:
++
+[cols="1,2"]
+|===
+| Node | Services Hosted
+
+| 1
+| Data, Query, & Search
+
+| 2
+| Data
+
+| 3
+| Data
+|===
++
+If Node 1 becomes unresponsive, auto-failover can be triggered. This is due to _Data Service Preference_, which applies auto-failover based on the policy for the Data Service, irrespective of other services on the unresponsive node.
+In this case, even though the Query and Search Services were both running on only a single node (1), which is below the auto-failover policy requirement for each of those services (>=2), the Data Service was running on three nodes (1, 2, and 3), which meets the auto-failover policy requirement for the Data Service (>=3).
+
 == Configuring Auto-Failover
 
 Auto-failover is configured by means of parameters that include the following.
 
 * _Timeout_.
-The number of seconds that must elapse, after a node or group has become unavailable, before auto-failover is triggered. This number is configurable: the default is 120 seconds; the minimum permitted is 5; the maximum 3600.
-Note that a low number reduces the potential time-period during which a consistently unavailable node remains unavailable before auto-failover is triggered; but may also result in auto-failover being unnecessarily triggered, in consequence of short, intermittent periods of node unavailability.
+The number of seconds that must elapse, after a node or group has become unresponsive, before auto-failover is triggered. This number is configurable: the default is 120 seconds; the minimum permitted is 5; the maximum 3600.
+Note that a low number reduces the potential time-period during which a consistently unresponsive node remains unresponsive before auto-failover is triggered; but may also result in auto-failover being unnecessarily triggered, in consequence of short, intermittent periods of node unavailability.
 * _Maximum count_.
 The maximum number of failover events that can occur sequentially and be handled by auto-failover.
 The maximum-allowed value is 3, the default is 1.
@@ -84,9 +170,9 @@ The default value is false.
 This parameter is available in Enterprise Edition only.
 
 By default, auto-failover is switched on, to occur after 120 seconds for up to 1 event.
-Nevertheless, Couchbase Server triggers auto-failover only within the constraints described above, in xref:learn:clusters-and-availability/automatic-failover.adoc#auto-failover-constraints[Auto-Failover Constraints]. These include a minimum of three nodes being in the cluster.
+Nevertheless, Couchbase Server triggers auto-failover only within the constraints described above, in xref:learn:clusters-and-availability/automatic-failover.adoc#auto-failover-constraints[Auto-Failover Constraints].
 
-For more detailed information, see the documentation provided for specifying
+For practical steps towards auto-failover configuration, see the documentation provided for specifying
 xref:manage:manage-settings/change-failover-settings.adoc[Node Availability]
 with Couchbase Web Console UI, for
 xref:rest-api:rest-cluster-autofailover-intro.adoc[Managing Auto-Failover] with the
