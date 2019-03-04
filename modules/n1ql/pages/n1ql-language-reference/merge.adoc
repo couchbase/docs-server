@@ -1,80 +1,18 @@
 = MERGE
 :page-topic-type: concept
+:imagesdir: ../../assets/images
 
+[abstract]
 A MERGE statement provides the ability to update, insert into, or delete from a keyspace based on the results of a join with another keyspace or subquery.
-It is possible to specify actions (insert, update, delete) on the keyspace based a match or no match in the join.
+It is possible to specify actions (insert, update, delete) on the keyspace based on a match or no match in the join.
 Multiple actions can be specified in the same query.
 
-_merge:_
+Couchbase Server supports two types of merge clause, which are described in the sections below: <<ansi-merge,ANSI Merge>> and <<lookup-merge,Lookup Merge>>.
 
-----
-MERGE INTO keyspace-ref USING merge-source ON key-clause merge-actions [limit-clause] [returning-clause]
-----
+NOTE: The ANSI merge clause has much more flexible functionality than its earlier legacy equivalent.
+Since it is standard compliant and more flexible, we recommend you to use ANSI merge exclusively, where possible.
 
-.Railroad Diagram: merge
-image::n1ql-language-reference/merge.png[]
-
-_merge-source:_
-
-----
-[from-path] ( [AS] [alias] | ( select ) [AS] alias
-----
-
-.Railroad Diagram: merge-source
-[#merge-source]
-image::n1ql-language-reference/merge-source.png[]
-
-_keys-clause:_
-
-----
-[PRIMARY] KEY expression
-----
-
-.Railroad Diagram: key-clause
-[#key-clause]
-image::n1ql-language-reference/key-clause.png[]
-
-_merge-actions:_
-
-----
- [merge-update] [merge-delete] [merge-insert]
-----
-
-.Railroad Diagram: merge-actions
-[#merge-action]
-image::n1ql-language-reference/merge-actions.png[]
-
-_merge-update:_
-
-----
-WHEN MATCHED THEN UPDATE [set-clause] [unset-clause] [where-clause]
-----
-
-.Railroad Diagram: merge-update
-[#merge-update]
-image::n1ql-language-reference/merge-update.png[]
-
-_merge-delete:_
-
-----
-WHEN MATCHED THEN DELETE [where-clause]
-----
-
-.Railroad Diagram: merge-delete
-[#merge-delete]
-image::n1ql-language-reference/merge-delete.png[]
-
-_merge-insert:_
-
-----
-WHEN NOT MATCHED THEN INSERT expression [where-clause]
-----
-
-.Railroad Diagram: merge-insert
-[#merge-insert]
-image::n1ql-language-reference/merge-insert.png[]
-
-*RBAC Privileges*
+== Privileges
 
 User executing the MERGE statement must have the following privileges:
 
@@ -82,39 +20,674 @@ User executing the MERGE statement must have the following privileges:
 * _Query Insert_, _Query Update_, or _Query Delete_ privileges on the target keyspace as per the MERGE actions
 * _Query Select_ privileges on the keyspaces referred in the RETURNING clause
 
-For more details about user roles, see
+For more details about user roles, refer to
 xref:learn:security/authorization-overview.adoc[Authorization].
 
-For example,
+== Syntax
 
+[subs="normal"]
+----
+merge ::= MERGE INTO ( <<ansi-merge>> | <<lookup-merge>> ) [ <<limit-clause>> ] [ <<returning-clause>> ]
+----
+
+image::n1ql-language-reference/merge.png["'MERGE' 'INTO' ( ansi-merge | lookup-merge ) limit-clause? returning-clause?"]
+
+[[ansi-merge,ansi-merge]]
+== ANSI Merge
+
+_(Introduced in Couchbase Server 6.5)_
+
+[subs="normal"]
+----
+ansi-merge ::= <<ansi-merge-target>> <<target-hint>> USING <<ansi-merge-source>> <<ansi-merge-predicate>> <<ansi-merge-actions>>
+----
+
+image::n1ql-language-reference/ansi-merge.png["merge-target use-clause 'USING' ansi-merge-source ansi-merge-predicate ansi-merge-actions"]
+
+[[ansi-merge-target,merge-target]]
+=== ANSI Merge Target
+
+[subs="normal"]
+----
+merge-target ::= <<ansi-target-ref,keyspace-ref>> [ [ AS ] <<ansi-target-alias,alias>> ]
+----
+
+image::n1ql-language-reference/merge-source-keyspace.png["( namespace ':' )? keyspace ( 'AS'? alias )?"]
+
+The merge target is the keyspace which you want to update, insert into or delete from.
+
+[id="ansi-target-ref"]
+==== Keyspace Reference
+
+[subs="normal"]
+----
+keyspace-ref ::= [ xref:n1ql-language-reference/identifiers.adoc[namespace] ':' ] xref:n1ql-language-reference/identifiers.adoc[keyspace]
+----
+
+image::n1ql-language-reference/from-keyspace-ref.png[]
+
+Keyspace reference for the merge target.
+For more details, refer to xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+namespace::
+(Optional) The name or xref:n1ql-language-reference/identifiers.adoc[identifier] of the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[namespace] of the merge target.
+
+keyspace::
+(Required) The name or xref:n1ql-language-reference/identifiers.adoc[identifier] of the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace] of the merge target.
+
+[id="ansi-target-alias"]
+==== AS Alias
+
+Assigns another name to the keyspace reference.
+For details, refer to xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+alias::
+String to assign an alias.
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[[target-hint,target-hint]]
+=== ANSI Merge Target Hint
+
+You can use a `USE INDEX` hint on the merge target to specify that the merge should use a particular index.
+For details, refer to xref:n1ql-language-reference/hints.adoc#use-index-clause[USE INDEX Clause].
+
+NOTE: The `USE INDEX` hint is the only hint allowed on the target.
+You cannot specify a `USE KEYS` hint or a join hint (`USE NL` or `USE HASH`) on the target of a merge statement.
+
+[[ansi-merge-source,ansi-merge-source]]
+=== ANSI Merge Source
+
+[subs="normal"]
+----
+ansi-merge-source ::= ( <<ansi-merge-source-keyspace>> | <<ansi-merge-source-subquery>> | <<ansi-merge-source-expr>> ) [ <<ansi-merge-source-hints>> ]
+----
+
+image::n1ql-language-reference/ansi-merge-source.png["( merge-source-keyspace | merge-source-subquery | expr ( 'AS'? alias )? ) ansi-merge-source-hints?"]
+
+The merge source is the recordset that you want to merge with the merge target.
+It can be a keyspace reference, a subquery, or a generic expression.
+
+[[ansi-merge-source-keyspace,merge-source-keyspace]]
+==== ANSI Merge Keyspace
+
+[subs="normal"]
+----
+merge-source-keyspace ::= <<ansi-keyspace-ref,keyspace-ref>> [ [ AS ] <<ansi-keyspace-alias,alias>> ]
+----
+
+image::n1ql-language-reference/merge-source-keyspace.png["( namespace ':' )? keyspace ( 'AS'? alias )?"]
+
+[id="ansi-keyspace-ref"]
+===== Keyspace Reference
+
+[subs="normal"]
+----
+keyspace-ref ::= [ xref:n1ql-language-reference/identifiers.adoc[namespace] ':' ] xref:n1ql-language-reference/identifiers.adoc[keyspace]
+----
+
+image::n1ql-language-reference/from-keyspace-ref.png[]
+
+Keyspace reference for the merge source.
+For details, refer to xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+namespace::
+(Optional) The name or xref:n1ql-language-reference/identifiers.adoc[identifier] of the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[namespace] of the merge source.
+
+keyspace::
+(Required) The name or xref:n1ql-language-reference/identifiers.adoc[identifier] of the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace] of the merge source.
+
+[id="ansi-keyspace-alias"]
+===== AS Alias
+
+Assigns another name to the keyspace reference.
+For details, refer to xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+alias::
+String to assign an alias.
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[[ansi-merge-source-subquery,merge-source-subquery]]
+==== ANSI Merge Subquery
+
+[subs="normal"]
+----
+merge-source-subquery ::= <<ansi-subquery-expr,subquery-expr>> [ AS ] <<ansi-subquery-alias,alias>>
+----
+
+image::n1ql-language-reference/merge-source-subquery.png["subquery-expr 'AS'? alias"]
+
+[id="ansi-subquery-expr"]
+===== Subquery Expression
+
+[subs="normal"]
+----
+subquery-expr ::= '('  xref:n1ql-language-reference/selectclause.adoc[select] ')'
+----
+
+image::n1ql-language-reference/subquery-expr.png[]
+
+Use parentheses to specify a subquery for the merge source.
+For details, refer to xref:n1ql-language-reference/subqueries.adoc[Subqueries].
+
+[id="ansi-subquery-alias"]
+===== AS Alias
+
+Assigns another name to the subquery.
+For details, refer to xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+alias::
+String to assign an alias.
+
+You must assign an alias to a subquery on the merge source.
+However, when you assign an alias to the subquery, the `AS` keyword may be omitted.
+
+[[ansi-merge-source-expr,merge-source-expr]]
+==== ANSI Merge Expression
+
+[subs="normal"]
+----
+merge-source-expr ::= <<ansi-generic-args,expr>> [ [ AS ] <<ansi-generic-alias,alias>> ]
+----
+
+image::n1ql-language-reference/merge-source-expr.png["expr ( 'AS'? alias )?"]
+
+[id="ansi-generic-args"]
+expr:: A N1QL xref:n1ql-language-reference/index.adoc[expression] generating JSON documents or objects for the merge source.
+
+[id="ansi-generic-alias"]
+===== AS Alias
+
+Assigns another name to the generic expression.
+For details, refer to xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+alias::
+String to assign an alias.
+
+Assigning an alias to the generic expression is optional.
+If you assign an alias to the generic expression, the `AS` keyword may be omitted.
+
+[[ansi-merge-source-hints,ansi-merge-source-hints]]
+==== ANSI Merge Source Hints
+
+You can specify ANSI join hints (`USE HASH` or `USE NL`) on the source of an ANSI merge.
+For details, refer to xref:n1ql-language-reference/join.adoc#ansi-join-hints[ANSI JOIN Hints].
+
+[NOTE]
+--
+If the merge source is a keyspace, you can also specify a `USE KEYS` or `USE INDEX` hint on the merge source. For details, refer to xref:n1ql-language-reference/join.adoc#multiple-hints[Multiple Hints].
+
+If the merge action is <<ansi-merge-update,update>> or <<ansi-merge-delete,delete>>, you can specify any of the join methods: `USE HASH(BUILD)`, `USE HASH(PROBE)`, or `USE NL`.
+
+If the merge action is <<ansi-merge-insert,insert>>, the only join methods you can specify are `USE HASH(PROBE)` or `USE NL`.
+In this case, if you specify `USE HASH(BUILD)`, the join method will default to `USE NL`.
+
+The ANSI join hint is optional.
+If omitted, the default hint is `USE NL`.
+
+If you are using a nested-loop join, i.e. `USE NL` is specified or no join hint is specified, the target keyspace reference must have an appropriate secondary index defined for the join to work.
+If such an index cannot be found an error will be returned.
+--
+
+[[ansi-merge-predicate,ansi-merge-predicate]]
+=== ANSI Merge Predicate
+
+[subs="normal"]
+----
+ansi-merge-predicate ::= ON expr
+----
+
+image::n1ql-language-reference/ansi-merge-predicate.png["'ON' expr"]
+
+The merge predicate enables you to specify an ANSI join between the <<ansi-merge-source,merge source>> and the <<ansi-merge-target,merge target>>.
+
+expr:: Boolean expression representing the join condition.
+This expression may contain fields, constant expressions, or any complex N1QL expression.
+
+[[ansi-merge-actions,ansi-merge-actions]]
+=== ANSI Merge Actions
+
+[subs="normal"]
+----
+ansi-merge-actions ::= [ <<ansi-merge-update>> ] [ <<ansi-merge-delete>> ] [ <<ansi-merge-insert>> ]
+----
+
+image::n1ql-language-reference/ansi-merge-actions.png["merge-update? merge-delete? ansi-merge-insert?"]
+
+The merge actions enable you to specify insert, update, and delete actions on the target keyspace, based on a match or no match in the join.
+
+[[ansi-merge-update,merge-update]]
+==== ANSI Merge Update
+
+[subs="normal"]
+----
+merge-update ::= WHEN MATCHED THEN UPDATE [ <<ansi-set-clause,set-clause>> ] ] [ <<ansi-unset-clause,unset-clause>> ] [ <<ansi-update-where,where-clause>> ]
+----
+
+image::n1ql-language-reference/merge-update.png["'WHEN' 'MATCHED' 'THEN' 'UPDATE' set-clause? unset-clause? where-clause?"]
+
+Updates a document that already exists with updated values.
+
+[id="ansi-set-clause"]
+===== SET Clause
+
+[subs="normal"]
+----
+set-clause ::= SET <<ansi-path,path>> '=' expr [ <<ansi-update-for,update-for>> ] [ ',' <<ansi-path,path>> '=' expr [ <<ansi-update-for,update-for>> ] ]*
+----
+
+image::n1ql-language-reference/set-clause.png["'SET' path '=' expr update-for? (',' path '=' expr update-for?)*"]
+
+[id="ansi-update-for"]
+--
+[subs="normal"]
+----
+update-for ::= ( FOR [ name-var ':' ] var ( IN | WITHIN ) <<ansi-path,path>> [ ',' [ name-var ':' ] var ( IN | WITHIN ) <<ansi-path,path>> ]* )+ [ WHEN cond ] END
+----
+
+image::n1ql-language-reference/update-for.png["('FOR' (name-var ':')? var ('IN' | 'WITHIN') path (',' (name-var ':')? var ('IN' | 'WITHIN') path)*)+ ('WHEN' cond)? 'END'"]
+--
+
+[id="ansi-path"]
+--
+[subs="normal"]
+----
+path::= identifier [ '[' expr ']' ]* [ '.' <<ansi-path,path>> ]
+----
+
+image::n1ql-language-reference/path.png["'identifier ('[' expr ']')* ( '.' path )?"]
+--
+
+Specifies the value for an attribute to be changed.
+For more details, refer to xref:n1ql-language-reference/update.adoc#set-clause[SET Clause].
+
+[id="ansi-unset-clause"]
+===== UNSET Clause
+
+[subs="normal"]
+----
+unset-clause ::= UNSET <<ansi-path,path>> [ <<ansi-update-for,update-for>> ] [ ',' <<ansi-path,path>> [ <<ansi-update-for,update-for>> ] ]*
+----
+
+image::n1ql-language-reference/unset-clause.png["'UNSET' path update-for? (',' path update-for?)*"]
+
+Removes a specified attribute from the document.
+For more details, refer to xref:n1ql-language-reference/update.adoc#unset-clause[UNSET Clause].
+
+[id="ansi-update-where"]
+===== WHERE Clause
+
+[subs="normal"]
+----
+where-clause ::= WHERE cond
+----
+
+image::n1ql-language-reference/where-clause.png[]
+
+Optionally specifies a condition that must be met for data to be updated.
+For more details, refer to xref:n1ql-language-reference/update.adoc#where-clause[WHERE Clause].
+
+[[ansi-merge-delete,merge-delete]]
+==== ANSI Merge Delete
+
+[subs="normal"]
+----
+merge-delete ::= WHEN MATCHED THEN DELETE [ <<ansi-delete-where,where-clause>> ]
+----
+
+image::n1ql-language-reference/merge-delete.png["'WHEN' 'MATCHED' 'THEN' 'DELETE' where-clause?"]
+
+Removes the specified document from the keyspace.
+
+[id="ansi-delete-where"]
+===== WHERE Clause
+
+[subs="normal"]
+----
+where-clause ::= WHERE cond
+----
+
+image::n1ql-language-reference/where-clause.png[]
+
+Optionally specifies a condition that must be met for data to be deleted.
+For more details, refer to xref:n1ql-language-reference/update.adoc#where-clause[WHERE Clause].
+
+[[ansi-merge-insert,ansi-merge-insert]]
+==== ANSI Merge Insert
+
+[subs="normal"]
+----
+ansi-merge-insert ::= WHEN NOT MATCHED THEN INSERT '(' <<key-clause>> ',' <<value-clause>> ')' [ <<ansi-insert-where>> ]
+----
+
+image::n1ql-language-reference/ansi-merge-insert.png["'WHEN' 'NOT' 'MATCHED' 'THEN' 'INSERT' '(' key-clause ',' 'VALUE'? expr ')' where-clause?"]
+
+Inserts a new document into the keyspace.
+Use parentheses to specify the key and value for the inserted document, separated by a comma.
+
+[[key-clause,key-clause]]
+===== KEY Clause
+
+[subs="normal"]
+----
+key-clause ::= [ KEY ] <<key-clause-args,expr>>
+----
+
+image::n1ql-language-reference/key-clause.png["'KEY'? expr"]
+
+[[key-clause-args]]
+expr:: An expression specifying the key for the inserted document.
+
+The `KEY` keyword may be omitted.
+If it is omitted, the `VALUE` keyword must be omitted also.
+
+TIP: Use the xref:n1ql-language-reference/metafun.adoc#uuid[UUID()] function to generate a random, unique document key.
+
+[[value-clause,value-clause]]
+===== VALUE Clause
+
+[subs="normal"]
+----
+value-clause ::= [ VALUE ] <<value-clause-args,expr>>
+----
+
+image::n1ql-language-reference/value-clause.png["'VALUE'? expr"]
+
+[[value-clause-args]]
+expr:: An expression specifying the value for the inserted document.
+
+The `VALUE` keyword may be omitted.
+If it is omitted, the `KEY` keyword must be omitted also.
+
+[[ansi-insert-where,where-clause]]
+===== WHERE Clause
+
+[subs="normal"]
+----
+where-clause ::= WHERE cond
+----
+
+image::n1ql-language-reference/where-clause.png[]
+
+Optionally specifies a condition that must be met for data to be inserted.
+For more details, refer to xref:n1ql-language-reference/update.adoc#where-clause[WHERE clause].
+
+[[lookup-merge,lookup-merge]]
+== Lookup Merge
+
+[subs="normal"]
+----
+lookup-merge ::= <<lookup-merge-target>> USING <<lookup-merge-source>> <<lookup-merge-predicate>> <<lookup-merge-actions>>
+----
+
+image::n1ql-language-reference/lookup-merge.png["merge-target 'USING' lookup-merge-source lookup-merge-predicate lookup-merge-actions"]
+
+[[lookup-merge-target,merge-target]]
+=== Lookup Merge Target
+
+Keyspace reference for the merge target.
+The syntax is the same as for an ANSI merge.
+Refer to <<ansi-merge-target,ANSI Merge Target>>.
+
+[[lookup-merge-source,lookup-merge-source]]
+=== Lookup Merge Source
+
+[subs="normal"]
+----
+lookup-merge-source ::= <<lookup-merge-source-keyspace>> [ <<lookup-merge-source-hints>> ] | <<lookup-merge-source-subquery>> | <<lookup-merge-source-expr>>
+----
+
+image::n1ql-language-reference/lookup-merge-source.png["from-keyspace ('AS'? alias)? use-clause? | '(' select ')' 'AS'? alias | expr ('AS'? alias)?"]
+
+The merge source is the recordset that you want to merge with the merge target.
+It can be a keyspace reference, a subquery, or a generic expression.
+
+[[lookup-merge-source-keyspace,merge-source-keyspace]]
+==== Lookup Merge Keyspace
+
+Keyspace reference for the merge source.
+The syntax is the same as for an ANSI merge.
+Refer to <<ansi-merge-source-keyspace,ANSI Merge Keyspace>>.
+
+[[lookup-merge-source-hints,lookup-merge-source-hints]]
+==== Lookup Merge Source Hint
+
+If the merge source is a keyspace, you can specify a USE KEYS or USE INDEX hint on the merge source.
+For details, refer to xref:n1ql-language-reference/hints.adoc[USE clause].
+
+[[lookup-merge-source-subquery,merge-source-subquery]]
+==== Lookup Merge Subquery
+
+Specifies a subquery for the merge source.
+The syntax is the same as for an ANSI merge.
+Refer to <<ansi-merge-source-subquery,ANSI Merge Subquery>>.
+
+[[lookup-merge-source-expr,merge-source-expr]]
+==== Lookup Merge Expression
+
+Specifies a generic expression for the merge source.
+The syntax is the same as for an ANSI merge.
+Refer to <<ansi-merge-source-expr,ANSI Merge Expression>>.
+
+[[lookup-merge-predicate,lookup-merge-predicate]]
+=== Lookup Merge Predicate
+
+[subs="normal"]
+----
+lookup-merge-predicate ::= ON [ PRIMARY ] KEY <<lookup-merge-predicate-args,expr>>
+----
+
+image::n1ql-language-reference/lookup-merge-predicate.png["'ON' 'PRIMARY'? 'KEY' expr"]
+
+The merge predicate produces a document key for the target of the lookup merge.
+
+[[lookup-merge-predicate-args]]
+expr::
+[Required] String or expression representing the primary key of the documents for the target keyspace.
+
+[[lookup-merge-actions,lookup-merge-actions]]
+=== Lookup Merge Actions
+
+[subs="normal"]
+----
+lookup-merge-actions ::= [ <<lookup-merge-update>> ] [ <<lookup-merge-delete>> ] [ <<lookup-merge-insert>> ]
+----
+
+image::n1ql-language-reference/lookup-merge-actions.png["merge-update? merge-delete? lookup-merge-insert?"]
+
+The merge actions enable you to specify insert, update, and delete actions on the target keyspace, based on a match or no match in the join.
+
+[[lookup-merge-update,merge-update]]
+==== Lookup Merge Update
+
+Updates a document that already exists with updated values.
+The syntax is the same as for an ANSI merge.
+Refer to <<ansi-merge-update,ANSI Merge Update>>.
+
+[[lookup-merge-delete,merge-delete]]
+==== Lookup Merge Delete
+
+Removes the specified document from the keyspace.
+The syntax is the same as for an ANSI merge.
+Refer to <<ansi-merge-delete,ANSI Merge Delete>> for details.
+
+[[lookup-merge-insert,lookup-merge-insert]]
+==== Lookup Merge Insert
+
+[subs="normal"]
+----
+lookup-merge-insert ::= WHEN NOT MATCHED THEN INSERT <<lookup-merge-insert-args,expr>> [ <<lookup-merge-insert-where,where-clause>> ]
+----
+
+image::n1ql-language-reference/lookup-merge-insert.png["'WHEN' 'NOT' 'MATCHED' 'THEN' 'INSERT' expr where-clause?"]
+
+Inserts a new document into the keyspace.
+The key specified in the <<lookup-merge-predicate,Lookup Merge Predicate>> is used as the key for the newly inserted document.
+
+[[lookup-merge-insert-args]]
+expr:: An expression specifying the value for the inserted document.
+
+[[lookup-merge-insert-where]]
+===== WHERE Clause
+
+[subs="normal"]
+----
+where-clause ::= WHERE cond
+----
+
+image::n1ql-language-reference/where-clause.png[]
+
+Optionally specifies a condition that must be met for data to be inserted.
+For more details, refer to xref:n1ql-language-reference/update.adoc#where-clause[WHERE clause].
+
+== Common Clauses
+
+The following clauses are common to both ANSI Merge and Lookup Merge.
+
+[[limit-clause,limit-clause]]
+=== LIMIT Clause
+
+[subs="normal"]
+----
+limit-clause ::= LIMIT expr
+----
+
+image::n1ql-language-reference/limit-clause.png[]
+
+Specifies the _minimum_ number of records to be processed.
+For more details, refer to xref:n1ql-language-reference/insert.adoc#limit-clause[LIMIT Clause].
+
+[[returning-clause,returning-clause]]
+=== RETURNING Clause
+
+[subs="normal"]
+----
+returning-clause ::= RETURNING ( result-expr [ ',' result-expr ]* | ( RAW | ELEMENT | VALUE ) expr )
+----
+
+image::n1ql-language-reference/returning-clause.png["'RETURNING' (result-expr (',' result-expr)* | ('RAW' | 'ELEMENT' | 'VALUE') expr)"]
+
+Specifies the information to be returned by the operation as a query result.
+For more details, refer to xref:n1ql-language-reference/insert.adoc#returning-clause[RETURNING Clause].
+
+== Examples
+
+[[example-1]]
+.ANSI merge with expression source
+====
+This example updates the vacancy field based on the source expression.
+
+[source,n1ql]
 ----
 MERGE INTO `travel-sample` t
-USING [{"id":"21728"},{"id":"21730"}] source
-ON KEY "hotel_"|| source.id
-WHEN MATCHED THEN UPDATE SET t.old_vacancy = t.vacancy, t.vacancy = false
+USING [
+  {"id":"21728", "vacancy": true},
+  {"id":"21730", "vacancy": true}
+] source
+ON meta(t).id = "hotel_" || source.id
+WHEN MATCHED THEN
+  UPDATE SET t.old_vacancy = t.vacancy,
+             t.vacancy = source.vacancy
 RETURNING meta(t).id, t.old_vacancy, t.vacancy;
 ----
+====
 
-*Examples*
+[[example-2]]
+.ANSI merge with keyspace source
+====
+This example finds all BA routes whose source airport is in France.
+If any flights are using equipment 319, they are updated to use 797.
 
+[source,n1ql]
+----
+MERGE INTO `travel-sample` AS route
+USING `travel-sample` AS airport
+ON route.sourceairport = airport.faa
+WHEN MATCHED THEN
+  UPDATE SET route.old_equipment = route.equipment,
+             route.equipment = "797",
+             route.updated = true
+WHERE airport.country = "France"
+  AND route.airline = "BA"
+  AND CONTAINS(route.equipment, "319");
+----
+====
+
+[[example-3]]
+.ANSI merge with updates and inserts
+====
+This example compares a source set of airport data with the `travel-sample` airport data.
+If the airport already exists in `travel-sample`, the record is updated.
+If the airport does not exist in `travel-sample`, a new record is created.
+
+[source,n1ql]
+----
+MERGE INTO `travel-sample` AS target
+USING [
+  {"iata":"DSA", "name": "Doncaster Sheffield Airport"},
+  {"iata":"VLY", "name": "Anglesey Airport / Maes Awyr Môn"}
+] AS source
+ON target.faa = source.iata
+WHEN MATCHED THEN
+  UPDATE SET target.old_name = target.airportname,
+             target.airportname = source.name,
+             target.updated = true
+WHEN NOT MATCHED THEN
+  INSERT (KEY UUID(),
+          VALUE {"faa": source.iata,
+                 "airportname": source.name,
+                 "type": "airport",
+                 "inserted": true} );
+----
+====
+
+.Lookup merge with expression source
+====
+Lookup merge version of <<example-1>>.
+
+[source,n1ql]
+----
+MERGE INTO `travel-sample` t
+USING [
+  {"id":"21728", "vacancy": true},
+  {"id":"21730", "vacancy": true}
+] source
+ON KEY "hotel_"|| source.id
+WHEN MATCHED THEN
+  UPDATE SET t.old_vacancy = t.vacancy, t.vacancy = source.vacancy
+RETURNING meta(t).id, t.old_vacancy, t.vacancy;
+----
+====
+
+.Lookup merge with keyspace source
+====
 The following statement updates product based on orders.
 
+[source,n1ql]
 ----
 MERGE INTO product p USING orders o ON KEY o.productId
 WHEN MATCHED THEN
-     UPDATE SET p.lastSaleDate = o.orderDate
+  UPDATE SET p.lastSaleDate = o.orderDate
 WHEN MATCHED THEN
-     DELETE WHERE p.inventoryCount  <= 0
+  DELETE WHERE p.inventoryCount  <= 0;
 ----
+====
 
+.Lookup merge with updates and inserts
+====
 The following statement merges two datasets containing employee information.
-It then updates all_empts on match with emps_deptb and inserts when there is no match.
+It then updates `all_empts` on match with `emps_deptb` and inserts when there is no match.
 
+[source,n1ql]
 ----
 MERGE INTO all_empts a USING emps_deptb b ON KEY b.empId
 WHEN MATCHED THEN
-     UPDATE SET a.depts = a.depts + 1
-     a.title = b.title || ", " || b.title
+  UPDATE SET a.depts = a.depts + 1
+  a.title = b.title || ", " || b.title
 WHEN NOT MATCHED THEN
-     INSERT  { "name": b.name, "title": b.title, "depts": b.depts, "empId": b.empId, "dob": b.dob }
+  INSERT { "name": b.name, "title": b.title, "depts": b.depts, "empId": b.empId, "dob": b.dob };
 ----
+====
