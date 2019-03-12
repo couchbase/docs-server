@@ -1,214 +1,283 @@
 = Array Indexing
-
-_(Introduced in Couchbase Server 4.5)_
+:imagesdir: ../../assets/images
+:page-status: Couchbase Server 4.5
 
 Array Indexing adds the capability to create global indexes on array elements and optimizes the execution of queries involving array elements.
 
 This is a huge leap from the previous versions where secondary indexes could only be created and subsequently queried on whole arrays.
 You can now create an index of array elements ranging from plain scalar values to complex arrays or JSON objects nested deeper in the array.
 
-== N1QL Syntax
+== Syntax
 
+[subs="normal"]
 ----
-CREATE INDEX [ index_name ]
-ON named_keyspace_ref ( index_key1, index_key2 , index_key3, ... )
- [ WHERE filter_expr ]
- [ USING GSI ]
- [ WITH { "nodes": [ "node_name" ],
-          "defer_build": true | false
-        }
- ];
+create-index ::= CREATE INDEX <<index-name>> ON <<named-keyspace-ref>> '(' <<index-key>> [ ',' <<index-key>> ]* ')' [ <<where-clause>> ] [ <<index-using>> ] [ <<index-with>> ]
 ----
 
-[.var]`index_name`:: Specify a unique name to identify the index.
+image::n1ql-language-reference/create-index-array.png["'CREATE' 'INDEX' index-name 'ON' named-keyspace-ref '(' index-key ( ',' index-key )* ')' where-clause? index-using? index-with?"]
 
-[.var]`named_keyspace_ref`::
-+
-----
-named_keyspace_ref ::= [ namespace_name : ] keyspace_name
-----
-+
-Specify the name of the keyspace or bucket to create an index on
+[[index-name,index-name]]
+index-name:: Specify a unique name to identify the index.
 
-[.var]`index_key`;;
-+
+[[named-keyspace-ref,named-keyspace-ref]]
+=== Named Keyspace Reference
+--
+[subs="normal"]
 ----
-index_key ::= expr | array_expr
+named-keyspace-ref ::= [ xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[namespace] ':' ] xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace]
 ----
-+
-Refers to the an attribute name or a scalar function or an ARRAY expression on the attribute.
+
+image::n1ql-language-reference/from-keyspace-ref.png["( namespace ':' )? keyspace"]
+
+Specify the name of the keyspace or bucket to create an index on.
+--
+
+[[index-key,index-key]]
+=== Index Key
+
+[subs="normal"]
+----
+index-key ::= <<index-key-args,expr>> | <<array-expr>>
+----
+
+image::n1ql-language-reference/index-key.png["expr | array-expr"]
+
+Refers to an attribute name or a scalar function or an ARRAY expression on the attribute.
 This constitutes an index-key for the index.
 
-[.var]`expr`:::
+[[index-key-args]]
+expr::
 A xref:n1ql-language-reference/index.adoc[N1QL expression] over any fields in the document.
 This cannot use constant expressions, aggregate functions, or sub-queries.
 
+[[array-expr,array-expr]]
+=== Array Expression
 
-[.var]`array_expr`:::
-+
+[subs="normal"]
 ----
-array_expr ::= full_array_expr | simple_array_expr
-full_array_expr ::=
-    (ALL | DISTINCT) ARRAY var_expr
-        FOR var1 ( IN | WITHIN ) expr1
-        [ , var2 ( IN | WITHIN ) expr2 ]
-        [ ( WHEN condition ) ] END
-simple_array_expr ::=
-    (ALL | DISTINCT) expr
+array_expr ::= <<full-array-expr>> | <<simple-array-expr>>
 ----
-+
+
+image::n1ql-language-reference/array-expr.png["full-array-expr | simple-array-expr"]
+
+[IMPORTANT]
+--
+The query predicate which appears in the WHERE clause of a SELECT, UPDATE, or DELETE statement must have exactly the same format as the variable in the array index key.
+See <<query-predicate-format>> for details.
+--
+
+[NOTE]
+--
+Currently, array indexing is limited to using only one index-key with the array expression.
+
+* To create an array index involving multiple array elements or multiple arrays, use a full array expression whose <<full-array-expr-args,variable expression>> is constructed as a compound object constituted with different elements of the same array or multiple arrays.
+
+* Subsequent SELECT or DML statements must use similar compound objects in the WHERE clause to use the array index.
+See <<examples>> below.
+
+--
+
+[[full-array-expr,full-array-expr]]
+==== Full Array Expression
+
+[subs="normal"]
+----
+full-array-expr ::= ( ALL | DISTINCT ) ARRAY <<full-array-expr-args,var-expr>> FOR <<full-array-expr-args,var>> ( IN | WITHIN ) <<full-array-expr-args,expr>> [ ',' <<full-array-expr-args,var>> ( IN | WITHIN ) <<full-array-expr-args,expr>> ]* [ WHEN <<full-array-expr-args,cond>> ] END
+----
+
+image::n1ql-language-reference/full-array-expr.png["( 'ALL' | 'DISTINCT' ) 'ARRAY' var-expr 'FOR' var ( 'IN' | 'WITHIN' ) expr ( ',' var ( 'IN' | 'WITHIN' ) expr )* ( 'WHEN' cond )? 'END'"]
+
 The [.cmd]`ARRAY` operator lets you map and filter the elements or attributes of a collection, object, or objects.
 It evaluates to an array of the operand expression that satisfies the WHEN clause, if specified.
-+
-`+var_expr ::= function(var1, var2, ...)+`
 
-* The expression is a function of the variables [.var]`var1`, [.var]`var2`, etc.
-used in the FOR clause, and the expressions [.var]`expr1`, [.var]`expr2`, etc.
-evaluate to an array of objects, elements of which are represented by the variables [.var]`var1`, [.var]`var2`, etc.
-respectively.
-* The [.var]`var_expr` itself can be an [.var]`array_expr`, allowing nested array expression.
+[[full-array-expr-args]]
+var-expr::
+A function of the [.var]`var` variable used in the FOR clause.
+
+var::
+Represents elements in the array specified by [.var]`expr`.
+
+expr::
+Evaluates to an array of objects, elements of which are represented by the [.var]`var` variable.
+
+cond::
+Specifies predicates to qualify the subset of documents to include in the index array.
+
+NOTE: The [.var]`var-expr` itself can be a nested <<array-expr,array expression>>.
 This enables creating array indexes on nested array fields.
-See examples below.
+See <<examples>> below.
 
-+
-[.var]`simple_array_expr`
-+
-When using [.var]`simple_array_expr`, only an array field name or an expression [.var]`expr` that can evaluate to an array can be specified.
-In this case, all elements of the array are indexed.
-+
-NOTE: Currently, array indexing is limited to using only one index key with [.var]`array_expr`.
-Furthermore, the [.var]`array_expr` must be the first index-key for the index to be leverages for a SELECT statement with an UNNEST clause on the array.
-To create an array index involving multiple array elements or multiple arrays:
-
-* The [.var]`var_expr` can be constructed as a compound object constituted with different elements of the same array or multiple arrays.
-* Subsequent SELECT or DML must use similar compound objects in the WHERE clause to use the array index.
-See examples below.
-
-+
-NOTE: Couchbase 4.6.2 release introduces the following enhancements to array indexing:
-
-* Allow arbitrary variable names in array index selection.
-That is, a SELECT query or DML that needs to use the array index can use different variable names in the query from those used in the array index definition.
-In earlier releases, the variable names must exactly match.
-See the xref:4.5@n1ql-language-reference/indexing-arrays.adoc[Couchbase Server 4.5 documentation] for details.
-* Support [.var]`simple_array_expr`, which provides simpler syntax for array indexing when all array elements are indexed as is, without requiring to use the ARRAY operator in the index definition.
-
-+
-NOTE: The variables used in query predicates (WHERE clauses) of subsequent SELECT/UPDATE/UPSERT/DELETE statements must be the same as those used in the above [.var]`array_expr`.
-See <<query-predicate-format,Format of Query Predicate in SELECT, UPDATE, or DELETE>> for details.
-
-[.var]`filter_expr`::
-Specifies WHERE clause predicates to qualify the subset of documents to include in the index.
-+
-[#query-predicate-format]
-*Format of Query Predicate in SELECT, UPDATE, or DELETE*
-+
-The query predicate, which must appear in the WHERE clause of a SELECT, UPDATE, or DELETE statement, must have the exact matching format as the variable in the array index key, including the name of the variable [.var]`x`.
-+
-Consider the following expressions used in a CREATE INDEX statement:
-+
-----
-(a) DISTINCT ARRAY f(x) FOR x IN expr1 END;
-
-(b) DISTINCT ARRAY f(x) FOR x WITHIN expr1 END;
-----
-+
-And the expression used in the SELECT where clause as:
-+
-----
-(c) ANY x IN expr2 SATISFIES g(x) END;
-
-(d) ANY x WITHIN expr2 SATISFIES g(x) END
-----
-+
-The following dependencies must be satisfied in Couchbase Server 4.5 for N1QL to consider the array index:
-
-* The index keys used in CREATE INDEX must be used in the where clause.
-* [.var]`expr2` in (c) and (d) must be equivalent to [.var]`expr1` in (a) and (b).
-This is a formal notion of equivalence.
-For example, if they are the same expressions, or equivalent arithmetic expressions such as (x+y) and (y+x).
-* The variable [.var]`x` in (c) and (d) must be exactly the same variable name as [.var]`x` in (a) and (b).
-* [.var]`g(x)` in (c) and (d) must be sargable for [.var]`f(x)` in (a) and (b).
-In other words, if there were a scalar index with key [.var]`f(x)`, then that index would be applicable to the predicate [.var]`g(x)`.
-For example, the index key `UPPER(x)` is sargable for the predicate `UPPER(x) LIKE "John%"`.
-* IN vs.
-WITHIN: Index key (a) can be used for query predicate (c).
-Index key (b) can be used for both query predicates (c) and (d).
-
-+
-NOTE: Index key (b) is strictly more expensive than index key (a), for both index maintenance and query processing.
-Index key (b) and query predicate (d) are very powerful.
-They can efficiently index and query recursive trees of arbitrary depth.
-
-USING GSI:: USING clause specifies the index type to use.
-
-WITH options::
-Use the WITH clause to specify additional options and is fully supported with nodes and [.var]`defer_build` expressions.
-+
-See the xref:n1ql-language-reference/createindex.adoc[CREATE INDEX] statement for more details on the syntax.
-
-== Simplified Array Syntax
+[[simple-array-expr,simple-array-expr]]
+==== Simple Array Expression
 
 _(Introduced in Couchbase Server 5.0)_
 
-Using Couchbase Server 5.0, you can now use a more simplified syntax to create an array index, for example:
-
+[subs="normal"]
 ----
-CREATE INDEX idx
-ON `travel-sample` (DISTINCT `schedule`)
-WHERE type = "airline";
+simple-array-expr ::= ( ALL | DISTINCT ) <<simple-array-expr-args,expr>>
 ----
 
-In the above example, you can directly use `schedule` instead of the `array_expr` described above.
+image::n1ql-language-reference/simple-array-expr.png["( 'ALL' | 'DISTINCT' ) expr"]
 
+Couchbase Server 5.0 and later provides a simpler syntax for array indexing when all array elements are indexed as is, without needing to use the `ARRAY` operator in the index definition.
+
+[[simple-array-expr-args]]
+expr::
+An array field name, or an expression that can evaluate to an array.
+In this case, all elements of the array are indexed.
+
+[[where-clause,where-clause]]
+=== WHERE Clause
+
+[subs="normal"]
+----
+where-clause ::= WHERE <<where-clause-args,cond>>
+----
+
+image::n1ql-language-reference/where-clause.png["'WHERE' cond"]
+
+[#where-clause-args]
+cond::
+Specifies WHERE clause predicates to qualify the subset of documents to include in the index.
+
+[[index-using,index-using]]
+=== USING Clause
+
+[subs="normal"]
+----
+index-using ::= USING ( VIEW | GSI )
+----
+
+image::n1ql-language-reference/index-using.png["'USING' ( 'VIEW' | 'GSI' )"]
+
+The USING clause specifies the index type to use.
+
+[[index-with,index-with]]
+=== WITH Clause
+
+[subs="normal"]
+----
+index-with ::= WITH <<index-with-args,expr>>
+----
+
+image::n1ql-language-reference/index-with.png["'WITH' expr"]
+
+Use the WITH clause to specify additional options.
+
+[[index-with-args]]
+expr::
+An object specifying additional options for the query.
+
+[subs="normal"]
+----
+WITH { "nodes": [ "__node_name__" ], "defer_build": _boolean_ }
+----
+
+See the xref:n1ql-language-reference/createindex.adoc[CREATE INDEX] statement for more details on the syntax.
+
+[#query-predicate-format]
+== Format of Query Predicate
+
+The query predicate which appears in the WHERE clause of a SELECT, UPDATE, or DELETE statement must have exactly the same format as the variable in the array index key.
+
+[NOTE]
+--
+Couchbase Server 4.6.2 and later allows arbitrary variable names in array index selection.
+That is, a SELECT query or DML statement that needs to use the array index can use different variable names in the query from those used in the array index definition.
+In earlier releases, the variable names must exactly match.
+See the xref:4.5@n1ql-language-reference/indexing-arrays.adoc[Couchbase Server 4.5 documentation] for details.
+--
+
+Consider the following expressions used in a CREATE INDEX statement:
+
+----
+DISTINCT ARRAY f(x) FOR x IN expr1 END; <1>
+
+DISTINCT ARRAY f(x) FOR x WITHIN expr1 END; <2>
+----
+
+And the following expressions used in the SELECT statement WHERE clause:
+
+----
+ANY x IN expr2 SATISFIES g(x) END; <3>
+
+ANY x WITHIN expr2 SATISFIES g(x) END <4>
+----
+
+The following dependencies must be satisfied for the Query service to consider the array index:
+
+* The index keys used in CREATE INDEX must be used in the WHERE clause.
+* [.var]`expr2` in ➂ and ➃ must be equivalent to [.var]`expr1` in ➀ and ➁.
+This is a formal notion of equivalence.
+For example, if they are the same expressions, or equivalent arithmetic expressions such as `(x+y)` and `(y+x)`.
+* [.var]`g(x)` in ➂ and ➃ must be sargable for [.var]`f(x)` in ➀ and ➁.
+In other words, if there were a scalar index with key [.var]`f(x)`, then that index would be applicable to the predicate [.var]`g(x)`.
+For example, the index key `UPPER(x)` is sargable for the predicate `UPPER(x) LIKE "John%"`.
+* IN vs. WITHIN: Index key ➀ can be used for query predicate ➂.
+Index key ➁ can be used for both query predicates ➂ and ➃.
+
+NOTE: Index key ➁ is strictly more expensive than index key ➀, for both index maintenance and query processing.
+Index key ➁ and query predicate ➃ are very powerful.
+They can efficiently index and query recursive trees of arbitrary depth.
+
+[#examples]
 == Examples
 
-The following examples use the xref:manage:manage-settings/install-sample-buckets.adoc[travel-sample] keyspace that is shipped with the product.
+The following examples use the xref:manage:manage-settings/install-sample-buckets.adoc[travel-sample] keyspace that is shipped with Couchbase Server.
 
-*Example 1*: Indexing all DISTINCT elements in an array
+.Indexing all DISTINCT elements in an array
+====
 
-C1: Create an index on all schedules:
-
+.C{example-number}: Create an index on all schedules
+[[C1,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_sched
 ON `travel-sample` ( DISTINCT ARRAY v.flight FOR v IN schedule END );
 ----
 
-Q1: The following query finds the list of scheduled 'UA' flights:
-
+.Q{example-number}: Find the list of scheduled 'UA' flights
+[[Q1,Q{example-number}]]
+[source,N1QL]
 ----
 SELECT * FROM `travel-sample`
 WHERE ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 ----
+====
 
-*Example 2*: Partial index (with WHERE clause) of individual attributes from selected elements (using WHEN clause) of an array:
-
-C2: Create an index on flight IDs scheduled in the first 4 days of the week:
-
+.Partial index (with WHERE clause) of individual attributes from selected elements (using WHEN clause) of an array
+====
+.C{example-number}: Create an index on flight IDs scheduled in the first 4 days of the week
+[[C2,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_flight_day
 ON `travel-sample` ( ALL ARRAY v.flight FOR v IN schedule WHEN v.day < 4 END )
 WHERE type = "route" ;
 ----
 
-Q2: The following query finds the list of scheduled 'UA' flights on day 1:
-
+.Q{example-number}: Find the list of scheduled 'UA' flights on day 1
+[[Q2,Q{example-number}]]
+[source,N1QL]
 ----
 SELECT * FROM `travel-sample`
-WHERE type = "route"
-AND ANY v IN schedule SATISFIES (v.flight LIKE 'UA%') AND (v.day=1) END;
+WHERE type = "route" <1>
+AND ANY v IN schedule SATISFIES (v.flight LIKE 'UA%') <2>
+AND (v.day=1) END; <3>
 ----
 
-NOTE: The index C2 qualifies for the query Q2 because:
+The index <<C2>> qualifies for the query <<Q2>> because:
 
-* Q2 predicate `type = "route"` matches that of the partial index WHERE clause.
-* The ANY operator uses the index key `v.flight` on which the index C2 is defined.
-* The ANY-SATISFIES condition `v.day=1` in Q2 is sargable to that in the index definition WHEN clause `v.day<4`.
+<1> The <<Q2>> predicate `type = "route"` matches that of the partial index WHERE clause.
+<2> The ANY operator uses the index key `v.flight` on which the index <<C2>> is defined.
+<3> The ANY-SATISFIES condition `v.day=1` in <<Q2>> is sargable to that in the index definition WHEN clause `v.day<4`.
+====
 
-*Example 3*: Compound array index with individual elements of an array and other non-array fields
-
-C3: Create an index on scheduled flight IDs and number of stops:
-
+.Compound array index with individual elements of an array and other non-array fields
+====
+.C{example-number}: Create an index on scheduled flight IDs and number of stops
+[[C3,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_flight_stops
 ON `travel-sample`
@@ -216,22 +285,25 @@ ON `travel-sample`
 WHERE type = "route" ;
 ----
 
-Q3: The following query finds the list of scheduled 'UA' flights that have one or more stops:
-
+.Q{example-number}: Find the list of scheduled 'UA' flights that have one or more stops
+[[Q3,Q{example-number}]]
+[source,N1QL]
 ----
 SELECT * FROM `travel-sample`
 WHERE type = "route"
 AND stops >=0
 AND ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 ----
+====
 
-*Example 4*: Indexing the individual elements of nest arrays
-
+.Indexing the individual elements of nest arrays
+====
 Use the DISTINCT ARRAY clause in a nested fashion to index specific attributes of a document when the array contains other arrays or documents that contain arrays.
 For example,
 
+[source,N1QL]
 ----
-cbq> UPDATE `travel-sample`
+UPDATE `travel-sample`
      SET schedule[0] = {"day" : 7, "special_flights" :
                     [ {"flight" : "AI444", "utc" : "4:44:44"},
                       {"flight" : "AI333", "utc" : "3:33:33"}
@@ -240,21 +312,23 @@ cbq> UPDATE `travel-sample`
      AND destinationairport = "CDG" AND sourceairport = "TLV";
 ----
 
-C4: The following creates a partial index on a nested array [.var]`special_flights`:
-
+.C{example-number}: Create a partial index on a nested array [.var]`special_flights`
+[[C4,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_nested ON `travel-sample`
     (DISTINCT ARRAY
-        (DISTINCT ARRAY y.flight
+        (DISTINCT ARRAY y.flight <1>
         FOR y IN x.special_flights END)
     FOR x IN schedule END)
 WHERE type = "route";
 ----
 
-NOTE: In this case, the inner ARRAY construct (in *bold*) is used as the [.var]`var_expr` for the outer ARRAY construct in the N1QL Syntax above.
+<1> In this case, the inner ARRAY construct is used as the [.var]`var_expr` for the outer ARRAY construct in the N1QL Syntax above.
 
-Q4: The following query uses nested ANY operator to use the index:
-
+.Q{example-number}: Use nested ANY operator to use the index
+[[Q4,Q{example-number}]]
+[source,N1QL]
 ----
 SELECT count(*) FROM `travel-sample`
 WHERE type = "route"
@@ -263,8 +337,9 @@ AND ANY x in schedule SATISFIES
 END;
 ----
 
-Q4A: The following query uses UNNEST operators to use the index:
-
+.Q{example-number}A: Use UNNEST operators to use the index
+[[Q4A,Q{example-number}A]]
+[source,N1QL]
 ----
 SELECT count(*) FROM `travel-sample`
 UNNEST schedule AS x
@@ -272,54 +347,64 @@ UNNEST x.special_flights AS y
 WHERE type = "route"
 AND y.flight IS NOT NULL;
 ----
+====
 
-*Example 5*: Array Index with multiple elements of an array
-
-C5: Create an index on [.var]`flight` and [.var]`day` fields in [.var]`schedule`:
-
+.Array Index with multiple elements of an array
+====
+.C{example-number}: Create an index on [.var]`flight` and [.var]`day` fields in [.var]`schedule`
+[[C5,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_flight_day ON `travel-sample`
     ( DISTINCT ARRAY [v.flight, v.day] FOR v IN schedule END)
 WHERE type = "route" ;
 ----
 
-Q5: The following query finds the list of scheduled 'US681' flights on day 2:
-
+.Q{example-number}: Find the list of scheduled 'US681' flights on day 2
+[[Q5,Q{example-number}]]
+[source,N1QL]
 ----
 SELECT meta().id FROM `travel-sample`
 WHERE type = "route"
 AND ANY v in schedule SATISFIES [v.flight, v.day] = ["US681", 2] END;
 ----
+====
 
-*Example 6*: Indexing all elements in an array using simplified syntax
-
-C6: Create an index on all schedules using simplified array index syntax:
-
+.Indexing all elements in an array using simplified syntax
+====
+.C{example-number}: Create an index on all schedules using simplified array index syntax
+[[C6,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_sched_simple
 ON `travel-sample` (ALL schedule)
 WHERE type = "route";
 ----
 
-Q6: The following query finds details of all route documents matching a specific schedule.
-Note that elements of schedule array are objects, and hence the right side value of the predicate condition should be similarly structured object.
-
+.Q{example-number}: Find details of all route documents matching a specific schedule
+[[Q6,Q{example-number}]]
+[source,N1QL]
 ----
 SELECT * FROM `travel-sample`
 WHERE type = "route"
 AND ANY v IN schedule
-SATISFIES v = {"day":2, "flight": "US681", "utc": "19:20:00"} END;
+SATISFIES v = {"day":2, "flight": "US681", "utc": "19:20:00"} END; <1>
 ----
 
-Q6A: This is a variant of Q6 using the UNNEST in the SELECT statement.
-The following query finds details of all route documents matching a specific schedule.
+<1> Elements of the schedule array are objects, and hence the right side value of the predicate condition should be a similarly structured object.
 
+.Q{example-number}A: Find details of all route documents matching a specific schedule
+[[Q6A,Q{example-number}A]]
+[source,N1QL]
 ----
 SELECT * FROM `travel-sample` t
 UNNEST schedule sch
 WHERE t.type = "route"
 AND sch = {"day":2, "flight": "US681", "utc": "19:20:00"};
 ----
+
+This is a variant of <<Q6>> using UNNEST in the SELECT statement.
+====
 
 == Covering Array Index
 
@@ -329,25 +414,36 @@ For more details, see xref:indexes:covering-indexes.adoc[Covering Indexes].
 
 Array indexing requires special attention to create covered array indexes.
 In general, the array field itself should be included as one of the index keys in the CREATE INDEX definition.
-For example, the index C1 does not cover the query Q1 because the Q1 projection list includes * which needs to fetch the document from the Data Service.
-The following Q7 is covered by index C7:
+For example, the index <<C1>> does not cover the query <<Q1>> because the <<Q1>> projection list includes * which needs to fetch the document from the Data Service.
 
-C7:  Creating a Covered Array Index.
-
+.Covered Array Index
+====
+.C{example-number}: Creating a Covered Array Index
+[[C7,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_sched_covered ON `travel-sample`
    ( DISTINCT ARRAY v.flight FOR v IN schedule END, schedule)
 WHERE type = "route";
 ----
 
-Q7:  Covered Array Index using the ANY clause.
+The index keys of an index must be used in the WHERE clause of a DML statement to use the index for that query.
+In the SELECT or DML WHERE clause, Covered Array Indexes can be used by the following operators:
 
+* ANY: As shown in query <<Q7>>.
+* ANY AND EVERY: As shown in query <<Q7A>> (a variant of Example <<Q7>>).
+
+.Q{example-number}: Covered Array Index using the ANY clause
+[[Q7,Q{example-number}]]
+[source,N1QL]
 ----
 EXPLAIN SELECT meta().id FROM `travel-sample`
-USE INDEX (idx_sched_covered)
+USE INDEX (idx_sched_covered) <1>
 WHERE type = "route"
 AND ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 ----
+
+<1> The query <<Q7>> needs index <<C7>> to cover it because the query predicate refers to the array `schedule` in the ANY operator.
 
 [source,JSON]
 .Result
@@ -375,16 +471,9 @@ AND ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
        ...
 ----
 
-NOTE: The query Q7 needs index C7 to cover it because the query predicate refers to the array `schedule` in the ANY operator.
-
-NOTE: The index keys of an index must be used in the WHERE clause of a DML to use the index for that query.
-In the SELECT or DML WHERE clause, Covered Array Indexes can be used by the following operators:
-
-* ANY:  As shown in query Q7.
-* ANY AND EVERY:  As shown in query Q7A (a variant of Example Q7).
-
-Q7A:  Covered Array Index using the ANY AND EVERY clause.
-
+.Q{example-number}A: Covered Array Index using the ANY AND EVERY clause
+[[Q7A,Q{example-number}A]]
+[source,N1QL]
 ----
 EXPLAIN SELECT meta().id FROM `travel-sample`
 USE INDEX (idx_sched_covered)
@@ -416,8 +505,9 @@ AND ANY AND EVERY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
        ...
 ----
 
-Q7B:  Covered Array Index using the UNNEST clause and aliasing.
-
+.Q{example-number}B: Covered Array Index using the UNNEST clause and aliasing
+[[Q7B,Q{example-number}B]]
+[source,N1QL]
 ----
 EXPLAIN SELECT meta(t).id FROM `travel-sample` t
 USE INDEX (idx_sched_covered)
@@ -450,20 +540,28 @@ WHERE t.type = "route" AND v.flight LIKE 'UA%';
        ...
 ----
 
-NOTE: The Q7 Examples have the following limitation: the collection operator EVERY cannot use array indexes or covered array indexes because the EVERY operator needs to apply the SATISFIES predicate to all elements in the array, including the case where an array has zero elements.
+[NOTE]
+--
+The <<Q7>> Examples have the following limitation: the collection operator EVERY cannot use array indexes or covered array indexes because the EVERY operator needs to apply the SATISFIES predicate to all elements in the array, including the case where an array has zero elements.
+
 As items cannot be indexed, it is not possible to index MISSING items, so the EVERY operator is evaluated in the N1QL engine and cannot leverage the array index scan.
-For example, the following query Q7C uses the non-array index `def_type` ignoring the xref:n1ql-language-reference/hints.adoc#use-index-clause[USE INDEX hint] to use the array indexes (note that query C7 defines a DISTINCT array index while C7C defines an ALL array index, and both are ignored).
 
-C7C:  Non-array index with an ALL array index.
+For example, the following query <<Q7C>> uses the non-array index `def_type` ignoring the xref:n1ql-language-reference/hints.adoc#use-index-clause[USE INDEX hint] to use the array indexes.
+(Note that query <<C7>> defines a DISTINCT array index while <<C7C>> defines an ALL array index, and both are ignored).
+--
 
+.C{example-number}C: Non-array index with an ALL array index
+[[C7C,C{example-number}C]]
+[source,N1QL]
 ----
 CREATE INDEX idx_sched_covered_all ON `travel-sample`
    ( ALL ARRAY v.flight FOR v IN schedule END, schedule)
 WHERE type = "route";
 ----
 
-Q7C:  Non-array index with an ALL array index.
-
+.Q{example-number}C: Non-array index with an ALL array index
+[[Q7C,Q{example-number}C]]
+[source,N1QL]
 ----
 EXPLAIN SELECT meta().id FROM `travel-sample`
 USE INDEX (idx_sched_covered_all, idx_sched_covered)
@@ -484,6 +582,7 @@ AND EVERY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
          "index": "def_type",
          ...
 ----
+====
 
 == Implicit Covered Array Index
 
@@ -491,22 +590,25 @@ N1QL supports simplified Implicit Covered Array Index syntax in certain cases wh
 This special optimization applies to those queries and DML which have WHERE clause predicates that can be exactly and completely pushed to the indexer during the array index scan.
 For example:
 
-* ANY operator with an =, <, >, and LIKE predicate in the SATISFIES clause.
-Not that the GSI indexes are tree structures that support exact match and range matches.
+.ANY operator with an =, <, >, and LIKE predicate in the SATISFIES clause
+====
+Note that the GSI indexes are tree structures that support exact match and range matches.
 And the ANY predicate returns `true` as long as it finds at least one matching item in the index.
 Hence, an item found in the index can cover the query.
 Furthermore, this is covered by both ALL and DISTINCT array indexes.
-+
-C8:  Creating an Implicit Covered Array Index with DISTINCT.
-+
+
+.C{example-number}: Creating an Implicit Covered Array Index with DISTINCT
+[[C8,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_sched_covered_simple ON `travel-sample`
   ( DISTINCT ARRAY v.flight FOR v IN schedule END)
 WHERE type = "route";
 ----
-+
-Q8: Implicit Covered Array Index using the ANY clause.
-+
+
+.Q{example-number}: Implicit Covered Array Index using the ANY clause
+[[Q8,Q{example-number}]]
+[source,N1QL]
 ----
 EXPLAIN SELECT meta().id FROM `travel-sample`
 USE INDEX (idx_sched_covered_simple)
@@ -538,23 +640,27 @@ AND ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
             "index": "idx_sched_covered_simple",
           ...
 ----
+====
 
-* UNNEST operator with =, <, >, or LIKE predicate in the WHERE clause.
+.UNNEST operator with =, <, >, or LIKE predicate in the WHERE clause
+====
 This applies to only ALL array indexes because, for such index, all array elements are indexed in the array index, and the UNNEST operation needs all the elements to reconstruct the array.
 Note that the array cannot be reconstructed if on DISTINCT elements of the array are indexed.
-+
-For example, the following query Q8A can be covered with the ALL index [.var]`idx_sched_covered_simple_all` in C8A, but Q8B is not covered when using the DISTINCT [.var]`index idx_sched_covered_simple` defined in C8.
-+
-C8A: UNNEST covered with the ALL index.
-+
+
+For example, the following query <<Q8A>> can be covered with the ALL index [.var]`idx_sched_covered_simple_all` in <<C8A>>, but <<Q8B>> is not covered when using the DISTINCT [.var]`index idx_sched_covered_simple` defined in <<C8>>.
+
+.C{example-number}: UNNEST covered with the ALL index
+[[C8A,C{example-number}]]
+[source,N1QL]
 ----
 CREATE INDEX idx_sched_covered_simple_all ON `travel-sample`
   ( ALL ARRAY v.flight FOR v IN schedule END)
 WHERE type = "route";
 ----
-+
-Q8A: UNNEST not covered when using the DISTINCT index.
-+
+
+.Q{example-number}A: UNNEST covered with the ALL index
+[[Q8A,Q{example-number}A]]
+[source,N1QL]
 ----
 EXPLAIN SELECT meta(t).id FROM `travel-sample` t
 USE INDEX (idx_sched_covered_simple_all)
@@ -652,6 +758,7 @@ AND v.flight LIKE 'UA%';
       }
 ...
 ----
+====
 
 == Summary
 
