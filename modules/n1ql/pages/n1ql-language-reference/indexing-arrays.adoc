@@ -75,6 +75,8 @@ Currently, array indexing is limited to using only one index-key with the array 
 * Subsequent SELECT or DML statements must use similar compound objects in the WHERE clause to use the array index.
 See <<examples>> below.
 
+* For an UNNEST scan to use an index, the leading key of the index definition must be an appropriate ARRAY index key.
+In Couchbase Server 6.0.1 and later, the UNNEST scan can generate index spans on other non-leading index keys when appropriate predicates exist.
 --
 
 [[full-array-expr,full-array-expr]]
@@ -304,12 +306,12 @@ For example,
 [source,N1QL]
 ----
 UPDATE `travel-sample`
-     SET schedule[0] = {"day" : 7, "special_flights" :
-                    [ {"flight" : "AI444", "utc" : "4:44:44"},
-                      {"flight" : "AI333", "utc" : "3:33:33"}
-                    ] }
-     WHERE type = "route"
-     AND destinationairport = "CDG" AND sourceairport = "TLV";
+SET schedule[0] = {"day" : 7, "special_flights" :
+               [ {"flight" : "AI444", "utc" : "4:44:44"},
+                 {"flight" : "AI333", "utc" : "3:33:33"}
+               ] }
+WHERE type = "route"
+AND destinationairport = "CDG" AND sourceairport = "TLV";
 ----
 
 .C{example-number}: Create a partial index on a nested array [.var]`special_flights`
@@ -449,26 +451,26 @@ AND ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 .Result
 ----
 [
-    {
-      "plan": {
-        "#operator": "Sequence",
-        "~children": [
-          {
-            "#operator": "DistinctScan",
-            "scan": {
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "DistinctScan",
+          "scan": {
             "#operator": "IndexScan3",
-              "covers": [
+            "covers": [
               "cover ((distinct (array (`v`.`flight`) for `v` in (`travel-sample`.`schedule`) end)))",
-                 "cover ((`travel-sample`.`schedule`))",
-                 "cover ((meta(`travel-sample`).`id`))"
-              ],
-              "filter_covers": {
-                "cover ((`travel-sample`.`type`))": "route",
+              "cover ((`travel-sample`.`schedule`))",
+              "cover ((meta(`travel-sample`).`id`))"
+            ],
+            "filter_covers": {
+              "cover ((`travel-sample`.`type`))": "route",
               "cover (any `v` in (`travel-sample`.`schedule`) satisfies ((\"UA\" <= (`v`.`flight`)) and ((`v`.`flight`) < \"UB\")) end)": true,
               "cover (any `v` in (`travel-sample`.`schedule`) satisfies ((`v`.`flight`) like \"UA%\") end)": true
-              },
-              "index": "idx_sched_covered",
-       ...
+            },
+            "index": "idx_sched_covered",
+      ...
 ----
 
 .Q{example-number}A: Covered Array Index using the ANY AND EVERY clause
@@ -485,24 +487,24 @@ AND ANY AND EVERY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 .Result
 ----
 [
-   {
-      "plan": {
-        "#operator": "Sequence",
-        "~children": [
-          {
-            "#operator": "DistinctScan",
-            "scan": {
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "DistinctScan",
+          "scan": {
             "#operator": "IndexScan3",
-              "covers": [
+            "covers": [
               "cover ((distinct (array (`v`.`flight`) for `v` in (`travel-sample`.`schedule`) end)))",
-                 "cover ((`travel-sample`.`schedule`))",
-                 "cover ((meta(`travel-sample`).`id`))"
-              ],
-              "filter_covers": {
+              "cover ((`travel-sample`.`schedule`))",
+              "cover ((meta(`travel-sample`).`id`))"
+            ],
+            "filter_covers": {
               "cover ((`travel-sample`.`type`))": "route"
-              },
-              "index": "idx_sched_covered",
-       ...
+            },
+            "index": "idx_sched_covered",
+      ...
 ----
 
 .Q{example-number}B: Covered Array Index using the UNNEST clause and aliasing
@@ -519,25 +521,25 @@ WHERE t.type = "route" AND v.flight LIKE 'UA%';
 .Result
 ----
 [
-    {
-      "plan": {
-        "#operator": "Sequence",
-        "~children": [
-          {
-            "#operator": "DistinctScan",
-            "scan": {
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "DistinctScan",
+          "scan": {
             "#operator": "IndexScan3",
             "as": "t",
-              "covers": [
+            "covers": [
               "cover ((distinct (array (`v`.`flight`) for `v` in (`t`.`schedule`) end)))",
-                 "cover ((`t`.`schedule`))",
-                 "cover ((meta(`t`).`id`))"
-              ],
-              "filter_covers": {
+              "cover ((`t`.`schedule`))",
+              "cover ((meta(`t`).`id`))"
+            ],
+            "filter_covers": {
               "cover ((`t`.`type`))": "route"
-              },
-              "index": "idx_sched_covered",
-       ...
+            },
+            "index": "idx_sched_covered",
+      ...
 ----
 
 [NOTE]
@@ -573,14 +575,14 @@ AND EVERY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 .Result
 ----
 [
-{
-  "plan": {
-     "#operator": "Sequence",
-     "~children": [
-       {
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
           "#operator": "IndexScan3",
-         "index": "def_type",
-         ...
+          "index": "def_type",
+          ...
 ----
 ====
 
@@ -620,25 +622,25 @@ AND ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 .Result
 ----
 [
-{
-  "plan": {
-    "#operator": "Sequence",
-    "~children": [
-      {
-        "#operator": "DistinctScan",
-        "scan": {
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "DistinctScan",
+          "scan": {
             "#operator": "IndexScan3",
-          "covers": [
+            "covers": [
               "cover ((distinct (array (`v`.`flight`) for `v` in (`travel-sample`.`schedule`) end)))",
-            "cover ((meta(`travel-sample`).`id`))"
-          ],
-          "filter_covers": {
-            "cover ((`travel-sample`.`type`))": "route",
+              "cover ((meta(`travel-sample`).`id`))"
+            ],
+            "filter_covers": {
+              "cover ((`travel-sample`.`type`))": "route",
               "cover (any `v` in (`travel-sample`.`schedule`) satisfies ((\"UA\" <= (`v`.`flight`)) and ((`v`.`flight`) < \"UB\")) end)": true,
               "cover (any `v` in (`travel-sample`.`schedule`) satisfies ((`v`.`flight`) like \"UA%\") end)": true
-          },
+            },
             "index": "idx_sched_covered_simple",
-          ...
+            ...
 ----
 ====
 
@@ -673,24 +675,24 @@ AND v.flight LIKE 'UA%';
 .Result
 ----
 [
-{
-  "plan": {
-    "#operator": "Sequence",
-    "~children": [
-      {
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
           "#operator": "IndexScan3",
           "as": "t",
-        "covers": [
-          "cover ((`v`.`flight`))",
-          "cover ((meta(`t`).`id`))"
-        ],
-        "filter_covers": {
-          "cover (((`t`.`schedule`) < {}))": true,
-          "cover (([] <= (`t`.`schedule`)))": true,
-          "cover ((`t`.`type`))": "route",
-          "cover (is_array((`t`.`schedule`)))": true
-        },
-        "index": "idx_sched_covered_simple_all",
+          "covers": [
+            "cover ((`v`.`flight`))",
+            "cover ((meta(`t`).`id`))"
+          ],
+          "filter_covers": {
+            "cover (((`t`.`schedule`) < {}))": true,
+            "cover (([] <= (`t`.`schedule`)))": true,
+            "cover ((`t`.`type`))": "route",
+            "cover (is_array((`t`.`schedule`)))": true
+          },
+          "index": "idx_sched_covered_simple_all",
           "index_id": "119e993a473f8297",
           "keyspace": "travel-sample",
           "namespace": "default",
@@ -740,22 +742,22 @@ AND v.flight LIKE 'UA%';
             "index_projection": {
               "primary_key": true
             },
-        "keyspace": "travel-sample",
-        "namespace": "default",
-        "spans": [
-          {
-            "exact": true,
-            "range": [
+            "keyspace": "travel-sample",
+            "namespace": "default",
+            "spans": [
               {
-                "high": "\"UB\"",
-                "inclusion": 1,
-                "low": "\"UA\""
+                "exact": true,
+                "range": [
+                  {
+                    "high": "\"UB\"",
+                    "inclusion": 1,
+                    "low": "\"UA\""
+                  }
+                ]
               }
-            ]
+            ],
+            "using": "gsi"
           }
-        ],
-        "using": "gsi"
-      }
 ...
 ----
 ====
