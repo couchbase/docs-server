@@ -146,6 +146,7 @@ The Query engine supports efficient predicate pushdown to indexes in the cases w
 Consider the following query, which finds all destination airports within 2000 miles of LAX.
 
 [[example-comp-explain]]
+.Composite Predicate with Range Scan
 ====
 .Index
 [source,n1ql]
@@ -192,6 +193,49 @@ include::example$services-and-indexes/indexes/pushdown-comp-plan.json[tag=index]
 include::example$services-and-indexes/indexes/pushdown-comp-plan.json[tag=final]
 ...
 ----
+
+=== Composite Predicate with Skip-Key Range Scan
+
+_(Introduced in Couchbase Server 6.5)_
+
+In <<example-comp-explain>> above, the query has a composite predicate on continuous leading index-keys, i.e. the index-keys `distance` and `sourceairport`, which occur together the start of the index definition.
+In Couchbase Server 6.5 and later, it is possible to push down a composite predicate on non-continuous leading index-keys.
+There must be a predicate on the first key in the index definition, and then on any of the subsequent index-keys.
+
+Consider the following query, which is a variant of the query in <<example-comp-explain>> above, and uses the same index.
+
+[[example-skip]]
+.Composite Predicate with Skip-Key Range Scan
+====
+.Query
+[source,n1ql]
+----
+EXPLAIN SELECT sourceairport
+FROM `travel-sample`
+USE INDEX (def_route_src_dst_dist)
+WHERE type = "route"
+AND distance < 2000 AND destinationairport = "LAX"; <1>
+----
+
+.Results
+[source,json]
+----
+include::example$services-and-indexes/indexes/pushdown-skip.json[tag=excerpt]
+...
+----
+====
+
+In this query:
+
+<1> The query has a range predicate on the first index-key `distance` and an equality predicate on the 3rd index-key `destinationairport`.
+There is no predicate on the 2nd index-key `sourceairport`.
+<2> The predicate is pushed-down to the indexer, as shown in the EXPLAIN query plan output.
+<3> The first element of `range[]` corresponds to the index-key `distance` with (`low`, `high`) values (`null`, `2000`) respectively.
+<4> The second element of `range[]` corresponds to the index-key `sourceairport` with no low or high bounds, i.e. a whole range scan.
+<5> The third element of `range[]` corresponds to the index-key `destinationairport` with (`low`, `high`) values (`"LAX"`, `"LAX"`) representing equals condition.
+
+By skipping the index-key that does not have a predicate, and including all the non-continuous index-keys that do have predicates, the query uses the index more effectively and reduces the number of documents that need to be fetched.
+This increases query preparation time a little, but vastly speeds up the execution of the query.
 
 == Pagination Pushdown
 
