@@ -7,16 +7,34 @@ Nodes are rebalanced with the `POST /controller/rebalance` HTTP method and URI.
 [#rest-cluster-rebalance-description]
 == Description
 
-To start a rebalance process, provide the `ejectedNodes` and `knownNodes` parameters.
-These parameters contain the list of nodes that have been marked to be ejected and the list of nodes that are known within the cluster.
+When one or more nodes have been brought into a cluster, or have been taken out of a cluster, _rebalance_ redistributes data and indexes among available nodes.
+The _cluster map_ is correspondingly updated and distributed to clients.
+The process occurs while the cluster continues to service requests for data.
 
-Retrieve information about ejected and known nodes by getting the current node configuration.
-This ensures that the client making the REST API request is aware of the current cluster configuration.
-Nodes should have been previously added or marked for removal as appropriate.
+The following parameters are used.
+
+* `knownNodes`.
+Must always be specified.
+Its value is a list containing all nodes that are in the cluster at the start of the rebalance process.
+
+* `ejectedNodes`.
+Must only be specified when one or more nodes are to be ejected from the cluster by the rebalance process.
+Its value is a list containing all nodes to be ejected.
+
+Therefore, node-list specified by `ejectedNodes` is a subset of that specified by `knownNodes`.
+If either value contains an unknown node, or if a node currently in the cluster is omitted from the value of `knownNodes`, the following error is returned:
+
+----
+{"mismatch":1}
+----
+
+If `knownNodes` is not specified and `ejectNodes` _is_ specified, the following error is returned:
+
+----
+{"empty_known_nodes":1}
+----
 
 === HTTP method and URI
-
-The information must be supplied via the `ejectedNodes` and `knownNodes` parameters as a `POST` operation to the `/controller/rebalance` endpoint.
 
 ----
 POST /controller/rebalance
@@ -30,48 +48,176 @@ curl -v -X POST -u [admin]:[password]
   [-d ejectedNodes | -d knownNodes]
 ----
 
-=== Examples
+== Examples
 
-*Curl request example for rebalancing new nodes in to a cluster:*
+The following examples demonstrate how to determine which nodes are currently in the cluster; how to rebalance, such that a node is ejected; how to return status on the ongoing rebalance; and how to re-add the ejected node to the cluster.
 
-----
-curl -v -X POST -u Administrator:password \
-'http://192.168.0.77:8091/controller/rebalance'\
--d 'knownNodes=ns_1@192.168.0.77,ns_1@192.168.0.56'
-----
 
-*Curl request example for rebalancing nodes out of a cluster:*
+=== Return Cluster Nodes
+
+To determine the nodes currently in the cluster, use the `GET /pools/default` HTTP method and URI.
+In this examine, the (extensive) output is piped to the `jq` tool for formatting, and the lines featuring the `hostname` filtered, to ensure readabiliy.
 
 ----
-curl -v -X POST -u Administrator:password \
-'http://192.168.0.77:8091/controller/rebalance'\
--d 'ejectedNodes=ns_1@192.168.0.56'
+curl  -u Administrator:password -X GET \
+http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
 ----
 
-*Raw HTTP request example:*
+The HTTP request contains the following:
+
+----
+GET /pools/default HTTP/1.1
+Host: 10.143.190.101:8091
+Authorization: Basic QWRtaW5pc3RyYXRvcjpwYXNzd29yZA==
+Accept: */*
+----
+
+The output contains the following lines, which specify all nodes in the cluster:
+
+----
+"hostname": "10.143.190.101:8091",
+"hostname": "10.143.190.102:8091",
+"hostname": "10.143.190.103:8091",
+----
+
+=== Rebalance Following Hard Failover
+
+The _Hard Failover_ of a node results in that node continuing to be a member of the cluster, but being unable to serve data.
+Since its active vBuckets are unavailable, corresponding replica vBuckets are promoted to active status on the still-available nodes.
+This means that data is still being served, but is imbalanced across the cluster.
+This requires rebalance.
+
+Specify all cluster-nodes in the `knownNodes` parameter, including the one or ones that have been failed-over hard:
+
+----
+curl  -u Administrator:password -v -X POST \
+http://10.143.190.101:8091/controller/rebalance \
+-d 'knownNodes=ns_1%4010.143.190.101%2Cns_1%4010.143.190.102%2Cns_1%4010.143.190.103'
+----
+
+The HTTP request contains the following:
 
 ----
 POST /controller/rebalance HTTP/1.1
-Authorization: Basic QWRtaW5pc3RyYXRvcjpUYW1zaW4=
-User-Agent: curl/7.24.0 (x86_64-apple-darwin12.0) libcurl/7.24.0 OpenSSL/0.9.8r zlib/1.2.5
-Host: 192.168.0.77:8091
+Host: 10.143.190.101:8091
+Authorization: Basic QWRtaW5pc3RyYXRvcjpwYXNzd29yZA==
+User-Agent: curl/7.43.0
 Accept: */*
-Content-Length: 63
+Content-Length: 115
 Content-Type: application/x-www-form-urlencoded
 ----
 
-=== Response codes
-
-The response is 200 (OK) if the operation was successfully submitted.
-
-If the wrong node information has been submitted, JSON with the mismatch error is returned:
+No object is returned.
+The failed-over node has been removed, and the data is now distributed evenly across the surviving nodes.
+This is confirmed by returning the current cluster nodes:
 
 ----
-{"mismatch":1}
+curl  -u Administrator:password -X GET \
+http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
+----
+
+This returns output that indicates which nodes are still in the cluster:
+
+----
+"hostname": "10.143.190.101:8091",
+"hostname": "10.143.190.102:8091",
+----
+
+=== Add a Node to a Cluster, then Rebalance
+
+Adding a node to a cluster is a two-step process.
+
+. The `POST /controller/addNode` HTTP method and URI are used to add the node.
+This allows service-deployment for the node to be specified.
+A placeholder username and password can be specified, when adding an unprovisioned node.
+
+. The `POST /controller/rebalance` HTTP method and URI are used to rebalance the added node into the cluster.
+Include the new node in the `knownNodes` node-list.
+
+For example, the following command adds node `10.143.1990.103` to the cluster from which it was removed, and deploys the Data Service to it:
+
+----
+curl -u Administrator:password -X POST \
+10.142.181.101:8091/controller/addNode \
+-d 'hostname=10.143.190.103&user=someName&password=somePassword&services=kv'
+----
+
+The HTTP request contains the following:
+
+----
+POST /controller/addNode HTTP/1.1
+Host: 10.142.181.101:8091
+Authorization: Basic QWRtaW5pc3RyYXRvcjpwYXNzd29yZA==
+User-Agent: curl/7.43.0
+Accept: */*
+Content-Length: 71
+Content-Type: application/x-www-form-urlencoded
+----
+
+If successful, this returns the following output, indicating that the node is now recognized as a member of the cluster:
+
+----
+{"otpNode":"ns_1@10.143.190.103"}
+----
+
+Next, the added node is rebalanced into the cluster, allowing it to take its share of data-distribution (since it is running the Data Service):
+
+----
+curl  -u Administrator:password -v -X POST \
+http://10.143.190.101:8091/controller/rebalance \
+-d 'knownNodes=ns_1%4010.143.190.101%2Cns_1%4010.143.190.102%2Cns_1%4010.143.190.103'
+----
+
+No object is returned.
+The cluster is now rebalanced.
+At the conclusion, the cluster can again be checked for its current membership:
+
+----
+curl  -u Administrator:password -X GET \
+http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
+----
+
+The output now includes the following:
+
+----
+"hostname": "10.143.190.101:8091",
+"hostname": "10.143.190.102:8091",
+"hostname": "10.143.190.103:8091",
+----
+
+=== Eject a Node
+
+To eject a node, use the `POST /controller/rebalance` HTTP method and URI.
+Specify the entire current node-list for the cluster as the value of the `knownNodes` parameter.
+Specify the list of nodes to be ejected as the value of the `ejectedNodes` parameter.
+
+For example, the following command ejects node `10.143.190.103` from the cluster:
+
+----
+curl  -u Administrator:password -v -X POST \
+http://10.143.190.101:8091/controller/rebalance \
+-d 'ejectedNodes=ns_1%4010.143.190.103' \
+-d 'knownNodes=ns_1%4010.143.190.101%2Cns_1%4010.143.190.102%2Cns_1%4010.143.190.103'
+----
+
+No object is returned.
+The response code is `200 (OK)`, on success.
+At the conclusion, the cluster can again be checked for its current membership:
+
+----
+curl  -u Administrator:password -X GET \
+http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
+----
+
+The output now includes the following:
+
+----
+"hostname": "10.143.190.101:8091",
+"hostname": "10.143.190.102:8091",
 ----
 
 [#rest-cluster-rebalance-getprogress]
-== Getting rebalance progress
+== Getting Rebalance Progress
 
 === HTTP method and URI
 
