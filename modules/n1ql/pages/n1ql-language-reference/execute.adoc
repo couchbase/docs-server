@@ -5,23 +5,44 @@
 [abstract]
 The EXECUTE statement executes a prepared statement.
 
+[[syntax]]
 == Syntax
 
 [subs="normal"]
 ----
-execute ::= EXECUTE _name_
+execute ::= EXECUTE _name_ [ USING _parameters_ ]
 ----
 
-image::n1ql-language-reference/execute.png["execute ::= 'EXECUTE' name"]
+image::n1ql-language-reference/execute.png["'EXECUTE' name ( 'USING' parameters )?"]
 
 name::
 The name of the prepared statement.
-This may be a UUID that was assigned automatically, or a name that was user-specified when the statement was created.
+This has the format `[host:port]local-name-or-UUID`, and may consist of:
 +
-An error is returned if the name does not identify a prepared statement.
+* Optionally, the host and port of the node where the prepared statement was created, in square brackets, followed by
+* The local name that you specified for the prepared statement, or a UUID that was assigned automatically.
+
++
+If present, the host and port are used for <<statement-retrieval>>.
 
 TIP: If the name of the prepared statement contains hyphens, wrap the entire name in backticks (`{backtick}`) or double quotation marks (`"`).
 
+=== USING Clause
+
+_(Introduced in Couchbase Server 6.5)_
+
+[Optional] The USING clause enables you to specify parameter values to use in the prepared statement.
+
+parameters::
+The parameter values to use in the prepared statement.
+This may be:
++
+* An array of values, for positional parameters, or
+* An object containing name / value properties, for named parameters.
+
+For more details, refer to <<parameters>> below.
+
+[[usage]]
 == Usage
 
 You can execute a prepared statement in three ways:
@@ -32,15 +53,62 @@ You can execute a prepared statement in three ways:
 
 * Using the xref:n1ql:n1ql-rest-api/index.adoc[Query REST API] (`/query/service` endpoint).
 
-All of these methods require you to specify the name of the prepared statement.
-With the last method, you can also include the encoded plan.
+[[statement-retrieval]]
+== Statement Retrieval
 
-If the name of the prepared statement is unrecognized, the query engine will decode and execute the prepared statement given by the encoded plan.
-The decoded prepared statement will be saved by the query engine so the next request that uses its name will succeed.
+The query engine first looks for the prepared statement on the currently connected node, using the local name or UUID.
+If the prepared statement is not found on the currently connected node, the query engine attempts to retrieve it from the node specified in the prepared statement name.
+Once retrieved, the query engine creates a local cached copy of the prepared statement, and executes it.
 
-When specified, the encoded plan should be the result of a prepared statement.
-An error is returned if the encoded plan cannot be converted to a valid plan.
+An error is returned if the name does not identify a prepared statement.
 
+[[auto-reprepare]]
+== Auto-Reprepare
+
+Before execution, the query engine checks whether the statement plan is still valid -- i.e. that all the indexes and keyspaces to which the plan refers are unchanged.
+If any indexes or keyspaces have changed, the statement is automatically prepared again, so that the plan matches the new set of resources.
+
+If this automatic reprepare succeeds, the statement simply executes as expected.
+However, if any required resources are found to be missing, execution of the affected prepared statement fails until those resources are created again.
+Once the resources are available again, execution proceeds without any further intervention.
+
+[[parameters]]
+== Parameters
+
+_(Introduced in Couchbase Server 6.5)_
+
+A prepared statement may contain parameters.
+These are replaced by a supplied value when the statement is executed.
+Parameters may be _named parameters_ or _positional parameters_.
+
+Named parameters are specified by name when the prepared statement is executed.
+In N1QL, named parameters are specified using an object containing name / value properties.
+
+====
+[source,N1QL]
+----
+EXECUTE NameParam
+USING {"city":"paris", "country":"france"};
+----
+====
+
+Positional parameters are specified by the position of each supplied parameter when the statement is executed.
+In N1QL, named parameters are specified using an array of values.
+
+====
+[source,N1QL]
+----
+EXECUTE NumParam
+USING ["paris", "france"];
+----
+====
+
+[NOTE]
+You can also specify named parameters and positional parameters using the N1QL REST API (`/query/service` endpoint) or the `cbq` command line tool.
+Named parameters can be specified as request-level parameters, and positional parameters can be specified using the `args` parameter.
+Refer to xref:settings:query-settings.adoc[Query Settings] for more information.
+
+[[examples]]
 == Examples
 
 .Executing a prepared statement in N1QL
@@ -187,64 +255,7 @@ $ curl -v http://localhost:8093/query/service -d 'prepared="fave_tweets"&$r=9.5'
 ----
 ====
 
-.Executing a prepared statement with the encoded plan using the REST API
-====
-The following example specifies a [.param]`name` for the prepared statement and the response includes an [.param]`encoded_plan`.
-
-.Request:
-[source,shell]
-----
-$ curl -v http://localhost:8093/query/service -d 'statement=PREPARE fave_tweets FROM SELECT text FROM tweets WHERE rating >= $r'
-----
-
-.Response
-[source,shell]
-----
-< HTTP/1.1 200 OK
-{
-  "requestID": "a339a496-7ed5-4625-9c64-0d7bf584a1bd",
-  "signature": "json",
-  "results": [
-  {   "encoded_plan": "H4sIAAAJbogA/5yRQU/6QBDFvwpZ/gdIIAAA==",
-        "name": "fave_tweets",
-        "operator": {
-        // and so on
-        ...
-----
-
-The following example uses the [.param]`name` and [.param]`encoded_plan` from the example above to run the prepared statement.
-
-.Request
-[source,shell]
-----
-$ curl -v http://localhost:8093/query/service -H "Content-Type: application/json" -d '{ "prepared":"fave_tweets", "encoded_plan":"H4sIAAAJbogA/5yRQU/6QBDFvwpZ/gdIIAAA==", "$r":9.5 }'
-----
-
-.Response
-[source,shell]
-----
-< HTTP/1.1 200 OK
-{
- "requestID": "1bd9956b-bc8e-478a-bd84-3955fe2db047",
- "signature": {
- "text": "json"
- },
- "results": [
-  {
-   "text": "Couchbase is my favorite database"
-   }
-   ],
-  "status": "success",
-  "metrics": {
-  "elapsedTime": "1.527795ms",
-  "executionTime": "1.443748ms",
-  "resultCount": 0,
-  "resultSize": 0
-   }
- }
-----
-====
-
+[[related]]
 == Related
 
 * For information on preparing a statement for execution, refer to xref:n1ql-language-reference/prepare.adoc[PREPARE].
