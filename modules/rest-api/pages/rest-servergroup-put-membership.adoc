@@ -1,68 +1,133 @@
-= Updating Server Group Memberships
+= Updating Group Membership
 :page-topic-type: reference
 
 [abstract]
-To change server group membership, use the `PUT /pools/default/serverGroups` HTTP method and URI.
+Server group membership is changed by means of the `PUT /pools/default/serverGroups` HTTP method and URI.
 
+[#http-method-and-uri]
 == HTTP method and URI
 
 ----
 PUT /pools/default/serverGroups?rev=<:number>
 ----
 
-`PUT /pools/default/serverGroups?rev=<:number>` updates the server’s group memberships.
-In the following examples, the group name is optional.
-If the group name is provided, it _must_ match the current group name.
-All servers must be mentioned and _all_ groups must be mentioned.
-The URI is used to identify the group.
+[#description]
+== Description
 
-This request moves servers from one server group to another.
-This request does not permit server group renaming or removal.
-In this example, the servers for Group 2 are moved to Group 1.
+This changes the membership of the groups that currently exist for the specified cluster.
+It does not permit the creation, removal, or renaming of groups.
+Every existing node must be specified once, and thereby assigned to an existing group.
+Groups to which no nodes are assigned must be specified as empty.
 
-The following is the group information that is needed to update the server and server group memberships:
+This node-to-group assignment must be specified as a JSON document: when `curl` is used, the document can be specified either explicitly, as a parameter-value on the command-line; or as a `.json` file.
+
+The request is transactional: it either succeeds completely, or fails without impact.
+
+See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness], for a conceptual overview of groups.
+
+[#curl-syntax]
+== Curl Syntax
+
+----
+curl -d @<jsonInput> -X PUT
+-u <administrator>:<password>
+http://<host>:<port>/pools/default/serverGroups?rev=<number>
+----
+
+The syntax includes the following:
+
+* `jsonInput`.
+The new configuration of nodes and groups, provided as a JSON document.
+When `curl` is used, the document can be provided either explicitly, as a parameter-value on the command-line; or as a `.json` file.
+See below for information on format.
+
+* `rev=<number>`.
+The _revision number_ for the existing configuration.
+This number can be retrieved by means of the `GET /pools/default/serverGroups` HTTP method and URI: see xref:rest-api:rest-servergroup-get.adoc[Getting Server Group Information].
+Note that this number changes whenever the configuration changes.
+
+[#configuration-statement]
+== Node-to-Group Assignment
+
+The following JSON document assigns all three of a cluster's nodes to the first of its two groups, thereby leaving the second group empty.
 
 ----
 {
-   "groups": [( { ("name": <groupName:string>,)?
-   "uri": "/pools/default/serverGroups/"<uuid>,
-   "nodes": [(<otpNode>)*]
+  "groups": [
+  {
+    "nodes": [
+      {"otpNode": "ns_1@10.143.190.101"},
+      {"otpNode": "ns_1@10.143.190.102"},
+      {"otpNode": "ns_1@10.143.190.103"}
+    ],
+    "name": "Group 1",
+    "uri": "/pools/default/serverGroups/0"
+  },
+  {
+    "nodes": [],
+    "name": "Group 2",
+    "uri": "/pools/default/serverGroups/3b66b3c3177f44a3ffa6771ffeb31f36"
+    }
+  ]
 }
 ----
 
-NOTE: The PUT request is transactional.
-The request either succeeds completely or fails without impact.
-If all nodes or groups are not passed, a generic error message: "Bad input" occurs and the server group is removed.
+The value of the `groups` key is an array, each of whose elements is an object that corresponds to one of the server groups for the cluster.
+Each group must be specified with the following:
 
-== Syntax
+* `nodes`.
+An array of the nodes in the group.
+Each node is specified with the key `otpNode` and the value `ns_1@node-ip-address`.
+
+* `uri`.
+The URI for the server group.
+This can be retrieved with the `GET /pools/default/serverGroups` HTTP method and URI: see xref:rest-api:rest-servergroup-get.adoc[Getting Server Group Information].
+Each URI is terminated with the unique UUID string for the group: for the default group, `Group 1`, this is always `0`.
+
+Optionally, the `name` of the group can be specified.
+This must correspond exactly to the current, established name of the group.
+This method _cannot_ be used to change that name.
+
+[#responses]
+== Responses
+Success gives `200 OK`, and returns an empty array.
+Malformed JSON, or failure to address all existing nodes, groups and group-names accurately, gives `400 BAD REQUEST`, and returns a `Bad input` array, containing the submitted JSON document.
+Failure to authenticate gives `401 Unauthorized`.
+
+[#examples]
+== Examples
+
+In the following examples, the cluster is considered to have two groups defined:
+
+* _Group 1_ contains nodes `10.143.190.101` and `10.143.190.102`.
+
+* _Group 2_ contains the node `10.143.190.103`.
+
+The JSON document shown above, in xref:rest-api:rest-servergroup-put-membership.adoc#configuration-statement[Node-to-Group Assignment], can thus be used to locate all nodes in _Group 1_, leaving _Group 2_ empty.
+
+The JSON document can be specified as a file, as follows:
 
 ----
-curl -d @<inputFile> -X PUT
-  -u <administrator>:<password>
-  http://<host>:<port>/pools/default/serverGroups?rev=<number>
+curl -d@groupChangeDefinition.json -X PUT \
+http://Administrator:password http://10.143.190.101:8091/pools/default/serverGroups?rev=112632175
 ----
 
-== Example
-
-In this example, a JSON file is used.
+Alternatively, the JSON document can be provided explicitly, on the command line.
 
 ----
-curl -d@file.json -X PUT \
-  http://Administrator:asdasd@192.168.0.1:8091/pools/default/serverGroups?rev=120137811
+curl -u Administrator:password -X PUT \
+http://10.143.190.101:8091/pools/default/serverGroups?rev=112632175 \
+-d '{"groups": [{"nodes": [{"otpNode": "ns_1@10.143.190.101"}, {"otpNode": "ns_1@10.143.190.102"}, {"otpNode": "ns_1@10.143.190.103"}], "name": "Group 1", "uri": "/pools/default/serverGroups/0"}, {"nodes": [], "name": "Group 2", "uri": "/pools/default/serverGroups/3b66b3c3177f44a3ffa6771ffeb31f36"}] }'
 ----
 
-In this example, the JSON data is provided on the command line.
+Each of these commands moves the node `10.143.190.103` into Group 1.
 
-----
-curl -v -X PUT \
-  -u Administrator:password \
-  http://192.168.171.144:8091/pools/default/serverGroups?rev=28418649 \
-  -d '{"groups": \
-      [{"nodes": [{"otpNode": "ns_1@192.168.171.144"}, \
-                  {"otpNode": "ns_1@192.168.171.145"}], \
-        "name": "Group 1", \
-        "uri": "/pools/default/serverGroups/0"}, \
-       {"nodes": [], \
-        "name": "Group 2", \
-        "uri": "/pools/default/serverGroups/3ca074a8456e1d4940cfa3b7badc1e22"}] }'
-----
+To check results, use the `GET /pools/default/serverGroups` HTTP method and URI: see xref:rest-api:rest-servergroup-get.adoc[Getting Server Group Information].
+
+[#see-also]
+== See Also
+
+See xref:rest-api:rest-servergroup-get.adoc[Getting Server Group Information] for getting information on the current node-to-group configuration for the server.
+See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness], for a conceptual overview of groups.
+See xref:manage:manage-groups/manage-groups.adoc[Manage Groups], for examples of managing groups by means of Couchbase Web Console.
+See xref:rest-api:rest-servergroup-post-add.adoc[Adding Servers to Server Groups], for information on adding nodes to groups.
