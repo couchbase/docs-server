@@ -901,11 +901,11 @@ cbq> PREPARE example1 FROM SELECT * FROM `travel-sample` LIMIT 1 ;
 ],
 "status": "success",
 "metrics": {
-"elapsedTime": "1.550053ms",
-"executionTime": "1.534731ms",
-"resultCount": 1,
-"resultSize": 3922
-}
+  "elapsedTime": "1.550053ms",
+  "executionTime": "1.534731ms",
+  "resultCount": 1,
+  "resultSize": 3922
+  }
 }
 ----
 
@@ -1287,7 +1287,9 @@ DELETE FROM system:prepareds;
 [#sys-completed-req]
 == system:completed_requests
 
-This catalog maintains a list of the most recent completed requests that have run longer than a predefined threshold of time.
+By default, this catalog maintains a list of the most recent completed requests that that have run longer than a predefined threshold of time.
+(You can also log completed requests that meet other conditions that you define.)
+
 For each completed request, this catalog maintains information such as requestId, statement text, prepared name (if prepared statement), request time, service time, and so on.
 This information provides a general insight into the health and performance of the query engine and the cluster.
 Note that most field names and meanings match exactly those of `system:active_requests`.
@@ -1495,39 +1497,119 @@ To purge the completed requests for a given time period, use:
 DELETE FROM system:completed_requests WHERE requestTime LIKE "2015-09-09%";
 ----
 
+=== Configure the Completed Requests
 
-To purge the completed requests for a given time period, use
+You can configure the `system:completed_requests` keyspace by specifying parameters through the Admin API settings endpoint.
 
-[source,json]
+In Couchbase Server 6.5 and later, you can specify the conditions for completed request logging using the `completed` field.
+
+This field takes a JSON object containing the names and values of logging qualifiers.
+Completed requests that meet the defined qualifiers are logged.
+
+[source,console]
 ----
-DELETE FROM system:completed_requests
-requests WHERE requests.time LIKE "2015-09-09%";requests
-              WHERE requests.Time LIKE "2015-09-09%";
+$ curl http://localhost:8093/admin/settings -u Administrator:password -H 'Content-Type: application/json' -d '{"completed": {"user": "marco", "error": 12003}}'
 ----
 
-=== Configuring the system:completed_requests keyspace
+==== Logging Qualifiers
 
-You can configure the `system:completed_requests` keyspace by specifying the parameters through the Admin API settings endpoint.
+You can specify the following logging qualifiers.
+A completed request is logged if _any_ of the qualifiers are met (logical OR).
 
-The JSON parameter accepts two new fields: [.param]`completed-threshold` and [.param]`completed-limit`.
+[horizontal]
+threshold:: The execution time threshold in milliseconds.
+aborted:: Whether to log requests that generate a panic.
+error:: Log requests returning this error number.
+client:: Log requests from this IP address.
+user:: Log requests with this user name.
+context:: Log requests with this client context ID.
 
-[.param]`completed-threshold`:: Sets the minimum request duration after which requests are added to the `system:completed_requests` catalog.
+For full details, refer to xref:settings:query-settings.adoc#_logging_parameters[Logging parameters].
+
+The basic syntax adds a qualifier to the logging parameters, i.e. any existing qualifiers are not removed.
+
+You can change the value of a logging qualifier by specifying the same qualifier again with a new value.
+
+To add a new instance of an existing qualifier, use a plus sign (`+`) before the qualifier name, e.g. `+user`.
+
+To remove a qualifier, use a minus sign (`-`) before the qualifier name, e.g. `-user`.
+
+For example, the following request will add user `simon` to those tracked, and remove error `12003`.
+
+[source,console]
+----
+$ curl http://localhost:8093/admin/settings -u Administrator:password -H 'Content-Type: application/json' -d '{"completed": {"+user": "simon", "-error": 12003}}'
+----
+
+Similarly, you could remove all logging by execution time with the following request, as long as the value matches the existing threshold.
+
+[source,console]
+----
+$ curl http://localhost:8093/admin/settings -u Administrator:password -H 'Content-Type: application/json' -d '{"completed": {"-threshold": 1000}}'
+----
+
+==== Tagged Sets
+
+You can also specify qualifiers that have to be met as a group for the completed request to be logged (logical AND).
+
+To do this, specify the `tag` field along with a set of qualifiers, like so:
+
+[source,console]
+----
+$ curl http://localhost:8093/admin/settings -u Administrator:password -H 'Content-Type: application/json' -d '{"completed": {"user": "marco", "error": 12003, "tag": "both_user_and_error"}}'
+----
+
+In this case, the request will be logged when both user and error match.
+
+The tag name can be any string that is meaningful and unique.
+Requests that match a tagged set of conditions are logged with a field `~tag`, which is set to the name of the tag.
+
+To add a qualifier to a tagged set, specify the tag name again along with the new qualifier:
+
+[source,console]
+----
+$ curl http://localhost:8093/admin/settings -u Administrator:password -H 'Content-Type: application/json' -d '{"completed": {"client": "172.1.2.3",  "tag": "both_user_and_error"}}'
+----
+
+You cannot add a new instance of an existing qualifier to a tagged set using a plus sign (`+`) before the qualifier name.
+For example, you cannot add a `user` qualifier to a tagged set that already contains a `user` qualifier.
+If you need to track two users with the same error, create two tagged sets, one per user.
+
+You can remove a qualifier from a tagged set using a minus sign (`-`) before the qualifier name, e.g. `-user`.
+When you remove the last qualifier from a tagged set, the tagged set is removed.
+
+[NOTE]
+--
+You can specify multiple tagged sets.
+In this case, completed requests are logged if they match all of the qualifiers in any of the tagged sets.
+
+You can also specify a mixture of tagged sets and individual qualifiers.
+In this case, completed requests are logged if they match any of the individual qualifiers, or all of the qualifiers in any of the tagged sets.
+--
+
+==== Completed Threshold
+
+The [.param]`completed-threshold` field provides another way of specifying the `threshold` qualifier within the `completed` field.
+
+This field sets the minimum request duration after which requests are added to the `system:completed_requests` catalog.
 The default value is 1000ms.
 Specify [.in]`0` to log all requests and [.in]`-1` to not log any requests to the keyspace.
-+
+
 To specify a different value, use:
-+
+
 [source,console]
 ----
 $ curl http://localhost:port/admin/settings -H 'Content-Type: application/json' -d '{"completed-threshold":0}' -u user:pword
 ----
 
-[.param]`completed-limit`:: Sets the number of most recent requests to be tracked in the `system:completed_requests` catalog.
+==== Completed Limit
+
+The [.param]`completed-limit` field sets the number of most recent requests to be tracked in the `system:completed_requests` catalog.
 The default value is 4000.
 Specify [.in]`0` to not track any requests and [.in]`-1` to set no limit.
-+
+
 To specify a different value, use:
-+
+
 [source,console]
 ----
 $ curl http://localhost:port/admin/settings -H 'Content-Type: application/json' -d '{"completed-limit":1000}' -u user:pword
