@@ -1,0 +1,154 @@
+= Durability
+
+[abstract]
+_Durability_ ensures the greatest likelihood of data-writes surviving unexpected anomalies, such as node-outages.
+
+[#understanding-durability]
+== Understanding Durability
+
+Clients writing to Couchbase-Server can optionally specify durability requirements; which instruct Couchbase Server to update the specified document on multiple nodes in memory and/or disk locations across the cluster; before considering the write to be committed.
+The greater the number of memory and/or disk locations specified in the requirements, the greater the level of durability achieved.
+
+Once the write has been committed as specified by the requirements, Couchbase Server notifies the client of success.
+If commitment was not possible, Couchbase Server notifies the client of failure; and the data retains its former value throughout the cluster.
+
+Couchbase Server supports durability for single-document writes only.
+This form of write is referred to as a _durable_ or _synchronous_ write.
+
+[#durability-benefits-and-costs]
+== Benefits and Costs
+
+Durability allows developers to distinguish between regular and durable writes.
+
+* A _regular_ write is _asynchronous_, and is not supported by durability.
+Such a write may be appropriate when writing only a small amount of data, the loss of which would produce only a minor inconvenience.
+
+* A _durable_ write is _synchronous_, and is supported by durability.
+Such a write may be appropriate when saving a large amount of data, the loss of which could have a considerable, negative impact on the user, and possibly on the system as a whole.
+
+Note that in most cases, a durable write takes significantly longer than a regular write; due to the increased amount of either replication or persistence it demands from Couchbase Server, prior to completion.
+Application-performance might therefore suffer, if durable writes are used to excess.
+
+[#majority]
+== Majority
+
+Client-specified durability requirements use the concept of _majority_, to indicate the number of configured Data Service nodes to which commitment is required, based on the number of replicas defined for the bucket.
+The correspondences are as follows:
+
+[cols="2,2"]
+|===
+| Number of Replicas | Number of Nodes Required for Majority
+
+| 0
+| 1
+
+| 1
+| 2
+
+| 2
+| 2
+
+| 3
+| 3
+|===
+
+[#durability-requirements]
+== Durability Requirements
+
+The durability requirements specified by a client are:
+
+* _Level_.
+The level of durability required.
+The possible values are:
+
+** _majority_.
+The mutation must be replicated to (that is, held in the bucket's memory on) a majority of the Data Service nodes.
+
+** _majorityAndPersistActive_.
+The mutation must be replicated to a majority of the Data Service nodes.
+Additionally, it must be _persisted_ (that is, written and synchronised to disk) on the node hosting the active vBucket for the data.
+
+** _persistToMajority_.
+The mutation must be persisted to a majority of the Data Service nodes.
+Accordingly, it will be written to disk on those nodes.
+
+* _Timeout_.
+The number of milliseconds within which the durability requirements must be met.
+If not specified, a server-defined default is used.
+If the number is exceeded, the entire synchronous write is aborted.
+
+[#process-and-communication]
+== Process and Communication
+
+A durable write is atomic.
+Client-reads of the value undergoing a durable write return the value that precedes the durable write.
+Clients that attempt to write to a key whose value is undergoing a durable write receive an error message from the active node, and may retry.
+
+[#durable-write-lifecycle]
+The lifecycle of a durable write is shown by the following, annotated diagram; which shows multiple clients' attempts to update and read a value, with the timeline moving from left to right.
+
+image::data/durabilityDiagram.png[,780,align=left]
+
+The annotations are as follows:
+
+. Client 1 specifies durability requirements for a durable write, to change a key’s existing value, of a, to b.
+
+. The Active Node receives the request, and the durable write process is initiated.
+During the course of the durable write, Couchbase Server attempts to meet the client’s specified durability requirements.
+
+. During the durable write process, Client 2 performs a read on the value undergoing the durable write.
+Couchbase Server returns the value, a,  that preceded the durable-write request.
+
+. During the durable-write process, Client 3 attempts either a durable write or an regular write on the value that is already undergoing durable write.
+Couchbase Server returns an error.
+(See below for information on regular writes.)
+
+. At the point the mutation has met the specified durability requirements, the Active Node commits the durable write, and sends a status response of SUCCESS to Client 1.
+
+. After the durable-write process, Client 2 performs a second read on the the value.
+Couchbase Server returns the value, b, committed by the durable write.
+Indeed, from this point, all clients see the value b.
+If Couchbase Server aborts a durable write, all mutations to active and replica vBuckets in memory and on disk are rolled back, and all copies of the data are reverted to their value from before the data-write.
+Couchbase Server duly informs the client with an error message.
+See xref:learn:data/durability.adoc#failure-scenarios[Failure Scenarios], below.
+
+In some circumstances, rather than acknowledging to a client that the durable write has been either committed or aborted, Couchbase Server acknowledges an ambiguous outcome: for example, due to the client-specified timeout having elapsed.
+
+A client that specifies durability requirements should not disconnect from the server before receiving acknowledgement of the durable write’s success or failure.
+
+Subsequent to a durable write’s commitment and due acknowledgement, Couchbase Server continues the process of replication and persistence, until all active and replica vBuckets, both in memory and on disk, have been appropriately updated across all nodes.
+
+[#regular-writes]
+== Regular Writes
+
+If a client writes data to Couchbase Server without specifying durability requirements, this is considered a _regular_ (that is _asynchronous_) write.
+By default, no durability requirement is imposed.
+The client receives acknowledgment of a successful write as soon as the data is in memory, on the node hosting the active vBucket.
+A regular write provides no guarantee of durability.
+
+[#failure-scenarios]
+== Failure Scenarios
+
+A durable write fails in the following situations:
+
+. _Server timeout exceeded_.
+The active node aborts the durable write, issues an undo request to all replica nodes, and informs the client that the durable write has had an ambiguous result.
+
+. _Replica node fails while SyncWrite is pending (that is, before the active node can identify whether the node hosted a replica)_.
+If enough alternative replica nodes can be identified, the durable write can proceed.
+Otherwise, the active node waits until a server-side timeout has expired; then aborts the durable write, and duly informs the client.
+
+. _Active node fails while SyncWrite is pending_.
+This disconnects the client, which must assume that the result of the durable write has proved ambiguous.
+If the active node is failed over, a replica is promoted from a replica node: depending on how advanced the durable write was at the time of active-node failure, the durable write may proceed.
+
+. _Write while SyncWrite is pending_.
+A client that attempts a durable or an asynchronous write on a key whose value is currently undergoing a durable write receives a corresponding error message.
+The client may retry.
+
+[#rebalance]
+== Rebalance
+
+The _rebalance_ process moves active and replica vBuckets across nodes, to ensure optimal availability.
+During the process, clients’ access to data is uninterrupted.
+The durable-write process is likewise uninterrupted by rebalance, and continues throughout the rebalance process.
