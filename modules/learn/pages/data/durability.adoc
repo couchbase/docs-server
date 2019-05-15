@@ -6,8 +6,8 @@ _Durability_ ensures the greatest likelihood of data-writes surviving unexpected
 [#understanding-durability]
 == Understanding Durability
 
-Clients writing to Couchbase-Server can optionally specify durability requirements; which instruct Couchbase Server to update the specified document on multiple nodes in memory and/or disk locations across the cluster; before considering the write to be committed.
-The greater the number of memory and/or disk locations specified in the requirements, the greater the level of durability achieved.
+Clients writing to Couchbase Server can optionally specify _durability requirements_; which instruct Couchbase Server to update the specified document on multiple nodes in memory and/or disk locations across the cluster; before considering the write to be committed.
+The greater the number of memory and/or disk locations specified in the requirements, the greater the level of _durability_ achieved.
 
 Once the write has been committed as specified by the requirements, Couchbase Server notifies the client of success.
 If commitment was not possible, Couchbase Server notifies the client of failure; and the data retains its former value throughout the cluster.
@@ -153,18 +153,27 @@ The _rebalance_ process moves active and replica vBuckets across nodes, to ensur
 During the process, clients’ access to data is uninterrupted.
 The durable-write process is likewise uninterrupted by rebalance, and continues throughout the rebalance process.
 
-[#protection-guarantees]
-== Protection Guarantees
+[#protection-guarantees-overview]
+== Protection Guarantees: Overview
 
 When the durable-write process is complete, the application is notified that _commitment_ has occurred.
 During the time-period that starts at the point of commitment, and lasts until the point at which the new data has been fully propagated throughout the cluster (this being potentially but not necessarily later than the point of commitment), if an outage occurs, the new data is guaranteed to be protected from loss &#8212; _within certain constraints_.
 The constraints are related to the _level_ of durability specified by the client, the nature of the outage, and the number of replicas.
+The guarantees and associated constraints are stated on this page, below.
 
-The guarantees and associated constraints are stated below.
-Note that certain scenarios assume that xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover] has been configured, such than a non-responsive node is removed from the cluster, and active vBuckets thereby lost are replaced by the promotion of replica vBuckets, on the surviving nodes.
+[#protection-guarantees-automatic-failover]
+=== Protection Guarantees: Automatic Failover
 
-[#protection-guarantee-1-replica]
-=== One Replica
+xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover] removes a non-responsive node from the cluster automatically, following an administrator-configured timeout.
+Active vBuckets thereby lost are replaced by the promotion of replica vBuckets, on the surviving nodes.
+A maximum of three sequential automatic failovers can be configured to occur.
+
+In cases where persistence-based commitment has occurred without (as yet) propagation of the new data to the remaining nodes, if outages render non-communicative the nodes that contain the new data, failover of those nodes results in the data's loss &#8212; since no updated replica vBuckets yet exist elsewhere on the cluster.
+
+To prevent this, and thereby maintain guaranteed protection, at least one of the non-communicative nodes containing the new data should _not_ be failed over; and auto-failover should be configured to occur sequentially only up to the number of times that supports this requirement.
+
+[#protection-guarantees-1-replica]
+== Protection Guarantees: One Replica
 
 When one replica has been defined, from the point of commitment until the new data has been fully propagated across the cluster, protection guarantees are as follows:
 
@@ -205,6 +214,15 @@ The replica vBucket is promoted to active status on the replica node, and the th
 | The new data is lost from the active node, but exists in the memory and on the disk of the replica node; and is promoted there to active status.
 Subsequently, the former replica node itself goes offline, and the new data is temporarily unavailable. However, when the former replica node has restarted, the new data again becomes available, retrieved from disk.
 
-Note that after the former replica node has gone offline, its auto-failover could not be assumed to allow the new data to survive; since the new data might not yet have been propagated to any other node.
+To ensure auto-failover does not conflict with guaranteed protection, when two replicas have been configured, establish `1` as the maximum number of sequential automatic failovers that can take place without administrator intervention.
 
 |===
+
+[#protection-guarantees-2-replicas]
+== Protection Guarantees: Two Replicas
+
+The durability protection guarantees for two replicas are identical to those described above, for xref:learn:data/durability.adoc#protection-guarantees-1-replica[One Replica].
+This is because _majority_ is `2` for both cases: see the table in xref:learn:data/durability.adoc#majority[Majority], above.
+Commitment therefore occurs without the second replica being guaranteed an update.
+
+To ensure auto-failover does not conflict with guaranteed protection, when two replicas have been configured, establish `1` as the maximum number of sequential automatic failovers that can take place without administrator intervention.
