@@ -1,129 +1,161 @@
-= XDCR Filtering
+= XDCR Advanced Filtering
 
 [abstract]
-XDCR Filtering allows a limited subset of documents to be replicated from the source bucket.
+XDCR Advanced Filtering allows specified subsets of documents to be replicated from the source bucket.
 
 [#configure-xdcr-filering]
-== Configuring XDCR Filtering
+== Understanding XDCR Advanced Filtering
 
-Full, Cluster, and XDCR Administrators can configure XDCR filtering.
+_XDCR filtering_ allows a document to be included in or excluded from a filtered replication, based on the document's fields and values.
 
-The _filtering expression_ is a regular expression that is applied to document keys on the source cluster: those document keys returned by
-the filtering process correspond to documents that will be replicated to the target.
+Case-sensitive matches can be made on:
 
-Multiple filtering expressions can be used by a single replication: the expressions should be `ORed`, as follows: `filterExpression0|filterExpression1`.
-For example, the expression `airline|hotel` would match both `unitedairline` and `marriothotel`.
+* _id_ and _xattrs_ values, within the document's _metadata_.
 
-Filtering is established when a replication is created, by means of the Couchbase Web Console, CLI, or REST API.
-Once established, the filtering expression for a replication cannot be modified: the replication must be deleted, and a new replication created.
+* Field-names and values, within the document's _data_, nested to any degree.
 
-It is important to avoid conditions where two replications to the same destination overlap partially or fully.
-If an overlap occurs, it will waste machine resources since a single key gets replicated multiple times.
-Overlapping filtering expressions cannot guarantee which of the two replications will replicate the overlapping key instance to the destination faster.
+Every document on which a match is successfully made is included in the filtered replication.
+Other documents are _not_ included.
 
-Filtering does not impact conflict resolution and can be used with either the _revision-based_ or the _timestamp-based_ conflict resolution policy.
-Filtering does not affect the ability to pause and resume replications.
+Match-requirements are specified by means of:
 
-== XDCR Regular Expressions
+* _Regular Expressions_.
+These can be used to specify case-sensitive character-matches, and thereby determine whether a field-name or value may entitle a document to be included in a replication.
+See the reference information provided in xref:xdcr-reference:xdcr-regular-expressions.adoc[XDCR Regular Expressions].
 
-The following JavaScript regular expressions (RegExes) can be used for XDCR filtering.
-Note that regular expressions are case-sensitive: a lowercase '[.code]``a``' is distinct from an uppercase '[.code]``A``'.
-You can enclose a range of characters in square brackets, to match against all of those characters.
+* _Filtering Expressions_.
+These allow comparisons and calculations to be made on the fields and values identified by means of _regular_ expressions: based on the results, a document either is or is not included in a replication.
+See the reference information provided in
+xref:xdcr-reference:xdcr-filtering-expressions.adoc[XDCR Filtering Expressions].
 
-[cols="1,4"]
-|===
-| Expression | Description
+Note that fields and values on which matches are to be made should typically be kept immutable.
+If the fields or values of a given document are changed after a replication has started (see xref:learn:clusters-and-availability/xdcr-filtering.adoc#filter-expression-editing[Filter-Expression Editing], below), such a document may no longer meet the criterion for replication, and so go unreplicated in its new form &#8212; and yet may already reside in its _previous_ form on the target cluster; since it formerly met the criterion, and was duly replicated.
+In consequence, a single document would be maintained with a different value on each cluster.
 
-| `[tT]here`
-| Matches against 'There' and 'there'
+This page explains XDCR Advanced Filtering at a conceptual level.
+For the practical steps involved, see xref:manage:manage-xdcr/filter-xdcr-replication.adoc[Filter a Replication].
+See also the information provided in the xref:xdcr-reference:xdcr-filtering-reference-intro.adoc[XDCR Advanced Filtering Reference].
 
-| `[ ]`
-| Can be used on a range of characters separated by a `-` character.
+== No Filter Applied
 
-| `[0-9]`
-| Matches any digit.
+When no filter is applied, all documents in the specified source bucket are replicated to the specified target bucket.
+For example:
 
-| `[A-Z]`
-| Matches any uppercase alpha character.
+.Replication with no filter applied
+image::xdcr/filter-replication-diagram-1.png[,720,align=left]
 
-| `[A-Za-z0-9]`
-| Matches any alphanumeric character.
+The replication _R_ specifies as its source _Source Bucket_, on the _Source Cluster_; and specifies as its target _Target Bucket_, on the _Target Cluster_.
+The replication specifies no filter.
 
-| `^`
-| Matches beginning of input.
-If the multi-line flag is set to `true`, also matches immediately after a line-break character.
-For example, `/^A/` does not match the '[.code]``A``' in "[.code]``an A``", but does match the '[.code]``A``' in "[.code]``An E``".
+When it starts, the replication examines the documents in the source bucket, which are `airline_10` and `airport_8835`.
+Since no filter is applied, both documents are suitable for replication, and are duly replicated to the _Target Bucket_.
 
-The '[.code]``^``' has a different meaning when it appears as the first character in a character set pattern.
-See https://developer.mozilla.org/en/docs/Web/JavaScript/Guide/Regular_Expressions#special-negated-character-set[complemented character sets^] for details and an example.
+== Filter Applied
 
-It can also be used as a "[.code]``not``" character, therefore `[^0-9]` matches against any character that is not a digit.
-|===
+When a filter is applied, on those documents whose fields or values provide a successful match are included in the replication.
+For example:
 
-Ranges can be used to specify a group of characters.
-The following shortcuts are also available:
+.Replication with filter applied
+image::xdcr/filter-replication-diagram-2.png[,720,align=left]
 
-[cols="1,4"]
-|===
-| Expression | Description
+The replication  _R_ specifies as its source _Source Bucket_, on the _Source Cluster_; and specifies as its target _Target Bucket_, on the _Target Cluster_.
+The replication specifies a filter: this requires that a document have a `type` field, whose value is a string that contains the substring `air`, and that this be followed by the substring `l`.
+For details on this kind of expression (referred to as _positive lookahead_), see the reference provided for xref:xdcr-reference:xdcr-filtering-expressions.adoc[XDCR Filtering Expressions].
 
-| `.`
-| Matches against any character.
+When it starts, the replication examines the documents in the source bucket.
+The document `airline_10` has a `type` field whose value provides a successful match; therefore, the document is replicated.
+The document `airport_8835` does have a `type` field, but its value does not contain a string that provides a successful match; therefore, the document is _not_ replicated.
 
-| `\d`
-| Matches against a digit [0-9].
-***
+== Multiple Filters Applied
 
-| `\D`
-| Matches against a non-digit `[^0-9]`.
-***
+_Multiple Filters_ can be applied in either of two ways:
 
-| `\s`
-| Matches against a whitespace character (such as a tab, space, or line-feed character).***
+* By means of ORing, within a single replication.
+This allows a document to be replicated if any one of the specified filters makes a successful match.
+For information, see the xref:xdcr-reference:xdcr-filtering-reference-intro.adoc[XDCR Advanced Filtering Reference].
 
-| `\S`
-| Matches against a non-whitespace character.***
+* By means of individual or multiple ORed filters, specified across multiple replications.
+For example:
 
-| `\w`
-| Matches against an alphanumeric character `[a-zA-Z_0-9]`.***
+.Replication with multiple filters applied simultaneously
+image::xdcr/filter-replication-diagram-3a.png[,720,align=left]
 
-| `\W`
-| Matches against a non-alphanumeric character.***
+The replication  _R1_ specifies as its source _Source Bucket_, on the _Source Cluster_; and specifies as its target _Target Bucket 1_, on the _Target Cluster 1_.
+The replication specifies a filter: as in the previous example, this requires that a document have a `type` field, whose value is a string that contains the substring `air`, and that this be followed by the substring `l`.
 
-| `\xhh`
-| Matches against a control character (for the hexadecimal character `hh`).***
+When it starts, the replication examines the documents in the source bucket.
+The document `airline_10` has a `type` field whose value provides a successful match; therefore, the document is replicated to _Target Bucket 1_.
+The document `airport_8835` does have a `type` field, but its value does not contain a string that provides a successful match; therefore, the document is _not_ replicated.
 
-| `\uhhhh`
-| Matches against a Unicode character (for the hexadecimal character `hhhh`).***
-|===
+As _R1_, the replication _R2_ specifies as its source _Source Bucket_, on the _Source Cluster_.
+However, it specifies as its target _Target Bucket 2_, on the _Target Cluster 2_.
+The replication specifies a filter: this requires that a document have a `type` field, whose value is a string that contains the substring `air`, and that this be followed by the substring `p`.
 
-Note that since the backslash character is used to denote a specific search expression, a double backslash (`\\`) must be entered when the backslash is the search target.
+The document `airport_8835` has a `type` field whose value provides a successful match; therefore, the document is replicated to _Target Bucket 2_.
+The document `airline_10` does have a `type` field, but its value does not contain a string that provides a successful match; therefore, the document is _not_ replicated.
 
-To match against occurrences of a character or expression, you can use the following.
+Thus, each of the two documents in the source is replicated to one, distinct target bucket, on its own target cluster.
+Note that many variants of this example can be designed; including replicated the contents of a single source bucket to multiple target buckets on a single target cluster.
 
-[cols="1,4"]
-|===
-| Expression | Description
+[#filter-expression-editing]
+== Filter-Expression Editing
 
-| `*`
-| Matches against zero or more occurrences of the previous character or expression.
+The filter-expressions defined for a particular replication can be edited after their initial definition and use.
+This allows a single replication to employ multiple different filters and filter-combinations, sequentially.
 
-| `+`
-| Matches against one or more occurrences of the previous character or expression.
+Note that once a document has been replicated, it can only be removed from the target by being removed from the source.
+Therefore, if a replication's filter-expression is changed, although it changes the criterion whereby documents are to be replicated in future, it does not affect the presence on those documents already replicated to the target according to the old criterion.
+If the intention is to populate the target _only_ with documents that meet the new criterion, those documents on the target that do not meet the criterion must either be manually removed, or removed by means of _flushing_: see xref:learn:clusters-and-availability/xdcr-overview.adoc#xdcr-bucket-flush[XDCR Bucket Flush], for details.
 
-| `?`
-| Matches zero or one occurrence of the previous character or expression.
+Note also that a replication only prepares to replicate all documents in the source bucket during its _initial process_; and afterwards, only considers _mutations_ as candidates for replication.
+See xref:learn:clusters-and-availability/xdcr-overview.adoc#xdcr-process[XDCR Process], for details.
+Two options are therefore made available, whereby the continuance of a replication can be configured, following the editing of a filter-expression:
 
-| `(n)`
-| Matches `n` occurrences of the previous character or expression.
+* _Restart_.
+The current instance of the replication is ended, and a new instance is started, with the new filtering criterion.
+This causes a new running of the replication's _initial process_, whereby all documents in the source bucket are examined.
+In consequence, documents that already meet the new filtering criterion, but were not replicated according to the old filtering criterion, and have not been mutated, are determined to be candidates for replication.
+This is the default.
 
-| `(n,m)`
-| Matches from `n` to `m` occurrences of the previous character or expression.
+* _Continue_.
+The current instance of the replication continues, with the new filtering criterion.
+The replication's _initial process_ is _not_ re-run.
+Therefore, documents that already meet the new filtering criterion, but were not replicated according to the old filtering criterion, and have not been mutated, are _not_ replicated &#8212; unless they are mutated subsequently.
 
-| `(n,)`
-| Matches at least `n` occurrences of the previous character or expression.
-|===
+For example, it might be desirable to modify the replication shown above in Figure 2 &#8212; which searches for the string `air`, followed by the string `l` &#8212; without deleting and recreating the replication.
+The possible results are shown below.
 
-You can provide text to replace all or part of your search string.
-To do this, you need to group together matches by enclosing them in parentheses,so that they can be referenced in the replacement.
-To reference a matched parameter, use `$n` where `n` is the parameter,starting from `1`.
+=== Restart
+
+In the following illustration, the filter-expression used in Figure 2 is changed, to search for the string `air`, followed by the string `p`.
+The _restart_ option is specified.
+
+.Filter-expression edited, with restart option
+image::xdcr/filter-replication-diagram-5.png[,720,align=left]
+
+In its original version, _R1_, the replication had identified, during its _initial process_, the document `airline_10`, which was duly replicated to the target bucket.
+The original filter-expression is edited, so that the replication becomes _R1a_; and the replication is restarted.
+During its _initial process_, it examines all documents in the source bucket; finding no match on `airline_10`, but finding a match on `airport_8835`, which is duly replicated to the target bucket.
+
+Subsequently, _R1a_ will examine all mutations, and will replicate those on which it achieves a successful match.
+
+=== Continue
+
+In the following illustration, the filter-expression used in Figure 2 is again changed to search for the string `air`, followed by the string `p`.
+This time, the _continue_ option is specified.
+
+.Filter-expression edited, with continue option
+image::xdcr/filter-replication-diagram-6.png[,720,align=left]
+
+In its original version, _R1_, the replication had identified, during its _initial process_, the document `airline_10`, which was duly replicated to the target bucket.
+The original filter-expression is edited, so that the replication becomes _R1a_; and the replication is continued.
+There is no repetition of the _initial process_: therefore, the existing documents `airline_10` and `airport_8835` are not re-examined; and no replication occurs.
+
+Subsequently, _R1a_ will examine all mutations, and will replicate those on which it achieves a successful match.
+This is illustrated as follows:
+
+.Mutation recognized with continue option
+image::xdcr/filter-replication-diagram-7.png[,720,align=left]
+
+The new document `airline_8838` is added the the source bucket, and is examined by _R1a_.
+A successful match is made, and `airline_8838` is duly replicated to the target bucket.
