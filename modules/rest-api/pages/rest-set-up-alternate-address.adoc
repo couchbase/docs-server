@@ -16,20 +16,21 @@ DELETE /node/controller/setupAlternateAddresses/external
 [#rest-setup-alternate-address-description]
 == Description
 
-An alternate address can be established for and removed from a node; as can alternate port-numbers, for services running on the node.
-This permits node-access by external applications unable to handle cluster-private or otherwise non-standard node-naming conventions &#8212; which are sometimes required in cloud-based deployments.
+A single, alternate address can be established for and removed from a node.
+Likewise, a single alternate port-number can be established for and removed from each node-service.
+This facilitates access by external applications that are unable to handle cluster-private or otherwise non-standard naming-conventions.
 
 [#curl-syntax]
 == Curl Syntax
 
 ----
 curl -v -X PUT -u [admin]:[password]
-  http://[localhost]:8091/node/controller/setupAlternateAddresses/external
+  http://[ip-address]:8091/node/controller/setupAlternateAddresses/external
   [-d hostname=<alternate-address> ]
   [-d <service-name>=<alternate-port-number> ]+
 
 curl -v -X DELETE -u [admin]:[password]
-  http://[localhost]:8091/node/controller/setupAlternateAddresses/external
+  http://[ip-address]:8091/node/controller/setupAlternateAddresses/external
 ----
 
 The parameters are:
@@ -63,12 +64,12 @@ Specifying an invalid service-name gives the status `400 Bad Request`, with the 
 [#examples]
 == Examples
 
-The following examples demonstrate how to specify alternate addresses and port-numbers, and how to remove them.
+The following examples demonstrate how to assign alternate addresses and port-numbers, and how to remove them.
 
 [#assign-alternate-address-and-port-numbers]
 === Assign an Alternate Address and Port-Numbers
 
-To assign and alternate address and alternate port-numbers, use the `PUT /node/controller/setupAlternateAddresses/external` method and URI.
+To assign an alternate address and alternate port-numbers, use the `PUT /node/controller/setupAlternateAddresses/external` method and URI.
 
 ----
 curl -v -X PUT -u Administrator:password \
@@ -78,14 +79,14 @@ http://10.143.192.101:8091/node/controller/setupAlternateAddresses/external \
 -d n1ql=9050
 ----
 
-This assigns the alternate address `10.10.10.11` to node 10.143.192.101, and the alternate port-numbers `9000` and `9050` to the Data and Query Services, respectively.
+This assigns the alternate address `10.10.10.11` to node `10.143.192.101`, and the alternate port-numbers `9000` and `9050` to the Data and Query Services, respectively.
 No object is returned.
 
 [#list-alternate-addresses-and-port-numbers]
 === List Alternate Addresses and Port Numbers
 
 To list alternate addresses and port numbers, use the `GET /pools/default/nodeServices` method and URI.
-In the following example, the output is piped to the `jq` tool, to provide optimal readability.
+In the following example, the output is piped to the `jq` tool, to optimize readability.
 
 ----
 curl -v -X GET -u Administrator:password \
@@ -96,186 +97,125 @@ http://10.143.192.101:8091/pools/default/nodeServices | jq
 The output is as follows:
 
 ----
-
+{
+  "rev": 2142,
+  "nodesExt": [
+    {
+      "services": {
+        "mgmt": 8091,
+        "mgmtSSL": 18091,
+        "eventingAdminPort": 8096,
+        "eventingDebug": 9140,
+        "eventingSSL": 18096,
+        "indexAdmin": 9100,
+        "indexScan": 9101,
+        "indexHttp": 9102,
+        "indexStreamInit": 9103,
+        "indexStreamCatchup": 9104,
+        "indexStreamMaint": 9105,
+        "indexHttps": 19102,
+        "kv": 11210,
+        "kvSSL": 11207,
+        "capi": 8092,
+        "capiSSL": 18092,
+        "projector": 9999,
+        "n1ql": 8093,
+        "n1qlSSL": 18093
+      },
+      "thisNode": true,
+      "hostname": "10.143.192.101",
+      "alternateAddresses": {
+        "external": {
+          "hostname": "10.10.10.11",
+          "ports": {
+            "kv": 9000,
+            "n1ql": 9050
+          }
+        }
+      }
+    }
+  ],
+  "clusterCapabilitiesVer": [
+    1,
+    0
+  ],
+  "clusterCapabilities": {
+    "n1ql": [
+      "enhancedPreparedStatements"
+    ]
+  }
+}
 ----
 
+The output shows, in the internal `alternateAddresses` object, the specified alternate hostname, and the alternate port-numbers for the Data and Query Services.
 
+[#remove-alternate-addresses-and-port-numbers]
+=== Remove Alternate Addresses and Port Numbers
 
-
-
-To determine which nodes are currently in the cluster, use the `PUT /node/controller/setupAlternateAddresses/external` HTTP method and URI.
-
-----
-curl  -u Administrator:password -X GET \
-http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
-----
-
-In this example, the (extensive) output is piped to the `jq` tool to be formatted, and the lines featuring the `hostname` are then filtered by `grep`, to ensure readability.
+The following example removes the alternate address and all alternate port numbers from the specified node.
 
 ----
-curl  -u Administrator:password -X GET \
-http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
+curl -v -X DELETE -u Administrator:password \
+http://10.143.192.101:8091/node/controller/setupAlternateAddresses/external
 ----
 
-The output contains the following lines, which specify all nodes currently in the cluster:
+If the call is successful, the status `200 OK` is provided.
+The results can be checked as before:
 
 ----
-"hostname": "10.143.190.101:8091",
-"hostname": "10.143.190.102:8091",
-"hostname": "10.143.190.103:8091",
+curl -v -X GET -u Administrator:password \
+http://10.143.192.101:8091/pools/default/nodeServices | jq
 ----
 
-For more information on this method and URI, see xref:rest-api:rest-cluster-details.adoc[Viewing Cluster Details].
-
-[#perform-rebalance-following-a-hard-failover]
-=== Perform Rebalance Following a Hard Failover
-
-The _hard failover_ of a node results in that node continuing to be a member of the cluster, but being unable to serve data.
-Since its active vBuckets are unavailable, corresponding replica vBuckets are promoted to active status on the still-available nodes.
-This means that data continues to be served, but is in an _imbalanced state_ across the cluster.
-This requires rebalance.
-
-For detailed conceptual information, see xref:learn:clusters-and-availability/hard-failover.adoc[Hard Failover].
-For information on performing a hard failover, see xref:rest-api:rest-node-failover.adoc[Failing over Nodes].
-
-To perform the rebalance, specify all cluster-nodes in the value for the `knownNodes` parameter, including the one or ones to which hard failover is known to have been applied:
+This now produces the following output:
 
 ----
-curl  -u Administrator:password -v -X POST \
-http://10.143.190.101:8091/controller/rebalance \
--d 'knownNodes=ns_1%4010.143.190.101%2Cns_1%4010.143.190.102%2Cns_1%4010.143.190.103'
+{
+  "rev": 2143,
+  "nodesExt": [
+    {
+      "services": {
+        "mgmt": 8091,
+        "mgmtSSL": 18091,
+        "eventingAdminPort": 8096,
+        "eventingDebug": 9140,
+        "eventingSSL": 18096,
+        "indexAdmin": 9100,
+        "indexScan": 9101,
+        "indexHttp": 9102,
+        "indexStreamInit": 9103,
+        "indexStreamCatchup": 9104,
+        "indexStreamMaint": 9105,
+        "indexHttps": 19102,
+        "kv": 11210,
+        "kvSSL": 11207,
+        "capi": 8092,
+        "capiSSL": 18092,
+        "projector": 9999,
+        "n1ql": 8093,
+        "n1qlSSL": 18093
+      },
+      "thisNode": true,
+      "hostname": "10.143.192.101"
+    }
+  ],
+  "clusterCapabilitiesVer": [
+    1,
+    0
+  ],
+  "clusterCapabilities": {
+    "n1ql": [
+      "enhancedPreparedStatements"
+    ]
+  }
+}
 ----
 
-On success, the status `200 OK` is given, and no object is returned.
-The failed-over node has been removed, and the data is now distributed evenly across the surviving nodes.
-The successful node-removal is confirmed by again examining the current cluster nodes:
-
-----
-curl  -u Administrator:password -X GET \
-http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
-----
-
-The output indicates which nodes are still in the cluster:
-
-----
-"hostname": "10.143.190.101:8091",
-"hostname": "10.143.190.102:8091",
-----
-
-This confirms that `10.143.190.103` has been removed.
-
-[#add-a-node-to-a-cluster-then-rebalance]
-=== Add a Node to a Cluster, then Rebalance
-
-Adding a node to a cluster is a two-step process.
-
-. The `POST /controller/addNode` HTTP method and URI are used to add the node.
-This allows service-deployment for the node to be specified.
-A placeholder username and password can be specified, when adding an unprovisioned node.
-
-. The `POST /controller/rebalance` HTTP method and URI are used to rebalance the added node into the cluster.
-Include the new node in the `knownNodes` node-list.
-
-For example, the following command adds node `10.143.1990.103` to the cluster from which it was removed, and assigns it the Data Service:
-
-----
-curl -u Administrator:password -X POST \
-10.142.181.101:8091/controller/addNode \
--d 'hostname=10.143.190.103&user=someName&password=somePassword&services=kv'
-----
-
-If successful, this returns the following object, indicating that the node is now recognized as a member of the cluster:
-
-----
-{"otpNode":"ns_1@10.143.190.103"}
-----
-
-For more information on this method and URI, see xref:rest-api:rest-cluster-addnodes.adoc[Adding Nodes to Clusters].
-
-Next, the added node is rebalanced into the cluster.
-This allows it to take its share of the data-distribution.
-
-----
-curl  -u Administrator:password -v -X POST \
-http://10.143.190.101:8091/controller/rebalance \
--d 'knownNodes=ns_1%4010.143.190.101%2Cns_1%4010.143.190.102%2Cns_1%4010.143.190.103'
-----
-
-On success, the response code `200 OK` is given, and no object is returned.
-The cluster is now rebalanced.
-At the conclusion, the cluster can again be checked for its current membership:
-
-----
-curl  -u Administrator:password -X GET \
-http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
-----
-
-The output now includes the following:
-
-----
-"hostname": "10.143.190.101:8091",
-"hostname": "10.143.190.102:8091",
-"hostname": "10.143.190.103:8091",
-----
-
-This confirms that `10.143.190.103` has been rebalanced into the cluster.
-
-[#eject-a-node]
-=== Eject a Node
-
-To eject a node, use the `POST /controller/rebalance` HTTP method and URI.
-Specify the entire current node-list for the cluster as the value of the `knownNodes` parameter.
-Specify the list of nodes to be ejected as the value of the `ejectedNodes` parameter.
-
-For example, the following command ejects node `10.143.190.103` from the cluster:
-
-----
-curl  -u Administrator:password -v -X POST \
-http://10.143.190.101:8091/controller/rebalance \
--d 'ejectedNodes=ns_1%4010.143.190.103' \
--d 'knownNodes=ns_1%4010.143.190.101%2Cns_1%4010.143.190.102%2Cns_1%4010.143.190.103'
-----
-
-On success, the response code `200 OK` is given, and no object is returned.
-At the conclusion, the cluster can again be checked for its current membership:
-
-----
-curl  -u Administrator:password -X GET \
-http://10.143.190.101:8091/pools/default | jq '.' | grep hostname
-----
-
-The output now includes the following:
-
-----
-"hostname": "10.143.190.101:8091",
-"hostname": "10.143.190.102:8091",
-----
-
-[#rest-cluster-rebalance-adjustduringcompaction]
-== Adjusting Rebalance During Compaction
-
-=== Description
-
-If a rebalance is performed while a node is undergoing index compaction, rebalance delays may be experienced.
-The parameter, `rebalanceMovesBeforeCompaction`, is used to improve rebalance performance: potentially, this results in a larger index.
-This setting can be modified with the `POST /internalSettings` endpoint.
-By default, it is 64.
-This specifies that 64 vBuckets are to be moved per node; at which point all vBucket movement is paused, and index compaction is triggered.
-Since index compaction is therefore not performed while vBuckets are being moved, a large `rebalanceMovesBeforeCompaction` value results in the server spending less time compacting indexes; potentially resulting in larger index files, which take up more disk space.
-
-For example:
-
-----
-curl -X POST -u Administrator:password 'http://10.5.2.54:8091/internalSettings' \
-    -d 'rebalanceMovesBeforeCompaction=256'
-----
+The internal `alternateAddresses` object has been removed; indicating that the alternate address and port numbers no longer exist.
 
 [#see-also]
 == See Also
 
-For conceptual information on rebalance, see xref:learn:clusters-and-availability/rebalance.adoc[Rebalance].
-For information on how to retrieve status on an ongoing rebalance, see xref:rest-api:rest-get-rebalance-progress.adoc[Getting Rebalance Progress] and xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks].
+A complete list of Couchbase Services and the ports they occupy, along with infomration on custom port mapping, is provided in xref:install:install-ports.adoc[Network and Firewall Requirements].
 
-For conceptual information on hard failover, see xref:learn:clusters-and-availability/hard-failover.adoc[Hard Failover].
-For information on performing a hard failover with the REST API, see xref:rest-api:rest-node-failover.adoc[Failing over Nodes].
-For information on retrieving details of a cluster, including its current nodes, see xref:rest-api:rest-cluster-details.adoc[Viewing Cluster Details].
+Also see xref:rest-api:rest-list-node-services.adoc[Listing Node Services].
