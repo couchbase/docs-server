@@ -99,9 +99,8 @@ The options are *None* (to connect without encryption), *TLS* (to connect to a T
 * *Certificate Validation*. Whether to validate Couchbase Server with the server certificate.
 This set of radio-buttons is enabled only if *TLS* or *StartTLSExtension* has been selected from the *Encryption* pull-down menu.
 The options are *None*, *Couchbase*, and *Paste Cert*.
-If *none* is selected, no certificate validation occurs.
 +
-WARNING: The *none* option is not recommended, since it is insecure.
+If *none* is selected, no certificate validation occurs. This option is insecure, and therefore _not_ recommended.
 +
 If *Couchbase* is selected, the certificate already installed for the cluster is used for validation.
 (See xref:learn:security/certificates.adoc[Certificates] for information.)
@@ -220,11 +219,11 @@ The advanced settings are as follows:
 
 ** *Request timeout ms*.
 The number of milliseconds to elapse before a query times out.
-The default is 4000.
+The default is 5000.
 
 ** *Max Parallel Connections*.
 The maximum number of parallel connections to the LDAP server that can be maintained.
-The default is 1000.
+The default is 100.
 
 ** *Max Cache Records*.
 The maximum number of requests that can be cached.
@@ -247,10 +246,12 @@ image::manage-security/configureLDAPdialogSaveButton.png[,260,align=left]
 
 Alternatively, left-click on *Cancel* to abandon the configuration procedure.
 
-[#create-couchbase-server-group]
-=== Create a Couchbase-Server Group
+[#map-ldap-groups-to-couchbase-server-roles]
+=== Map LDAP Groups to Couchbase-Server Roles
 
-To create a Couchbase-Server _group_, and map it to an _LDAP group_, left-click on the *Groups* tab, at the upper right of the *Users* panel, on the *Security* screen:
+To map an LDAP group to a Couchbase-Server role you must first, create a Couchbase-Server user-group; then, associate this user-group with an LDAP group; and finally, assign roles.
+
+Left-click on the *Groups* tab, at the upper right of the *Users* panel, on the *Security* screen:
 
 [#access-groups-tab]
 image::manage-security/accessGroupsTab.png[,160,align=left]
@@ -277,11 +278,11 @@ The fields are as follows:
 The name of the new Couchbase-Server group to be created.
 
 * *Description*.
-An optional description of the new Couchbase-Servergroup.
+An optional description of the new Couchbase-Server group.
 
 * *Map to LDAP Group*.
 The name of the existing LDAP group to which the new Couchbase-Server group is to be mapped.
-When a user authenticates by means of LDAP, a list of the LDAP groups to which they are assigned on that server is returned to Couchbase Server: if this list contains the LDAP group specified here, the user inherits the roles associated with the new Couchbase-Server group.
+When a user authenticates by means of LDAP and LDAP Group Authorization is enabled, a list of the LDAP groups to which the user is assigned on that server is returned to Couchbase Server: if this list contains the LDAP group specified here, the user inherits the roles associated with the new Couchbase-Server group.
 
 * *Roles*. The roles to be associated with the new Couchbase-Server group.
 For information, see xref:learn:security/authorization-overview.adoc[Authorization].
@@ -313,18 +314,20 @@ To configure an LDAP server to be used as a point of authentication for Couchbas
 --cluster http://10.143.192.101 \
 --username Administrator \
 --password password \
+--hosts --hosts 172.23.124.25 --port 389 \
+--encryption startTLS \
+--ca-cert '/path/to/cert' \
+--query-dn 'cn=admin,dc=example,dc=com' \
+--query-pass 'password' \
 --authentication-enabled 1 \
+--user-dn-mapping '[{"re":"(.+)","template":"uid={0},ou=users,dc=example,dc=com"}]' \
 --authorization-enabled 1 \
---hosts 172.23.124.25 --port 389 \
---disable-cert-validation \
---encryption none \
---query-dn domain=LOCAL \
---query-pass querypassword \
---group-query %D?memberOf?base
+--group-query 'ou=groups,dc=example,dc=com??one?(member=%D)'
 ----
 
 This call references the LDAP server at `172.23.125.25`, on port `389`, and specifies `--authorization-enabled` and `--authentication-enabled` for the user-credentials that will be passed from Couchbase Server.
 The argument specified for `--group-query` is the query that retrieves the LDAP groups of which the user is a member.
+A `--user-dn-mapping` is specified.
 
 If successful, the call produces the following output:
 
@@ -351,35 +354,32 @@ For example:
 --group-name admins \
 --roles admin \
 --group-description "Couchbase Server Administrators" \
---ldap-ref domain=admins
+--ldap-ref 'uid=cbadmins,ou=groups,dc=example,dc=com'
 ----
 
 This establishes a Couchbase Server group named `admins`, each of whose members is granted the `admin` (the `Full Administrator`) role.
-It additionally references the LDAP group `admins`: from this point, LDAP-authenticated external users who are in the LDAP 'admins' group are placed in the Couchbase Server 'admins' group, and thereby are granted the 'admin' role.
+It additionally references the LDAP group `admins`: from this point, LDAP-authenticated external users who are in the LDAP group `uid=cbadmins,ou=groups,dc=example,dc=com` are placed in the Couchbase Server 'admins' group, and thereby are granted the 'admin' role.
 
 [#configure-ldap-with-the-rest-api]
 == Configure LDAP with the REST API
 
-To configure an LDAP server to be used as a source of authentication for Couchbase Server, use the `pools` endpoint, as follows:
+To configure an LDAP server to be used as a source of authentication for Couchbase Server, use the `/settings/ldap` endpoint, as follows:
 
 ----
-curl -v -X GET -u Administrator:password \
-http://10.143.192.101:8091/pools \
--d authentication_enabled=true \
--d authorization_enabled=true \
+curl -v -X POST -u Administrator:password \
+http://10.143.192.101:8091/settings/ldap \
 -d hosts=172.23.124.25 \
 -d port=389 \
--d encryption=TLS \
--d max_parallel_connections=100 \
--d server_cert_validation=false \
--d max_cache_size=10000 \
--d request_timeout=5000 \
--d nested_groups_enabled=false \
--d nested_groups_max_depth=10 \
--d cache_value_lifetime=300000 \
--d groups_query %D?memberOf?base \
--d query_dn='domain=LOCAL' \
--d query_pass=querypassword
+-d encryption=StartTLSExtension \
+-d server_cert_validation=true \
+--data-urlencode cacert@/path/to/cert \
+-d query_dn='cn=admin,dc=example,dc=com' \
+-d query_pass=password \
+-d authentication_enabled=true \
+--data-urlencode user_dn_mapping='[{"re":"(.+)","template":"uid={0},ou=users,dc=example,dc=com"}]' \
+-d authorization_enabled=true \
+--data-urlencode groups_query='ou=groups,dc=example,dc=com??one?(member=%D)'
+
 ----
 
 This call references the LDAP server at `172.23.125.25`, on port `389`, enabling authorization and authentication for user-credentials to be passed from Couchbase Server.
@@ -393,11 +393,11 @@ For more information, see xref:rest-api:rest-configure-ldap.adoc[Configure LDAP]
 curl -v -X PUT -u Administrator:password \
 http://10.143.192.101:8091/settings/rbac/groups/admins \
 -d roles=admin \
--d description=Couchbase+Server+Administrators \
--d ldap_group_ref=domain%3Dadmins
+-d description=Couchbase+Server+Adminirators \
+--data-urlencode ldap_group_ref='uid=cbadmins,ou=groups,dc=example,dc=com'
 ----
 
 This establishes a Couchbase Server group named `admins`, each of whose members is granted the `admin` (the `Full Administrator`) role.
-It additionally references the LDAP group `admins`: from this point, LDAP-authenticated external users who are in the LDAP 'admins' group are placed in the Couchbase Server 'admins' group, and thereby are granted the 'admin' role.
+It additionally references the LDAP group `uid=cbadmins,ou=groups,dc=example,dc=com`: from this point, LDAP-authenticated external users who are in the LDAP 'uid=cbadmins,ou=groups,dc=example,dc=com group are placed in the Couchbase Server 'admins' group, and thereby are granted the 'admin' role.
 
 For more information, see xref:rest-api:rbac.adoc[Role Based Admin Access (RBAC)].
