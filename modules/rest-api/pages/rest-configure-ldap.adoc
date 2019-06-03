@@ -3,7 +3,36 @@
 [abstract]
 Couchbase Server can be configured to authenticate the user by means of an LDAP server; and to recognize the LDAP _groups_ of which the user is a member.
 
-== GET /pools
+== GET /settings/ldap
+
+*Description*
+
+Returns information about the ldap settings as JSON object. 
+
+*Example*
+
+----
+curl -v -u Administrator:password \
+http://localhost:8091/settings/ldap
+{
+    "authentication_enabled": true,
+    "authorization_enabled": true,
+    "encryption": "StartTLSExtension",
+    "groups_query": "ou=groups,dc=example,dc=com??one?(member=%D)",
+    "hosts": ["172.23.124.25"],
+    "port": 389,
+    "query_dn": "cn=admin,dc=example,dc=com",
+    "query_pass": "**********",
+    "user_dn_mapping": [
+        {
+            "re": "(.+)",
+            "template": "uid={0},ou=users,dc=example,dc=com"
+        }
+    ]
+}
+----
+
+== POST /settings/ldap
 
 *Description*
 
@@ -12,55 +41,41 @@ This command establishes an LDAP server to provide authentication-support for Co
 *Syntax:*
 
 ----
- curl -X GET -u <administrator>:<password>
-    http://<host>:<port>/pools
+ curl -X POST -u <administrator>:<password>
+    http://<host>:<port>/settings/ldap
     -d args
     .
     .
 ----
 
-HTTP request syntax:
-
-----
-GET /pools/default
-Host: localhost:8091
-Authorization: Basic xxxxxxxxxxxxxxxxxxx
-Accept: */*
-Content-Type: application/x-www-form-urlencoded
-----
-
 *Example*
 
 ----
-curl -v -X GET -u Administrator:password \
-http://localhost:8091/pools \
--d authentication_enabled=true \
--d authorization_enabled=true \
+curl -v -X POST -u Administrator:password \
+http://localhost:8091/settings/ldap \
 -d hosts=172.23.124.25 \
 -d port=389 \
--d encryption=TLS \
--d max_parallel_connections=100 \
--d server_cert_validation=false \
--d max_cache_size=10000 \
--d request_timeout=5000 \
--d nested_groups_enabled=false \
--d nested_groups_max_depth=10 \
--d cache_value_lifetime=300000 \
--d groups_query %D?memberOf?base \
--d query_dn='domain=LOCAL' \
--d query_pass=querypassword
+-d encryption=StartTLSExtension \
+-d server_cert_validation=true \
+--data-urlencode cacert@/path/to/cert \
+-d query_dn='cn=admin,dc=example,dc=com' \
+-d query_pass=password \
+-d authentication_enabled=true \
+--data-urlencode user_dn_mapping='[{"re":"(.+)","template":"uid={0},ou=users,dc=example,dc=com"}]' \
+-d authorization_enabled=true \
+--data-urlencode groups_query='ou=groups,dc=example,dc=com??one?(member=%D)'
 ----
 
 .Controller parameters
 [cols="40,70"]
 |===
-| Function | Description
+| Parameter | Description
 
 | authentication_enabled
-| Enables using LDAP to authenticate users. 1 enables, 0 disables.
+| Enables using LDAP to authenticate users. _true_ enables, _false_ disables.
 
-| authorization-enabled
-| Enables using LDAP to give users authorization. 1 enables, 0 disables.
+| authorization_enabled
+| Enables using of LDAP groups for authorization. `true` enables, `false` disables.
 
 | hosts
 | Comma-separated list of LDAP hosts.
@@ -69,7 +84,7 @@ http://localhost:8091/pools \
 | LDAP port
 
 | encryption
-| Security used to communicate with LDAP servers. Can be _tls_, _ssl_, or _none_.
+| Encryption method to communicate with LDAP servers. Can be _StartTLSExtension_, _TLS_, or _false_.
 
 | max_parallel_connections
 | Maximum number of parallel connections that can be established with LDAP servers.
@@ -78,7 +93,7 @@ http://localhost:8091/pools \
 | Whether server certificate validation be enabled: true enables, false disables.
 
 | cacert
-| Path for certificate to be used in server certificate validation, if server_cert_validation is _true_.
+| Certificate in PEM format to be used in LDAP server certificate validation, if server_cert_validation is _true_.
 
 | max_cache_size
 | Maximum number of requests that can be cached: defaults to 10000.
@@ -87,23 +102,22 @@ http://localhost:8091/pools \
 | The timeout for LDAP requests, in milliseconds.
 
 | user_dn_mapping
-| User to DN mapping. If none is specified, the username is used as the user's DN.
+| User to distinguished name (DN) mapping. If none is specified, the username is used as the user's distinguished name.
 
 | query_dn
-| DN for groups synchronization.
+| DN to use for searching users and groups synchronization.
 
 | query_pass
-| Password for groups synchronization
+| Password for _query_dn_ user.
 
 | groups_query
-| LDAP query, to get the users' group by username.
-RFC4516 format should be specified: for example, '%D?memberOf?base'.
-If attribute is present in the query, the list of attributes in the query result is considered as la ist of user's groups (single entry result is expected).
-The %u and %D placeholders can be used, for username and user's DN respectively.
-If the attribute is not present in the query, every returned entry is considered a group
+| LDAP query, to get the users' groups by username in RFC4516 format. The %u and %D placeholders can be used, for username and user's DN respectively.
+If attribute is present in the query, the list of attribute values in the search result is considered as list of user's groups (single entry result is expected): for example: '%D?memberOf?base'.
+
+If the attribute is not present in the query, every returned entry is considered a group: for example, 'ou=groups,dc=example,dc=com??one?(member=%D)' 
 
 | nested_groups_enabled
-| If enabled Couchbase server will try to recursively search for groups for every discovered ldap group.
+| If enabled Couchbase server will try to recursively search for groups for every discovered ldap group. _groups_query_ will be user for the search.
 
 | nested_groups_max_depth
 | Maximum number of recursive groups requests the server is allowed to perform.
