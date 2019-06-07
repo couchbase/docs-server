@@ -103,13 +103,19 @@ This includes:
 Each Generated User is assigned a _username_ that is identical to the bucket-name; and either a _password_ that is identical to the bucket's pre-5.0 password, or _no password_, if the bucket did not feature a password.
 Generated Users are created to ensure that legacy applications can continue to access legacy buckets after upgrade to 5.0 or post-5.0, with the same username-password combination being used for authentication.
 
-* _External_: Contains users defined externally; either by means of _LDAP_ or _PAM_.
+* _External_: Contains users of either or both of the following kinds:
+
+** Users that are explicitly defined on Couchbase Server as _external_; as supported either by _LDAP_ or _PAM_.
+Usernames are stored on Couchbase Server.
 Passwords are defined and stored remotely.
 Note that External usernames do not clash with Local usernames.
 
+** Users that are not defined on Couchbase Server, but are defined on LDAP; and are are members of one or more _LDAP Groups_.
++
+If _Native LDAP_ is being used, and _LDAP Group Support_ has been enabled, and one or more of the user's LDAP Groups has been _mapped_ to a corresponding Couchbase-Server user-group, the user can be authenticated on the LDAP server, and then be granted the roles assigned to each of the user-groups to which a mapping has been made.
+
 When a user attempts to authenticate, Couchbase Server always looks up their credentials in the same order: which is _Local_ first, and _External_ second.
 
-_External_ authentication can be performed by means either of _LDAP_ or _PAM_.
 
 [#introduction-to-ldap-based-authentication]
 === LDAP-Based Authentication
@@ -160,11 +166,46 @@ Couchbase Server allows Native LDAP to be configured by means of the xref:cli:cb
 [#introduction-to-ldap-groups]
 ===== LDAP Groups
 
-LDAP allows users to be members of _groups_.
-When a Couchbase-Server user authenticates with LDAP, a list of the user's LDAP groups is returned to Couchbase Server.
+LDAP allows users to be members of _LDAP Groups_.
+When a user authenticates with LDAP, a list of the user's LDAP groups is returned to Couchbase Server.
 If an LDAP group has previously been _mapped_ to a Couchbase-Server group, the user inherits the roles assigned to the Couchbase-Server group.
+Note that when LDAP Groups are used to support Couchbase-Server authorization in this way, the user does _not_ need to have been registered on Couchbase Server &#8212; even as an _external_ user.
 
-For more information and specific examples, see xref:manage:manage-security/configure-ldap.adoc[Configure LDAP].
+[#native-ldap-auth-sequence]
+==== Native LDAP Authentication and Authorization Sequence
+
+Each user added to a Couchbase-Server cluster is, for authentication purposes, specified as either _local_ or _external_.
+Initially, when a user attempts to access the cluster by specifying their username and password, the username is checked against the list of local usernames maintained on Couchbase Server.
+If there is a match, password-verification is attempted: if this succeeds, the user is granted the roles they have been assigned either directly or by their membership of one or more Couchbase-Server _user-groups_.
+If the granted roles support the user's intended action, the action is permitted; otherwise, it is prohibited.
+
+In cases where the specified username does _not_ match against the list of locally defined users, provided that Native LDAP support has been configured, Couchbase Server attempts to authenticate and authorize the user by means of LDAP.
+First, the _authentication_ sequence is performed:
+
+. If _LDAP User Authentication_ has been enabled, Couchbase Server calculates an LDAP _Distinguished Name_ (DN) for the user, whereby the user can be authenticated on the LDAP server.
+This makes use of the user-specified password and a _template_ or _query_, which has already been configured: for examples of how to configure templates and queries, see xref:manage:manage-security/configure-ldap.adoc#enable-ldap-user-authentication[Enable LDAP User Authentication].
+
+. Couchbase Server contacts the LDAP server, and attempts to authenticate the user, using the calculated DN and the user-specified password.
+
+. Couchbase Server receives confirmation from the LDAP server either that authentication has succeeded (meaning that the user exists, and has submitted the correct password), or that it has failed.
+If authentication has failed, the authentication-process is thereby concluded, the user is _not_ granted access to Couchbase Server, and no further action is taken.
+
+If authentication has succeeded, the authentication-process is thereby concluded; and Couchbase Server next proceeds to determine whether and in what ways the user is _authorized_ on Couchbase Server.
+
+. Couchbase Server checks whether an _external_ user, with the specified username, has previously been added to Couchbase Server.
+If such an external user is located, Couchbase Server determines which roles have been assigned to the user: first, it checks for roles that have been _directly_ assigned to the user; and secondly, it checks for roles assigned to the user by means of _group membership_.
+(For information on granting roles to users directly and by means of groups, see xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users, Groups, and Roles].) The user is duly granted the privileges that correspond to all assigned roles.
+
+. If _LDAP Group Support_ has been enabled, Couchbase Server again contacts the LDAP server: this time, in order to retrieve a list of the LDAP groups of which the user is a member.
+Note that this step is performed irrespective of whether or not the user has proved to be an _external_ user on Couchbase Server.
+See xref:manage:manage-security/configure-ldap##enable-ldap-user-authentication[Enable LDAP User Authentication], for detailed information on configuring LDAP Group Support.
+
+. Couchbase Server determines whether one or more of the user's LDAP groups have been _mapped_ to existing Couchbase-Server user-groups.
+Wherever a mapping exists, the user is granted (in addition to whatever privileges they may have already been granted as an _external_ user) the privileges that correspond to all roles assigned to the Couchbase-Server user-group.
+(For information on mapping LDAP groups to Couchbase-Server groups, see xref:manage:manage-security/configure-ldap.adoc[Configure LDAP]).
+If any of the granted privileges supports the user's intended action, the action is permitted; otherwise, the action is prohibited.
+
+For detailed, step-by-step accounts of how to configure these procedures, see xref:manage:manage-security/configure-ldap.adoc[Configure LDAP].
 
 [#using-saslauthd]
 ==== Using `saslauthd`
