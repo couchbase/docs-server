@@ -1,0 +1,192 @@
+= Apply Node-to-Node Encryption
+
+[abstract]
+Network traffic between the individual nodes of a Couchbase-Server cluster can be encrypted, in order to optimize cluster-internal security.
+
+[#understanding-node-to-node-encryption]
+== Understanding Node-to-Node Encryption
+
+Couchbase Server supports _node-to-node encryption_, whereby network traffic between the individual nodes of a cluster is encrypted.
+Both the IPV4 and IPV6 address-families are supported, as is the ability to switch the cluster between them.
+
+Node-to-node encryption is managed by means of the Couchbase CLI.
+This page provides a sequence of calls, to exemplify how a cluster can be optionally transitioned from one address-family to another, and then secured by means of node-to-node encryption.
+For a complete conceptual overview, see xref:learn:clusters-and-availability/nodes.adoc#node-to-node-encryption[Node-to-Node Encryption].
+
+[#set-up-node-to-node-encryption]
+== Set Up Node-to-Node Encryption
+
+The following sequence demonstrates how to set up node-to-node encryption for a cluster, using the Couchbase CLI.
+The sequence assumes:
+
+* The reader's familiarity with the information provided at xref:learn:clusters-and-availability/nodes.adoc#node-to-node-encryption[Node-to-Node Encryption].
+
+* A pre-existing cluster of two nodes, `node1-devcluster.com` and `node2-devcluster.com`, both running Couchbase Enterprise Server Version 6.5.
+
+* The cluster's initial use of the IPV6 address-family.
+
+* Node-to-node encryption initially disabled.
+
+* Auto-failover initially enabled.
+
+Proceed as follows:
+
+. Turn off auto-failover.
+Use the `setting-autofailover` CLI command, as follows
++
+----
+/opt/couchbase/bin/couchbase-cli setting-autofailover \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--enable-auto-failover 0
+----
++
+The value of `0` assigned to the `--enable-auto-failover` flag specifies that auto-failover be switched off.
+If the command is successful, the following output is displayed:
++
+----
+SUCCESS: Auto-failover settings modified
+----
+
+. Ensure that the IP family of the cluster is the right one for your needs: either IPV4 or IPV6. To set the family, use the `change-ip-family` CLI command:
++
+----
+/opt/couchbase/bin/couchbase-cli change-ip-family \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--set \
+--ipv4
+----
++
+The `--set` flag indicates that an IP-family setting is to be made.
+The `--ipv4` flag specifies that the cluster will from this point use the IPV4 family.
++
+If successful, the command provides the following output:
++
+----
+Switched ip family for node: http://node1-devcluster.com:8091
+Switched ip family for node: http://node2-devcluster.com:8091
+SUCCESS: Switched ip family of the cluster
+----
++
+The output indicates that the IP family has been successfully established, and thus changed for each cluster in the node.
+
+. Enable node-to-node encryption for the cluster.
+Use the `change-cluster-encryption` CLI command:
++
+----
+/opt/couchbase/bin/couchbase-cli change-cluster-encryption \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--enable
+----
++
+The `--enable` flag enables node-to-node encryption for the cluster, at the default level of `control`.
+If the command is successful, the following output is displayed:
++
+----
+Turned on encryption for node: http://node1-devcluster.com:8091
+Turned on encryption for node: http://node2-devcluster.com:8091
+SUCCESS: Switched cluster encryption on
+----
++
+The output indicates that encryption has been successfully enabled for each node in the cluster.
+
+. Establish an appropriate encryption-level for the cluster.
+This is achieved by the `setting-security` CLI command, specifying the `--cluster-encryption-level` parameter.
+Its value can be either control (meaning that only server-management information is passed in encrypted form) or all (meaning that all information, including data handled by services, is passed in encrypted form):
++
+----
+/opt/couchbase/bin/couchbase-cli setting-security \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--set \
+--cluster-encryption-level all
+----
++
+Passed as the value for the `--cluster-encryption-level` flag, `all` is specified as the new encryption-level for the cluster.
+If the command is successful, the following output is displayed:
++
+----
+SUCCESS: Security settings updated
+----
+
+. Switch auto-failover back on, using the `setting-autofailover` command:
++
+----
+/opt/couchbase/bin/couchbase-cli setting-autofailover \
+-c node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--enable-auto-failover 1 \
+--auto-failover-timeout 120 \
+--enable-failover-of-server-groups 1 \
+--max-failovers 2 \
+--can-abort-rebalance 1
+----
++
+The parameter values specify that auto-failover be enabled with a timeout of 120 seconds; with a maximum of two, sequential automated failovers able to occur, prior to administrator intervention being required.
+Automated failover of server groups is enabled, as is the aborting of rebalance.
++
+If the command succeeds, and the settings are successfully modified, the following output is displayed:
++
+----
+SUCCESS: Auto-failover settings modified
+----
+
+
+. Confirm that node-to-node encryption is enabled, using the `--get` parameter to `change-cluster-encryption`:
++
+----
+/opt/couchbase/bin/couchbase-cli change-cluster-encryption \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--get
+----
++
+If the command is successful, the following output is displayed:
++
+----
+Cluster encryption is enabled
+----
+
+. Confirm the established encryption-level, using the `--get` parameter to `setting-security`:
++
+----
+/opt/couchbase/bin/couchbase-cli setting-security \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--get
+----
++
+If successful, the command returns a JSON document whose contents include information on the cluster's _UI disablement settings_, and also confirms that the encryption-level has been established as _all_:
++
+----
+{"disableUIOverHttp": false, "disableUIOverHttps": false, "clusterEncryptionLevel": "all"}
+----
++
+For information on UI disablement, see xref:manage:manage-security/manage-console-access.adoc[Manage Console Access].
+
+. Confirm the established IP-address family, using the `--get` parameter to `change-ip-family`:
++
+----
+/opt/couchbase/bin/couchbase-cli change-ip-family \
+-c http://node1-devcluster.com:8091 \
+-u Administrator \
+-p password \
+--get
+----
++
+The command returns output confirming the IP-family currently used, which is in this case IPV4:
++
+----
+Cluster using ipv4
+----
+
+This concludes the sequence of commands.
