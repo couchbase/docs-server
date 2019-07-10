@@ -34,7 +34,7 @@ It has not been initialized or provisioned.
 * The cluster has the Full Administrator username of `Administrator`, and password of `password`.
 
 [#add-a-node-with-the-ui]
-== Add a Node with the UI
+== Add a Node and Rebalance with the UI
 
 Proceed as follows:
 
@@ -187,7 +187,7 @@ Retries can also be cancelled by means of the CLI and the REST API.
 See xref:manage:manage-nodes/add-node-and-rebalance.adoc#cancel-retries-with-the-cli[Cancel Retries with the CLI] and xref:manage:manage-nodes/add-node-and-rebalance.adoc#cancel-retries-with-the-rest-api[Cancel Retries with the REST API], below.
 
 [#add-a-node-with-the-cli]
-== Add a Node with the CLI
+== Add a Node and Rebalance with the CLI
 
 To add a new Couchbase Server-node to an existing cluster, use the xref:cli:cbcli/couchbase-cli-server-add.adoc[server-add] command.
 Note that this command requires that arguments be provided for its `--server-add-username` and `--server-add-password` flags.
@@ -195,9 +195,12 @@ In this case, meaningful arguments do not exist, since the new node features an 
 Therefore, specify placeholder arguments. Additionally, specify that the `data` service be run on the node, once it is part of the cluster.
 
 ----
-couchbase-cli server-add -c 10.142.181.101:8091 --username Administrator \
---password password --server-add 10.142.181.102:8091 \
---server-add-username someName --server-add-password somePassword \
+couchbase-cli server-add -c 10.142.181.101:8091 \
+--username Administrator \
+--password password \
+--server-add 10.142.181.102:8091 \
+--server-add-username someName \
+--server-add-password somePassword \
 --services data
 ----
 
@@ -234,12 +237,66 @@ Note that when the operation is highly complex, it may be desirable to get statu
 [#cancel-retries-with-the-cli]
 === Cancel Retries with the CLI
 
-_Retries_ (described above, in xref:manage:manage-nodes/add-node-and-rebalance.adoc#automated-rebalance-failure-handling[Automated Rebalance-Failure Handling]) can be cancelled with the REST API.
+_Retries_ (described above, in xref:manage:manage-nodes/add-node-and-rebalance.adoc#automated-rebalance-failure-handling[Automated Rebalance-Failure Handling]) can be cancelled with the CLI, by means of the xref:cli:cbcli/couchbase-cli-setting-rebalance.adoc[setting-rebalance] command.
 
-If, following a rebalance failure, a retry is pending,
+Note that use of `setting-rebalance` for setting and getting the current rebalance-failure configuration is documented in xref:manage:manage-settings/general-settings.adoc[General Settings].
+
+If, following a rebalance failure, a retry is pending, retrieve information on the pending retry as follows.
+Note that the command is piped to the https://stedolan.github.io/jq/[jq] program, to facilitate readability:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-rebalance \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--pending-info | jq '.'
+----
+
+This returns the following object:
+
+----
+{
+  "retry_rebalance": "pending",
+  "rebalance_id": "29d89aa757097523898588c28efd3b4a",
+  "type": "rebalance",
+  "attempts_remaining": 2,
+  "retry_after_secs": 184,
+  "known_nodes": [
+    "ns_1@10.143.192.101",
+    "ns_1@10.143.192.103"
+  ],
+  "eject_nodes": [],
+  "delta_recovery_buckets": "all"
+}
+----
+
+The output indicates that a `retry_rebalance` is `pending`, and indicates that the `rebalance_id` for the pending retry is `29d89aa757097523898588c28efd3b4a`.
+This id can be used to cancel the current retry sequence.
+The output also indicates that 2 further retries are scheduled to be made, if necessary; and the `184` seconds remain before the next retry starts.
+The nodes in the cluster are listed.
+None is specified to be ejected.
+All buckets are selected for `delta` recovery.
+
+The current rebalance sequence can be cancelled by means of the `setting-rebalance` command, specifying the retrieved `rebalance_id`.
+Enter the following:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-rebalance \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--cancel \
+--rebalance-id 29d89aa757097523898588c28efd3b4a
+----
+
+If successful, the command returns the following:
+
+----
+SUCCESS: Rebalance retry canceled
+----
 
 [#add-a-node-with-the-rest-api]
-== Add a Node with the REST API
+== Add a Node and Rebalance with the REST API
 
 To add a new Couchbase Server-node to an existing cluster, use the `/controller/addNode` URI.
 The following command adds node `10.142.181.102` to cluster `10.142.181.101`:
@@ -277,8 +334,10 @@ For further information on adding nodes with the REST API, see xref:rest-api:res
 
 _Retries_ (described above, in xref:manage:manage-nodes/add-node-and-rebalance.adoc#automated-rebalance-failure-handling[Automated Rebalance-Failure Handling]) can be cancelled with the REST API.
 
+Note that use of the REST API for setting and getting the current rebalance-failure configuration is documented in xref:manage:manage-settings/general-settings.adoc[General Settings].
+
 If, following a rebalance failure, a retry is pending, use the `GET /pools/default/pendingRetryRebalance` http method and URI to identify the pending retry, as follows.
-Note that this example uses the `jq` tool, to facilitate readability of output.
+Note that this example uses the https://stedolan.github.io/jq/[jq] tool, to facilitate readability of output.
 
 ----
 curl -u Administrator:password -v -X GET \
@@ -325,6 +384,8 @@ This would be indicated by the following output:
 ----
 
 All scheduled retries have thus been successfully cancelled.
+
+Note that reference pages for these commands are provided at xref:rest-api:rest-get-rebalance-retry.adoc[Get Rebalance-Retry Information] and xref:rest-api:rest-cancel-rebalance-retry.adoc[Cancel Rebalance Retries].
 
 [#next-steps-after-adding-and-rebalancing]
 == Next Steps
