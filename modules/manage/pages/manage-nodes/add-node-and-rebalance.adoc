@@ -34,7 +34,7 @@ It has not been initialized or provisioned.
 * The cluster has the Full Administrator username of `Administrator`, and password of `password`.
 
 [#add-a-node-with-the-ui]
-== Add a Node with the UI
+== Add a Node and Rebalance with the UI
 
 Proceed as follows:
 
@@ -115,6 +115,11 @@ The pane expands to provide additional information on the progress of data-trans
 +
 image::manage-nodes/rebalanceOpenedDataTab.png[,430,align=middle]
 +
+The dialog provides the average times required in the move of each vBucket.
+A set of averages is provided for each bucket on the cluster.
+For an explanation of the _stages_ &#8212; *Move*, *Backfill*, *Takeover*, and *Persistence* &#8212; see xref:learn:clusters-and-availability/rebalance.adoc#data-service-rebalance-stages[Data-Service Rebalance Stages].
+Note that the dialog may also include progress information on data-compression.
++
 When the rebalance is complete,
 *Servers* screen now appears as follows:
 +
@@ -142,12 +147,47 @@ Information is also provided on the *Rebalance* dialog:
 
 image::manage-nodes/rebalanceDialogFailureNotification.png[,400,align=middle]
 
-If failure occurs, the cause should be identified.
-If an unresponsive node become responsive again, rebalance can simply be reattempted.
+If an unresponsive node become responsive again, rebalance can simply be reattempted manually.
+Alternatively, the handling of a rebalance-failure can be configured to occur automatically, as described immediately xref:manage:manage-nodes/add-node-and-rebalance.adoc#automated-rebalance-failure-handling[below].
+
 Before attempting rebalance with a reduced number of nodes, assess whether the available resources can support the intended number of replicas.
+See xref:learn:clusters-and-availability/removal.adoc[Removal], for guidance.
+
+[#automated-rebalance-failure-handling]
+=== Automated Rebalance-Failure Handling
+
+The handling of a rebalance-failure can be configured to occur automatically.
+Configuration occurs by means of the *General* settings screen.
+Up to 3 _retries_ can be configured.
+Each retry occurs after the elapsing of a time-period specified by the administrator, in seconds.
+By default, automated rebalance-failure handling is _not_ enabled.
+For detailed information, see xref:manage:manage-settings/general-settings.adoc[General Settings].
+
+If automated rebalance-failure handling has been enabled (meaning that between 1 and 3 retries have been specified), following a rebalance failure, the following notifications appear at the lower left of the main screen of Couchbase Web Console:
+
+image::manage-nodes/rebalanceFailureMessage.png[,260,align=middle]
+
+The middle notification indicates that a retry is planned, in accordance with the configuration made on the *General* settings screen.
+The displayed integer represents the number of seconds remaining before the retry is commenced; and is gradually decremented, from the configured maximum to zero; at which point, retry is commenced.
+
+If a retry fails, additional retries occur successively; until the maximum configured number have been attempted.
+
+[#retry-cancellation]
+=== Retry-Cancellation
+
+If one or more retries have been configured, and, following a rebalance failure, a retry is pending, no administrative tasks should be performed on the cluster.
+Instead, _either_ allow configured retries continue occurring &#8212; until one has succeeded, or all have failed; _or_ cancel the entire retry sequence.
+Then, continue performing administrative tasks as appropriate.
+
+To cancel, left-click on the *CANCEL RETRY* link, on the retry notification.
+Note that this cancels *all* currently scheduled retries.
+However, the configured number of retries will be rescheduled for each subsequent, manually initiated rebalance.
+
+Retries can also be cancelled by means of the CLI and the REST API.
+See xref:manage:manage-nodes/add-node-and-rebalance.adoc#cancel-retries-with-the-cli[Cancel Retries with the CLI] and xref:manage:manage-nodes/add-node-and-rebalance.adoc#cancel-retries-with-the-rest-api[Cancel Retries with the REST API], below.
 
 [#add-a-node-with-the-cli]
-== Add a Node with the CLI
+== Add a Node and Rebalance with the CLI
 
 To add a new Couchbase Server-node to an existing cluster, use the xref:cli:cbcli/couchbase-cli-server-add.adoc[server-add] command.
 Note that this command requires that arguments be provided for its `--server-add-username` and `--server-add-password` flags.
@@ -155,9 +195,12 @@ In this case, meaningful arguments do not exist, since the new node features an 
 Therefore, specify placeholder arguments. Additionally, specify that the `data` service be run on the node, once it is part of the cluster.
 
 ----
-couchbase-cli server-add -c 10.142.181.101:8091 --username Administrator \
---password password --server-add 10.142.181.102:8091 \
---server-add-username someName --server-add-password somePassword \
+couchbase-cli server-add -c 10.142.181.101:8091 \
+--username Administrator \
+--password password \
+--server-add 10.142.181.102:8091 \
+--server-add-username someName \
+--server-add-password somePassword \
 --services data
 ----
 
@@ -191,8 +234,69 @@ SUCCESS: Rebalance complete
 
 Note that when the operation is highly complex, it may be desirable to get status on its progress, or stop the operation. See the command reference for xref:cli:cbcli/couchbase-cli-rebalance-status.adoc[rebalance-status] and xref:cli:cbcli/couchbase-cli-rebalance-stop.adoc[rebalance-stop], for more information.
 
+[#cancel-retries-with-the-cli]
+=== Cancel Retries with the CLI
+
+_Retries_ (described above, in xref:manage:manage-nodes/add-node-and-rebalance.adoc#automated-rebalance-failure-handling[Automated Rebalance-Failure Handling]) can be cancelled with the CLI, by means of the xref:cli:cbcli/couchbase-cli-setting-rebalance.adoc[setting-rebalance] command.
+
+Note that use of `setting-rebalance` for setting and getting the current rebalance-failure configuration is documented in xref:manage:manage-settings/general-settings.adoc[General Settings].
+
+If, following a rebalance failure, a retry is pending, retrieve information on the pending retry as follows.
+Note that the command is piped to the https://stedolan.github.io/jq/[jq] program, to facilitate readability:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-rebalance \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--pending-info | jq '.'
+----
+
+This returns the following object:
+
+----
+{
+  "retry_rebalance": "pending",
+  "rebalance_id": "29d89aa757097523898588c28efd3b4a",
+  "type": "rebalance",
+  "attempts_remaining": 2,
+  "retry_after_secs": 184,
+  "known_nodes": [
+    "ns_1@10.143.192.101",
+    "ns_1@10.143.192.103"
+  ],
+  "eject_nodes": [],
+  "delta_recovery_buckets": "all"
+}
+----
+
+The output indicates that a `retry_rebalance` is `pending`, and indicates that the `rebalance_id` for the pending retry is `29d89aa757097523898588c28efd3b4a`.
+This id can be used to cancel the current retry sequence.
+The output also indicates that 2 further retries are scheduled to be made, if necessary; and the `184` seconds remain before the next retry starts.
+The nodes in the cluster are listed.
+None is specified to be ejected.
+All buckets are selected for `delta` recovery.
+
+The current rebalance sequence can be cancelled by means of the `setting-rebalance` command, specifying the retrieved `rebalance_id`.
+Enter the following:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-rebalance \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--cancel \
+--rebalance-id 29d89aa757097523898588c28efd3b4a
+----
+
+If successful, the command returns the following:
+
+----
+SUCCESS: Rebalance retry canceled
+----
+
 [#add-a-node-with-the-rest-api]
-== Add a Node with the REST API
+== Add a Node and Rebalance with the REST API
 
 To add a new Couchbase Server-node to an existing cluster, use the `/controller/addNode` URI.
 The following command adds node `10.142.181.102` to cluster `10.142.181.101`:
@@ -225,6 +329,63 @@ If successful, the command returns no output.
 
 For further information on adding nodes with the REST API, see xref:rest-api:rest-cluster-addnodes.adoc[Adding Nodes to Clusters]; on rebalancing, see xref:rest-api:rest-cluster-rebalance.adoc[Rebalancing Nodes].
 
+[#cancel-retries-with-the-rest-api]
+=== Cancel Retries with the REST API
+
+_Retries_ (described above, in xref:manage:manage-nodes/add-node-and-rebalance.adoc#automated-rebalance-failure-handling[Automated Rebalance-Failure Handling]) can be cancelled with the REST API.
+
+Note that use of the REST API for setting and getting the current rebalance-failure configuration is documented in xref:manage:manage-settings/general-settings.adoc[General Settings].
+
+If, following a rebalance failure, a retry is pending, use the `GET /pools/default/pendingRetryRebalance` http method and URI to identify the pending retry, as follows.
+Note that this example uses the https://stedolan.github.io/jq/[jq] tool, to facilitate readability of output.
+
+----
+curl -u Administrator:password -v -X GET \
+http://10.143.192.101:8091/pools/default/pendingRetryRebalance | jq '.'
+----
+
+The output is as follows:
+
+----
+{
+  "retry_rebalance": "pending",
+  "rebalance_id": "ff5845cdce693db2dce9a9308cbf885d",
+  "type": "rebalance",
+  "attempts_remaining": 2,
+  "retry_after_secs": 291,
+  "known_nodes": [
+    "ns_1@10.143.192.101",
+    "ns_1@10.143.192.103"
+  ],
+  "eject_nodes": [],
+  "delta_recovery_buckets": "all"
+}
+----
+
+This indicates that the status of `retry_rebalance` is `pending`; and provides a `rebalance_id` for the process, of `ff5845cdce693db2dce9a9308cbf885d`.
+This id can be used to cancel the retry.
+The output also lists the cluster's nodes, indicates that `2` retry attempts are scheduled to occur if necessary after the current one, and indicates that `291` seconds are still to elapse before the pending retry.
+
+To cancel the pending retry, use the `POST /controller/cancelRebalanceRetry` http method and URI, specifying the retrieved `rebalance_id` as the endpoint:
+
+----
+curl -u Administrator:password -v -X POST \
+http://10.143.192.101:8091/controller/cancelRebalanceRetry/ff5845cdce693db2dce9a9308cbf885d
+----
+
+If successful, this produces a `HTTP/1.1 200 OK` success message.
+Subsequently, the `GET /pools/default/pendingRetryRebalance` http method and URI can again be used, to verify that there is no longer a retry pending.
+This would be indicated by the following output:
+
+----
+{
+  "retry_rebalance": "not_pending"
+}
+----
+
+All scheduled retries have thus been successfully cancelled.
+
+Note that reference pages for these commands are provided at xref:rest-api:rest-get-rebalance-retry.adoc[Get Rebalance-Retry Status] and xref:rest-api:rest-cancel-rebalance-retry.adoc[Cancel Rebalance Retries].
 
 [#next-steps-after-adding-and-rebalancing]
 == Next Steps
