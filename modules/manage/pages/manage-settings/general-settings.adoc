@@ -94,8 +94,9 @@ For information on groups, see xref:learn:clusters-and-availability/groups.adoc[
 This option is selected by default.
 For further information, see xref:learn:clusters-and-availability/automatic-failover.adoc#auto-failover-during-rebalance[Auto-Failover During Rebalance].
 
-The *Node Availability* panel also contains an *Enable auto-reprovisioning* option, for Ephemeral buckets.
-Checking this checkbox ensures that if a node containing _active_ Ephemeral buckets becomes unavailable, its replicas on the specified number of other nodes are promoted to active status as appropriate, to avoid data-loss.
+The *Node Availability* panel also contains a *For Ephemeral Buckets* option.
+When opened, this provides an *Enable auto-reprovisioning* checkbox, with a configurable number of nodes.
+Checking this ensures that if a node containing _active_ Ephemeral buckets becomes unavailable, its replicas on the specified number of other nodes are promoted to active status as appropriate, to avoid data-loss.
 Note, however, that this may leave the cluster in an unbalanced state, requiring a rebalance.
 
 [#auto-failover-and-durability]
@@ -104,6 +105,20 @@ Note, however, that this may leave the cluster in an unbalanced state, requiring
 Couchbase Server provides _durability_, which ensures the greatest likelihood of data-writes surviving unexpected anomalies, such as node-outages.
 The auto-failover maximum should be established to support guarantees of durability.
 See xref:learn:data/durability.adoc[Durability], for information.
+
+[#rebalance-settings]
+=== Rebalance Settings
+
+_Rebalance_ re-distributes data and indexes among available nodes.
+For an overview, see xref:learn:clusters-and-availability/rebalance.adoc[Rebalance].
+In some cases, the rebalance operation may fail; therefore, a *Retry rebalance* option is provided.
+Check the checkbox, to enable.
+The specifiable, _maximum number of retries_ must be in the range of 1 to 3, inclusive.
+The specifiable, _maximum number of seconds_ must be in the range of 5 to 3600, inclusive.
+
+Note that this option should _not_ be enabled if the cluster is managed by _Couchbase Autonomous Operator_, or if custom scripts are already being used to trigger rebalance.
+Note also that no administrative tasks should be attempted when rebalance-retries are pending.
+However, pending rebalance-retries can be cancelled: see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance], for information.
 
 [#index-storage-mode]
 === Index Storage Mode
@@ -137,9 +152,16 @@ If *Restricted* is specified, the UI expands, to display configurable fields int
 The *Query Temp Disk Path* field allows specification of the path to which temporary files are written, based on query activities.
 The maximum size of the target can be specified, in megabytes.
 
+[#xdcr-maximum-processes]
+=== XDCR Maximum Processes
+
+The maximum number of threads used per node, to support XDCR.
+A greater number of threads increases parallelism, and may thereby produce enhanced XDCR performance.
+The default number of threads is 4.
+
 [#saving-settings]
 === Saving Settings
-To save settings, left-click on the *Save* button, at the lower right.
+To save settings, left-click on the *Save* button, at the lower left.
 
 image::manage-settings/save-or-cancel.png[,220,align=left]
 
@@ -263,6 +285,64 @@ SUCCESS: Auto-failover settings modified
 ----
 
 For a detailed description of auto-failover settings, policy, and constraints, see xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover].
+
+[#rebalance-settings-via-cli]
+=== Rebalance Settings via CLI
+
+To obtain the cluster's current rebalance settings by means of the CLI, use the xref:cli:cbcli/couchbase-cli-setting-rebalance.adoc[setting-rebalance] command, with the `--get` option:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-rebalance \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--get
+----
+
+If successful, the command returns the current rebalance settings:
+
+----
+Automatic rebalance retry disabled
+Retry wait time: 300
+Maximum number of retries: 2
+----
+
+To modify the current rebalance settings, use the `--set` option; and specify appropriate values for the `--max-attempts` and `--wait-for` flags:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-rebalance \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--set \
+--max-attempts 3 \
+--wait-for 200
+----
+
+If successful, the command displays the following success message:
+
+----
+SUCCESS: Automatic rebalance retry settings updated
+----
+
+[#xdcr-process-setting-via-cli]
+=== XDCR Process Setting via CLI
+
+To configure the number of XDCR processes for the node, use the xref:cli:cbcli/couchbase-cli-setting-xdcr.adoc[setting-xdcr] command, with the `--max-processes` option:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-xdcr \
+-c 10.143.192.101 \
+-u Administrator \
+-p password \
+--max-processes 5
+----
+
+If successful, the command returns the following message:
+
+----
+SUCCESS: Global XDCR settings updated
+----
 
 [#configure-general-settings-with-the-rest-api]
 == Configure General Settings with the REST API
@@ -413,3 +493,111 @@ If successful, the call returns a JSON document that confirms the modified setti
 ----
 {"all_access":false,"allowed_urls":["https://company1.com"],"disallowed_urls":["https://company2.com"]}
 ----
+
+[#rebalance-settings-via-rest]
+=== Rebalance Settings via REST
+
+To obtain the cluster's current rebalance settings by means of the REST API, use the `GET /settings/retryRebalance` http method and URI, as follows:
+
+----
+curl -X GET -u Administrator:password \
+http://10.143.192.101:8091/settings/retryRebalance
+----
+
+If successful, the command returns the following object:
+
+----
+{"enabled":true,"afterTimePeriod":200,"maxAttempts":3}
+----
+
+This output shows that rebalance retry is enabled, with `200` seconds required to elapse before a retry is attempted, and a maximum of `3` retries possible.
+
+To change the rebalance settings, use the `POST` method with the same URI, specifying appropriate values:
+
+----
+curl -X POST -u Administrator:password \
+http://10.143.192.101:8091/settings/retryRebalance \
+-d enabled=false \
+-d afterTimePeriod=100 \
+-d maxAttempts=2
+----
+
+If successful, the command returns the following object:
+
+----
+{"enabled":false,"afterTimePeriod":100,"maxAttempts":2
+----
+
+This verifies that rebalance retry has been disabled, the required period between retries changed to `100` seconds, and the maximum number of retries changed to `2`.
+
+[#xdcr-process-setting-via-rest]
+=== XDCR Process Setting via REST
+
+To determine how many XDCR processes are configured for the current node, use the `GET /settings/replications` http method and URI, as follows.
+Note that this example pipes the output to the https://stedolan.github.io/jq/[jq] program, to facilitate readability.
+
+----
+curl -X GET -u Administrator:password \
+http://10.143.192.101:8091/settings/replications | jq '.'
+----
+
+If successful, the command returns the following object:
+
+----
+{
+  "checkpointInterval": 600,
+  "compressionType": "Auto",
+  "desiredLatency": 50,
+  "docBatchSizeKb": 2048,
+  "failureRestartInterval": 10,
+  "filterBypassExpiry": false,
+  "filterDeletion": false,
+  "filterExpiration": false,
+  "goGC": 100,
+  "goMaxProcs": 4,
+  "logLevel": "Info",
+  "networkUsageLimit": 0,
+  "optimisticReplicationThreshold": 256,
+  "priority": "High",
+  "sourceNozzlePerNode": 2,
+  "statsInterval": 1000,
+  "targetNozzlePerNode": 2,
+  "workerBatchSize": 500
+}
+----
+
+The configured number of threads is the value to `goMaxProcs`; which is currently `4.`
+To change this value, use the `POST` method with the same URI, specifying the required number of processes as the value to the `--goMaxProcs` option:
+
+----
+curl -X POST -u Administrator:password \
+http://10.143.192.101:8091/settings/replications \
+-d goMaxProcs=5 | jq '.'
+----
+
+If successful, this returns the following object:
+
+----
+{
+  "checkpointInterval": 600,
+  "compressionType": "Auto",
+  "desiredLatency": 50,
+  "docBatchSizeKb": 2048,
+  "failureRestartInterval": 10,
+  "filterBypassExpiry": false,
+  "filterDeletion": false,
+  "filterExpiration": false,
+  "goGC": 100,
+  "goMaxProcs": 5,
+  "logLevel": "Info",
+  "networkUsageLimit": 0,
+  "optimisticReplicationThreshold": 256,
+  "priority": "High",
+  "sourceNozzlePerNode": 2,
+  "statsInterval": 1000,
+  "targetNozzlePerNode": 2,
+  "workerBatchSize": 500
+}
+----
+
+This output indicates that the value of `goMaxProcs` has been appropriately incremented.
