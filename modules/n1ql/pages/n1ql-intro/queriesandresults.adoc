@@ -2,19 +2,24 @@
 :page-topic-type: concept
 
 [abstract]
-In N1QL, you submit queries using any of the DML statements.
+An overview of common concepts that you need to understand and use the Query service.
+
+== Queries
+
+A N1QL query is a string parsed by the query service.
+The N1QL query language is based on SQL, but designed for structured and flexible JSON documents.
 
 As with SQL, you can have nested sub-queries.
 N1QL queries run on JSON documents, and you can query over multiple documents by using the `JOIN` clause.
 
-Because data in N1QL can be nested , there are operators and functions that let you navigate through nested arrays.
+Because data in N1QL can be nested, there are operators and functions that let you navigate through nested arrays.
 Because data can be irregular, you can specify conditions in the `WHERE` clause to retrieve data.
 
 You can use standard `GROUP BY`, `ORDER BY`, `LIMIT`, and `OFFSET` clauses as well as a rich set of functions to transform the results as needed.
 
-== Queries
+== Results
 
-In N1QL, a query returns a set of documents.
+The result for each query is a set of JSON documents.
 The returned document set is not required to be uniform, though it can be.
 A `SELECT` statement that specifies a fixed set of attribute (column) names results in a uniform set of documents and a `SELECT` statement that specifies the wild card (*) results in a non-uniform result set.
 The only guarantee is that every returned document meets the query criteria.
@@ -57,6 +62,7 @@ SELECT name, brewery_id from `beer-sample` WHERE brewery_id IS NOT MISSING LIMIT
 [#paths]
 == Paths
 
+One of the main differences between JSON and flat rows is that JSON supports a nested structure, allowing documents to contain other documents, also known as sub-documents.
 N1QL provides [.term]_paths_ to support nested data.
 Paths use dot notation syntax to identify the logical location of an attribute within a document.
 For example, to get the street from a customer order, use the path `orders.billTo.street`.
@@ -71,3 +77,129 @@ Any document data can be requested and returned to an application.
 When only relevant information is returned to an application, querying bandwidth is reduced.
 
 See xref:n1ql-language-reference/index.adoc#nested-path-expressions[Nested Path Expressions] for more details.
+
+[#named-placeholders]
+== Parameterized Queries
+
+N1QL allows the use of placeholders to declare dynamic query parameters.
+For example:
+
+[source,n1ql]
+----
+SELECT airportname FROM `travel-sample` WHERE city=$1
+----
+
+The `$1` is a positional placeholder.
+When the query is constructed, it may receive arguments, with each argument being used as the placeholder value in the query.
+Thus, `$1` refers to the first argument,`$2` to the second, and so on.
+
+Placeholders may also be _named_.
+This is particularly useful when there are many query parameters and ensuring that they are all in the correct order may be cumbersome.
+Name query placeholders take the form of `$name`.
+
+[source,n1ql]
+----
+SELECT airportname FROM `travel-sample`
+WHERE country=$country
+AND geo.alt > $altitude
+AND (geo.lat BETWEEN $min_lat AND $max_lat)
+AND (geo.lon BETWEEN $min_lon AND $max_lon);
+----
+
+You can set positional and named parameter values using cbq or the N1QL REST API when you run the query.
+For example, using cbq:
+
+[source,console]
+----
+cbq> \SET -$country "United States";
+cbq> \SET -$altitude 500;
+cbq> \SET -$min_lat -50;
+cbq> \SET -$max_lat 50;
+cbq> \SET -$min_lon -180;
+cbq> \SET -$max_lon 0;
+----
+
+[#prepare-stmts]
+== Query Optimization Using Prepared Statements
+
+When a N1QL query string is sent to the server, the server will inspect the string and parse it, planning which indexes to query.
+Once this is done, it generates a _query plan_.
+The computation for the plan adds some additional processing time and overhead for the query.
+
+Often-used queries can be _prepared_ so that its _plan_ is generated only once.
+Subsequent queries using the same query string will use the pre-generated _plan_ instead, saving on the overhead and processing of the plan each time.
+
+NOTE: Parameterized queries are considered the same query for caching and planning purposes, even if the supplied parameters are different.
+
+For more information on how to optimize queries using prepared statements, refer to the xref:n1ql:n1ql-language-reference/prepare.adoc[PREPARE] statement.
+
+== Indexes
+
+The Couchbase query service makes use of _indexes_ in order to do its work.
+Indexes replicate subsets of documents from data nodes over to index nodes, allowing specific data (for example, specific document properties) to be retrieved quickly, (and to distribute load away from data nodes in MDS topologies).
+
+In order to make a bucket queryable, it must have at least one index defined.
+
+You can define a _primary index_ on a bucket.
+When a _primary_ index is defined you can issue non-covered queries on the bucket as well.
+This includes using the `META` function in the queries.
+
+[source,n1ql]
+----
+CREATE PRIMARY INDEX ON `users`;
+----
+
+You can also define indexes over given document fields and then use those fields in the query:
+
+[source,n1ql]
+----
+CREATE INDEX ix_name ON `users`(name);
+CREATE INDEX ix_email ON `users`(email);
+----
+
+Would allow you to query the _users_ bucket regarding a document's `name` or `email` properties, so for example:
+
+[source,n1ql]
+----
+SELECT name, email FROM `users` WHERE name="Monty Python" OR email="monty@python.org";
+----
+
+Indexes help improve the performance of a query.
+When an index includes the actual values of all the fields specified in the query, the index covers the query and eliminates the need to fetch the actual values from the Data Service.
+An index, in this case, is called a covering index and the query is called a covered query.
+For more information, refer to xref:indexes:covering-indexes.adoc[Covering Indexes].
+
+== Index Building
+
+Creating indexes can take a long time on buckets with lots of existing documents.
+You can build indexes in the background, creating _deferred_ indexes and then building all deferred indexes at once.
+This allows multiple indexes to be built at once rather than having to re-scan the entire bucket for each index.
+
+[source,sql]
+----
+CREATE PRIMARY INDEX ON `users` WITH {"defer_build": true};
+CREATE INDEX ix_name ON `users`(name) WITH {"defer_build": true};
+CREATE INDEX ix_email ON `users`(email) WITH {"defer_build": true};
+BUILD INDEX ON `users`(`#primary`, `ix_name`, `ix_email`);
+----
+
+The indexes are actually built when the `BUILD INDEX` statement is executed.
+At this point, the server scans all the documents in the `users` bucket and indexes it for all of the applicable indexes (i.e.
+if it has a `name` or `email`) field.
+
+== Index Consistency
+
+Because indexes are by design outside the data service, they are eventually consistent with respect to changes to documents and, depending on how you issue the query, may at times not contain the most up-to-date information.
+This may especially be the case when deployed in a write-heavy environment: changes may take some time to propagate over to the index nodes.
+
+The asynchronous updating nature of global secondary indexes means that they can be very quick to query and do not require the additional overhead of index recalculations at the time documents are modified.
+N1QL queries are forwarded to the relevant indexes and the queries are done based on indexed information, rather than the documents as they exist in the data service.
+
+With default query options, the query service will rely on the current index state: the most up-to-date document versions are not retrieved, and only the indexed versions are queried.
+This provides the best performance.
+Only updates occurring with a small time frame may not yet have been indexed.
+
+The query service can use the latest versions of documents by modifying the [.api]`consistency` of the query.
+This is done by setting the [.api]`scan_consistency` parameter to [.api]`REQUEST_PLUS`.
+When using this consistency mode, the query service will ensure that the indexes are synchronized with the data service before querying.
+For more information, refer to xref:settings:query-settings.adoc[Query Settings].
