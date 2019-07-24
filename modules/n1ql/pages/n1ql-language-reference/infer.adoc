@@ -1,54 +1,56 @@
 = INFER
+:imagesdir: ../../assets/images
+:page-edition: enterprise edition
 
-Couchbase Server 4.5 introduces INFER, a N1QL statement that infers the metadata of documents in a keyspace, for example the structure of documents, data types of various attributes, sample values, and so on.
+The INFER statement enables you to infer the metadata of documents in a keyspace, for example the structure of documents, data types of various attributes, sample values, and so on.
 Since a keyspace or bucket can contain documents with varying structures, the INFER statement is statistical in nature rather than deterministic.
 You can specify the sample size that must be used to analyze and identify the structure of documents in a keyspace or bucket.
 The INFER statement is only supported in the Enterprise Edition.
 
 NOTE: The [.cmd]`describe` statement introduced in the Couchbase Server 4.1 release has been renamed to INFER.
 
-The statement returns the output in the http://json-schema.org/documentation.html[JSON Schema draft v4^] format as specified by http://json-schema.org/[json-schema.org^].
-It supports the following data types: array, boolean, integer, null, number, and object.
-For each identified attribute, the statement returns the following details:
-
-* [.out]`#docs`: Specifies the number of documents in the sample that contain this attribute.
-* [.out]`%docs`: Specifies the percentage of documents in the sample that contain this attribute.
-* [.out]`minitems`: If the data type is an array, specifies the minimum number of elements (array size).
-* [.out]`maxitems`: If the data type is an array, specifies the maximum number of elements (array size).
-* [.out]`samples`: Displays a list of sample values for the attribute found in the sample population.
-* [.out]`type`: Specifies the identified data type of the attribute.
-
 The Query Workbench in the Couchbase Web console (available under the [.ui]*Query* tab) uses the INFER statement to display the structure of documents in the [.ui]*Bucket Analysis* area when you expand the keyspace or bucket name.
 
-*Syntax*
+== Syntax
 
+[subs="normal"]
 ----
-INFER <keyspace_ref> [ WITH { "parameter" : value, … } ]
-----
-
-* [.var]`keyspace_ref`: Specifies a simple or fully-qualified keyspace name.
-* [.var]`parameter`: Specifies one or more of the following comma separated parameters to guide the INFER statement.
-+
-----
-parameter ::= [ "sample_size" : <value> ]
-              [ , "num_sample_values" : <value> ]
-              [ , "similarity_metric" : <value> ]
-              [ , "dictionary_threshold" : <value> ]
+infer-clause ::= INFER keyspace-ref [ WITH '{' <<infer-parameters,parameter>> ':' value ( ',' <<infer-parameters,parameter>> ':' value )* '}' ]
 ----
 
-* [.var]`sample_size`: Specifies the number of documents to randomly sample in the keyspace or bucket when inferring the schema.
+image::n1ql-language-reference/infer-clause.png["'INFER' keyspace-ref ( 'WITH' '{' parameter ':' value ( ',' parameter ':' value )* '}' )?"]
+
+[.var]`keyspace_ref`:: Specifies a simple or fully-qualified keyspace name.
+
+[#infer-parameters]
+=== Parameters
+
+[subs="normal"]
+----
+parameter ::= '"' ( 'sample_size' | 'num_sample_values' | 'similarity_metric' | 'dictionary_threshold' ) '"'
+----
+
+image::n1ql-language-reference/infer-parameters.png["'&quot' ( 'sample_size' | 'num_sample_values' | 'similarity_metric' | 'dictionary_threshold' ) '&quot;'"]
+
+You may specify one or more of the following comma-separated parameters to guide the INFER statement.
+
+[.var]`sample_size`:: Specifies the number of documents to randomly sample in the keyspace or bucket when inferring the schema.
 The default sample size is 1000 documents.
 If a bucket contains fewer documents than the specified [.var]`sample_size`, then all the documents in the bucket will be used.
-* [.var]`num_sample_values`: Specifies the number of sample values for each attributes to be returned.
+
+[.var]`num_sample_values`:: Specifies the number of sample values for each attributes to be returned.
 The sample values provide examples of the data format.
 The default value is 5.
-* [.var]`similarity_metric`: The schema inferencing process groups similar schemas into document flavors.
-_Similarity-metric_ is the degree of similarity that two schemas must have to be considered part of the same flavor.
+
+[.var]`similarity_metric`:: The schema inferencing process groups similar schemas into document flavors.
+The `similarity_metric` is the degree of similarity that two schemas must have to be considered part of the same flavor.
 You can specify a real number between 0 and 1 indicating the percentage match (of attributes) required to establish similarity between two documents.
 The default value is 0.6, which means two documents are considered similar if 60% of the attributes at the top-level attributes are the same.
-* [.var]`dictionary_threshold`: Sometimes JSON documents follow the dictionary pattern, where a field has sub-fields that are key-value pairs, instead of general field-name and value pairs.
+
+[.var]`dictionary_threshold`:: Sometimes JSON documents follow the dictionary pattern, where a field has sub-fields that are key-value pairs, instead of general field-name and value pairs.
 For example, one of the Couchbase training modules has music tracks with a sub-document called "ratings" where each rating has the user ID paired with the object:
 +
+[source,json]
 ----
    "ratings": {
           "brambliertypo75631": {
@@ -73,26 +75,60 @@ For example, one of the Couchbase training modules has music tracks with a sub-d
 While this pattern may not be ideal for a number of reasons, if your data follows this pattern it might seem that the data has a huge number of ‘fields’, since a data value is being used as a field name.
 When the schema inferencing process sees more than [.var]`dictionary_threshold` fields with different names, but the same sub-document schema, it collapses them into a single schema field marked as a dictionary.
 
-*RBAC Privileges*
+== Schema Output
 
-User executing the INFER statement must have the _Query Select_ privilege granted on the target keyspace/bucket.
+The statement returns the output in the http://json-schema.org/documentation.html[JSON Schema draft^] format as specified by http://json-schema.org/[json-schema.org^].
+It supports the following data types: array, boolean, integer, null, number, and object.
+
+At the top level, the output contains an array of schemas.
+Each schema recursively describes the structure of a flavor of document.
+For each identified attribute, the schema may contain the following details:
+
+Common Details::
+[.out]`#docs`;; Specifies the number of documents in the sample that contain this attribute.
+[.out]`%docs`;; Specifies the percentage of documents in the sample that contain this attribute.
+[.out]`samples`;; Contains sample values for the attribute found in the sample population.
+[.out]`type`;; Specifies specifying the identified data type of the attribute.
+
+Details for Array Data Type::
+[.out]`items`;; Contains details of the elements in the array.
+[.out]`minItems`;; Specifies the minimum number of elements (array size).
+[.out]`maxItems`;; Specifies the maximum number of elements (array size).
+
+Details for Object Data Type::
+[.out]`properties`;; Contains details of the properties of the object.
++
+Each property is described by a key-value pair, in which the key is the name of the property, and the value gives recursive details of that property.
+
+Details for Documents and Subdocuments::
+[.out]`$schema`;; Specifies the version of the JSON Schema standard.
+[.out]`Flavor`;; Specifies the flavor of a document or subdocument.
+
+== RBAC Privileges
+
+To execute the INFER statement, you must have the _Query Select_ privilege granted on the target keyspace/bucket.
 For more details about user roles, see
 xref:learn:security/authorization-overview.adoc[Authorization].
 
 For example,
 
-To execute the following statement, user must have the _Query Select_ privilege on `pass:c[`travel-sample`]`.
+To execute the following statement, you must have the _Query Select_ privilege on `pass:c[`travel-sample`]`.
 
+[source,n1ql]
 ----
 INFER `travel-sample`
 ----
 
-*Example*
+== Example
 
+====
+[source,n1ql]
 ----
 INFER `beer-sample` WITH {"sample_size":10000,"num_sample_values":1,"similarity_metric":0.0};
 ----
 
+.Results
+[source,json]
 ----
 [
     [
@@ -237,3 +273,4 @@ INFER `beer-sample` WITH {"sample_size":10000,"num_sample_values":1,"similarity_
       ]
 ]
 ----
+====
