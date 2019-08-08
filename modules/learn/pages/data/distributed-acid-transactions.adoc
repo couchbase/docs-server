@@ -5,29 +5,29 @@
 
 
 [abstract]
-Couchbase’s traditional strong consistency across single documents is now complemented by multi-document distributed ACID transactions.
+Couchbase’s traditional strong consistency across single documents is now complemented by multi-document, distributed ACID transactions.
 The Read Committed model of isolation offers a balance between safety and performance, and preventing the reading of ‘dirty’ data.
-Metadata is used internally during the transaction operations. 
+Couchbase manages transactions automatically, storing metadata in the system as your application executes transactional logic.
 
 
 
-Couchbase’s traditional strong consistency across single documents is now complemented by multi-document distributed ACID transactions.
-The flexible schema model allows more data in such single docs than would be typically found in an RDBMS.
+Couchbase’s traditional strong consistency across single documents is now complemented by multi-document, distributed ACID transactions.
+The flexible schema model inherent to JSON allows the expression of data in a more natural way than would be typically found in an RDBMS, including the extension of the inherent schema over time.
 Careful architecting of your application can avoid the performance trade-off of needing more than single document atomicity.
-Where a more immediate and guaranteed form of consistency may be required across documents, Couchbase offers multi-document atomicity, or _ACID Transactions_.
+Where a more immediate and guaranteed form of consistency may be required across documents, Couchbase offers _Distributed ACID Transactions_.
 
-Couchbase transactions offer the same flexibility that users are used to from relational databases.  
+Couchbase transactions offer the same flexibility that users are used to from traditional, relational databases.
 Reads and writes may be freely mixed, branching logic inside a transaction is supported, and data may be manipulated without restriction.  
 There is no limit to the number of documents that can be updated in a transaction.  
-The provided SDK has a strong focus on being easy to use for developers, with transactions automatically being retried as required.
+The provided API has a strong focus on being easy to use when developing, with transactions automatically being retried as required.
 
 == Prerequisites
 
-This is a Beta release, working with the Couchbase Java client only (with both the traditional asynchronous and the reactive asynchronous APIs). 
-Other languages are planned.
+This is a Beta release, available on Java only (with both the traditional asynchronous and the reactive asynchronous APIs).
+Other languages will be available in the future.
 ACID Transactions are implemented from Couchbase Data Platform 6.5 onwards, and require the xref:3.0@java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Java SDK] from 3.0 onwards.
 It is dependent upon the xref:data/durability.adoc[Synchronous Replication improvements introduced in Couchbase Data Platform 6.5].
-NTP across the Couchbase cluster is also _strongly_ recommended, to ensure any abandoned transactions are cleaned up.
+NTP across the Couchbase cluster is also _strongly_ recommended, to ensure any abandoned transactions are cleaned up in a timely manner.
 
 == ACID
 For single document operations, Couchbase has long provided a form of ACID semantics comparable with that of traditional RDBMSs.
@@ -42,7 +42,9 @@ This applies to insert, update, and delete operations across multiple documents.
 
 === Consistency
 
-_Synchronous Replication_, available from Couchbase Data Platform 6.5 onwards, ensures documents are synchronously replicated to a majority of replicas. In addition, eventual consistency is provided for Global Secondary Indexes and Full Text Search Indexes. xref:6.5@server:n1ql:n1ql-rest-api/index.adoc#table_xmr_grl_lt[`At_Plus` (_Read Your Own Writes_)] can be used in N1QL queries to wait for indexes to catch up to a transaction's updates
+_Synchronous Replication_, available from Couchbase Data Platform 6.5 onwards, ensures documents are synchronously replicated to a majority of replicas. 
+In addition, eventual consistency is provided for Global Secondary Indexes and Full Text Search Indexes. 
+xref:6.5@server:n1ql:n1ql-rest-api/index.adoc#table_xmr_grl_lt[`At_Plus` (_Read Your Own Writes_)] can be used in N1QL queries to wait for indexes to catch up to a transaction's updates.
 
 
 === Isolation
@@ -57,7 +59,6 @@ which is our solution to providing a single atomic commit in a distributed syste
 Essentially, as soon as a transaction commits, other transactions will only see committed data from that transaction.
 
 Non-transactional reads will not perform this Monotonic Atomic View logic, and will see the eventually consistent version of the commit.  Reads will never see ‘dirty’ uncommitted data.
-
 
 === Durability
 
@@ -82,10 +83,12 @@ Read Committed isolation level means that N1QL queries will never see ‘dirty�
 
 === XDCR
 
-XDCR streams used in backup are part of an eventually consistent data model.
+XDCR streams are part of an eventually consistent data model.
 Atomicity is not provided across XDCR.
 
-XDCR Active-passive configurations are supported with Transactions.  Active-active configurations are not supported in the current release -- although they will work in a situation where the application can guarantee that the two clusters will not attempt concurrent transactions involving the same document.
+XDCR Active-passive configurations are supported with Transactions. 
+Active-active configurations, where documents may be changed in multiple places concurrently relying on XDCR's conflict resolution, are not supported with the use of ACID Transactions in the current release. 
+They will work in a situation where the application can guarantee that the two clusters will not attempt concurrent transactions involving the same document.
 
 The following guidelines need to be followed for Couchbase ACID Transactions with Active-Passive XDCR:
 Use Last Write Wins for conflict resolution.
@@ -99,33 +102,36 @@ Application must completely fail over all application requests to the backup clu
 
 Users will see additional documents created in each bucket when they first use transactions.  Namely:
 
-A number of Active Transaction Records will be created, which will grow to 1024 documents over time.  These documents will have ids starting with “atr-”.
+A number of Active Transaction Records will be created, which will grow to 1024 documents over time. 
+These documents will have ids starting with “atr-”.
 A single “txn-client-record” document is also created.
 
-These documents are automatically maintained by the transactions library, and should be left alone by the application.
+These documents are automatically maintained by Couchbase transactions, and should not be changed by the application. 
+These documents do not contain any content directly so they should not accidentally impact query or full text results.
 
 NOTE: Staged mutations are stored alongside documents within Couchbase Server, helping to provide excellent performance.
-This means that the standard Couchbase document size limit of 20 MB is reduced to 10MB for documents involved in a transaction.
+This means that the standard Couchbase document size limit of 20 MB is reduced to 10 MB for documents involved in a transaction.
 
 
 == Tradeoffs
 
 === Overhead
 
-There is some unavoidable overhead to transactions, in order to provide the atomicity and consistency guarantees.  Each write is doubled -- first, to stage the data, then to commit it -- and four further writes per transaction are used for important metadata.
+There is some unavoidable overhead to transactions, in order to provide the atomicity and consistency guarantees. 
+Each write is doubled -- first, to stage the data, then to commit it -- and four further writes per transaction are used for important metadata.
 
-It is suggested that in many cases where customers may be considering transactions, the application should first consider the single document model. Together with the improved durability guarantees offered by xref:6.5@server:learn:data/durability.adoc[Synchronous Replication] this will offer atomicity with the excellent throughput and latency that users expect from Couchbase.
-
-
+It is suggested that in many cases where customers may be considering transactions, the application should first consider the single document model. 
+Together with the improved durability guarantees offered by xref:6.5@server:learn:data/durability.adoc[Synchronous Replication] this will offer atomicity with the excellent throughput and latency that users expect from Couchbase.
 
 
 === Co-operative Model
 
 This initial release of Couchbase transactions requires a degree of cooperation from the application.
 
-The application should ensure that non transactional updates (such as KV upserts or N1QL UPDATEs) and transactional updates are never done simultaneously to the same document.
+Applications using the bucket and documents should ensure that non transactional updates (such as KV upserts or N1QL UPDATEs) and transactional updates are never done simultaneously to the same document.
 
-We plan to lift this requirement in a future release.  In the meantime, a mechanism is provided whereby the application can subscribe to an events feed that will notify if this requirement has been violated, and on which documents.
+We plan to lift this requirement in a future release. 
+In the meantime, a mechanism is provided whereby the application can subscribe to an events feed that will notify if this requirement has been violated, and on which documents.
 
 
 == Current Limitations
