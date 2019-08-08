@@ -1,0 +1,309 @@
+= CREATE FUNCTION
+:page-topic-type: concept
+:page-status: Developer Preview
+:imagesdir: ../../assets/images
+:page-partial:
+
+[abstract]
+The `CREATE FUNCTION` statement enables you to create a user-defined function.
+
+include::ROOT:partial$developer-preview.adoc[tag=admonition]
+
+// == RBAC Privileges
+// 
+// TODO: Waiting for new RBAC roles to be implemented for user-defined functions.
+// For more details about user roles, see
+// xref:learn:security/authorization-overview.adoc[Authorization].
+
+== Syntax
+
+There are two types of user-defined function:
+
+* <<create-function-inline,Inline functions>> are defined using N1QL expressions, including subqueries.
+They enable you to name and reuse complex or repetitive expressions, including subqueries, in order to simplify your queries.
+
+* <<create-function-external,External functions>> are defined using an external language.
+They enable you to create functions that may be difficult or impossible to define using built-in N1QL expressions.
+The only supported language is JavaScript.
+
+The `CREATE FUNCTION` statement takes a different syntax depending on the type of function you are creating.
+
+[subs="normal"]
+----
+create-function ::= <<create-function-inline,create-function-inline>> | <<create-function-external,create-function-external>>
+----
+
+image::n1ql-language-reference/create-function.png["create-function-inline | create-function-external"]
+
+[[create-function-inline]]
+:section: inline
+=== Inline Functions
+
+There are two alternative syntaxes for defining an inline function: a syntax with braces `{}` and a syntax using the `LANGUAGE` keyword.
+The two syntaxes are synonymous.
+
+[subs="normal"]
+----
+create-function-inline ::= CREATE FUNCTION <<{section}-name,name>> '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')' ( '{' <<inline-expression,expression>> '}' | LANGUAGE INLINE AS <<inline-expression,expression>> )
+----
+
+image::n1ql-language-reference/create-function-inline.png["'CREATE' 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' ( '{' expression '}' | 'LANGUAGE' 'INLINE' 'AS' expression )"]
+
+// tag::arguments[]
+[id='{section}-name']
+name::
+The name of the function.
+This may be an unqualified identifier, such as `func1` or `{backtick}func-1{backtick}`, or a qualified identifier with a namespace, such as `default:func1`.
+It is recommended to use an unqualified identifier for the function name.
+This may not be the same as a reserved keyword.
+A function name with a namespace may have the same name as a reserved keyword.
++
+[NOTE]
+--
+You cannot create a function with the same name as an existing user-defined function.
+If you want to redefine a function, you must drop the function first, then create it again.
+--
+
+[id='{section}-parameter']
+parameter::
+[Optional] The name of a function argument.
+If you specify named parameters for the function, then you must call the function with exactly the same number of parameters at execution time.
+If you specify no parameters for the function, then you may call the function with any number of parameters at execution time, or with none.
+// end::arguments[]
+
+[[inline-expression]]
+expression::
+The N1QL expression that defines the function.
+You can use any valid expression.
+If you specified named parameters for the function, you can use these in the expression to represent arguments passed to the function at execution time.
+If you did not specify any named parameters for the function, any arguments passed to the function at execution time are held in an array named `args`.
++
+[NOTE]
+--
+* If the expression contains a parameter that has the same name as a field in the document, it will always refer to the parameter.
+To distinguish between the field and the parameter, prefix the field with the keyspace name, for example `{backtick}travel-sample{backtick}.type`.
+To avoid this ambiguity, you should use unique parameter names that do not clash with document field names, such as `vType`.
+
+* Functions may return only one value, of any valid N1QL type.
+For inline functions, the result and type of the function are the result and type of the expression.
+If you need to return multiple values, construct an array.
+--
+
+[[create-function-external]]
+:section: external
+=== External Functions
+
+[subs="normal"]
+----
+create-function-external ::=  CREATE FUNCTION <<{section}-name,name>> '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')' LANGUAGE JAVASCRIPT AS '{' <<external-library,library>> ',' <<external-object,object>> '}'
+----
+
+image::n1ql-language-reference/create-function-external.png["'CREATE' 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' 'LANGUAGE' 'JAVASCRIPT' 'AS' '{' library ',' object '}'"]
+
+include::createfunction.adoc[tag=arguments]
+
+[[external-library]]
+library::
+The name of the JavaScript library that contains the function you want to use.
+You must create the JavaScript library and the JavaScript function using the N1QL Functions REST API.
+For details, refer to xref:n1ql-rest-api/functions.adoc[Functions REST API].
+
+[[external-object]]
+object::
+The name of the JavaScript function that you want to use for the user-defined function.
+The supported JavaScript syntax is the same as for the Eventing service.
+For details, refer to xref:eventing:eventing-language-constructs.adoc[Language Constructs].
+
+== Examples
+
+For simplicity, none of these examples implement any data validation or error checking.
+
+.Inline function with the LANGUAGE syntax
+====
+This statement creates a function called `celsius`, which converts Fahrenheit to Celsius.
+The function does not define any arguments.
+The expression converts the first argument supplied at execution time, which is stored in the first member in the `args` array.
+
+[source,n1ql]
+----
+CREATE FUNCTION celsius() LANGUAGE INLINE AS (args[0] - 32) * 5/9;
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION celsius(100);
+----
+
+.Result
+[source,json]
+----
+[
+  37.77777777777778
+]
+----
+====
+
+.Inline function with the braces syntax
+====
+This statement creates a function called `fahrenheit`, which converts Celsius to Fahrenheit.
+The function does not define any arguments.
+The expression converts the first argument supplied at execution time, which is stored in the first member in the `args` array.
+
+[source,n1ql]
+----
+CREATE FUNCTION fahrenheit() { (args[0] * 9/5) + 32 };
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION fahrenheit(100, "ignore this");
+----
+
+.Result
+[source,json]
+----
+[
+  212
+]
+----
+
+As no arguments were specified by the function definition, you can use any number of arguments when you call the function.
+Arguments which are not used by the function expression are ignored.
+====
+
+.Inline function with named parameters
+====
+The following statement creates a function called `lstr`, which returns the specified number of characters from the left of a string.
+The expression expects two named arguments: `vString`, which is the string to work with, and `vLen`, which is the number of characters to return.
+
+[source,n1ql]
+----
+CREATE FUNCTION lstr(vString, vLen) LANGUAGE INLINE AS SUBSTR(vString, 0, vLen);
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION lstr("Couchbase", 5, "ignore this");
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "code": 10104,
+    "msg": "Incorrect number of arguments supplied to function lstr - cause: lstr"
+  }
+]
+----
+
+As the arguments were specified by the function definition, you must use the same number of arguments when you call the function.
+If you supply the wrong number of arguments, an error is generated.
+====
+
+.Inline function with named parameters
+====
+The following statement creates a function called `rstr`, which returns the specified number of characters from the right of a string.
+The expression expects two named arguments: `vString`, which is the string to work with, and `vLen`, which is the number of characters to return.
+
+[source,n1ql]
+----
+CREATE FUNCTION rstr(vString, vLen) { SUBSTR(vString, LENGTH(vString) - vLen, vLen) };
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION rstr("Couchbase", 4);
+----
+
+.Result
+[source,json]
+----
+[
+  "base"
+]
+----
+====
+
+.Inline function with subquery
+====
+The following statement creates a function called `locations`, which selects name and address information from all documents of the specified type in the `travel-sample` bucket.
+
+[source,n1ql]
+----
+CREATE FUNCTION locations(vType) { (
+  SELECT id, name, address, city
+  FROM `travel-sample`
+  WHERE type = vType) };
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION locations("landmark");
+----
+
+.Result
+[source,json]
+----
+[
+  [
+    {
+      "address": "Prince Arthur Road, ME4 4UG",
+      "city": "Gillingham",
+      "id": 10019,
+      "name": "Royal Engineers Museum"
+    },
+    {
+      "address": "4 High Street, ME7 1BB",
+      "city": "Gillingham",
+      "id": 10020,
+      "name": "Hollywood Bowl"
+    },
+    ...
+  ]
+]
+----
+====
+
+.External function
+====
+The following command registers a JavaScript function called `add` in a library called `math`.
+
+[source,console]
+----
+$ curl -v -X POST http://localhost:8093/functions/v1/libraries -H 'content-type: application/json' -d '{"name":"math","code":"function add(a, b) { let data = a + b; return data; }"}' -u Administrator:password
+----
+
+The following statement creates a function called `javaScriptAdd`, which calls the JavaScript `add` function from the `math` library.
+
+[source,n1ql]
+----
+CREATE FUNCTION javaScriptAdd() LANGUAGE JAVASCRIPT AS { "math", "add" };
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION javaScriptAdd(2, 3);
+----
+
+.Result
+[source,json]
+----
+[
+  5
+]
+----
+====
+
+== Related Links
+
+* To execute user-defined functions, refer to xref:n1ql-language-reference/execfunction.adoc[EXECUTE FUNCTION].
+* To include user-defined functions in an expression, refer to xref:n1ql-language-reference/userfun.adoc[User-Defined Functions].
+* To view user-defined functions, refer to xref:manage:monitor/monitoring-n1ql-query.adoc#sys-functions[Monitor Queries].
+* To drop user-defined functions, refer to xref:n1ql-language-reference/dropfunction.adoc[DROP FUNCTION].
