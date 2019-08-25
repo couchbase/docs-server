@@ -160,3 +160,52 @@ These are scorch specifc commands ...
  ** command-line tool to interact with a zap file
 
 Invoking the commands above with --help will highlight more information and further sub commands available for each.
+
+*Q: How does FTS scores documents?*
+
+FTS's internal text indexing library(bleve) uses a slightly modified version of standard tf-idf scoring. This improvisation is done to normalise the score by various relevant factors. The search scoring happens at the query time.
+
+When bleve scores a document - it sort of sums a set of sub scores to reach the final score. Scores across different searches are not directly comparable as the search query is also an input factor to the scoring function. The more conjuncts/disjuncts/sub clauses your query has, the more it will influence the scoring.
+The score of a particular hit is not absolute, meaning that it can only be used as a comparison to the highest score from the same search result. There isn't a pre-defined range for valid scores. 
+
+To summarise the scoring function in a comprehensive way,
+
+Given a document which has a field  `f`  over which a given  match query `q`  is applied, 
+then the  `scoreFn`  for that document is defined as:
+
+----
+scoreFn(q, f) = coord(q, f) * SUM(tw(t0, q, f), tw(t1, q, f), tw(t2, q, f)..., tw(tn, q, f))
+where ti := term in q
+coord(q, f) = nFoundTokens(q, f)/nTokens(q)
+tw(ti, q, f) = queryWeight(q, f, ti) * fieldWeight(f, ti)
+queryWeight(q, ti) = w(ti) * queryNorm(q)
+w(ti) = boost(ti) * idf(ti)
+queryNorm(q) = 1 / SQROOT(SUM(SQ(w(t0)),...,SQ(w(tn))))
+fieldWeight(f, ti) = SQROOT(FREQ(ti, f))*idf(f, ti)*fieldNorm(f)
+fieldNorm(f) = 1 / SQROOT(nTokens(f))
+idf(f, ti) = 1 + LN(|Docs| / (1 + FREQ(ti, FIELDNAME(f), Docs)))
+Docs = a set of all indexed documents
+----
+
+where SQROOT, SUM, and LN denote standard mathematical functions. Auxiliary functions are:
+
+* *coord(q, f)*  — is a dampening factor defined as a ratio of query tokens that are found in the given field, and the total number of tokens in a query.
+* *tw(ti, q, f)*  — *ti* ’s term weight is the product of  *ti* ’s query weight and ti’s field weight.
+* *queryWeight(q, ti)*  —  *ti* ’s query weight (wrt to  *q* ) is the product of its [inverse document frequency](https://en.wikipedia.org/wiki/Tf%E2%80%93idf) (see  *idf*  below) and its [boosting factor](http://www.blevesearch.com/docs/Query-String-Query/).
+* *queryNorm(q)*  — is used to normalize each query term’s contribution. It uses the [Euclidean distance](https://en.wikipedia.org/wiki/Norm_(mathematics)#Euclidean_norm) as the normalization factor.
+* *fieldWeight(f, ti)*  — is a normalized product of  *ti* ’s idf and the square root of its frequency.
+* *FREQ(ti, f)*  — is the frequency of  *ti*  in the given field  *f* .
+* *fieldNorm(f)*  — normalises each (in  *f* ) term’s contribution to the score. The normalisation factor is the square root of the number of distinct terms in  *f.*  (Note that  *f* ’s terms may and may not be part of  *q.* )
+* *idf(f, ti)*  — a dampening factor that favours terms that have high frequency in a small set of field, but not across the whole indexed (document) set.
+* *FREQ(ti, FIELDNAME(f), Docs)*  —frequency of  *ti*  across all documents’ fields that have the same ID/Name as  *f* .
+
+Bleve's tf-idf scoring variant differs with the standard  *textbook*  functions (see [Intro to Information Retrieval](http://nlp.stanford.edu/IR-book/html/htmledition/queries-as-vectors-1.html)):  mainly in these points.
+
+1. Term frequency is augmented with the square root function.
+2. The idf function is “ *inverse document frequency smooth* ” (due to the (1+) factor). Note that it is present in both the query weight and the field weight.
+3. The normalization factors are different for the field weight (a variant of the  *byte size*  normalization) and the query weight ( *Euclidean* ).
+4. The coordination factor, which is often not present by default, can have an impact on scores for small queries. 
+
+Users have an option of exploring the score computations during any search in FTS. 
+They can enable the "Explain" field in the searchRequest to retrieve the score deriving details for the hits.
+
