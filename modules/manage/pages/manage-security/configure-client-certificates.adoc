@@ -7,26 +7,107 @@ certificates.
 [#couchbase-client-authentication]
 == Couchbase Client Authentication
 
-Couchbase clients can authenticate by means of X.509 certificates. This
-page explains how client certificates can be prepared for a Java client. It
-also provides information on TLS levels, and on supported ciphers.
+Couchbase clients can authenticate by means of X.509 certificates.
+This page provides step-by-step instructions for the creation of client certificates for:
 
-For a list of Couchbase-Server ports that provide secure connectivity to
-clients, see
+* _Couchbase Server_.
+The certificate can be used by a Couchbase Server-cluster that wishes to secure its connection to another Couchbase Server-cluster.
+This certificate might be used by a _source_ cluster that wishes to perform _Cross Data Center Replication_ securely, to a _destination_ cluster.
+
+* _Java Applications_.
+A Java application based on the Couchbase SDK can obtain its client certificate from a Java _keystore_, and so authenticate with Couchbase Server securely.
+
+For a list of Couchbase-Server ports that provide secure connectivity to clients, see
 xref:learn:clusters-and-availability/connectivity.adoc[Connectivity].
 
-[#cert_auth_for_java_client]
-== Configure Certificates for a Java Client
+[#cert-auth-for-couchbase-server]
+== Configure a Client Certificate for Couchbase Server
 
-Once the root certificate for a Couchbase Server-node has been deployed, a
-Java client can authenticate by means of an appropriately prepared keystore,
-and so gain access to the Data, Query, and Search Services.
+The instructions below create a client certificate whose chain of authority is the same as the node certificate created in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
+The instructions assume that _that_ procedure has already been followed; and duly make use of the resulting directory structure and files.
+
+The instructions also assume that the instance of Couchbase Server to be accessed by the client:
+
+* Contains an instance of the sample bucket `travel-sample`: this is the bucket whose contents the client wishes to read and write.
+For information on sample buckets and how to install them, see xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets].
+
+* Has a defined, locally authenticated user named `clientuser`, who has been assigned a role supportive of reading and writing to the `travel-sample` bucket.
+For information on creating users and roles, see xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users and Roles].
 
 Proceed as follows.
-Note that these instructions use the Ubuntu 16 environment previously configured
-in
-xref:manage:manage-security/configure-server-certificates.adoc[Configure
-Server Certificates].
+Note that additional information on each of the file-types used can be found in the procedure already used for _server_-certificate generation.
+See xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
+
+. Create and access a working directory.
++
+----
+cd certfiles
+mkdir client
+cd client
+----
+
+. Create the extensions file for the client.
++
+----
+cat > client.ext <<EOF
+basicConstraints = CA:FALSE
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer:always
+extendedKeyUsage = clientAuth
+keyUsage = digitalSignature
+subjectAltName = DNS:node2.cb.com,IP:10.143.192.102
+EOF
+----
+
+. Create a client private key.
++
+----
+openssl genrsa -out ./travel-sample.key 2048
+----
++
+This creates the private key `travel-sample.key`, and saves it in the `client` directory.
+
+. Generate the client certificate signing request.
++
+----
+openssl req -new -key ./travel-sample.key -out ./travel-sample.csr -subj "/CN=clientuser"
+----
++
+The client's private key, `travel-sample.key` is provided as input for the signing request.
+The _Common Name_ provided as `Subject` for the certificate is specified as `clientuser`, which is the name of the server-defined user to be authenticated by the client.
+The output request-file, `travel-sample.csr`, is saved in the `client` directory.
+
+. Create the client certificate.
++
+----
+openssl x509 -CA ../ca.pem -CAkey ../ca.key \
+-CAcreateserial -days 365 -req -in ./travel-sample.csr \
+-out ./travel-sample.pem -extfile ../client.ext
+----
++
+The root certificate for the cluster, and its corresponding private key, `ca.pem` and `ca.key` are specified as inputs for certificate generation.
+This ensures that the root certificate will be incorporated into the client certificate, with a digital signature that can be deciphered by means of the public key within the root certificate, thereby establishing the client's chain of authority.
++
+The file containing extensions is specified as the value of the `extfile` flag.
+The output file, `travel-sample.pem`, is the client certificate, and is saved in `clientdir`.
+
+This concludes the process.
+The client can now use `travel-sample.pem` to authenticate itself as having the authority of `ca.pem` (which is shared by the server it intends to access); and provides the username of `clientuser` (which the server associates with a role appropriate for access to the `travel-sample` bucket).
+The client key, `travel-sample.key`, can be used for digital signing.
+
+[#using-client-and-server-certificates-for-secure-xdcr]
+=== Using Client and Server Certificates for Secure XDCR
+
+Examples of using the certificates and keys created on this page and on xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates] can be found in xref:manage:manage-xdcr/enable-full-secure-replication.adoc#specify-full-xdcr-security-with-certificates[Specify Root and Client Certificates, and Client Private Key].
+
+[#cert_auth_for_java_client]
+== Configure a Client Certificate for a Java Client
+
+A Java client can authenticate by means of an appropriately prepared keystore, and so gain access to all services.
+Certificate and keystore preparation is demonstrated by the following instructions.
+Note that these instructions make the same assumptions as those provided above, in xref:manage:manage-security/configure-client-certificates.adoc##cert-auth-for-couchbase-server[Configure a Client Certificate for Couchbase Server].
+
+Proceed as follows:
 
 . Define environment variables for the name of the keystore to be created, and its password.
 +
