@@ -5,39 +5,39 @@ Couchbase Server Enterprise Edition supports X.509 certificates, for
 the encryption of communications between the server and
 networked clients.
 
-[#certificate-management-preparation]
-== Certificate-Management Preparation
-
-Before configuring certificates for Couchbase Server, see the conceptual and architectural information provided in xref:learn:security/certificates.adoc[Certificates].
-
 [#configure-server-side-certificates]
-== Configure Server-Side Certificates
+== Configure Server Certificates
+
+This section demonstrates how server certificates can be configured for Couchbase Server.
+Note that the procedure is provided only as a _limited example_, providing guidance as to the basic steps typically involved in certificate creation.
+Modification of the procedure will likely be required, for the preparation of certificates for different platforms and cluster-configurations.
+
+Before attempting to follow the procedure, see the conceptual and architectural information provided in xref:learn:security/certificates.adoc[Certificates].
 
 The following steps configure X.509 certificates for Couchbase Server on Ubuntu 16.
 Use the `sudo` command where appropriate.
 
-. Create working directories:
+. On the server to be certificate-protected, create working directories:
 +
 ----
 mkdir -p {public,private,requests}
 ----
 +
-The `public` directory will be used to store certificates and public keys, the `private` to store private keys.
-The `requests` directory will store _certificate signing requests_, which are the materials generated from private keys to be subsequently signed, as _certificates_, by an appropriate authority.
+The `public` directory will be used to store _certificates_, which contain _public_ keys.
+The `private` directory will contain _private_ keys.
+The `requests` directory will store certificate _signing requests_, which are files generated from private keys for subsequent signing, as _certificates_, by an appropriate authority.
 
-. Define certificate extensions for the cluster.
+. Define _certificate extensions_ for the cluster.
 +
-_Certificate extensions_ specify how a certificate is to be used.
-When an attempt is made to use the certificate, all usage-requirements must be satisfied for the certificate to be usable.
+Certificate extensions specify requirements for how a certificate is to be used: all specified requirements must be met, for the certificate to be usable.
 +
-For example, the certificate's public key can be constrained, by means of the `keyUsage` extension, to providing _digital signatures_ rather than _key encipherment_; or vice versa.
-Or, it can be expressly permitted to provide both.
-Meanwhile, the `subjectAltName` extension can be used to specify the _DNS name_ and _IP address_ of the server on which the certificate resides; so that the certificate becomes invalid if deployed in any different context.
+For example, the certificate's public key can be specified, by means of the `keyUsage` extension, to support _digital signatures_, but _not_ to support _key encipherment_ &#8212; or, _the opposite_ can be specified; or, support of _both_ digital signatures _and_ key encipherment can be specified.
+Meanwhile, the `subjectAltName` extension can be used to specify the _DNS name_ and _IP address_ of the server on which the certificate resides; so that if the certificate is deployed in any other context, it becomes invalid.
 +
-For detailed information on certificate extensions, see the https://tools.ietf.org/html/rfc5280#section-4.2.1[Standard Extensions] section of the http://https://tools.ietf.org/html/rfc5280[Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL Profile)].
+For detailed information on certificate extensions, see the https://tools.ietf.org/html/rfc5280#section-4.2.1[Standard Extensions] section of the https://tools.ietf.org/html/rfc5280[Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL Profile)].
 +
-The most convenient way of specifying certificate extensions is by means of a file, provided as a parameter to the `openssl` command used to create the certificate.
-The extensions for the server might be defined as follows:
+Certificate extensions can be specified by means of a file, provided as a parameter to the `openssl` command that is used to create the certificate.
+Thus, the server-certificate extensions might be written as follows:
 +
 ----
 cat > server.ext <<EOF
@@ -57,10 +57,12 @@ If experimentation is being performed locally, the `/etc/hosts` file for the loc
 10.143.192.102  node2.cb.com
 ----
 
-. Create a private key for the cluster.
+. Create a _private key_ for the cluster.
 +
-An RSA asymmetric _private key_ allows the _decryption_ of data previously _encrypted_ by the corresponding RSA asymmetric _public key_.
-Note that in the key-creation sequence, the public key is _derived from_ the private, and therefore created after it.
+A private key can be used to decrypt data previously encrypted by the corresponding _public_ key.
+It can also be used to encrypt a _digital signature_, to be decrypted by the public key.
+In the key-creation sequence, the private key is created first.
+Then, the public key is created, being _derived from_ the private key.
 +
 Enter the following:
 +
@@ -70,8 +72,7 @@ openssl genrsa -out ca.key 2048
 +
 The output of this command, `ca.key`, is the private key for the cluster.
 
-. Create the _certificate_ (that is, the file containing the public key) for the cluster.
-+
+. Create the _certificate_ (that is, the file that will contain the public key) for the cluster.
 Enter the following:
 +
 ----
@@ -79,10 +80,10 @@ openssl req -new -x509 -days 3650 -sha256 -key ca.key -out ca.pem -subj "/CN=Cou
 ----
 +
 The `x509` flag indicates that an x509 structure, rather than a _request_ should be generated.
-The `days` flag spcifies the number of days for which the certificate should be active.
-The hashing algorithm used for digital-signature creation for the certificate is specified as `sha256`.
-The private `key` file on which the certificate is to be based is specified as `ca.key`, and the output certificate is named as `ca.pem`.
-The certificate's _issuer_ is specified to have the `CN` (_Common Name_) of `Couchbase Root CA`: this will indeed be the root certificate for the Couchbase Server-cluster to be accessed.
+The `days` flag specifies the number of days for which the certificate should be active.
+The hashing algorithm to be used for digital-signature creation is specified as `sha256`.
+The private key file on which the certificate is to be based is specified as `ca.key`, and the output-certificate is named as `ca.pem`.
+The certificate's _issuer_ is specified to have the `CN` (_Common Name_) of `Couchbase Root CA`: as this indicates, the certificate will be the _root_ certificate for the Couchbase Server-cluster.
 +
 The output of the command is the certificate `ca.pem`.
 This contains the public key that corresponds to the cluster's private key, `ca.key`.
@@ -116,12 +117,41 @@ The _entire certificate_ can be displayed as text, by means of the following com
 ----
 openssl x509 -text -noout -in ./ca.pem
 ----
++
+The initial part of the output, which is extensive, is as follows:
++
+----
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 18276610881715621025 (0xfda390c366b2cca1)
+    Signature Algorithm: sha256WithRSAEncryption
+        Issuer: CN=Couchbase Root CA
+        Validity
+            Not Before: Sep  2 08:32:31 2019 GMT
+            Not After : Aug 30 08:32:31 2029 GMT
+        Subject: CN=Couchbase Root CA
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
+                    00:d7:a6:ba:5d:e2:e2:fd:6e:1b:33:9a:4b:bf:77:
+                    6f:28:c3:37:60:33:da:09:b2:0b:73:1f:f9:65:2a:
+                                  .
+                                  .
+----
++
+The displayed text thus provides information including the `Version`, the `Serial Number`, and the `Signature Algorithm` of the certificate.
+The certificate's `Issuer`, `Subject`, and period of `Validity` are also shown.
+The `Algorithm` and `Modulus` (and, further below, the `Exponent`) of the public key are shown.
++
+For detailed information on keys and key-generation, see https://en.wikipedia.org/wiki/RSA_(cryptosystem)[RSA (cryptosystem)].
 
 . Create a private key for the server node.
 +
-In addition to the root certificate and private key for the entire cluster, `ca.pem` and `ca.key` respectively, a _node_ certificate and private key must also be created.
+In addition to the root certificate and private key for the entire cluster, which are `ca.pem` and `ca.key`, a _node_ certificate and private key must also be created.
 The node certificate and private key will reside on each node of the cluster.
-The node certificate will specify the root certificate, `ca.pem`, as its issuer; and thereby records the chain of authority whereby clients may choose to trust it.
+The node certificate will specify the root certificate, `ca.pem`, as its issuer; and thereby record the chain of authority whereby clients may choose to trust it.
 When deployed, the node certificate must be named `chain.pem`, and the node private key `pkey.key`.
 +
 Create the node private key as follows:
@@ -147,6 +177,26 @@ Note that the request file can be inspected as text, by entering the following c
 ----
 openssl req -text -noout -verify -in ./requests/couchbase.default.svc.csr
 ----
++
+The initial part of the displayed output, which is extensive, is as follows:
++
+----
+verify OK
+Certificate Request:
+    Data:
+        Version: 0 (0x0)
+        Subject: CN=Couchbase Server
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
+                    00:be:26:e5:06:c6:8e:43:bb:9d:bc:84:20:34:8e:
+                    db:2f:d1:8b:b4:ff:c2:66:c0:61:70:8d:c3:8c:df:
+                                      .
+                                      .
+----
++
+The `Version` and `Subject` of the request are listed, along with information on the public key to be included in the certificate.
 
 . Create a self-signed certificate for the node.
 +
@@ -154,8 +204,86 @@ Enter the following:
 +
 ----
 openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial -days 365 -req \
--in requests/couchbase.default.svc.csr -out public/couchbase.default.svc.pem \
+-in requests/couchbase.default.svc.csr \
+-out public/couchbase.default.svc.pem \
 -extfile server.ext
 ----
 +
+The output from this command, the file `couchbase.default.svc.pem`, is the node certificate.
+Note that the root certificate and private key, `ca.pem` and `ca.key`, are specified as input values to the certificate-creation command. This ensures that the new certificate's chain of trust includes the root certificate, `ca.pem`, and is digitally signed by `ca.key`; allowing that signature to be verified as required, through decipherment by means of the public key embedded in `ca.pem`.
++
+Note that if a node certificate were submitted to an external authority for signing, then the authority's own `pem` and `key` would be specified as inputs, rather than `ca.pem` and `ca.key`: and in such a case, the authority's `pem` would need to become the root certificate for the cluster.
+
+. Rename the node certificate and node private key.
++
+The node certificate must be named `chain.pem`; the node private key, `pkey.key`.
+Proceed as follows:
++
+----
+cd ./public
+mv couchbase.default.svc.pem chain.pem
+cd ../private
+mv couchbase.default.svc.key pkey.key
+----
+
+. Deploy the node certificate and node private key.
++
+These are deployed by being moved to the `inbox` directory of the server.
+Proceed as follows:
++
+----
+cd ..
+sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/
+sudo cp ./public/chain.pem /opt/couchbase/var/lib/couchbase/inbox/chain.pem
+sudo chmod a+x /opt/couchbase/var/lib/couchbase/inbox/chain.pem
+sudo cp ./private/pkey.key /opt/couchbase/var/lib/couchbase/inbox/pkey.key
+sudo chmod a+x /opt/couchbase/var/lib/couchbase/inbox/pkey.key
+----
+
+. Upload and activate the root certificate for the cluster.
++
+The root certificate is uploaded and activated with the following REST commands:
++
+----
+curl -X POST --data-binary "@./ca.pem" \
+http://Administrator:password@10.143.192.102:8091/controller/uploadClusterCA
+
+curl -X POST \
+http://Administrator:password@10.143.192.102:8091/node/controller/reloadCertificate
+----
++
+The root certificate is now deployed and ready for use.
+This can be verified by means of Couchbase Web Console.
+Access the *Security* screen, by means of the *Security* tab in the left-hand navigation bar.
+Then, left-click on the *Root Certificate* tab, located on the upper, horizontal navigation bar.
+The screen appears as follows:
++
+image::manage-security/rootCertificateWithSignedCert.png[600,align=left]
++
+As this indicates, the signed certificate has now been substituted for the default certificate.
+
+[#client-certificate-enablement]
+== Client Certificate Enablement
+
+As well as _providing_ a certificate _to_ clients for purposes of authentication and encryption, Couchbase Server may also _receive_ certificates _from_ clients, allowing the clients to authenticate themselves.
+The handling of client certificates by the server must be explicitly enabled.
+For information on enablement options and identity encodings, see xref:learn:security/certificates.adoc#client-certificates[Client Certificates].
+For information on enabling client certificates with Couchbase Web Console, see xref:manage:manage-security/manage-security-settings.adoc#client-certificate-security-screen-display[Client Certificate].
+
+To enable client-certificate handling with the REST API, enter the following:
+
+----
+curl -u Administrator:password -v -X POST \
+http://10.143.192.102:8091/settings/clientCertAuth \
+-d '{"state": "enable","prefixes": [{"path": \
+"subject.cn","prefix": "","delimiter": ""}]}'
+----
+
+[#further-information]
+== Further Information
+
 For further information on certificate-deployment, see xref:cli:cbcli/couchbase-cli-ssl-manage.adoc[ssl-manage] and xref:rest-api:rest-encryption.adoc[Encryption On-the-Wire API].
+
+For step-by-step instructions on creating _client_ certificates, see xref:manage:manage-security/configure-client-certificates.adoc[Configure Client Certificates].
+
+For an example of using the certificates and keys created on the current page and on xref:manage:manage-security/configure-client-certificates.adoc[Configure Client Certificates] to secure an _XDCR replication_, see xref:manage:manage-xdcr/enable-full-secure-replication.adoc#specify-full-xdcr-security-with-certificates[Specify Root and Client Certificates, and Client Private Key].
