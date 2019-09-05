@@ -14,7 +14,7 @@ Modification of the procedure will likely be required, for the preparation of ce
 
 Before attempting to follow the procedure, see the conceptual and architectural information provided in xref:learn:security/certificates.adoc[Certificates].
 
-The following steps configure X.509 certificates for Couchbase Server on Ubuntu 16.
+The following steps configure X.509 certificates on Ubuntu 16, for a one-node Couchbase Server-cluster.
 Use the `sudo` command where appropriate.
 
 . On the server to be certificate-protected, create working directories:
@@ -39,7 +39,7 @@ Meanwhile, the `subjectAltName` extension can be used to specify the _DNS name_ 
 For detailed information on certificate extensions, see the https://tools.ietf.org/html/rfc5280#section-4.2.1[Standard Extensions] section of the https://tools.ietf.org/html/rfc5280[Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL Profile)].
 +
 Certificate extensions can be specified by means of a file, provided as a parameter to the `openssl` command that is used to create the certificate.
-Thus, the server-certificate extensions might be written as follows:
+Thus, the server-certificate extensions that are generic across all servers in the cluster might be written as follows:
 +
 ----
 cat > server.ext <<EOF
@@ -75,13 +75,18 @@ openssl genrsa -out ca.key 2048
 The output of this command, `ca.key`, is the private key for the cluster.
 
 . Create the _certificate_ (that is, the file that will contain the public key) for the cluster.
+The certificate is intended to be _self-signed_, meaning that it will not be vouched for by any other authority.
+This means that it can be created directly, based on the existing private key `ca.key`, without assistance from a third party.
++
 Enter the following:
 +
 ----
-openssl req -new -x509 -days 3650 -sha256 -key ca.key -out ca.pem -subj "/CN=Couchbase Root CA"
+openssl req -new -x509 -days 3650 -sha256 -key ca.key -out ca.pem \
+-subj "/CN=Couchbase Root CA"
 ----
 +
 The `x509` flag indicates that an x509 structure, rather than a _request_ should be generated.
+(A request is needed when the certificate must be signed by a third-party authority, as is demonstrated below.)
 The `days` flag specifies the number of days for which the certificate should be active.
 The hashing algorithm to be used for digital-signature creation is specified as `sha256`.
 The private key file on which the certificate is to be based is specified as `ca.key`, and the output-certificate is named as `ca.pem`.
@@ -154,7 +159,7 @@ For detailed information on keys and key-generation, see https://en.wikipedia.or
 In addition to the root certificate and private key for the entire cluster, which are `ca.pem` and `ca.key`, a _node_ certificate and private key must also be created.
 The node certificate and private key will reside on each node of the cluster.
 The node certificate will specify the root certificate, `ca.pem`, as its issuer; and thereby record the chain of authority whereby clients may choose to trust it.
-When deployed, the node certificate must be named `chain.pem`, and the node private key `pkey.key`.
+When deployed, the node certificate must be named `chain.pem`, and the node private key `pkey.key`: however, if the node certificates and private keys for multiple cluster-nodes are being prepared on a single system, they need to be given individual, distinctive names on creation; and then deployed on each respective cluster node as `chain.pem` and `pkey.key` &#8212; this renaming procedure is indeed followed here for demonstration purposes, even though only a one-node cluster is involved.
 +
 Create the node private key as follows:
 +
@@ -165,6 +170,8 @@ openssl genrsa -out private/couchbase.default.svc.key 2048
 The output file is `couchbase.default.svc.key`, which is the private key for the node.
 
 . Create a certificate signing request for the node certificate.
+This is an intermediate step, applied between the creation of the private key and the creation of the certificate, which allows the materials required for certificate-creation to be passed to a third-party, who will _digitally sign_ the certificate as part of its creation-process, and thereby confirm its validity.
+(In this demonstration, however, no third-party is involved: the certificate will be signed, below, by the current user.)
 +
 Enter the following command:
 +
@@ -201,7 +208,7 @@ Certificate Request:
 +
 The `Version` and `Subject` of the request are listed, along with information on the public key to be included in the certificate.
 
-. Create a self-signed certificate for the node.
+. Create the node certificate, applying the certificate and digital signature of the appropriate authority, to the materials in the signing request.
 +
 Enter the following:
 +
@@ -213,13 +220,14 @@ openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial -days 365 -req \
 ----
 +
 The output from this command, the file `couchbase.default.svc.pem`, is the node certificate.
-Note that the root certificate and private key, `ca.pem` and `ca.key`, are specified as input values to the certificate-creation command. This ensures that the new certificate's chain of trust includes the root certificate, `ca.pem`, and is digitally signed by `ca.key`; allowing that signature to be verified as required, through decipherment by means of the public key embedded in `ca.pem`.
+The root certificate and private key, `ca.pem` and `ca.key`, are specified as input values to the certificate-creation command.
+This ensures that the new certificate's chain of trust includes the root certificate, `ca.pem`, and is digitally signed by `ca.key`; allowing that signature to be verified as required, through decipherment by means of the public key embedded in `ca.pem`.
 +
-Note that if a node certificate were submitted to an external authority for signing, then the authority's own `pem` and `key` would be specified as inputs, rather than `ca.pem` and `ca.key`: and in such a case, the authority's `pem` would need to become the root certificate for the cluster.
+Note that if a node certificate were actually submitted to an external authority for signing, then the authority's own `pem` and `key` would be specified as inputs, rather than `ca.pem` and `ca.key`: and in such a case, the authority's `pem` would need to become the root certificate for the cluster.
 
 . Rename the node certificate and node private key.
 +
-The node certificate must be named `chain.pem`; the node private key, `pkey.key`.
+For deployment on the node, the node certificate must be renamed `chain.pem`; and the node private key renamed `pkey.key`.
 Proceed as follows:
 +
 ----
