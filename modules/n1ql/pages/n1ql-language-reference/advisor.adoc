@@ -1,0 +1,794 @@
+= ADVISOR Function
+:page-topic-type: concept
+:page-status: Developer Preview
+:imagesdir: ../../assets/images
+
+:n1ql: xref:n1ql-language-reference
+:select: {n1ql}/selectintro.adoc
+:update: {n1ql}/update.adoc
+:delete: {n1ql}/delete.adoc
+:merge: {n1ql}/merge.adoc
+
+[abstract]
+The `ADVISOR` function provides recommendations for GSI indexes to optimize query response time.
+There are two main scenarios for using this function.
+One is to invoke the index advisor for a given query or set of queries; the other is to start a session in which every query of interest is collected for a set time period, then invoke the index analyzer for that collection of queries after the session ends.
+Within these two scenarios, this function has several different usages.
+The operation and output of the function depends on the function's single argument.
+For clarity, each usage is listed separately on this page.
+
+include::ROOT:partial$developer-preview.adoc[tag=admonition]
+
+[[advisor-string]]
+== ADVISOR(`string`)
+
+=== Description
+
+When used with a string argument, the function invokes the index advisor for a single N1QL query.
+The index advisor works with {select}[SELECT], {update}[UPDATE], {delete}[DELETE], or {merge}[MERGE] queries.
+
+=== Arguments
+
+string::
+A single N1QL query for which you want index advice.
+
+=== Return Value
+
+An index advisor results object with the following properties.
+
+[[results]]
+**Results**
+
+[options="header", cols="3a,11a,4a"]
+|===
+|Name|Description|Schema
+
+|**current_used_indexes** +
+__optional__
+|If the query uses an index, this is an array of Index objects, each giving information about one of the currently used primary or secondary indexes.
+
+If the query does not currently use an index, this field does not appear.
+|< <<indexes,Indexes>> > array
+
+|**recommended_covering_indexes** +
+__optional__
+|If the index advisor recommends any indexes, this is an array of Index objects, each giving information about one of the recommended indexes.
+
+If the index advisor cannot recommend any covering indexes, this field does not appear.
+|< <<indexes,Indexes>> > array
+
+|**recommended_indexes** +
+__optional__
+|If the index advisor recommends any indexes, this is an array of Index objects, each giving information about one of the recommended indexes.
+
+If the index advisor cannot recommend any indexes, this field does not appear.
+|< <<indexes,Indexes>> > array
+|===
+
+[[indexes]]
+**Indexes**
+
+[options="header", cols="~a,~a,~a"]
+|===
+|Name|Description|Schema
+
+|**index** +
+__required__
+|The N1QL command used to define the index.
+|string
+
+|**statements** +
+__required__
+|An array of Statement objects, each giving information about one of the N1QL input queries associated with this index.
+|< <<statements,Statements>> > array
+|===
+
+[[statements]]
+**Statements**
+
+[options="header", cols="~a,~a,~a"]
+|===
+|Name|Description|Schema
+
+|**run_count** +
+__required__
+|When the function is used with a single N1QL input query, this is always 1.
+
+When the function is used with an array of queries, or a collection of queries from a session, this is the number of times that this N1QL input query occurs in the input array or session.
+|integer
+
+|**statement** +
+__required__
+|The N1QL input query.
+|string
+|===
+
+=== Example
+
+.Get index advice for a single query
+====
+[source,n1ql]
+----
+SELECT ADVISOR("SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'") AS Single;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Single": {
+      "current_used_indexes": [
+        {
+          "index": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "advise SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'"
+            }
+          ]
+        },
+        {
+          "index": "CREATE INDEX def_city ON `travel-sample`(`city`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "advise SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'"
+            }
+          ]
+        }
+      ],
+      "recommended_indexes": [
+        {
+          "index": "CREATE INDEX adv_city_type ON `travel-sample`(`city`) WHERE `type` = 'hotel'",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "advise SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]
+----
+====
+
+[[advisor-array]]
+== ADVISOR(`array`)
+
+=== Description
+
+When used with an array argument, the function invokes the index advisor for multiple N1QL queries.
+The index advisor works with {select}[SELECT], {update}[UPDATE], {delete}[DELETE], or {merge}[MERGE] queries.
+
+=== Arguments
+
+array::
+An array of strings, each of which contains a N1QL query for which you want index advice.
+
+=== Return Value
+
+An <<results,index advisor results>> object.
+
+=== Examples
+
+.Get index advice for multiple queries
+====
+[source,n1ql]
+----
+SELECT ADVISOR(["SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'", "SELECT * FROM `travel-sample` h JOIN `travel-sample` a ON a.city = h.city WHERE h.type = 'hotel' AND a.type = 'airport'"]) AS Multiple;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Multiple": {
+      "current_used_indexes": [
+        {
+          "index": "CREATE INDEX def_city ON `travel-sample`(`city`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'"
+            },
+            ...
+          ]
+        },
+        {
+          "index": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'"
+            },
+            ...
+          ]
+        }
+      ],
+      "recommended_indexes": [
+        {
+          "index": "CREATE INDEX adv_city_type ON `travel-sample`(`city`) WHERE `type` = 'hotel'",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "SELECT * FROM `travel-sample` WHERE type = 'hotel' AND city = 'Paris'"
+            },
+            {
+              "run_count": 1,
+              "statement": "SELECT * FROM `travel-sample` h JOIN `travel-sample` a ON a.city = h.city WHERE h.type = 'hotel' AND a.type = 'airport'"
+            }
+          ]
+        }
+      ]
+    }
+  }
+]
+----
+
+(Results are truncated for brevity.)
+====
+
+.Get index advice for recent completed requests
+====
+This example uses a subquery to get an array of statements from the xref:manage:monitor/monitoring-n1ql-query.adoc#sys-completed-req[system:completed_requests] catalog.
+
+[source,n1ql]
+----
+SELECT ADVISOR((SELECT RAW statement FROM system:completed_requests)) AS Recent;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Recent": {
+      "current_used_indexes": [
+        {
+          "index": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+          "statements": [
+            {
+              "run_count": 4,
+              "statement": "SELECT d.id, d.destinationairport, RATIO_TO_REPORT(d.distance) OVER (PARTITION BY d.destinationairport) AS `distance-ratio` FROM `travel-sample` AS d WHERE d.type='route' LIMIT 7;"
+            },
+            {
+              "run_count": 3,
+              "statement": "SELECT * FROM `travel-sample` r WHERE r.type = 'airport' LIMIT 3;"
+            },
+            ...
+          ]
+        },
+        {
+          "index": "CREATE INDEX def_city ON `travel-sample`(`city`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "SELECT h.name, h.city, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' AND a.type = 'airport' LIMIT 5;"
+            },
+            ...
+          ]
+        },
+        ...
+      ],
+      "recommended_covering_indexes": [
+        {
+          "index": "CREATE INDEX adv_city_airportname ON `travel-sample`(`city`,`airportname`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "advise SELECT h.name, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' LIMIT 5;"
+            },
+            ...
+          ]
+        },
+        {
+          "index": "CREATE INDEX adv_city_type_name ON `travel-sample`(`city`,`name`) WHERE `type` = 'hotel'",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "advise SELECT h.name, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' LIMIT 5;"
+            },
+            ...
+          ]
+        },
+        ...
+      ],
+      "recommended_indexes": [
+        {
+          "index": "CREATE INDEX adv_array_star_reviews_ratings_Cleanliness ON `travel-sample`(array_star((`reviews`)).`ratings`.`Cleanliness`)",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "SELECT ARRAY_AGG(reviews[*].ratings.Cleanliness) AS Reviews FROM `travel-sample`;"
+            },
+            ...
+          ]
+        },
+        {
+          "index": "CREATE INDEX adv_city_type ON `travel-sample`(`city`) WHERE `type` = 'hotel'",
+          "statements": [
+            {
+              "run_count": 1,
+              "statement": "SELECT h.name, h.city, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' AND a.type = 'airport' LIMIT 5;"
+            },
+            ...
+          ]
+        },
+        ...
+      ]
+    }
+  }
+]
+----
+
+(Results are truncated for brevity.)
+====
+
+[[advisor-session-start]]
+== ADVISOR(`start_session`)
+
+=== Description
+
+When used with a `start_session` object argument, the function can be used to start an index advisor session.
+As long as the session is running, any queries that meet the criteria you specify are collected for later analysis.
+
+By default, the session continues running for the duration you specify when you start the session.
+At the end of the duration, the session is retained in the _tasks cache_.
+You can then <<advisor-session-get,invoke the index advisor>> for any queries that have been collected as part of this session.
+
+=== Arguments
+
+start_session::
+An object with the following properties:
+
+action;;
+[Required] The string `start`.
+
+profile;;
+[Optional] A string specifying the user profile whose queries you want to collect.
+If omitted, all queries are collected.
+
+response;;
+[Optional] A string representing a duration.
+All completed queries lasting longer than this threshold are collected for analysis by the index advisor.
+Valid time units are `ns` (nanoseconds), `us` (microseconds), `ms` (milliseconds), `s` (seconds), `m` (minutes), or `h` (hours).
+If omitted, the default setting is `0s`.
+
+duration;;
+[Required] A string representing a duration.
+The index advisor session runs for the length of this duration.
+Valid time units are `ns` (nanoseconds), `us` (microseconds), `ms` (milliseconds), `s` (seconds), `m` (minutes), or `h` (hours).
+
+query-count;;
+[Optional] An integer specifying the maximum number of queries to be collected for analysis by the index advisor.
+If omitted, the default setting is the same as the service-level xref:settings:query-settings.adoc#completed-limit[completed-limit] setting.
+You can change the service-level `completed-limit` setting to change the default for this property.
+
+=== Return Value
+
+An object with the following property:
+
+session::
+A string in UUID format, specifying the name of the index analyzer session.
+You will need to refer to this name to <<advisor-session-get,invoke the index analyzer>> for this session, or to <<advisor-session-stop,stop>>, <<advisor-session-abort,abort>>, or <<advisor-session-purge,purge>> this session.
+
+=== Example
+
+.Start an index advisor session
+====
+The following example starts an index advisor session to run for one hour.
+All completed queries taking longer than 0 seconds will be collected.
+
+[source,n1ql]
+----
+SELECT ADVISOR({"action": "start", "response": "0s", "duration": "1h"}) AS Collect;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Collect": {
+      "session": "8c41a3c6-2252-437e-ab47-0b28f29f47fb"
+    }
+  }
+]
+----
+====
+
+[[advisor-session-list]]
+== ADVISOR(`list_session`)
+
+=== Description
+
+When used with a `list_session` object argument, the function can be used to list index advisor sessions.
+
+=== Arguments
+
+list_session::
+An object with the following properties:
+
+action;;
+[Required] The string `list`.
+
+status;;
+[Required] A string specifying the status of the index advisor sessions to list.
+This must be one of the following:
++
+* `completed` -- only list completed sessions
+* `active` -- only list active sessions
+* `all` -- list all sessions
+
+=== Return Value
+
+Returns an array of tasks cache objects, each of which has the following properties.
+
+[[tasks-cache]]
+**Tasks Cache**
+
+[options="header", cols="3a,11a,4a"]
+|===
+|Name|Description|Schema
+
+|**tasks_cache** +
+__required__
+|A nested object that gives information about a session.
+|<<session,Session>>
+|===
+
+[[session]]
+**Session**
+
+[options="header", cols="~a,~a,~a"]
+|===
+|Name|Description|Schema
+
+|**class** +
+__required__
+|The class of the session; in this case, `advisor`.
+|string
+
+|**delay** +
+__required__
+|The scheduled duration of the session.
+|string (duration)
+
+|**id** +
+__required__
+|The internal ID of the session.
+|string (UUID)
+
+|**name** +
+__required__
+|The name of the session.
+You will need to refer to this name to <<advisor-session-get,invoke the index analyzer>> for this session, or to <<advisor-session-stop,stop>>, <<advisor-session-abort,abort>>, or <<advisor-session-purge,purge>> this session.
+|string (UUID)
+
+|**node** +
+__required__
+|The node where the session was started.
+|string (address)
+
+|**state** +
+__required__
+|The state of the session:
+
+* `scheduled` -- the session is active.
+* `cancelled` -- the session was stopped.
+* `completed` -- the session is completed.
+|enum (cancelled, completed, scheduled)
+
+|**subClass** +
+__required__
+|The subclass of the session; in this case, `analyze`.
+|string
+
+|**submitTime** +
+__required__
+|The date and time when the function was called to start the session.
+|string (date-time)
+
+|**startTime** +
+__optional__
+|The date and time when the session started.
+
+If the session is still active, this field is not present.
+|string (date-time)
+
+|**stopTime** +
+__optional__
+|The date and time when the session stopped.
+
+If the session is still active, this field is not present.
+|string (date-time)
+
+|**results** +
+__optional__
+|An array containing a single <<results,index advisor results>> object.
+
+If the session is still active, this field is not present.
+|< <<results,Results>> > array
+|===
+
+Returns an empty array if the tasks cache is empty.
+
+=== Example
+
+.List index advisor sessions
+====
+[source,n1ql]
+----
+SELECT ADVISOR({"action": "list", "status": "all"}) AS List;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "List": [
+      {
+        "tasks_cache": {
+          "class": "advisor",
+          "delay": "1h0m0s",
+          "id": "bcd9f8e4-b324-504c-a98b-ace90dba869f",
+          "name": "aa7f688a-bf29-438f-888f-eeaead87ca40",
+          "node": "10.143.192.101:8091",
+          "state": "scheduled",
+          "subClass": "analyze",
+          "submitTime": "2019-09-17 05:18:12.903122381 -0700 PDT m=+8460.550715992"
+        }
+      },
+      {
+        "tasks_cache": {
+          "class": "advisor",
+          "delay": "5m0s",
+          "id": "254abec5-5782-543e-9ee0-d07da146b94e",
+          "name": "ca2cfe56-01fa-4563-8eb0-a753af76d865",
+          "node": "10.143.192.101:8091",
+          "results": [
+            ...
+          ],
+          "startTime": "2019-09-17 05:03:31.821597725 -0700 PDT m=+7579.469191487",
+          "state": "completed",
+          "stopTime": "2019-09-17 05:03:31.963133954 -0700 PDT m=+7579.610727539",
+          "subClass": "analyze",
+          "submitTime": "2019-09-17 04:58:31.821230131 -0700 PDT m=+7279.468823737"
+        }
+      }
+    ]
+  }
+]
+----
+
+(Results are truncated for brevity.)
+====
+
+[[advisor-session-stop]]
+== ADVISOR(`stop_session`)
+
+=== Description
+
+When used with a `stop_session` object argument, the function can be used to stop an index advisor session.
+In this case, the session is stopped, but the session is retained in the tasks cache.
+You can then <<advisor-session-get,invoke the index advisor>> for any queries that have been collected as part of this session.
+
+=== Arguments
+
+stop_session::
+An object with the following properties:
+
+action;;
+[Required] The string `stop`.
+
+session;;
+[Required] A string specifying the name of a session.
+
+=== Return Value
+
+Returns NULL.
+
+=== Example
+
+.Stop an index advisor session
+====
+[source,n1ql]
+----
+SELECT ADVISOR({"action": "stop", "session": "8c41a3c6-2252-437e-ab47-0b28f29f47fb"}) AS Stop;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Stop": null
+  }
+]
+----
+====
+
+[[advisor-session-abort]]
+== ADVISOR(`abort_session`)
+
+=== Description
+
+When used with an `abort_session` object argument, the function can be used to abort an index advisor session.
+In this case, the session is stopped, and the session is removed from the tasks cache.
+
+=== Arguments
+
+abort_session::
+An object with the following properties:
+
+action;;
+[Required] The string `abort`.
+
+session;;
+[Required] A string specifying the name of a session.
+
+=== Return Value
+
+Returns NULL.
+
+=== Example
+
+.Abort an index advisor session
+====
+[source,n1ql]
+----
+SELECT ADVISOR({"action": "abort", "session": "8c41a3c6-2252-437e-ab47-0b28f29f47fb"}) AS Abort;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Abort": null
+  }
+]
+----
+====
+
+[[advisor-session-get]]
+== ADVISOR(`get_session`)
+
+=== Description
+
+When used with `get_session` object argument, the function can be used to get the results of a completed index advisor session.
+The index advisor is invoked for any collected {select}[SELECT], {update}[UPDATE], {delete}[DELETE], or {merge}[MERGE] queries.
+
+=== Arguments
+
+get_session::
+An object with the following properties:
+
+action;;
+[Required] The string `get`.
+
+session;;
+[Required] A string specifying the name of a session.
+
+=== Return Value
+
+Returns an array containing an array, which in turn contains an <<results,index advisor results>> object.
+
+Returns an empty array if the specified session collected no queries, or if the specified session does not exist.
+
+=== Example
+
+.Get index advice for an index advisor session
+====
+[source,n1ql]
+----
+SELECT ADVISOR({"action": "get", "session": "8c41a3c6-2252-437e-ab47-0b28f29f47fb"}) AS Get;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Get": [
+      [
+        {
+          "current_used_indexes": [
+            {
+              "index": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+              "statements": [
+                {
+                  "run_count": 1,
+                  "statement": "SELECT h.name, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' LIMIT 5;"
+                },
+                ...
+              ]
+            },
+            ...
+          ],
+          "recommended_covering_indexes": [
+            {
+              "index": "CREATE INDEX adv_city_type_name ON `travel-sample`(`city`,`name`) WHERE `type` = 'hotel'",
+              "statements": [
+                {
+                  "run_count": 1,
+                  "statement": "SELECT h.name, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' LIMIT 5;"
+                }
+              ]
+            },
+            ...
+          ],
+          "recommended_indexes": [
+            {
+              "index": "CREATE INDEX adv_city_type ON `travel-sample`(`city`) WHERE `type` = 'hotel'",
+              "statements": [
+                {
+                  "run_count": 1,
+                  "statement": "SELECT h.name, a.airportname FROM `travel-sample` h JOIN `travel-sample` a ON h.city = a.city WHERE h.type = 'hotel' LIMIT 5;"
+                }
+              ]
+            },
+            ...
+          ]
+        }
+      ]
+    ]
+  }
+]
+----
+
+(Results are truncated for brevity.)
+====
+
+[[advisor-session-purge]]
+== ADVISOR(`purge_session`)
+
+=== Description
+
+When used with a `purge_session` object argument, the function can be used to purge the results of a completed index advisor session from the tasks cache.
+
+=== Arguments
+
+purge_session::
+An object with the following properties:
+
+action;;
+[Required] The string `purge`.
+
+session;;
+[Required] A string specifying the name of a session.
+
+=== Return Value
+
+Returns NULL.
+
+=== Example
+
+.Purge an index advisor session
+====
+[source,n1ql]
+----
+SELECT ADVISOR({"action": "purge", "session": "8c41a3c6-2252-437e-ab47-0b28f29f47fb"}) AS Purge;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Purge": null
+  }
+]
+----
+====
+
+== Related Links
+
+* The xref:n1ql-language-reference/advise.adoc[ADVISE] task
+* The xref:tools:query-workbench.adoc#index-advisor[Index Advisor] in the Query Workbench
+* The xref:manage:monitor/monitoring-n1ql-query.adoc#sys-tasks-cache[system:tasks_cache] catalog
