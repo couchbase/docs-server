@@ -367,17 +367,20 @@ openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial \
 ----
 +
 This applies the extension file `ca.ext` to the certificate, so as to limit the certificate's capabilities.
-The certificate is output as `server-signing.pem`.
+The certificate is generated and saved in the `reqs` folder as `server-signing.pem`.
 
 . Save the intermediate certificate as the authority for the node certificates that are to be created.
 +
 ----
-cp issued/client-signing.pem ../clients/ca.pem
+cp issued/server-signing.pem ../servers/ca.pem
 ----
 
-. Create an extension file containing the information that will be generic across the individual nodes of the cluster.
+. Change directory to `../servers`.
+Then, create an extension file containing the information that will be generic across the individual nodes of the cluster.
 +
 ----
+cd ../servers
+
 cat > server.ext <<EOF
 basicConstraints = CA:FALSE
 subjectKeyIdentifier = hash
@@ -387,15 +390,17 @@ keyUsage = digitalSignature,keyEncipherment
 EOF
 ----
 +
-Although the current example uses a single-node cluster, the information in the extension file could be applied to multiple nodes, if the cluster were incremented in size.
+Although the current example uses a single-node cluster, the information in this extension file could be applied to multiple nodes, if the cluster were incremented in size.
 The `extendedKeyUsage` value `serverAuth` indicates that the certificate will be used for server authentication.
 The `keyUsage` value `digitalSignature` specifies that the certificate's public key can be used in the verifying of information-origin; while `keyEncipherment` allows the public key to be used in the encrypting of symmetric keys.
 
-. Generate the private key to be used for each, individual server node.
+. Generate the private key to be used for each individual cluster-node.
 +
 ----
 openssl genrsa -out private/couchbase.node.svc.key 2048
 ----
++
+The private key `couchbase.node.svc.key` is hereby saved in the `private` folder, as the private key for each node in the cluster.
 
 . Generate the certificate signing request for the node certificate.
 +
@@ -404,6 +409,8 @@ openssl req -new -key private/couchbase.node.svc.key \
 -out reqs/couchbase.node.svc.csr \
 -subj "/C=UA/O=MyCompany/OU=Servers/CN=couchbase.node.svc"
 ----
++
+The signing-request file `couchbase.node.svc.csr` is hereby saved in the `reqs` folder.
 
 . Add node-specific information for each node, in turn.
 Although the current example features a single-node cluster, this step should be repeated for each node in the cluster, when the cluster contains multiple nodes.
@@ -414,20 +421,27 @@ cp server.ext temp.ext
 
 echo 'subjectAltName = DNS:node2.cb.com,IP:10.143.192.102' >> temp.ext
 ----
++
+This creates `temp.ext` as an extension file that will be used for one node only.
+The file specifies the DNS name and IP address specific to the node.
 
-. Create the node certificate for an individual node, specifying the unique extension file for the node.
+. Create the node certificate for an individual node, specifying the unique extension file for the node, and specifying the intermediate certificate and key as the signing authority.
 +
 ----
 openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial \
 -CAserial serial.srl -days 365 -req -in reqs/couchbase.node.svc.csr \
 -out issued/couchbase.node.svc.pem -extfile temp.ext
 ----
++
+The node-certificate file `couchbase.node.svc.pem` is hereby saved in the `issued` folder.
+The certificate bears the constraints specified in `temp.ext`, and is granted the authority of the intermediate certificate and key, which are `ca.pem` and `ca.key` respectively.
 
 . Check that the node certificate is valid.
-The following `openssl` command verifies the relationship between the root certificate, the intermediate certificate, and the node certificate.
+The following use of the `openssl` command verifies the relationship between the root certificate, the intermediate certificate, and the node certificate.
 +
 ----
-openssl verify -trusted ../root/ca.pem -untrusted ca.pem issued/couchbase.node.svc.pem
+openssl verify -trusted ../root/ca.pem -untrusted ca.pem \
+issued/couchbase.node.svc.pem
 ----
 +
 If the certificate is valid, the following output is displayed:
@@ -448,7 +462,7 @@ cp private/couchbase.node.svc.key pkey.key
 +
 This step, and each of the following steps in this procedure, must be performed for each node in the cluster.
 
-. Move the node certificate and node private key into the `inbox` for the node.
+. Move the node certificate and node private key into the `inbox` for the curent node.
 +
 ----
 sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/  # if needed
