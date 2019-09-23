@@ -21,12 +21,19 @@ For a list of Couchbase-Server ports that provide secure connectivity to clients
 xref:learn:clusters-and-availability/connectivity.adoc[Connectivity].
 
 [#cert-auth-for-couchbase-server]
-== Configure a Client Certificate for Couchbase Server
+== Configure Client Certificates for Couchbase Server
 
-The instructions below create a client certificate whose chain of authority is the same as the node certificate created in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
+The section contains two procedures for the creation of a client certificate and key, whereby authentication with Couchbase Server can be performed:
+
+* xref:manage:manage-security/configure-client-certificates.adoc#client-certificate-authorized-by-a-root-certificate[Client Certificate Authorized by a Root Certificate] shows how to create a client certificate that is authorized by a cluster's root certificate.
+The procedure for creating the cluster's root certificate (and, based on the root certificate, the cluster's individual per node certificates), is provided in xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Example with Root and Node Certificates].
 The instructions assume that _that_ procedure has already been followed; and duly make use of the resulting directory structure and files.
 
-The instructions also assume that the instance of Couchbase Server to be accessed by the client:
+* xref:manage:manage-security/configure-client-certificates.adoc#client-certificate-authorized-by-an-intermediate-certificate[Client Certificate Authorized by an Intermediate Certificate] shows how to create a client certificate that is authorized by an _intermediate_ certificate; which derives its own authority from the cluster's root certificate; and which is used instead of the root for the signing of the client certificate.
+The procedure for creating the cluster's root, server-intermediate and per node certificates is provided in xref:manage:manage-security/configure-server-certificates.adoc#root-intermediate-and-node-certificates[Example with Root, Intermediate, and Node Certificates].
+The instructions assume that _that_ procedure has already been followed; and duly make use of the resulting directory structure and files.
+
+Both procedures additionally assume that the instance of Couchbase Server to be accessed by the client:
 
 * Contains an instance of the sample bucket `travel-sample`: this is the bucket whose contents the client wishes to read and write.
 For information on sample buckets and how to install them, see xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets].
@@ -34,15 +41,18 @@ For information on sample buckets and how to install them, see xref:manage:manag
 * Has a defined, locally authenticated user named `clientuser`, who has been assigned a role that permits reading and writing to the `travel-sample` bucket.
 For information on creating users and roles, see xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users and Roles].
 
-Proceed as follows.
 Note that additional information on file-types can be found in the procedure for _server_-certificate generation; in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
+
+[#client-certificate-authorized-by-a-root-certificate]
+=== Client Certificate Authorized by a Root Certificate
+
+Proceed as follows:
 
 . Create and access a working directory.
 +
 ----
-cd certfiles
-mkdir client
-cd client
+mkdir clientcertfiles
+cd clientcertfiles
 ----
 
 . Create the extensions file for the client.
@@ -93,6 +103,109 @@ The output file, `travel-sample.pem`, is the client certificate, and is saved in
 This concludes the process.
 The client can now use `travel-sample.pem` to authenticate itself as having the authority of `ca.pem` (which is shared by the server it intends to access); and provides the username of `clientuser` (which the server associates with a role appropriate for access to the `travel-sample` bucket).
 The client key, `travel-sample.key`, can be used for digital signing.
+
+[#client-certificate-authorized-by-an-intermediate-certificate]
+=== Client Certificate Authorized by an Intermediate Certificate
+
+Proceed as follows:
+
+. Access the `servercertfiles2/root` directory, created in xref:manage:manage-security/configure-server-certificates.adoc#root-intermediate-and-node-certificates[Example with Root, Intermediate, and Node Certificates].
++
+----
+cd servercertfiles2/root
+----
+
+. Create a certificate signing request for an intermediate certificate to be used for signing client certificates.
++
+----
+openssl req -new -sha256 -newkey rsa:2048 -keyout ../clients/ca.key -out reqs/client-signing.csr -subj '/C=UA/O=MyCompany/OU=People/CN=ClientSigningCA'
+----
++
+This command specifies a new private key for the request, named `../clients/ca.key`.
+The signing-request file is saved as `reqs/client-signing.csr`.
+
+. Create the intermediate certificate to be used for client-certificate signing.
++
+----
+openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial -CAserial serial.srl \
+-days 3650 -req -in reqs/client-signing.csr -out issued/client-signing.pem \
+-extfile ca.ext
+----
++
+The root certificate and key for the cluster, `ca.pem` and `ca.key`, are specified as the authority for the intermediate certificate.
+The extension file used to constrain the capabilities of the intermediate certificate is that created in xref:manage:manage-security/configure-server-certificates.adoc#create-intermediate-extensions-file[Example with Root, Intermediate, and Node Certificates].
+
+. Save the intermediate certificate as the certificate-authority for the client certificate that is to be created.
++
+----
+cp issued/client-signing.pem ../clients/ca.pem
+----
+
+. Change directory to `../clients`, and create an extension file for the client certificate:
++
+----
+cd ../clients
+
+cat > client.ext <<EOF
+basicConstraints = CA:FALSE
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer:always
+extendedKeyUsage = clientAuth
+keyUsage = digitalSignature
+EOF
+----
++
+The value of `extendedKeyUsage` is specified as `clientAuth`, indicating that the certificate will be used to authenticate a client.
+The value of `keyUsage` is specified as `digitalSignature`, indicating that the certificate may be used in the verifying of information-origin.
+
+. Create a private key for the client certificate.
++
+----
+openssl genrsa -out private/clientuser.key 2048
+----
+
+. Create a certificate signing request for the client certificate.
++
+----
+openssl req -new -key private/clientuser.key -out reqs/clientuser.csr \
+-subj "/C=UA/O=MyCompany/OU=People/CN=clientuser"
+----
++
+The signing request is based on the private key `clientuser.key`.
+The username associated with the certificate is specified as `clientuser`: this is the username to be recognized by Couchbase Server, and associated with specific roles.
+
+. Create the client certificate.
++
+----
+openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial -CAserial serial.srl \
+-days 365 -req -in reqs/clientuser.csr \
+-out issued/clientuser.pem -extfile client.ext
+----
++
+This creates the client certificate `clientuser.pem`, based on the signing request `clientuser.csr`, and signed with the authority of the intermediate certificate and key, `ca.pem` and `ca.key`.
+The certificate is saved in the `issued` folder.
+
+. Check the validity of the client certificate.
+The following use of the `openssl` command verifies the relationship between the root certificate, the client-intermediate certificate, and the client certificate.
++
+----
+openssl verify -trusted ../root/ca.pem -untrusted ca.pem \
+issued/clientuser.pem
+----
++
+If the certificate is valid, the following output is displayed:
++
+----
+issued/clientuser.pem: OK
+----
+
+. Concatenate the issued client certificate with the client-intermediate certificate, to establish the chain of authority.
++
+----
+cat issued/tony.hillman@couchbase.com.pem ca.pem > clientuser.pem
+----
++
+The result of the concatenation, `clientuser.pem` is the completed client certificate.
 
 [#using-client-and-server-certificates-for-secure-xdcr]
 === Using Client and Server Certificates for Secure XDCR
