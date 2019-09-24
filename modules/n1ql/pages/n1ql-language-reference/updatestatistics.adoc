@@ -1,0 +1,460 @@
+= UPDATE STATISTICS
+:page-topic-type: concept
+:page-status: Developer Preview
+:imagesdir: ../../assets/images
+
+:n1ql: xref:n1ql-language-reference
+:cbo: {n1ql}/cost-based-optimizer.adoc
+:select: {n1ql}/selectintro.adoc
+:update: {n1ql}/update.adoc
+:delete: {n1ql}/delete.adoc
+:merge: {n1ql}/merge.adoc
+:insert: {n1ql}/insert.adoc
+:expression: {n1ql}/index.adoc
+:array-expr: {n1ql}/indexing-arrays.adoc#array-expr
+:adaptive-expr: {n1ql}/adaptive-indexing.adoc#index-key
+:meta-info-expr: {n1ql}/indexing-meta-info.adoc#metakeyspace_expr-property
+:logical-hierarchy: xref:n1ql-intro/sysinfo.adoc#logical-hierarchy
+
+[abstract]
+The `UPDATE STATISTICS` statement collects statistics on expressions over a named keyspace.
+These statistics are used by the cost-based optimizer when choosing the optimal index to execute a query.
+
+include::ROOT:partial$developer-preview.adoc[tag=admonition]
+
+== Purpose
+
+The {cbo}[cost-based optimizer] uses statistics to generate a query plan with the lowest processing cost, for {select}[SELECT], {update}[UPDATE], {delete}[DELETE], {merge}[MERGE], and {insert}[INSERT INTO with SELECT] queries.
+
+After creating the indexes, and before running a query, you must use the `UPDATE STATISTICS` statement to gather distribution statistics for the expressions used in the query.
+The cost-based optimizer uses these distribution statistics, together with keyspace and index statistics, to select the optimal indexes and generate the query plan.
+
+== Syntax
+
+[subs="normal"]
+----
+update-statistics ::= UPDATE STATISTICS [ FOR ] <<named-keyspace-ref>> '(' <<index-key>> [ ',' <<index-key>> ]* ')' [ WITH <<options>> ]
+----
+
+image::n1ql-language-reference/update-statistics.png["'UPDATE' 'STATISTICS' 'FOR'? named-keyspace-ref '(' index-key ( ',' index-key )* ')' 'WITH' options"]
+
+[[named-keyspace-ref,named-keyspace-ref]]
+=== Named Keyspace Reference
+--
+[subs="normal"]
+----
+named-keyspace-ref ::= [ {logical-hierarchy}[namespace] ':' ] {logical-hierarchy}[keyspace]
+----
+
+image::n1ql-language-reference/from-keyspace-ref.png["( namespace ':' )? keyspace"]
+
+Specifies the name of the keyspace for which you want to update statistics.
+--
+
+[[index-key,index-key]]
+=== Index Key
+
+This may be any of the expressions used to create an index, including, but not limited to:
+
+* A {expression}[N1QL expression] over any fields in the document, as used in a secondary index.
+
+* An {array-expr}[array expression], as used when creating an array index.
+
+* An {adaptive-expr}[expression with the PAIRS() function], as used in an adaptive index.
+
+* An {meta-info-expr}[expression with the META() function], as used in a metadata index.
+
+[[options,options]]
+=== Options
+
+An object with the following properties:
+
+sample_size::
+[Optional] An integer specifying the sample size to use for distribution statistics.
+A minimum sample size is also calculated.
+If the specified sample size is smaller than the minimum sample size, the minimum sample size is used instead.
+
+resolution::
+[Optional] A float representing the percentage of documents to store in each distribution bin.
+If omitted, the default value is `1.0`, meaning each distribution bin contains 1% of the documents, and therefore 100 bins are required.
+The minimum resolution is `0.02` (5000 distribution bins) and the maximum is `5.0` (20 ditribution bins).
+
+update_statistics_timeout::
+[Optional] A number representing a duration in seconds.
+The command times out when this timeout period is reached.
+If omitted, a default timeout value is calculated based on the number of samples used.
+
+== Usage
+
+When you use an index with a query, you typically create the index on the fields which the query uses to filter.
+To use the cost-based optimizer with that query, you must collect statistics on the same fields that you used to create the index.
+
+For a query which filters on an array or array of objects, you must collect the statistics using exactly the same expression that you used to create the index.
+
+== Result
+
+The statement returns an empty array.
+
+== Examples
+
+[[ex1]]
+.Single predicate
+====
+.Create indexes
+[source,N1QL]
+----
+CREATE INDEX idx_country_city ON `travel-sample`(country, city);
+CREATE INDEX idx_city_country ON `travel-sample`(city, country);
+----
+
+.Update statistics
+[source,N1QL]
+----
+UPDATE STATISTICS for `travel-sample`(type, city, country);
+----
+
+.Query
+[source,N1QL]
+----
+EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'France';
+----
+
+.Result
+[source,JSON]
+----
+[
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "IndexScan3",
+          "cardinality": 147.4090909090909, // <1>
+          "cost": 82.99131818181819, // <2>
+          "covers": [
+            "cover ((`travel-sample`.`country`))",
+            "cover ((`travel-sample`.`city`))",
+            "cover ((meta(`travel-sample`).`id`))",
+            "cover (count(*))"
+          ],
+          "index": "idx_country_city",
+          "index_group_aggs": {
+            "aggregates": [
+              {
+                "aggregate": "COUNT",
+                "expr": "1",
+                "id": 3,
+                "keypos": -1
+              }
+            ]
+          },
+          "index_id": "ebcdefa561f1e3f6",
+          "index_projection": {
+            "entry_keys": [
+              3
+            ]
+          },
+          "keyspace": "travel-sample",
+          "namespace": "default",
+          "spans": [
+            {
+              "exact": true,
+              "range": [
+                {
+                  "high": "\"France\"",
+                  "inclusion": 3,
+                  "low": "\"France\""
+                }
+              ]
+            }
+          ],
+          "using": "gsi"
+        },
+        {
+          "#operator": "Parallel",
+          "~child": {
+            "#operator": "Sequence",
+            "~children": [
+              {
+                "#operator": "InitialProject",
+                "result_terms": [
+                  {
+                    "expr": "cover (count(*))"
+                  }
+                ]
+              },
+              {
+                "#operator": "FinalProject"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "text": "SELECT count(*) FROM `travel-sample` WHERE country = 'France';"
+  }
+]
+----
+====
+
+<1> The cardinality estimate for the index scan operator.
+Cardinality is a measure of the uniqueness of the data values.
+Low cardinality -- high duplication; high cardinality -- low duplication.
+
+<2> The cost estimate for the index scan operator.
+
+[[ex2]]
+.Multiple predicates
+====
+This example uses the same indexes and statistics as <<ex1>>.
+
+[source,N1QL]
+----
+EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND type = 'hotel';
+----
+
+.Result
+[source,JSON]
+----
+[
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "IndexScan3",
+          "cardinality": 740.8095238095237, // <1>
+          "cost": 417.07576190476186,
+          "index": "idx_country_city",
+          "index_id": "ebcdefa561f1e3f6",
+          "index_projection": {
+            "primary_key": true
+          },
+          "keyspace": "travel-sample",
+          "namespace": "default",
+          "spans": [
+            {
+              "exact": true,
+              "range": [
+                {
+                  "high": "\"United States\"",
+                  "inclusion": 3,
+                  "low": "\"United States\""
+                }
+              ]
+            }
+          ],
+          "using": "gsi"
+        },
+        {
+          "#operator": "Fetch",
+          "cardinality": 740.8095238095237, // <2>
+          "cost": 4047.042428571428,
+          "keyspace": "travel-sample",
+          "namespace": "default"
+        },
+        {
+          "#operator": "Parallel",
+          "~child": {
+            "#operator": "Sequence",
+            "~children": [
+              {
+                "#operator": "Filter",
+                "cardinality": 16.542774045435976, // <3>
+                "condition": "(((`travel-sample`.`country`) = \"United States\") and ((`travel-sample`.`type`) = \"hotel\"))",
+                "cost": 4049.2648571428567
+              },
+              {
+                "#operator": "InitialGroup",
+                "aggregates": [
+                  "count(1)"
+                ],
+                "group_keys": []
+              }
+            ]
+          }
+        },
+        {
+          "#operator": "IntermediateGroup",
+          "aggregates": [
+            "count(1)"
+          ],
+          "group_keys": []
+        },
+        {
+          "#operator": "FinalGroup",
+          "aggregates": [
+            "count(1)"
+          ],
+          "group_keys": []
+        },
+        {
+          "#operator": "Parallel",
+          "~child": {
+            "#operator": "Sequence",
+            "~children": [
+              {
+                "#operator": "InitialProject",
+                "result_terms": [
+                  {
+                    "expr": "count(1)"
+                  }
+                ]
+              },
+              {
+                "#operator": "FinalProject"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "text": "select count(1) from `travel-sample` where country = 'United States' and type = 'hotel'"
+  }
+]
+----
+====
+
+<1> Cardinality and cost estimates for the index scan operator.
+<2> Cardinality and cost estimates for the fetch operator.
+<3> Cardinality and cost estimates for the filter operator.
+
+[[ex3]]
+.Filter on an array
+====
+.Create index
+[source,N1QL]
+----
+CREATE INDEX idx_public_likes ON `travel-sample`((DISTINCT (`public_likes`)));
+----
+
+.Update statistics
+[source,N1Ql]
+----
+UPDATE STATISTICS FOR `travel-sample`((DISTINCT (`public_likes`)));
+----
+
+.Query
+[source,N1Ql]
+----
+EXPLAIN SELECT COUNT(1)
+FROM `travel-sample`
+WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "DistinctScan",
+          "cardinality": 7.088088423748743,
+          "cost": 3.0904065527544518,
+          "scan": {
+            "#operator": "IndexScan3",
+            "cardinality": 7.088088423748743,
+            "cost": 3.0691422874832055,
+            "covers": [
+              "cover ((distinct ((`travel-sample`.`public_likes`))))",
+              "cover ((meta(`travel-sample`).`id`))"
+            ],
+            "filter_covers": {
+              "cover (any `p` in (`travel-sample`.`public_likes`) satisfies ((\"A\" \u003c= `p`) and (`p` \u003c \"B\")) end)": true,
+              "cover (any `p` in (`travel-sample`.`public_likes`) satisfies (`p` like \"A%\") end)": true
+            },
+            "index": "idx_public_likes",
+            ...
+          }
+        },
+        {
+          "#operator": "Parallel",
+          "~child": {
+            "#operator": "Sequence",
+            "~children": [
+              {
+                "#operator": "Filter",
+                "cardinality": 0.012547701674046188,
+                "condition": "cover (any `p` in (`travel-sample`.`public_likes`) satisfies (`p` like \"A%\") end)",
+                "cost": 3.111670818025698
+              },
+              {
+                "#operator": "InitialGroup",
+                "aggregates": [
+                  "count(1)"
+                ],
+                "group_keys": []
+              }
+            ]
+          }
+        },
+        ...
+      ]
+    },
+    "text": "SELECT COUNT(1)\nFROM `travel-sample`\nWHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END"
+  }
+]
+----
+====
+
+[[ex4]]
+.Filter on an array of objects
+====
+.Create index
+[source,N1QL]
+----
+CREATE INDEX idx_reviews_ratings_overall ON `travel-sample`(DISTINCT ARRAY r.ratings.Overall FOR r IN reviews END);
+----
+
+.Update statistics
+[source,N1Ql]
+----
+UPDATE STATISTICS FOR `travel-sample`(DISTINCT ARRAY r.ratings.Overall FOR r IN reviews END);
+----
+
+.Query
+[source,N1Ql]
+----
+EXPLAIN SELECT COUNT(1)
+FROM `travel-sample`
+WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END
+----
+
+.Results
+[source,JSON]
+----
+[
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "IndexScan3",
+          "cardinality": 57.22814556197126,
+          "cost": 19.056972472136433,
+          "covers": [
+            "cover ((distinct (array ((`r`.`ratings`).`Overall`) for `r` in (`travel-sample`.`reviews`) end)))",
+            "cover ((meta(`travel-sample`).`id`))",
+            "cover (count(1))"
+          ],
+          "filter_covers": {
+            "cover (any `r` in (`travel-sample`.`reviews`) satisfies (((`r`.`ratings`).`Overall`) = 4) end)": true
+          },
+          "index": "idx_reviews_ratings_overall",
+          ...
+        },
+        ...
+      ]
+    },
+    "text": "SELECT COUNT(1)\nFROM `travel-sample` WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END"
+  }
+]
+----
+====
+
+== Related Links
+
+* {cbo}[Cost-Based Optimizer]
