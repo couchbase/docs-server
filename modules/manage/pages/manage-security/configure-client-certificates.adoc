@@ -33,6 +33,7 @@ The instructions assume that _that_ procedure has already been followed: therefo
 The procedure for creating the cluster's root, server-intermediate and per node certificates is provided in xref:manage:manage-security/configure-server-certificates.adoc#root-intermediate-and-node-certificates[Cluster Protection with Root, Intermediate, and Node Certificates].
 The instructions assume that _that_ procedure has already been followed: therefore, they duly make use of the resulting directory structure and files.
 
+[#assumptions]
 Both procedures additionally assume that the instance of Couchbase Server to be accessed by the client:
 
 * Contains an instance of the sample bucket `travel-sample`: this is the bucket whose contents the client wishes to read and write.
@@ -264,15 +265,35 @@ Use the following files:
 ** The client private key as `servercertfiles2/clients/private/clientuser.key`.
 
 [#cert_auth_for_java_client]
-== Configure a Client Certificate for a Java Client
+== Configure Client Certificates for a Java Clients
 
 A _Java_ client uses a _keystore_ to access the certificates it requires for authentication.
-This allows the client to access all Couchbase Services.
-Certificate and keystore preparation is demonstrated by the following instructions; which are based on the same assumptions as those listed above, in xref:manage:manage-security/configure-client-certificates.adoc#cert-auth-for-couchbase-server[Configure a Client Certificate for Couchbase Server].
+Certificate and keystore preparation is demonstrated by the procedures in the following two sections, which are:
+
+* xref:manage:manage-security/configure-client-certificates.adoc#java-client-access-root-certificate-authorization[Java Client Access: Root-Certificate Authorization].
+This creates a Java-client certificate signed by the cluster's root certificate.
+As such, the procedure follows on from the server-certificate creation-process documented in xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Cluster Protection with Root and Node Certificates]; and makes use of the directories and keys created there.
+
+* xref:manage:manage-security/configure-client-certificates.adoc#java-client-access-intermediate-certificate-authorization[Java Client Access: Intermediate-Certificate Authorization].
+This creates a Java-client certificate signed by the cluster's intermediate certificate.
+As such, the procedure follows on from the server-certificate creation-process documented in xref:manage:manage-security/configure-server-certificates.adoc#root-intermediate-and-node-certificates[Cluster Protection with Root, Intermediate and Node Certificates]; and makes use of the directories and keys created there.
+
+Note that the xref:manage:manage-security/configure-client-certificates.adoc#assumptions[assumptions] specified for the examples above likewise apply to the Java client examples below.
+
+[#java-client-access-root-certificate-authorization]
+=== Java Client Access: Root-Certificate Authorization
 
 Proceed as follows:
 
-. Define environment variables for the name of the keystore to be created, and its password.
+. Access the main working directory created in xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Cluster Protection with Root and Node Certificates], and create and access a new working directory for the Java client certificate to be created.
++
+----
+cd servercertfiles
+mkdir javaclient
+cd javaclient
+----
+
+. Define two environment variables: one for the name of the keystore to be created, another for its password.
 +
 [source,bash]
 ----
@@ -287,16 +308,19 @@ export STOREPASS=storepass
 sudo apt install openjdk-9-jre-headless
 ----
 
-. Within the top-level, `SSLCA` directory that you created, generate the keystore.
+. Generate the keystore.
 Note that the password you specify for the alias, by means of the `--keypass` flag, must be identical to the password you specify for the keystore, by means of the `--storepass` flag.
 In this case, both passwords are specified as `&#36;&#123;STOREPASS&#125;`; which resolves to `storepass`.
 +
 [source,bash]
 ----
 keytool -genkey -keyalg RSA -alias selfsigned \
--keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -validity 360 -keysize 2048 \
--noprompt  -dname "CN=${USERNAME}, OU=None, O=None, L=None, S=None, C=US" -keypass ${STOREPASS}
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -validity 360 \
+-keysize 2048 -noprompt  -dname "CN=clientuser, OU=People, O=MyCompany, \
+L=None, S=None, C=UA" -keypass ${STOREPASS}
 ----
++
+Note that the `Common Name` for the certificate is specified as `clientuser`, which is the username established on Couchbase Server, whose role-assignment is supportive of reading and writing data to the `travel-sample` bucket.
 
 . Generate the certificate signing-request:
 +
@@ -306,28 +330,20 @@ keytool -certreq -alias selfsigned -keyalg RSA -file my.csr \
 -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
 ----
 
-. Generate the client certificate, signing it with the intermediate private key:
+. Generate the client certificate, signing it with the root private key, and thereby establishing the root certificate's authority:
 +
 [source,bash]
 ----
-openssl x509 -req -in my.csr -CA ./${INT_DIR}/${INTERMEDIATE}.pem \
--CAkey ./${INT_DIR}/${INTERMEDIATE}.key -CAcreateserial -out clientcert.pem -days 365
+openssl x509 -req -in my.csr -CA ../ca.pem \
+-CAkey ../ca.key -CAcreateserial -out clientcert.pem -days 365
 ----
 
 . Add the root certificate to the keystore:
 +
 [source,bash]
 ----
-keytool -import -trustcacerts -file ./${ROOT_DIR}/${ROOT_CA}.pem \
+keytool -import -trustcacerts -file ../ca.pem \
 -alias root -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
-----
-
-. Add the intermediate certificate to the keystore:
-+
-[source,bash]
-----
-keytool -import -trustcacerts -file ./${INT_DIR}/${INTERMEDIATE}.pem \
--alias int -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
 ----
 
 . Add the client certificate to the keystore:
