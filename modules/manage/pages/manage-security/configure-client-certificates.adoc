@@ -49,9 +49,10 @@ Note that additional information on file-types can be found in the procedures fo
 
 Proceed as follows:
 
-. Create and access a working directory.
+. Within the top-level directory created in xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Cluster Protection with Root and Node Certificates], create and access a new working directory.
 +
 ----
+cd servercertfiles
 mkdir clientcertfiles
 cd clientcertfiles
 ----
@@ -265,7 +266,7 @@ Use the following files:
 ** The client private key as `servercertfiles2/clients/private/clientuser.key`.
 
 [#cert_auth_for_java_client]
-== Configure Client Certificates for a Java Clients
+== Configure Client Certificates for Java Clients
 
 A _Java_ client uses a _keystore_ to access the certificates it requires for authentication.
 Certificate and keystore preparation is demonstrated by the procedures in the following two sections, which are:
@@ -355,16 +356,97 @@ keytool -import -keystore ${KEYSTORE_FILE} -file clientcert.pem \
 ----
 
 This concludes preparation of the Java client's keystore.
-Copy the file (in this case, `my.keystore`) to a location on a local filesystem
-from which the Java client can access it.
+Copy the file (in this case, `my.keystore`) to a location on a local filesystem from which the Java client can access it.
+
+[#java-client-access-intermediate-certificate-authorization]
+=== Java Client Access: Intermediate-Certificate Authorization
+
+Proceed as follows:
+
+. Access the main working directory created in xref:manage:manage-security/configure-server-certificates.adoc#root-intermediate-and-node-certificates[Cluster Protection with Root, Intermediate, and Node Certificates], and create and access a new working directory for the Java client certificate to be created.
++
+----
+cd servercertfiles2
+mkdir javaclient
+cd javaclient
+----
+
+. Define two environment variables: one for the name of the keystore to be created, another for its password:
++
+----
+export KEYSTORE_FILE=my.keystore
+export STOREPASS=storepass
+----
+
+. If necessary, install a package containing the `keytool` utility:
++
+----
+sudo apt install openjdk-9-jre-headless
+----
+
+. Note that the password you specify for the alias, by means of the `--keypass` flag, must be identical to the password you specify for the keystore, by means of the `--storepass` flag.
+In this case, both passwords are specified as `&#36;&#123;STOREPASS&#125;`; which resolves to `storepass`.
++
+----
+keytool -genkey -keyalg RSA -alias selfsigned \
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -validity 360 \
+-keysize 2048 -noprompt  -dname "CN=clientuser, OU=People, O=MyCompany, \
+L=None, S=None, C=UA" -keypass ${STOREPASS}
+----
++
+Note that the Common Name for the certificate is specified as `clientuser`, which is the username established on Couchbase Server, whose role-assignment is supportive of reading and writing data to the `travel-sample` bucket.
+
+. Generate the certificate signing-request:
++
+----
+keytool -certreq -alias selfsigned -keyalg RSA -file my.csr \
+-keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
+----
+
+. Generate the client certificate, signing it with the intermediate private key, and thereby establishing the intermediate certificate’s authority:
++
+----
+openssl x509 -req -in my.csr -CA ../servers/ca.pem \
+-CAkey ../servers/ca.key -CAcreateserial -out clientcert.pem -days 365
+----
++
+Since the intermediate private key was encrypted, a prompt now appears, requesting entry of the pass phrase for the key:
++
+----
+Enter pass phrase for ../servers/ca.key:
+----
++
+Enter the pass phrase against the prompt.
+
+. Add the root certificate to the keystore:
++
+----
+keytool -import -trustcacerts -file ../root/ca.pem \
+-alias root -keystore ${KEYSTORE_FILE2} -storepass ${STOREPASS2} -noprompt
+----
+
+. Add the intermediate certificate to the keystore:
++
+----
+keytool -import -trustcacerts -file ../servers/ca.pem \
+-alias root2 -keystore ${KEYSTORE_FILE2} -storepass ${STOREPASS2} -noprompt
+----
+
+. Add the client certificate to the keystore:
++
+----
+keytool -import -keystore ${KEYSTORE_FILE2} -file clientcert.pem \
+-alias selfsigned -storepass ${STOREPASS2} -noprompt
+----
+
+This concludes preparation of the Java client's keystore.
+Copy the file (in this case, `my.keystore`) to a location on a local filesystem from which the Java client can access it.
 
 [#enabling-client-security]
 == Securing Client Access with TLS
 
-For an application to communicate securely with Couchbase Server, SSL/TLS must
-be enabled on the client side.
+For an application to communicate securely with Couchbase Server, SSL/TLS must be enabled on the client side.
 Enablement requires a copy of the certificate used by Couchbase Server: this can be accessed from the Couchbase Web Console, as described in
-xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Root
-Certificate].
+xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Root Certificate].
 
 Note that if, at some point, this certificate gets regenerated on the server-side, a copy of the new version must be obtained, and the client re-enabled.
