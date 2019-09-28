@@ -35,10 +35,10 @@ The cost-based optimizer uses these distribution statistics, together with keysp
 
 [subs="normal"]
 ----
-update-statistics ::= UPDATE STATISTICS [ FOR ] <<named-keyspace-ref>> '(' <<index-key>> [ ',' <<index-key>> ]* ')' [ WITH <<options>> ]
+update-statistics ::= UPDATE STATISTICS [ FOR ] <<named-keyspace-ref>> '(' <<index-expr>> [ ',' <<index-expr>> ]* ')' [ WITH <<options>> ]
 ----
 
-image::n1ql-language-reference/update-statistics.png["'UPDATE' 'STATISTICS' 'FOR'? named-keyspace-ref '(' index-key ( ',' index-key )* ')' 'WITH' options"]
+image::n1ql-language-reference/update-statistics.png["'UPDATE' 'STATISTICS' 'FOR'? named-keyspace-ref '(' index-expr ( ',' index-expr )* ')' 'WITH' options"]
 
 [[named-keyspace-ref,named-keyspace-ref]]
 === Named Keyspace Reference
@@ -50,19 +50,18 @@ named-keyspace-ref ::= [ {logical-hierarchy}[namespace] ':' ] {logical-hierarchy
 
 image::n1ql-language-reference/from-keyspace-ref.png["( namespace ':' )? keyspace"]
 
-Specifies the name of the keyspace for which you want to update statistics.
+The name of the keyspace for which you want to gather statistics.
 --
 
-[[index-key,index-key]]
-=== Index Key
+[[index-expr,index-expr]]
+=== Index Expression
 
-This may be any of the expressions used to create an index, including, but not limited to:
+The expression for which you want to gather statistics.
+This may be any expression that is supported as an index key, including, but not limited to:
 
 * A {expression}[N1QL expression] over any fields in the document, as used in a secondary index.
 
 * An {array-expr}[array expression], as used when creating an array index.
-
-* An {adaptive-expr}[expression with the PAIRS() function], as used in an adaptive index.
 
 * An {meta-info-expr}[expression with the META() function], as used in a metadata index.
 
@@ -92,6 +91,8 @@ Refer to {distribution-stats}[Distribution Statistics] for more information on s
 
 When you use an index with a query, you typically create the index on the fields which the query uses to filter.
 To use the cost-based optimizer with that query, you must collect statistics on the same fields that you used to create the index.
+
+A query may have predicates on non-indexed fields, and you can collect statistics on those fields also to help the optimizer.
 
 For a query which filters on an array or array of objects, you must collect the statistics using exactly the same expression that you used to create the index.
 
@@ -207,11 +208,21 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'France';
 [[ex2]]
 .Multiple predicates
 ====
-This example uses the same indexes and statistics as <<ex1>>.
+This example uses the same indexes as <<ex1>>.
 
+.Update statistics
 [source,N1QL]
 ----
-EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND type = 'hotel';
+UPDATE STATISTICS for `travel-sample`(type, city, country, free_breakfast);
+----
+
+There is no index on the `free_breakfast` field.
+However, the query below refers to this field as a predicate, so we collect statistics on this field also.
+
+.Query
+[source,N1QL]
+----
+EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND type = 'hotel' AND free_breakfast = true;
 ----
 
 .Result
@@ -224,8 +235,8 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
       "~children": [
         {
           "#operator": "IndexScan3",
-          "cardinality": 740.8095238095237, // <1>
-          "cost": 417.07576190476186,
+          "cardinality": 703.8225187176041, // <1>
+          "cost": 396.2520780380112,
           "index": "idx_country_city",
           "index_id": "ebcdefa561f1e3f6",
           "index_projection": {
@@ -249,8 +260,8 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
         },
         {
           "#operator": "Fetch",
-          "cardinality": 740.8095238095237, // <2>
-          "cost": 4047.042428571428,
+          "cardinality": 703.8225187176041, // <2>
+          "cost": 3296.0008551545407,
           "keyspace": "travel-sample",
           "namespace": "default"
         },
@@ -261,14 +272,14 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
             "~children": [
               {
                 "#operator": "Filter",
-                "cardinality": 16.542774045435976, // <3>
-                "condition": "(((`travel-sample`.`country`) = \"United States\") and ((`travel-sample`.`type`) = \"hotel\"))",
-                "cost": 4049.2648571428567
+                "cardinality": 0.2514468840707154, // <3>
+                "condition": "((((`travel-sample`.`country`) = \"United States\") and ((`travel-sample`.`type`) = \"hotel\")) and ((`travel-sample`.`free_breakfast`) = true))",
+                "cost": 3298.1123227106937
               },
               {
                 "#operator": "InitialGroup",
                 "aggregates": [
-                  "count(1)"
+                  "count(*)"
                 ],
                 "group_keys": []
               }
@@ -278,14 +289,14 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
         {
           "#operator": "IntermediateGroup",
           "aggregates": [
-            "count(1)"
+            "count(*)"
           ],
           "group_keys": []
         },
         {
           "#operator": "FinalGroup",
           "aggregates": [
-            "count(1)"
+            "count(*)"
           ],
           "group_keys": []
         },
@@ -298,7 +309,7 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
                 "#operator": "InitialProject",
                 "result_terms": [
                   {
-                    "expr": "count(1)"
+                    "expr": "count(*)"
                   }
                 ]
               },
@@ -310,7 +321,7 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
         }
       ]
     },
-    "text": "select count(1) from `travel-sample` where country = 'United States' and type = 'hotel'"
+    "text": "SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND type = 'hotel' AND free_breakfast = true;"
   }
 ]
 ----
