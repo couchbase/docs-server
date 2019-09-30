@@ -1,386 +1,376 @@
-= Network and Firewall Requirements
+= Couchbase Server Ports
+
+:fn-moxi: footnote:fn-moxi[Support for server-side Moxi was xref:5.0@release-notes:relnotes.adoc#release-500[deprecated in version 5.0], and the ability to create a bucket with a Moxi port was xref:5.5@release-notes:relnotes.adoc#deprecation-550[removed in version 5.5]. Starting in version 6.5, support for port-based buckets is xref:6.5@release-notes:relnotes.adoc#changes-in-behavior-650[completely removed]. Attempts to upgrade to version 6.5 or later will fail during rebalance if a port-based bucket is present in the cluster. Use xref:cli:cbcli/couchbase-cli-bucket-edit.adoc[`bucket-edit --remove-bucket-port`] in the CLI to remove the port from each bucket, and consider using xref:install-client-server.adoc[client-side Moxi].]
+:fn-moxi-ref: footnote:fn-moxi[]
 
 [abstract]
-Couchbase Server uses a variety of network ports for communication between server components and with the clients that access the data stored in the Couchbase Server cluster.
+Couchbase Server uses multiple TCP ports to facilitate communication between server components, as well as with Couchbase clients.
+These ports must be open for Couchbase Server to operate correctly.
 
-The ports listed below must be open on each host for Couchbase Server to operate correctly.
-In addition, certain ports must be available (i.e., not blocked by a firewall or other such mechanism) between each node of a cluster, between nodes of multiple clusters connected via XDCR, between application servers and nodes, and for administrative access.
+== Ports Overview
 
-IMPORTANT: If any port numbers are already in use by other running applications, Couchbase Server will not function properly and may fail to start.
+This page describes the TCP ports that are used by Couchbase Server for network communication.
+Some ports, such as those used for cluster management, are required to be open on every node because they are essential to how Couchbase Server communicates with itself. 
+Other ports are used by individual xref:learn:services-and-indexes/services/services.adoc[Couchbase Services], and are only required to be open on the nodes where those services are running.
 
-The following is a list of port numbers grouped by category of communication path:
+Couchbase Server uses a default set of port numbers for all ports that it requires.
+The xref:learn:clusters-and-availability/cluster-manager.adoc[Couchbase Cluster Manager] on each node is responsible for port management, and will open and close these ports on the host as necessary, as well as automatically switch to using encrypted ports if the cluster is configured to use TLS.
+Most port numbers can be <<map-custom-ports,remapped>> to fit the requirements of your network environment, but some port numbers cannot be changed.
 
-Node-local: Only connected to over localhost, needs to be open on the node but not available externally.:: 11213, 9119, 9998
+IMPORTANT: If other software on the same host is using any of the ports that are required by Couchbase Server, then Couchbase Server will not function properly and may fail to start. 
 
-Node-to-node: Between all nodes within a single cluster.:: 4369, 8091-8096, 9100-9105, 9110-9118, 9120-9122, 9999, 11209, 11210, 18094, 21100-21299
+=== Couchbase Server Communication Paths
 
-Client-to-node: Between any clients/app-servers/SDKs and all nodes of each cluster they require access to.::
-Unencrypted*: 8091-8096, 11210, 11211
+Couchbase Server components and services connect to each port over one or more _communication paths_.
+These paths are defined as:
+
+* _Node-local_: A Couchbase service running on a node connects to the port on localhost, and communication happens entirely within the node itself.
+
+* _Node-to-node_: A Couchbase service connects to the port on other nodes in the cluster.
+
+* _Client-to-node_: A Couchbase client, such as an application using the Couchbase SDK, connects to the port on the node that it requires access to.
+
+* _XDCR (cluster-to-cluster)_: A source node connects to the port on a destination node of another cluster as part of an xref:manage:manage-xdcr/prepare-for-xdcr.adoc[XDCR replication stream]. 
+(This is very similar to the client-to-node communication path.)
 +
-Encrypted: 18091-18096†††, 11207
+There are two versions of XDCR that each use their own protocol: Version 1 (CAPI), which uses the REST protocol, and Version 2 (XMEM), which uses the Memcached Binary protocol.
+The default is Version 2, and it should be noted that each version requires a different set of ports.
+Refer to xref:xdcr-reference:xdcr-advanced-settings.adoc[XDCR Advanced Settings] for more information about XDCR versions.
 
-Cluster administration: Administration traffic via the REST API, command-line, and Web UI.::
-Unencrypted*: 8091
-+
-Encrypted: 18091
-+
-*Note:* certain support/diagnostic requests may run against ports other than 8091.
+Each communication path used by a required port must remain open and unblocked by firewalls or other such mechanisms.
+
+== Ports Listed by Communication Path
+
+<<table-ports-communication-path>> lists all port numbers grouped by category of communication path.
+
+.All Couchbase Server Ports, Listed by Communication Path
+[#table-ports-communication-path,cols="1,2",options=header]
+|===
+
+| Communication Path | Default Ports
+
+| _Node-local only_
+| 9119, 9998, 11213
+
+| _Node-to-node_
+| *Unencrypted*: 4369, 8091-8094, 9100-9105, 9110-9118, 9120-9122, 9999, 11209-11210, 21100-21299
+
+*Encrypted*: 11207, 18091-18094
+
+| _Client-to-node_
+| *Unencrypted*: 8091-8096, 9140 footnote:eventing-debug-port[The Eventing Service Debugger port (`debugPort`) is an internal port and is not supported for external access outside of the cluster. You should only use this port in your development environments.], 11210, 11211
+
+*Encrypted*: 11207, 18091-18096 footnote:analytics-encrypted-port[The Analytics Service encrypted port (18095) is not currently used, but is reserved for future use.]
+
+| _XDCR (cluster-to-cluster)_
+a| * Version 1 (CAPI)
+** *Unencrypted*: 8091, 8092
+* Version 2 (XMEM)
+** *Unencrypted*: 8091, 8092, 11210
+** *Encrypted*: 11207, 18091, 18092
+
+NOTE: If enforcing TLS encryption, these ports may be blocked outside of a Couchbase Server cluster but need to remain open between nodes.
+|===
+
+NOTE: Certain support and diagnostic requests may run against ports other than the administration port (8091).
 These are expected to execute locally on a node and so do not require external access.
 
-XDCR: Between all source and destination nodes of an XDCR replication stream.::
-*v1 (CAPI)*
-+
-8091, 8092
-+
-*v2 (XMEM)*
-+
-Unencrypted*: 8091, 8092, 11210
-+
-Encrypted: 8091, 11207, 18091, 18092
+== Detailed Port Description
 
-*  If enforcing encryption (SSL/TLS), these ports may be blocked outside of a Couchbase Server cluster but need to remain open between nodes.
+<<table-ports-detailed>> contains a detailed description of each port used by Couchbase Server.
 
-The following table provides more description:
-
-[cols="1,1,3,1,1,1,1,1"]
+.All Couchbase Server Ports, Listed by Service 
+[#table-ports-detailed,cols="3,2,3,1,1,1",options=header] 
 |===
-| Port Name | Default Port Number Un / Encrypted | Description | Node-to-node | Client-to-Node | Cluster admin | XDCR v1 (CAPI) | XDCR v2 (XMEM)
+| Port name
+| Default port number +
+(un / encrypted)
+| Description
+| Node-to-node
+| Client-to-node
+| XDCR (cluster-to-cluster)
 
-| epmd port^†^
+| `epmd` footnote:fn-cannot-remap[This port cannot be remapped.]
 | 4369
 | Erlang Port Mapper Daemon
 | Yes
 | No
 | No
-| No
-| No
 
-| rest_port / ssl_rest_port
+| `rest_port` / `ssl_rest_port`
 | 8091 / 18091
-| REST/HTTP including Web UI
+| Cluster administration REST/HTTP traffic, including Couchbase Web Console
 | Yes
 | Yes
-| Yes
-| Yes
-| Yes
+| Version 1 & 2
 
-| capi_port / ssl_capi_port
+| `capi_port` / `ssl_capi_port`
 | 8092 / 18092
 | Views and XDCR access
 | Yes
 | Yes
-| No
-| Yes
-| Yes
+| Version 1 & 2
 
-| query_port / ssl_query_port
+| `query_port` / `ssl_query_port`
 | 8093 / 18093
 | Query service REST/HTTP traffic
 | Yes
 | Yes
 | No
-| No
-| No
 
-| fts_http_port / fts_ssl_port
+| `fts_http_port` / `fts_ssl_port`
 | 8094 / 18094
 | Search service REST/HTTP traffic
 | Yes
 | Yes
 | No
-| No
-| No
 
-| cbas_http_port / cbas_ssl_port
-| 8095 / 18095†††
+| `cbas_http_port` / `cbas_ssl_port` footnote:analytics-encrypted-port[]
+| 8095 / 18095
 | Analytics service REST/HTTP traffic
 | No
 | Yes
 | No
-| No
-| No
 
-| eventing_http_port/ eventing_ssl_port
+| `eventing_http_port` / `eventing_ssl_port`
 | 8096 / 18096
 | Eventing service REST/HTTP traffic
 | No
 | Yes
 | No
-| No
-| No
 
-| debugPort^†††††^
-| 9140
-| Port for Eventing Debugger
-| No
-| Yes
-| No
-| No
-| No
-
-| indexer_admin_port
+| `indexer_admin_port`
 | 9100
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| indexer_scan_port
+| `indexer_scan_port`
 | 9101
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| indexer_http_port
+| `indexer_http_port`
 | 9102
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| indexer_stinit_port
+| `indexer_stinit_port`
 | 9103
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| indexer_stcatchup_port
+| `indexer_stcatchup_port`
 | 9104
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| indexer_stmaint_port
+| `indexer_stmaint_port`
 | 9105
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_admin_port
+| `cbas_admin_port`
 | 9110
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_cc_http_port
+| `cbas_cc_http_port`
 | 9111
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_cc_cluster_port
+| `cbas_cc_cluster_port`
 | 9112
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_cc_client_port
+| `cbas_cc_client_port`
 | 9113
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_console_port
+| `cbas_console_port`
 | 9114
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_cluster_port††††
+| `cbas_cluster_port` footnote:[In version 5.5 Beta, this port was named `cbas_hyracks_console_port`.]
 | 9115
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_data_port
+| `cbas_data_port`
 | 9116
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_result_port
+| `cbas_result_port`
 | 9117
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_messaging_port
+| `cbas_messaging_port`
 | 9118
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_auth_port
+| `cbas_auth_port`
 | 9119
-| Analytics service
-| No
-| No
+| Analytics service (node-local only)
 | No
 | No
 | No
 
-| cbas_replication_port
+| `cbas_replication_port`
 | 9120
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_metadata_port
+| `cbas_metadata_port`
 | 9121
 | Analytics service
 | Yes
 | No
 | No
-| No
-| No
 
-| cbas_metadata_callback_port
+| `cbas_metadata_callback_port`
 | 9122
 | Analytics service
 | Yes
 | No
 | No
+
+| `debugPort` footnote:eventing-debug-port[]
+| 9140
+| Eventing Service Debugger
 | No
+| Yes
 | No
 
-| xdcr_rest_port
+| `xdcr_rest_port`
 | 9998
-| XDCR REST port
-| No
-| No
+| XDCR REST port (node-local only)
 | No
 | No
 | No
 
-| projector_port
+| `projector_port`
 | 9999
 | Indexer service
 | Yes
 | No
 | No
-| No
-| No
 
-| memcached_dedicated_port
+| `memcached_dedicated_port`
 | 11209
 | Data Service
 | Yes
 | No
 | No
-| No
-| No
 
-| memcached_port / memcached_ssl_port
+| `memcached_port` / `memcached_ssl_port`
 | 11210 / 11207
 | Data Service
 | Yes
 | Yes
-| No
-| No
-| Yes
+| Version 2
 
-| moxi_port^††^
+| `moxi_port` footnote:fn-cannot-remap[] {fn-moxi}
 | 11211
 | Moxi port
 | No
 | Yes
 | No
-| No
-| No
 
-| moxi_port_internal^††^
+| `moxi_port_internal` footnote:fn-cannot-remap[] {fn-moxi-ref}
 | 11213
-| Moxi port
-| No
-| No
+| Moxi port (node-local only)
 | No
 | No
 | No
 
 | Internal data ports
-| 21100 to 21299 (inclusive)
-| Node data exchange.
+| 21100-21299
+| Node data exchange
 | Yes
-| No
-| No
 | No
 | No
 |===
 
-† Cannot be remapped
-
-†† Cannot be remapped.
-Deprecated in 5.0 and will be removed in a subsequent release.
-Consider using xref:install-client-server.adoc[client-side Moxi] instead.
-
-††† Analytics SSL port not currently used; reserved for future use.
-
-†††† In 5.5 Beta build, this port was named _cbas_hyracks_console_port_.
-
-††††† The Eventing debugger port, debugPort, is an internal port and is not supported for external access outside of the cluster.
-Ensure to use this port only in your developer environments.
-
+[#map-custom-ports]
 == Custom Port Mapping
 
-IMPORTANT: Changing the port mappings will require a reset and reconfiguration of any Couchbase Server node.
+Most, but not all, port numbers used by Couchbase Server can be remapped from their defaults to fit the requirements of your network environment.
+Refer to <<table-ports-detailed>> for details about default ports and whether or not they can be remapped.
 
-*Setting up Couchbase Server with Custom Ports*
+Changing the port mappings will require a reset and reconfiguration of any Couchbase Server node.
 
-. Install Couchbase Server (If already running, stop it.)
-. Add the new user-defined ports to the [.path]_/opt/couchbase/etc/couchbase/static_config_ file (this will be at wherever you put [.path]_<path to> /couchbase/etc/couchbase/static_config_ for multiple node installations).
- ** For example, to change the REST API port from 8091 to 9000, add this line:
+.To Change Port Mapping
+. xref:install-intro.adoc[Install Couchbase Server].
+. xref:startup-shutdown.adoc[Stop the Couchbase Server service].
+. For most ports, you'll need to edit the Couchbase Server [.path]_static_config_ file.
+(This will be wherever you put the path to [.path]_/couchbase/etc/couchbase/static_config_ in multi-node installations.)
 +
+[source,console]
+----
+vi /opt/couchbase/etc/couchbase/static_config
+----
++
+If you're remapping the CAPI port (8092 / 18092) you'll need to edit the [.path]_/opt/couchbase/etc/couchdb/default.d/capi.ini_ file and replace 8092 with the new port number.
+. Add each custom port map entry on its own line, using the following format:
++
+[source,console,subs=+quotes]
+----
+{[.var]_port-name_, [.var]_port-number_}
+----
++
+For example, to change the REST API port from 8091 to 9000, you would add the following line:
++
+[source,console]
 ----
 {rest_port, 9000}
 ----
++
+Once you've added all of your custom port mappings, save the file and close your text editor.
+. If Couchbase Server was previously configured, you'll need to delete the [.path]_opt/couchbase/var/lib/couchbase/config/config.dat_ file to remove the old configuration.
++
+[source,console]
+----
+rm -rf opt/couchbase/var/lib/couchbase/config/config.dat
+----
+. xref:startup-shutdown.adoc[Start Couchbase Server].
 
- ** Any ports not listed will be assigned their defaults as listed above
-. (Optional) CAPI port (default 8092) can be edited in the [.path]_/opt/couchbase/etc/couchdb/default.d/capi.ini_ file by replacing 8092 with the new port number.
-. If Couchbase Server was previously configured, delete the [.path]_opt/couchbase/var/lib/couchbase/config/config.dat_ file to remove the old configuration.
-. Start Couchbase Server.
+Any ports not given a custom mapping in the [.path]_static_config_ file will continue to be assigned their defaults, which are listed in <<table-ports-detailed>>.
+
