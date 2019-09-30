@@ -2,11 +2,148 @@
 :page-topic-type: concept
 :page-status: Developer Preview
 :imagesdir: ../../assets/images
-:page-partial:
+
+:n1ql: xref:n1ql-language-reference
+:select: {n1ql}/selectintro.adoc
+:update: {n1ql}/update.adoc
+:delete: {n1ql}/delete.adoc
+:merge: {n1ql}/merge.adoc
+:insert: {n1ql}/insert.adoc
+:updatestatistics: {n1ql}/updatestatistics.adoc
+:collation: {n1ql}/datatypes.adoc#collation
+
+:query-service-architecture: xref:learn:services-and-indexes/services/query-service.adoc#query-service-architecture
 
 [abstract]
-The cost-based optimizer takes into account the cost of memory, CPU, and disk usage when choosing the optimal index to execute a query.
+The cost-based optimizer takes into account the cost of memory, CPU, network transport, and disk usage when choosing the optimal plan to execute a query.
 
 include::ROOT:partial$developer-preview.adoc[tag=admonition]
 
-For information on this feature, take a look at the blog: https://blog.couchbase.com/?p=7384&preview=true[Cost Based Optimizer for Couchbase N1QL (SQL for JSON)^].
+[[overview]]
+== Overview
+
+The _cost-based optimizer_ (CBO) replaces the previous {query-service-architecture}[rules-based N1QL optimizer].
+It can generate a query plan for {select}[SELECT], {update}[UPDATE], {delete}[DELETE], {merge}[MERGE], and {insert}[INSERT INTO with SELECT] queries.
+
+The cost-based optimizer uses metadata and statistics to estimate amount of processing (memory, CPU, and I/O) for each operation.
+It compares the cost of alternative routes, and then selects the query-execution plan with the least cost.
+
+.Query execution flow, showing the cost-based optimizer using statistics and metadata
+image::cbo_query_execution_flow.png["Query execution flow",588,346]
+
+[[optimizer-stats]]
+== Optimizer Statistics
+
+The cost-based optimizer uses the following statistics.
+These statistics are gathered using the {updatestatistics}[UPDATE STATISTICS] statement.
+
+For keyspaces:
+
+* The number of documents in the keyspace.
+* The average document size.
+
+For indexes:
+
+* The number of items in the index.
+* The number of index pages.
+* The resident ratio.
+* The average item size.
+* The average page size.
+
+For data:
+
+* Distribution statistics -- refer to <<distribution-stats,the section below>>.
+
+[[distribution-stats]]
+== Distribution Statistics
+
+The cost-based optimizer can collect distribution statistics on predicate expressions.
+These predicate expressions may be fields, nested fields, array expressions, or any of the expressions supported as an index key.
+
+The distribution statistics enable cost estimation for predicates like `c1 = 100`, `c1 >= 20`, or `c1 < 150`.
+They also enable cost estimates for join predicates such as `t1.c1 = t2.c2`, assuming distribution statistics exist for both `t1.c1` and `t2.c2`.
+
+[[distribution-bins]]
+=== Distribution Bins
+
+The optimizer takes a sample of the values returned by the expression across the keyspace.
+These sample values are sorted into _distribution bins_ by data type and value.
+
+. Values with different data types are placed into separate distribution bins.
+(A field may contain values of several different data types across documents.)
+
+. After being separated by data type, values are sorted further into separate bins depending on their value.
+
+The distribution bins are of approximately equal size, except for the last distribution bin for each data type, which could be a partial bin.
+
+The sample size can be specified when you use the {updatestatistics}[UPDATE STATISTICS] statement.
+
+[[resolution]]
+=== Resolution
+
+The number of distribution bins is determined by the _resolution_.
+
+The default resolution is `1.0`, meaning each distribution bin contains 1% of the documents, and therefore 100 bins are required.
+The minimum resolution is `0.02` (5000 distribution bins) and the maximum is `5.0` (20 distribution bins).
+The cost-based optimizer calculates the bin size based on the resolution and the number of documents in the collection.
+
+The resolution can be specified when you use the {updatestatistics}[UPDATE STATISTICS] statement.
+
+[[overflow-bins]]
+=== Overflow Bins
+
+For each distribution bin, the number of distinct values is calculated, as a fraction of the total number of documents.
+
+If a particular value is highly duplicated and represents more than 25% of a distribution bin, it is removed from the distribution bin and placed in an _overflow bin_.
+MISSING, NULL, or boolean values are always placed in an overflow bin.
+
+[[boundary-bins]]
+=== Boundary Bins
+
+Each distribution bin has a maximum value, which acts as the minimum value for the next bin.
+
+A _boundary bin_ containing no values is created before the first distribution bin of each different data type.
+The boundary bin contains no values.
+This provides the minimum value for the first bin of each type.
+
+[[histogram]]
+=== Histogram
+
+The boundary bins, distribution bins, and overflow bins for each data type are chained together in the {collation}[default ascending collation order] used for N1QL data types:
+
+* MISSING
+* NULL
+* FALSE
+* TRUE
+* number
+* string
+* array
+* object
+* binary (non-JSON)
+
+This forms a histogram of statistics for the index-key expression across multiple data types.
+
+.Distribution bins and boundary bins for integers, strings, and arrays
+image::cbo_distribution_bins.png["Distribution bins"]
+
+[[operations]]
+== Operations
+
+When a query is executed, the optimizer performs the following tasks:
+
+. Rewrite the query if necessary, in the same manner as the previous rules-based optimizer.
+
+. Use the distribution histogram and index statistics to estimate the _selectivity_ of a predicate -- that is, the number of documents that the optimizer expects to retrieve which satisfy this predicate.
+
+. Use the selectivity to estimate the _cardinality_ -- that is, the number of documents remaining after all applicable predicates are applied.
+
+. Use the cardinality to estimate the cost of different access paths.
+
+. Compare the costs and generate a query execution plan with the lowest cost.
+
+The cost-based optimizer does not yet rewrite the query to use the optimal join ordering or join type.
+
+== Related Links
+
+* {updatestatistics}[UPDATE STATISTICS] statement
+* Blog post: https://blog.couchbase.com/?p=7384&preview=true[Cost Based Optimizer for Couchbase N1QL^]
