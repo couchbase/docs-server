@@ -8,7 +8,9 @@ The ALTER INDEX statement moves the placement of an existing index or replica am
 
 == Purpose
 
-Use the `ALTER INDEX` statement to change the placement of an existing index or replica among different GSI nodes when you encounter any of the following situations:
+You can use the `ALTER INDEX` statement to change the placement of an existing index or replica among different GSI nodes.
+You can also use it to change the placement of a partitioned index and any replica partitions.
+You may use this statement when you encounter any of the following situations:
 
 * An imbalance occurs due to a particular index growing faster than expected and is needed on a different node.
 * An imbalance occurs due to a cluster of indexes being dropped on a single node.
@@ -23,7 +25,7 @@ For example, if a node fails and you need to move it from node 172.23.130.*24* t
 CREATE INDEX idx1 ON `travel-sample`(id, airline) WHERE type="route";
 
 ALTER INDEX `travel-sample`.idx1
-WITH {"action":"move","nodes": ["172.23.120.25:8091"]}
+WITH {"action": "move", "nodes": ["172.23.120.25:8091"]}
 ----
 
 NOTE: The ALTER INDEX move operation is asynchronous.
@@ -37,7 +39,7 @@ If a node goes down while an ALTER INDEX operation is in progress, then the inde
 Only users with the suitable RBAC role of `Administrator` are allowed to run the `ALTER INDEX` directive.
 
 This directive is applicable only for Standard GSI (Plasma) and MOI Indexes; and hence supported only for Enterprise Edition nodes.
-(Not Applicable for Forest DB).
+(Not applicable for Forest DB.)
 
 This statement is supported only from 5.5 onwards; if the cluster is in mix-mode (a mix of 5.5 and previous versions), then this directive will not work.
 
@@ -79,23 +81,28 @@ nodes::
 
 [NOTE]
 ====
-* The length of the nodes array must be equal to the number of index replicas.
-* The full node list needs to be specified even if only 1 replica needs to be moved.
+* The number of destination nodes must be the same as the number of nodes on which the index and any replicas are currently placed.
+You must specify the full node list, even if only one replica needs to be moved.
+
+* Likewise, when moving a partitioned index, the number of destination nodes must be the same as the number of nodes on which the index partitions and any replicas are currently placed.
+You cannot use this statement to repartition an index across a different number of nodes.
+
+* The source and destination node ranges may overlap, for example you may move a partitioned index from `["192.168.0.15:9000", "27.0.0.1:9001"]` to `["192.168.0.15:9000", "127.0.0.1:9002"]`.
 ====
 
 == Return Value
 
 If the `ALTER INDEX` succeeds, then:
 
-* The Query Workbench will show `{  Results: []  }`
-* The index progress will be visible on the UI.
-* After the movement is complete, the new indexes will begin to service query scans.
-* The command line will display the new index nodes.
+* The Query Workbench shows `{  Results: []  }`
+* The index progress is visible on the UI.
+* After the movement is complete, the new indexes begin to service query scans.
+* The command line displays the new index nodes.
 
 If the `ALTER INDEX` fails, then:
 
-* The original indexes will continue to service query scans.
-* The UI Log and Query Workbench will have the appropriate error message.
+* The original indexes continue to service query scans.
+* The UI Log and Query Workbench has the appropriate error message.
 * Some common errors include:
 +
 |===
@@ -135,8 +142,8 @@ When using the below examples, make sure Couchbase Server 5.5 Enterprise Edition
 
 .Move the `def_faa` index from one node to another
 ====
-Create a cluster of 3 nodes and then go to *Settings > Sample buckets* to install the `travel-sample` bucket.
-The indexes will then be installed in a round-robin fashion and distributed over the 3 nodes.
+Create a cluster of 3 nodes and then go to menu:Settings[Sample buckets] to install the `travel-sample` bucket.
+The indexes are then installed in a round-robin fashion and distributed over the 3 nodes.
 Then move the `def_faa` index from the first node (192.168.10.*10* in the screenshot) to the second node (192.168.10.*11* in the screenshot).
 
 image::n1ql-language-reference/alter-index_servers_step1.png[,70%]
@@ -144,7 +151,7 @@ image::n1ql-language-reference/alter-index_servers_step1.png[,70%]
 [source,n1ql]
 ----
 ALTER INDEX `travel-sample`.def_faa
-WITH {"action":"move","nodes": ["192.168.10.11:8091"]}
+WITH {"action": "move", "nodes": ["192.168.10.11:8091"]}
 ----
 
 You should see:
@@ -167,10 +174,10 @@ Create an index on node 192.168.10.10 with a replica on node 192.168.10.11, then
 ----
 CREATE INDEX country_idx ON `travel-sample`(country, city)
        WHERE type="route" USING GSI
-       WITH {"nodes":["192.168.10.10:8091", "192.168.10.11:8091"]};
+       WITH {"nodes": ["192.168.10.10:8091", "192.168.10.11:8091"]};
 
 ALTER INDEX `travel-sample`.country_idx
-WITH {"action":"move","nodes": ["192.168.10.10:8091", "172.23.120.12:8091"]}
+WITH {"action": "move", "nodes": ["192.168.10.10:8091", "172.23.120.12:8091"]}
 ----
 ====
 
@@ -184,7 +191,7 @@ CREATE INDEX country_idx ON `travel-sample`(country, city)
 WITH {"nodes": ["192.168.10.10:8091", "192.168.10.11:8091", "192.168.10.12:8091"]}
 
 ALTER INDEX `travel-sample`.country_idx
-WITH {"action":"move","nodes":
+WITH {"action": "move", "nodes":
       ["192.168.10.10:8091", "192.168.10.13:8091", "192.168.10.14:8091"]}
 ----
 ====
@@ -193,20 +200,23 @@ WITH {"action":"move","nodes":
 ====
 NOTE: To avoid any downtime, before removing a replica (or index), first create an equivalent index for your queries to continue using.
 
-If you created an index on node 192.168.10.10 with replicas on nodes 192.168.10.11 and 192.168.10.12 and later decided you didn't want the 2nd replica, you'd need to remove the index (which removes all replicas) and then re-create the index with only one replica.
+If you created an index on node 192.168.10.10 with replicas on nodes 192.168.10.11 and 192.168.10.12 and later decided you didn't want the second replica, you'd need to remove the index (which removes all replicas) and then recreate the index with only one replica.
 
 [source,n1ql]
 ----
 CREATE INDEX country_idx ON `travel-sample`(country, city)
 WHERE type="route" USING GSI
-WITH {"nodes":["192.168.10.10:8091", "192.168.10.11:8091", "192.168.10.12:8091"]};
+WITH {"nodes": ["192.168.10.10:8091", "192.168.10.11:8091", "192.168.10.12:8091"]};
 
 DROP INDEX `travel-sample`.country_idx;
 
 CREATE INDEX country_idx ON `travel-sample`(country, city)
 WHERE type="route" USING GSI
-WITH {"nodes":["192.168.10.10:8091", "192.168.10.11:8091"]};
+WITH {"nodes": ["192.168.10.10:8091", "192.168.10.11:8091"]};
 ----
+
+TIP: You would use a similar procedure to remove a partitioned index and recreate the partitioned index on a smaller or greater number of nodes.
+However, refer also to the section on xref:n1ql-language-reference/index-partitioning.adoc#rebalancing[rebalancing a partitioned index].
 ====
 
 // ### TBD ###  <b>Example 5: Creating new replicas.</b></p><p>Create an index
