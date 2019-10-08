@@ -641,3 +641,96 @@ ORDER BY t.country, t.tz;
 ]
 ----
 ====
+
+[[index-selection]]
+=== Index Selection
+
+The optimizer attempts to select an appropriate secondary index for a query based on the filters in the WHERE clause.
+If it cannot select a secondary query, the query service falls back on the the primary index for the keyspace.
+
+Secondary indexes do not index a document if the leading index key is MISSING in the document.
+This means that when a query selects a field which is MISSING in some documents, the optimizer will not be able to choose a secondary index
+which uses that field as a leading key.
+
+To enable the optimizer to choose the required index, you must use a WHERE clause of some kind to filter out any documents in which the required field is MISSING.
+The minimum filter you can use to do this is `IS NOT MISSING`.
+This is usually only necessary in queries which do not otherwise have a WHERE clause; for example, some GROUP BY and aggregate queries.
+
+.Field with MISSING values -- cannot choose the secondary index
+====
+This example uses the `def_faa` index that comes pre-installed and is defined by following statement.
+
+.Index
+[source,n1ql]
+----
+CREATE INDEX `def_faa` ON `travel-sample`(`faa`);
+----
+
+.Query
+[source,n1ql]
+----
+EXPLAIN SELECT faa FROM `travel-sample`; -- <1>
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "PrimaryScan3",
+          "cardinality": 31591,
+          "cost": 142984.663,
+          "index": "def_primary", // <2>
+          "index_projection": {
+            "primary_key": true
+          },
+          "keyspace": "travel-sample",
+          "namespace": "default",
+          "using": "gsi"
+        },
+...
+----
+====
+
+<1> The query selects the `faa` field, which is MISSING for any documents which are not airports.
+<2> Therefore the optimizer falls back on the `def_primary` index.
+
+.Filter out MISSING values -- correct secondary index is chosen
+====
+[source,n1ql]
+----
+EXPLAIN SELECT faa FROM `travel-sample` WHERE faa IS NOT MISSING; -- <1>
+----
+
+[source,json]
+----
+[
+  {
+    "plan": {
+      "#operator": "Sequence",
+      "~children": [
+        {
+          "#operator": "IndexScan3",
+          "covers": [
+            "cover ((`travel-sample`.`faa`))",
+            "cover ((meta(`travel-sample`).`id`))"
+          ],
+          "index": "def_faa", // <2>
+          "index_id": "5dbeaaf6ff7c4635",
+          "index_projection": {
+            "entry_keys": [
+              0
+            ]
+          },
+...
+----
+====
+
+<1> The WHERE clause filters out documents where `faa` is not MISSING.
+<2> The optimizer correctly chooses the `def_faa` index.
+
+For further examples, refer to xref:n1ql:n1ql-language-reference/groupby-aggregate-performance.adoc[Group By and Aggregate Performance].
