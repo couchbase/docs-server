@@ -1,95 +1,198 @@
 = BUILD INDEX
 :page-topic-type: concept
+:imagesdir: ../../assets/images
 
 [abstract]
 The BUILD INDEX statement enables you to build one or more GSI indexes that are marked for deferred building all at once.
 
 By default, CREATE INDEX statement starts building the created index.
-However for more efficient building of multiple indexes, CREATE INDEX command can mark indexes for deferred building using the "defer_build:true" option.
-BUILD INDEX is capable of building multiple indexes all at once and can utilize a single scan to feed many index build operations.
+However for more efficient building of multiple indexes, CREATE INDEX command can mark indexes for deferred building using the `defer_build:true` option.
+BUILD INDEX is capable of building multiple indexes at once, and can utilize a single scan of documents in the bucket to feed many index build operations.
 
 BUILD INDEX is an asynchronous operation.
 BUILD INDEX creates a task to build the primary or secondary GSI indexes and returns as soon as the task is queued for execution.
 The full index creation operation happen in the background.
 Indexes of type GSI provide a status field and mark index status pending while the index build operation is in progress.
-This status field and other index metadata can be queried using system:indexes.
+This status field and other index metadata can be queried using `system:indexes`.
 
 When building an index which has automatic index replicas, all of the replicas are also built as part of the BUILD INDEX statement, without having to manually specify them.
 
-*RBAC Privileges*
+[discrete]
+===== RBAC Privileges
 
 User executing the BUILD INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
 For more details about user roles, see xref:security:security-authorization.adoc[Authorization].
 
 [IMPORTANT]
+.Known Issue
 ====
-_Known issue_: If multiple index building operations are kicked off without waiting for all indexes to get to the online state, index building for some indexes might fail.
+If multiple index building operations are kicked off without waiting for all indexes to get to the online state, index building for some indexes might fail.
 In this case, `system:indexes` output might report the following error:
 
+[source,json]
 ----
 "errors": [{"code": 12014,
    "msg": "error: Build Already In Progress. Bucket BUCKET_NAME. Index INDEX_NAME. Index state: pending"}]
 ----
 
-Index building might never complete if you get error 12014.
-To work around the issue, you can drop the indexes returning error 12014 and then recreate all of them either with a deferred build in one BUILD INDEX command (instead of multiple BUILD INDEX commands) or recreate them one at a time with a delay between the subsequent index creations to allow for index building to complete (that is index to get to the online state).
+To work around this issue, wait for index building to complete (that is, for all indexes to get to the online state), then issue the BUILD INDEX command again.
 ====
 
-_build-index:_
+== Syntax
 
+[subs="normal"]
 ----
-BUILD INDEX ON named_keyspace_ref(index_name[,index_name]*) USING GSI;
-----
-
-_index_name:_
-
-A unique name that identifies an index.
-A name must be specified for each index to be built.
-
-_named-keyspace-ref_
-
-----
-[ namespace-name :] keyspace-name
+build-index ::= BUILD INDEX ON <<keyspace-ref>> '(' <<index-name>> [ ',' <<index-name>> ]* ')' [ <<index-using>> ]
 ----
 
-_keyspace-name:_
+image::n1ql-language-reference/build-index.png["'BUILD' 'INDEX' 'ON' keyspace-ref '(' index-name (',' index-name)* ')' index-using?"]
 
-`keyspace-name` is an identifier that refers to the bucket name.
-It specifies the bucket as the source for which the index needs to be created.
-You can add an optional namespace name to the keyspace name in this way:
+[[keyspace-ref,keyspace-ref]]
+=== Keyspace Reference
 
+[subs="normal"]
 ----
-namespace-name : keyspace-name
+keyspace-ref ::= [ namespace ':' ] keyspace
 ----
 
-For example, `main:customer` indicates the customer keyspace in the main namespace.
+image::n1ql-language-reference/from-keyspace-ref.png["(namespace ':')? keyspace"]
+
+namespace::
+(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-heirarchy[namespace] of the bucket to be indexed.
+Currently, only the `default` namespace is available.
 If the namespace name is omitted, the default namespace in the current session is used.
 
+keyspace::
+(Required) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the bucket name or xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace].
+It specifies the bucket as the source for which the index needs to be created.
+
+For example, `default:{backtick}travel-sample{backtick}` indicates the `travel-sample` keyspace in the `default` namespace.
+
+[[index-name,index-name]]
+=== Index Name
+
+An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the name of an index.
+
+You can specify one index name, or multiple index names separated by commas.
+An index name must be specified for each index to be built.
+
+[[index-using,index-using]]
+=== USING Clause
+
+[subs="normal"]
 ----
-USING GSI
+index-using ::= USING ( VIEW | GSI )
 ----
 
-The USING clause specifies the index type to use.
-The BUILD INDEX command can be used only with GSI indexes.
-Views do not support deferred building.
+image::n1ql-language-reference/index-using.png["'USING' ('VIEW' | 'GSI')"]
 
-== Example
+Specifies which index form to use.
 
-The following example creates a set of primary and secondary indexes on the `beer-sample` bucket with the `defer_build` option.
-After the create index statement comes back, `system:indexes` is queried to for the status of the index.
+`USING VIEW`:: Cannot be used.
+View indexes do not support deferred building.
 
+`USING GSI`:: Builds the index using the Global Secondary Index form.
+
+This clause is optional; if omitted, the default is `USING GSI`.
+
+== Examples
+
+[[ex-create-idx-defer]]
+.Create deferred indexes
+====
+Create a set of primary and secondary indexes on the `travel-sample` bucket with the `defer_build` option.
+
+[source,n1ql]
 ----
-CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI
-   WITH {"defer_build":true};
-
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
+include::example$n1ql-language-reference/create-idx-defer-1.n1ql[]
 ----
 
-With the `defer_build` option enabled, the output from `system:indexes` shows the `beer-sample-type-index` in the pending state (`"state": "deferred"`).
-BUILD INDEX can be used to kick off the deferred build on the index on type attribute.
-
+[source,n1ql]
 ----
-BUILD INDEX ON `beer-sample`(`beer-sample-type-index`) USING GSI;
-
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
+include::example$n1ql-language-reference/create-idx-defer-2.n1ql[]
 ----
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/create-idx-defer-3.n1ql[]
+----
+====
+
+[[ex-check-idx-defer]]
+.Check deferred index status
+====
+Query `system:indexes` for the status of an index.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/check-idx-defer.n1ql[]
+----
+
+.Results
+[source,json]
+----
+include::example$n1ql-language-reference/check-idx-defer.jsonc[]
+----
+====
+
+<1> The `travel-sample-type-index` is in the pending state (deferred).
+
+[[ex-build-idx-single]]
+.Build a named index
+====
+Kick off a deferred build using the index name.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/build-idx-single.n1ql[]
+----
+====
+
+[[ex-list-idx-defer]]
+.List deferred builds
+====
+List all deferred builds in the keyspace.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/list-idx-defer.n1ql[]
+----
+
+.Results
+[source,json]
+----
+include::example$n1ql-language-reference/list-idx-defer.jsonc[]
+----
+====
+
+<1> The `RAW` keyword forces the subquery to return a flattened array of strings, each of which refers to an index name.
+
+[[ex-build-idx-many]]
+.Build multiple indexes
+====
+Kick off multiple deferred builds in the keyspace.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/build-idx-many.n1ql[]
+----
+====
+
+[[ex-check-idx-online]]
+.Check online index status
+====
+Query `system:indexes` for the status of an index.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/check-idx-online.n1ql[]
+----
+
+.Results
+[source,json]
+----
+include::example$n1ql-language-reference/check-idx-online.jsonc[]
+----
+====
+
+<1> The index has now been created.
