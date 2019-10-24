@@ -1,12 +1,13 @@
 = CREATE INDEX
 :page-topic-type: concept
+:imagesdir: ../../assets/images
 
 The `CREATE INDEX` statement allows you to create a secondary index.
 Secondary indexes contain a filtered or a full set of keys in a given bucket.
 Secondary indexes are optional but increase query efficiency on a bucket.
 
-`CREATE INDEX` is by default a synchronous operation.
-so every `CREATE INDEX` statement blocks until the operation finishes.
+`CREATE INDEX` is by default a synchronous operation,
+which means that every `CREATE INDEX` statement blocks until the operation finishes.
 Index building starts by creating a task that is queued for index build.
 After this phase, if you lose connectivity, the index build operation continues in the background.
 You can also run index creation asynchronously using the `defer_build` clause.
@@ -15,19 +16,6 @@ In the asynchronous mode, `CREATE INDEX` starts a task to create the primary ind
 Both GSI and View indexes provide a status field and mark index status pending.
 With GSI indexer, index status continues to report "pending".
 This status field and other index metadata can be queried using `system:indexes`.
-
-You can create multiple identical secondary indexes on a bucket for better index availability and place them on separate nodes using the "nodes" clause.
-
-Array indexing enables you to create global indexes on array elements and optimize the execution of queries involving array elements.
-For details, see xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing].
-
-Index partitioning helps increase the query performance by dividing and spreading a large index of documents across multiple nodes, horizontally scaling out an index as needed.
-For details, see xref:n1ql-language-reference/index-partitioning.adoc[Index Partitioning].
-
-*RBAC Privileges*
-
-User executing the CREATE INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
-For more details about user roles, see xref:security:security-authorization.adoc[Authorization].
 
 [IMPORTANT]
 ====
@@ -40,57 +28,129 @@ include::example$n1ql-language-reference/build-idx-error.jsonc[]
 ----
 ====
 
-*Syntax*
+You can create multiple identical secondary indexes on a bucket for better index availability and place them on separate nodes using the "nodes" clause.
 
+[discrete]
+===== RBAC Privileges
+
+User executing the CREATE INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
+For more details about user roles, see
+xref:learn:security/authorization-overview.adoc[Authorization].
+
+== Syntax
+
+[subs="normal"]
 ----
-CREATE INDEX index_name ON named_keyspace_ref ( expression1 [ , expression2 ] * )
-    WHERE filter_expressions
-    [ USING GSI | VIEW ]
-    [ WITH { "nodes": [ "node_name" ], "defer_build":true|false , "num_replica": num_replica_num } ];
+create-index ::= CREATE INDEX <<index-name>> ON <<named-keyspace-ref>> '(' <<index-key>> [ ',' <<index-key>> ]* ')' [ <<where-clause>> ] [ <<index-using>> ] [ <<index-with>> ]
 ----
 
-Arguments::
-index_name;;
-[Required] A unique name that identifies the index.
+image::n1ql-language-reference/create-index-array.png["'CREATE' 'INDEX' index-name 'ON' named-keyspace-ref '(' index-key ( ',' index-key )* ')' where-clause? index-using? index-with?"]
+
+[[index-name,index-name]]
+index-name:: [Required] A unique name that identifies the index.
 +
-Valid GSI index names can contain any of the following characters: A-Z a-z 0-9 # _, and must start with a letter, [A-Z a-z].
-+
+Valid GSI index names can contain any of the following characters: `A-Z` `a-z` `0-9` `&num;` `&lowbar;`, and must start with a letter, [`A-Z` `a-z`].
 The minimum length of an index name is 1 character and there is no maximum length set for an index name.
-+
-When querying, if the index name contains a '&#35;' or '_' character, you must enclose the index name within backticks.
+When querying, if the index name contains a `&num;` or `&lowbar;` character, you must enclose the index name within backticks.
 
-named_keyspace_ref;;
-An identifier that refers to the bucket name.
-Specifies the bucket as the source for which the index needs to be created.
-+
-You can add an optional namespace name to the keyspace name in this way:
-+
+[[named-keyspace-ref,named-keyspace-ref]]
+=== Named Keyspace Reference
+
+[subs="normal"]
 ----
-namespace-name : keyspace-name
+keyspace-ref ::= [ namespace ':' ] keyspace
 ----
-+
-For example, `main:customer` indicates the customer keyspace in the main namespace.
+
+image::n1ql-language-reference/from-keyspace-ref.png["(namespace ':')? keyspace"]
+
+namespace::
+(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-heirarchy[namespace] of the bucket to be indexed.
+Currently, only the `default` namespace is available.
 If the namespace name is omitted, the default namespace in the current session is used.
 
-expression1, expression2, \... , expressionX;;
+keyspace::
+(Required) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the bucket name or xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace].
+It specifies the bucket as the source for which the index needs to be created.
+
+For example, `default:{backtick}travel-sample{backtick}` indicates the `travel-sample` keyspace in the `default` namespace.
+
+[[index-key,index-key]]
+=== Index Key
+
+[subs="normal"]
+----
+index-key ::= <<index-key-args,expr>> | <<array-expr>>
+----
+
+image::n1ql-language-reference/index-key.png["expr | array-expr"]
+
 Refers to an attribute name or a scalar function or an ARRAY expression on the attribute.
 This constitutes an index-key for the index.
+
+[[index-key-args]]
+expr::
+A xref:n1ql-language-reference/index.adoc[N1QL expression] over any fields in the document.
+This cannot use constant expressions, aggregate functions, or sub-queries.
+
+array-expr::
+An array expression.
 For details about array expressions, see xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing].
 
-`USING GSI` | `VIEW`;; [Optional; Default is GSI]
-+
-The `USING` clause specifies the index type to use.
+[[where-clause,where-clause]]
+=== WHERE Clause
+
+[subs="normal"]
+----
+where-clause ::= WHERE <<where-clause-args,cond>>
+----
+
+image::n1ql-language-reference/where-clause.png["'WHERE' cond"]
+
+[[where-clause-args]]
+cond::
+Specifies WHERE clause predicates to qualify the subset of documents to include in the index.
+
+[[index-using,index-using]]
+=== USING Clause
+
+[subs="normal"]
+----
+index-using ::= USING ( VIEW | GSI )
+----
+
+image::n1ql-language-reference/index-using.png["'USING' ( 'VIEW' | 'GSI' )"]
+
+The USING clause specifies the index type to use.
 Secondary indexes can be created using global secondary indexes (GSI) or views.
 
-`WITH`;;
-"nodes":["node_name"]:::
-A single global secondary index can be placed on specific nodes that run the indexing service.
-The `nodes` option allows you to specify the nodes that the index is placed on.
+This clause is optional; if omitted, the default is `USING GSI`.
+
+[[index-with,index-with]]
+=== WITH Clause
+
+[subs="normal"]
+----
+index-with ::= WITH <<index-with-args,expr>>
+----
+
+image::n1ql-language-reference/index-with.png["'WITH' expr"]
+
+Use the WITH clause to specify additional options.
+
+[[index-with-args]]
+expr::
+An object with the following properties:
+
+nodes;;
+[Optional] An array of strings, each of which represents a node name.
 +
+A single global secondary index can be placed on specific nodes that run the indexing service.
+The `nodes` property allows you to specify the nodes that the index is placed on.
 If `nodes` is not specified, then nodes running the index service are randomly selected to host the index, based on the number of replicas.
 +
 Multiple nodes can be specified to distribute replicas of an index amongst multiple nodes, for example:
 +
+[source,n1ql]
 ----
 CREATE INDEX productName_index1 ON bucket_name(productName, ProductID)
 WHERE type="product" USING GSI
@@ -99,79 +159,130 @@ WITH {"nodes":["node1:8091", "node2:8091", "node3:8091"]};
 +
 If specifying both [.var]`nodes` and [.var]`num_replica`, the number of nodes in the array must be one greater than the specified number of replicas otherwise the index creation will fail.
 +
-IMPORTANT: The node names passed to the `nodes` parameter must include the cluster administration port (by default 8091).
+IMPORTANT: The node names passed to the `nodes` property must include the cluster administration port, by default 8091.
 For example `WITH {"nodes": ["192.0.2.0:8091"]}` instead of `WITH {"nodes": ["192.0.2.0"]}`.
 
-"defer_build":true | false:::
-*With defer_build set to TRUE*, then the `CREATE INDEX` operation queues the task for building the index but immediately pauses the building of the index of type GSI.
+defer_build;;
+[Optional] Boolean.
+
+true:::
+When set to `true`, the `CREATE INDEX` operation queues the task for building the index but immediately pauses the building of the index of type GSI.
 Index building requires an expensive scan operation.
 Deferring building of the index with multiple indexes can optimize the expensive scan operation.
 Admins can defer building multiple indexes and, using the `BUILD INDEX` statement, multiple indexes to be built efficiently with one efficient scan of bucket data.
-+
-*With defer_build set to FALSE*, then the `CREATE INDEX` operation queues the task for building the index and immediately kicks off the building of the index of type GSI.
 
-"num_replica": num_replica_num:::
-[.var]`num_replica` specifies the number of replicas of the index to create.
+false:::
+When set to `false`, the `CREATE INDEX` operation queues the task for building the index and immediately kicks off the building of the index of type GSI.
+
+num_replica;;
+[Optional] Integer that specifies the number of replicas of the index to create.
 +
 The indexer will automatically distribute these indexes amongst index nodes in the cluster for load-balancing and high availability purposes.
 When creating an index with replicas in this manner, the indexer will attempt to distribute the replicas based on the server groups in use in the cluster where possible.
 +
-If [.var]`num_replica_num` is not less than the number of index nodes in the cluster, then the index creation will fail.
+If the value of this property is not less than the number of index nodes in the cluster, then the index creation will fail.
 +
-[caption=Attention]
+.Attention
 IMPORTANT: We recommend that you do not create (or drop) secondary indexes when any node with a secondary index role is down as this may result in duplicate index names.
 
-*Using the meta().id function*
+== Usage
 
-For details, see xref:n1ql-language-reference/indexing-meta-info.adoc[Indexing Meta Info].
+[discrete]
+===== Array Indexing
 
-*Using indices for aggregates*
+Array indexing enables you to create global indexes on array elements and optimize the execution of queries involving array elements.
+For details, refer to xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing].
+
+[discrete]
+===== Index Partitioning
+
+Index partitioning helps increase the query performance by dividing and spreading a large index of documents across multiple nodes, horizontally scaling out an index as needed.
+For details, refer to xref:n1ql-language-reference/index-partitioning.adoc[Index Partitioning].
+
+[discrete]
+===== Using the `meta().id` Function
+
+For details, refer to xref:n1ql-language-reference/indexing-meta-info.adoc[Indexing Meta Info].
+
+[discrete]
+===== Using Indexes for Aggregates
 
 If there is an index on the expression of an aggregate, that index may be used to satisfy the query.
-For example, given the index "[.code]``abv_idx``" created using the following statement:
+For example, given the index `alt_idx` created using the following statement:
 
+[source,n1ql]
 ----
-CREATE INDEX abv_idx ON `beer-sample`(abv);
+CREATE INDEX alt_idx ON `travel-sample`(geo.alt);
 ----
 
-The query engine will use the index "[.code]``abv_idx``" for the following query:
+The query engine will use the index `alt_idx` for the following query:
 
+[source,n1ql]
 ----
-SELECT min(abv), max(abv) FROM `beer-sample`;
+SELECT MIN(geo.alt), MAX(geo.alt) FROM `travel-sample`;
 ----
 
 == Examples
 
-The following example creates a secondary index that contains beers with an `abv` value greater than 5 on the node `192.0.2.1`:
+[[ex-create-idx]]
+.Create an index
+====
+Create a secondary index that contains airports with an `alt` value greater than 1000 on the node `192.0.2.1`.
 
+[source,n1ql]
 ----
-CREATE INDEX over5 ON `beer-sample`(abv) WHERE abv > 5 USING GSI WITH {"nodes": ["192.0.2.1:8091"]};
+CREATE INDEX over1000 ON `travel-sample`(geo.alt) WHERE geo.alt > 1000 USING GSI WITH {"nodes": ["192.0.2.1:8091"]};
 ----
+====
 
-The following example creates a secondary index on the `beer-sample` bucket and then queries `system:indexes` for status of the index:
+[[ex-create-idx-defer]]
+.Create a deferred index
+====
+Create a secondary index with the `defer_build` option.
 
+[source,n1ql]
 ----
-CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI;
-
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
-----
-
-The following example creates the same secondary index by using the deferred build option and then queries `system:indexes` for status of the index:
-
-----
-CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI WITH {"defer_build":true};
-
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
-----
-
-Because the deferred build option was enabled, the output from the query on `system:indexes` shows `beer-sample-type-index` shows the index has not finished building (`"state": "pending"`).
-
-The following example uses the `BUILD INDEX` statement to kick off the deferred build on the `beer-sample-type-index` index and then queries `system:indexes` for status of the index:
-
-----
-BUILD INDEX ON `beer-sample`(`beer-sample-type-index`) USING GSI;
-
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
+include::example$n1ql-language-reference/create-idx-defer-1.n1ql[]
 ----
 
-This time the query on `system:indexes` shows that the index is built (`"state": "online"`).
+Query `system:indexes` for the status of the index.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/check-idx-defer.n1ql[]
+----
+
+.Results
+[source,json]
+----
+include::example$n1ql-language-reference/check-idx-defer.jsonc[]
+----
+====
+
+<1> The `travel-sample-type-index` is in the pending state (deferred).
+
+[[ex-build-idx-defer]]
+.Build a deferred index
+====
+Kick off a deferred build using the index name.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/build-idx-single.n1ql[]
+----
+
+Query `system:indexes` for the status of the index.
+
+[source,n1ql]
+----
+include::example$n1ql-language-reference/check-idx-online.n1ql[]
+----
+
+.Results
+[source,json]
+----
+include::example$n1ql-language-reference/check-idx-online.jsonc[]
+----
+====
+
+<1> The index has now been created.
