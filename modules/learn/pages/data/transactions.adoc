@@ -8,18 +8,50 @@ _Distributed ACID Transactions_ guarantee that multiple documents can be updated
 
 _Transactions_ are operations that ensure that when multiple discrete data-elements need to be modified such that only the successful modification of all justifies the modification of any, _either_ all the modifications do occur successfully; _or_ none of them occurs.
 Transactions are implemented by Couchbase Server as _Distributed ACID Transactions_.
-These require the Couchbase xref:3.0@java-sdk::start-using-sdk.adoc[Java SDK], version 3.0 or after.
 
 A Distributed ACID Transaction can be performed on any number of documents.
 For each document, the transaction makes a copy of the document-data, and saves the copy temporarily in the xref:learn:data/extended-attributes.adoc[Extended Attributes] area of the document's meta data.
-Updates and modifications are then made to the key-value pairs contained by this meta data copy: consequently, the changes progressively made by the authorial transaction &#8212; which constitute uncommitted (or _dirty_) data &#8212; are non-readable by any operation other than this transaction itself.
+Updates and modifications are then made to the key-value pairs contained by this meta data copy: consequently, the changes that occur during the transaction prior to commitment &#8212; these constituting _uncommitted_ (or _dirty_) data &#8212; are non-readable by any operation other than this transaction itself.
 Only following _commit_ of the documents modified by the transaction do the corresponding changes become readable by other transactions and operations.
 This isolation-level is known as https://jepsen.io/consistency/models/read-committed[Read Committed].
 
-Note also that no two Distributed ACID Transactions can access the same document at the same time.
-If such an attempt occurs, only one of the transactions can proceed; while the other must await commitment of the data, before being able to modify it.
+Note that this use of documents' extended attributes area results in an approximate doubling of the document's total size, while the transaction is underway.
+In consequence, transactions can only be used on documents whose maximum size is 10 MB (which is half of the standard maximum document-size, 20 MB).
 
-A Distributed ACID Transaction reads data from the documents it is itself modifying according to the https://jepsen.io/consistency/models/monotonic-atomic-view[Monotonic Atomic View] model.
+As well as making use of individual documents' extended attributes, Distributed ACID Transactions also create additional documents in each bucket that they access.
+These include _Active Transaction Records_ (up to 1024 of which can exist per bucket, and whose names are prefixed with `atr-`), and _Transaction Client Records_ (one of which exists per bucket, duly named `txn-client-record`).
+These documents are automatically maintained by Couchbase Server, and should not be modified by any application.
+They have no impact on use of either the _Query Service_ or the _Search Service_.
 
-Commits to Couchbase Server are made by Distributed ACID Transactions by means of _durable writes_, which constitute Couchbase Server's implementation of xref:learn:data/durability.adoc[Durability].
-Each commit provides _eventual consistency_, which is consistent with the _single-document write_ model of durable writes. 
+No two Distributed ACID Transactions can access the same document at the same time.
+If such an attempt occurs, only one of the transactions can proceed; while the other must await commitment of the data, before itself being able to modify it.
+
+Distributed ACID Transactions perform commits by means of _durable writes_.
+Each commit provides _eventual consistency_, which is consistent with the _single-document write_ model of durable writes; as described in xref:learn:data/durability.adoc[Durability].
+
+Only nodes that contain data to be updated &#8212; active and replica vBuckets &#8212; are affected by a transaction.
+
+[#dependencies-and-limitations]
+=== Dependencies and Limitations
+
+_Distributed ACID Transactions_ constitute an evolving technology.
+Currently, the following dependencies and limitations apply:
+
+* Transactions require the Enterprise Edition 6.5 of Couchbase Server.
+They also require the Couchbase xref:3.0@java-sdk::start-using-sdk.adoc[Java SDK], version 3.0 or after.
+Additionally, it is strongly recommended that _Network Time Protocol_ (NTP) be used to synchronize time across all cluster-nodes: this ensures that abandoned transactions are cleaned up in a timely manner.
+See xref:learn:install/synchronize-clocks-using-ntp.adoc[Clock Sync with NTP].
+
+* Only documents whose size is 10 MB or less can be included in a transaction.
+
+* Commits are performed by means of _durable writes_, which are single-document only.
+Consequently, _eventual consistency_ is achieved as the writes occur.
+Therefore, to ensure atomicity, non-transactional updates (such as might be performed by means of the _Data Service_ or _Query Service_) should not be made to any document involved in a transaction while the transaction is itself in progress.
+
+* The number of writes required in a transaction is greater than the number required for non-transactional updates; since writes are required both to _stage_ and to _commit_; and still further writes must be made in order to update transaction records.
+Consequently, transactional updates may be less performant than non-transactional updates.
+
+[#creating-and-using-transactions]
+== Creating and Using Transactions
+
+For a practical guide to creating and using _Distributed ACID Transactions_ on Couchbase Server, see xref:3.0@java-sdk::hotos/distributed-acid-transactions-from-the-sdk.adoc[Distributed Transactions from the Java SDK].
