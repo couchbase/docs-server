@@ -7,8 +7,8 @@ The ALTER INDEX statement moves the placement of an existing index or replica am
 
 == Purpose
 
-You can use the `ALTER INDEX` statement to change the placement of an existing index or replica among different GSI nodes.
-You can also use it to change the placement of a partitioned index and any replica partitions.
+You can use the `ALTER INDEX` statement to change the placement of an existing index or replica among different GSI nodes, to increase or decrease the number of replicas, or to drop a specified index replica.
+You can also use it to perform the same alterations to a partitioned index and any replica partitions.
 You may use this statement when you encounter any of the following situations:
 
 * An imbalance occurs due to a particular index growing faster than expected and is needed on a different node.
@@ -42,7 +42,7 @@ This directive is applicable only for Standard GSI (Plasma) and MOI Indexes; and
 
 This statement is only supported only in Couchbase Server 5.5 and later; if the cluster is a mix of Couchbase Server 5.5 and previous versions, then this statement will not work.
 
-In addition, altering the number of replicas is only supported in Couchbase Server 6.5 and later; if the cluster is a mix of Couchbase Server 6.5 and previous versions, you cannot alter the number of replicas.
+In addition, altering the number of replicas or deleting an index replica is only supported in Couchbase Server 6.5 and later; if the cluster is a mix of Couchbase Server 6.5 and previous versions, then these operations will not work.
 
 `ALTER INDEX` will not work while the cluster is undergoing a rebalance.
 
@@ -75,12 +75,18 @@ action::
 The possible values are:
 
 move:::
-Moves only 1 index (or its replica) at a time to a different node while not making any changes to the index topology -- for example, the number of replicas remains the same.
+Moves an index (or its replicas) to a different node while not making any changes to the index topology -- for example, the number of replicas remains the same.
+You must use the `nodes` property to specify the target node or nodes.
 
 replica_count:::
 Alters the number of replicas.
-When this action is specified, you must use the `num_replica` property to specify the required number of replicas.
+You must use the `num_replica` property to specify the required number of replicas.
+You can use the `nodes` property to restrict the placement of index replicas to the specified nodes.
 The planner decides where to place any new index replicas on the available index nodes, based on the server load.
+
+drop_replica:::
+Drops a specified replica.
+You must use the `replicaId` property to specify the replica to drop.
 
 IMPORTANT: It is not possible to move an index or index replica and change the number of index replicas at the same time.
 
@@ -91,9 +97,12 @@ The index service attempts to distribute the replicas based on the server groups
 (You can restrict the number of index nodes available for index and index replica placement using the `nodes` property, described below.)
 
 nodes::
-[Required] An array of strings, specifying a list of nodes.
+[Required if `action` is set to `move`; optional if `action` is set to `num_replica`] An array of strings, specifying a list of nodes.
 If `action` is set to `move`, the node list determines the new destination nodes for the index and its replicas.
 If `action` is set to `replica_count`, the node list restricts the set of nodes available for placement of the index and its replicas.
+
+replicaId::
+[Required if `action` is set to `drop_replica`] An integer, specifying a replica ID.
 
 [NOTE]
 .Moving an index or index replicas
@@ -116,8 +125,14 @@ If the specified number of replicas is greater than or equal to the number of in
 * If you specify a node list when changing the number of replicas, the specified nodes must include all of the nodes on which the index or index partitions and any index replicas are currently placed.
 
 * When reducing the number of replicas, the index service will first drop unhealthy replicas, where an unhealthy replica is a replica with missing partitions.
-After all unhealthy replicas are dropped, the index service will if necessary drop replicas with the highest replicaId.
-An unhealthy replica may not have the highest replicaId, so after an index reduction there may be "gaps" in the sequence of replicaIds -- for example, 1, 2, 4, where replicaId 3 was dropped.
+After all unhealthy replicas are dropped, the index service will if necessary drop replicas with the highest replica ID.
+An unhealthy replica may not have the highest replica ID, so after an index reduction there may be "gaps" in the sequence of replica IDs -- for example, 1, 2, 4, where replica ID 3 was dropped.
+====
+
+[NOTE]
+.Dropping a specific replica
+====
+* To find the ID of an index replica and see which node it is placed on, you can use the xref:manage:manage-ui/manage-ui.adoc#console-indexes[Indexes screen in the Couchbase Web Console] or the xref:rest-api:get-status-indexes.adoc[Index service REST API].
 
 * When dropping a replica, it is possible to leave a server group with no replica.
 For a partitioned index, run a rebalance to move a replica into the vacant server group.
@@ -210,7 +225,7 @@ CREATE INDEX country_idx ON `travel-sample`(country, city)
        WITH {"nodes": ["192.168.10.10:8091", "192.168.10.11:8091"]};
 
 ALTER INDEX `travel-sample`.country_idx
-WITH {"action": "move", "nodes": ["192.168.10.10:8091", "172.23.120.12:8091"]}
+WITH {"action": "move", "nodes": ["192.168.10.10:8091", "192.168.10.12:8091"]}
 ----
 ====
 
@@ -229,7 +244,7 @@ WITH {"action": "move", "nodes":
 ----
 ====
 
-.Creating new replicas
+.Increasing the number of replicas
 ====
 Create an index on node 192.168.10.10 with replicas on nodes 192.168.10.*11* and 192.168.10.*12*, then increase the number of replicas to 4, and specify that replicas may now also be placed on nodes 192.168.10.*13* and 192.168.10.*14*.
 
@@ -243,7 +258,7 @@ WITH {"action": "replica_count", "num_replica": 4, "nodes": ["192.168.10.10:8091
 ----
 ====
 
-.Deleting replicas
+.Decreasing the number of replicas
 ====
 Create an index on node 192.168.10.10 with replicas on nodes 192.168.10.*11* and 192.168.10.*12*, then decrease the number of replicas to 1.
 
@@ -257,12 +272,10 @@ WITH {"action": "replica_count", "num_replica": 1, "nodes": ["192.168.10.10:8091
 ----
 ====
 
-.Reducing the number of nodes available for index and replica placement
+.Dropping a specific replica
 ====
-NOTE: To avoid any downtime, before removing a replica (or index), first create an equivalent index for your queries to continue using.
-
 Create an index with two replicas, and specify that nodes 192.168.10.10, 192.168.10.11, 192.168.10.12, and 192.168.10.13 should be available for index and replica placement.
-If you then decide that you want to remove one node from consideration for index and replica placement, you need to remove the index (which removes all replicas) and then recreate the index with a different node set.
+Then delete replica 2.
 
 [source,n1ql]
 ----
@@ -270,13 +283,6 @@ CREATE INDEX country_idx ON `travel-sample`(country, city)
 WHERE type="route" USING GSI
 WITH {"num_replica": 2, "nodes": ["192.168.10.10:8091", "192.168.10.11:8091", "192.168.10.12:8091", "192.168.10.13:8091"]};
 
-DROP INDEX `travel-sample`.country_idx;
-
-CREATE INDEX country_idx ON `travel-sample`(country, city)
-WHERE type="route" USING GSI
-WITH {"num_replica": 2, "nodes": ["192.168.10.10:8091", "192.168.10.11:8091", "192.168.10.12:8091"]};
+ALTER INDEX `travel-sample`.country_idx WITH {"action": "drop_replica", "replicaId": 2};
 ----
-
-TIP: You would use a similar procedure to remove a partitioned index and recreate the partitioned index on a smaller or greater number of nodes.
-However, refer also to the section on xref:n1ql-language-reference/index-partitioning.adoc#rebalancing[rebalancing a partitioned index].
 ====
