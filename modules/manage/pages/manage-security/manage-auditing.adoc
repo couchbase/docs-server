@@ -15,9 +15,15 @@ A complete list of auditable events, and an analysis of the _audit fields_
 recorded, can be found in
 xref:learn:security/auditing.adoc[Auditing].
 
-== Audit Configuration
+Auditing can be configured by the *Full Admin* and *Security Admin* roles, and read by the *Read-Only Admin* role.
 
-Auditing can be configured by the *Full Admin* and *Security Admin* roles, and read by the *Read-Only Admin* role, using Couchbase Web Console.
+== Examples on This Page
+
+The examples in the subsections below show how to manage auditing using the xref:manage:manage-security/manage-auditing.adoc#managing-auditing-with-the-ui[UI], the xref:manage:manage-security/manage-auditing.adoc#managing-auditing-with-the-cli[CLI], and the xref:manage:manage-security/manage-auditing.adoc#managing-auditing-with-the-rest-api[REST API] respectively.
+
+[#managing-auditing-with-the-ui]
+== Manage Auditing with the UI
+
 Proceed as follows.
 
 Access Couchbase Web Console, and left-click on the [.ui]*Security* tab, in the vertical navigation-bar, at the left-hand side of the Dashboard:
@@ -54,7 +60,7 @@ Records will be saved to the directory you specify.
 Note the advisory message now visible beneath the checkbox: as this indicates, electing to audit a wide range of events may significantly impact performance and consume disk-space.
 
 The [.ui]*Log Rotation* `time interval & size trigger` determines at what times stored log files — referred to as _targets_ — are _rotated_: this means that the current default file, to which records are being written, named `audit.log`, is saved under a new name, which features an appended timestamp.
-For example: _usermachinename_`.local-2017-03-16T15-42-18-audit.log`.
+For example: `_usermachinename_.local-2017-03-16T15-42-18-audit.log`.
 Note that rotated log files are never deleted by Couchbase Server: if deletion is appropriate, this must be handled explicitly by the administrator.
 
 The number of time-units is specified by changing the number `1`, which appears in the interactive field by default.
@@ -70,7 +76,7 @@ The default value is 20, and the units are megabytes.
 
 == Filterable Events
 
-Events can be _filtered_ for the Data Service, the Query and Index Services, the Eventing Service, and the Analytics Service.
+Events can be _filtered_ for the REST API, the Data Service, the Query and Index Services, the Eventing Service, the Analytics Service, Views, and the Audit facility..
 _Filtering_ means _selective logging_.
 
 To view filterable events for the Data Service, first, ensure that logging is generally enabled, by checking the *Audit events & write them to a log* checkbox.
@@ -121,10 +127,97 @@ For each user specified in the field, all events will be ignored, _except_ the m
 
 Left-click on the *Save* button, to save the configuration.
 
-== Configuring Auditing with the CLI
+[#managing-auditing-with-the-cli]
+== Managing Auditing with the CLI
 
-For information on configuring audit with the Couchbase command-line interface, see xref:cli:cbcli/couchbase-cli-setting-audit.adoc[setting-audit].
+To manage auditing with the Couchbase CLI, use the `setting-audit` command, as follows:
 
-== Inspecting Audit Events with the REST API
+----
+/opt/couchbase/bin/couchbase-cli setting-audit \
+--cluster 10.143.192.101 \
+--username Administrator \
+--password password \
+--audit-enabled 1 \
+--audit-log-path '/opt/couchbase/var/lib/couchbase/logs' \
+--audit-log-rotate-interval 86400 \
+--audit-log-rotate-size 104857600
+----
 
-For information on inspecting audit events with the REST API, see xref:rest-api:rest-auditing.adoc[Auditing API].
+This enables auditing for the current node, by specifying a value of `1` for the `audit-enabled` parameter.
+(Specifying `0` would disable auditing for the current node.)
+A pathname is specified as the value of `audit-log-path`, indicating the location for the `audit.log` file.
+An `audit-log-rotate-interval` of `86400` seconds (24 hours) is specified, as is an `audit-log-rotate-size` of `104857600` byes (100 MB).
+
+If the call is successful, the following message is displayed:
+
+----
+SUCCESS: Audit settings modified
+----
+
+For more information on configuring audit with the Couchbase command-line interface, see xref:cli:cbcli/couchbase-cli-setting-audit.adoc[setting-audit].
+
+[#managing-auditing-with-the-rest-api]
+== Managing Auditing with the REST API
+
+The Couchbase REST API provides three endpoints whereby auditing can be managed.
+Full details are provided in xref:rest-api:rest-auditing.adoc[Configure Auditing].
+
+Auditable events are referred to with individual _ids_, as well as by name, description, and module.
+A complete list can be displayed by means of the `GET /settings/audit/descriptors` http method and URI.
+In the following example, output is piped to the http://stedolan.github.io/jq[jq] program, to facilitate readability.
+
+----
+curl -v -X GET -u Administrator:password http://10.143.192.101:8091/settings/audit/descriptors | jq
+----
+
+If successful, the call returns an array of objects, each of which contains identifying information for an auditable event:
+
+----
+[
+  {
+    "id": 8243,
+    "name": "mutate document",
+    "module": "ns_server",
+    "description": "Document was mutated via the REST API"
+  },
+  {
+    "id": 8255,
+    "name": "read document",
+    "module": "ns_server",
+    "description": "Document was read via the REST API"
+  },
+  {
+    "id": 8257,
+    "name": "alert email sent",
+    "module": "ns_server",
+    "description": "An alert email was successfully sent"
+  },
+          .
+          .
+          ,
+----
+
+Each element in the array thus features the `id, `name`, `module`, and `description` of an auditable event.
+
+The `POST /settings/audit` http method and URI can be used to modify the current audit configuration.
+For example:
+
+----
+curl -v -X POST -u Administrator:password \
+http://10.143.192.101:8091/settings/audit \
+-d auditdEnabled=true \
+-d disabled=8243,8255,8257,32770,32771,32772,32780,32783,32784,32785,32786,40963 \
+-d disabledUsers=testuser/local,@eventing/local,@cbq-engine/local \
+-d rotateSize=524288000 \
+-d rotateInterval=7200 \
+-d logPath='/opt/couchbase/var/lib/couchbase/logs'
+----
+
+Here, auditing for the node is enabled, by specifying a value of `true` for the `auditEnabled` parameter.
+A comma-separated list of audit-event _ids_ is provided as the value for the `disabled` parameter; indicating that each corresponding event will be disabled.
+Likewise, a list of `disabledUsers` is specified.
+See xref:manage:manage-security/manage-auditing.adoc#ignoring-events-by-user[Ignoring Events By User], above, for information.
+Note, however, that when specified using the REST API, local and internal usernames take the `/local`, rather than the `/couchbase` suffix.
+The `rotateSize` is specified in bytes, and the `rotateInterval` in seconds.
+
+See xref:rest-api:rest-auditing.adoc[Configure Auditing], for more detailed information; including use of the `GET /settings/audit` method and URI to retrieve the current audit configuration.
