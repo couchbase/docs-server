@@ -164,12 +164,16 @@ This is the means of username-declaration used by most clients.
 
 * The `DNS` name, provided as a _Subject Alternative Name_ for the certificate.
 For example, `subjectAltName = DNS:node2.cb.com` would, with no prefix or delimiter specified in the Couchbase Server handling-configuration, allow `node2.cb.com` to be identified as the username.
++
+_Prefix_ and _delimiter_ are explained below, in xref:learn:security/certificates.adoc#identifying-certificate-based-usernames-on-couchbase-server[Identifying Certificate-Based Usernames on Couchbase Server].
 
 * The `email`, provided as a _Subject Alternative Name_ for the certificate.
-For example, `subjectAltName = email:john.smith@mail.com` would, with no prefix configured, and a delimiter specified as `@`, allow `john.smith` to be extracted and identified as the username.
+For example, `subjectAltName = email:john.smith@mail.com` would, with no prefix configured or delimiter specified, allow `john.smith@mail.com` to be extracted and identified as the username.
+Note, however, that since the character `@` is not permitted in Couchbase Server usernames, no such user could exist.
+Nevertheless, the user `john.smith` _could_ be defined on Couchbase Server; and this name could be extracted from `john.smith@mail.com`, given appropriate server-side configuration of a _delimiter_, as explained in xref:learn:security/certificates.adoc#identifying-certificate-based-usernames-on-couchbase-server[Identifying Certificate-Based Usernames on Couchbase Server], below.
 
 * The `URI` provided as a _Subject Alternative Name_ for the certificate.
-For example, `subjectAltName = URI:www.acme.com` would, with a prefix of `www.` configured, and a delimiter specified as `.`, allow `acme` to be extracted and identified as the username.
+For example, `subjectAltName = URI:www.acme.com` would, with no prefix or delimiter specified, allow `www.acme.com` to be extracted and identified as the username.
 
 Examples of specifying _Subject Common Names_ and _Subject Alternative Names_ are provided in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates] and xref:manage:manage-security/configure-client-certificates.adoc[Configure Client Certificates].
 
@@ -178,9 +182,9 @@ Examples of specifying _Subject Common Names_ and _Subject Alternative Names_ ar
 
 Client-certificate handling is _disabled_ by default on Couchbase Server: it can optionally be _enabled_; and if required, specified as _mandatory_.
 
-When client-certificate handling has been enabled, multiple combinations of _path_, _prefix_, and _delimiter_ values can be specified to be matched with elements within client certificates presented for authentication.
+When client-certificate handling has been enabled, _paths_ specified within the client certificate can be configured to be searched for, in order to retrieve _usernames_ for authentication.
 
-The _path_ can be one of the following:
+Each specified _path_ can be one of the following path-types:
 
 * `subject.cn`.
 The _Subject Common Name_ specified in the certificate will be extracted.
@@ -188,16 +192,37 @@ The _Subject Common Name_ specified in the certificate will be extracted.
 * `san.dns`.
 The `DNS` _Subject Alternative Name_ for the certificate will be extracted.
 
-* `san.emal`.
+* `san.email`.
 The `email` _Subject Alternative Name_ for the certificate will be extracted.
 
 * `san.uri`.
 The `URI` _Subject Alternative Name_ for the certificate will be extracted.
 
-Once extracted, the _path_ can be parsed, so that the symbols that constitute the username are isolated from extraneous characters.
-This is achieved by specifying, for each path, a _prefix_ and a _delimiter_.
-A specified prefix is discarded from the extracted value: for example, if a specified `san.uri` is `www.couchbase.com`, a prefix of `www.` is removed; and so leaves the symbols `couchbase.com`.
-A specified delimiter causes both itself and subsequent characters to be discarded: for example, a delimiter of `.` discards the symbols `.com` from `couchbase.com`; and leaves `couchbase` as the username to be authenticated.
+Any number of paths can be specified on Couchbase Server, with multiple instances of any path-type.
+
+The name retrieved by searching for a Couchbase Server-specified path can optionally be _parsed_, so that the symbols that constitute the username are isolated from extraneous characters.
+This is achieved by associating the path with a specified _prefix_ and/or _delimiter_:
+
+* If neither a prefix nor a delimiter is specified for a given path, no parsing of the corresponding name is attempted; and authentication is attempted with the unparsed name.
+
+* If only a prefix or a delimiter is specified for a given path, parsing is attempted in accordance with whichever has been specified; and authentication is then attempted with the name that results.
+
+* If both a prefix and a delimiter are specified for a given path, parsing is first attempted in accordance with the specified prefix.
+The results of this initial parsing-attempt are then attemptedly parsed again, in accordance with the specified delimiter.
+Authentication is then attempted with the string produced by the two, sequential parsing-attempts.
+
+_Prefix_ and _delimiter_ are defined as follows:
+
+* _Prefix_: One or more characters that, if exactly matched with the substring that begins the string specified as the Subject Common Name or Subject Alternative Name, are removed from that string.
+For example, if a certificate-specified `san.uri` is `www.couchbase.com`, and the server-specified prefix is `www.`, then `www.` is removed from `www.couchbase.com`, leaving the string `couchbase.com`.
++
+However, if a certificate-specified `san.uri` is `foo.bar.com`, and the server-specified prefix is `www.`, nothing is removed from `foo.bar.com`.
+
+* _Delimiter_: A single character that, if matched with a single instance in the string being parsed, causes both itself and all subsequent characters to be discarded from the string.
+For example, a delimiter of `.` causes the substring `.com` to be discarded from `couchbase.com`; and leaves `couchbase` as the username to be authenticated.
++
+Note that if a string contains multiple instances of the character specified as the delimiter, the _first_ instance is the one used.
+For example, a delimiter of `.` causes the substring `.couchbase.com` to be discarded from `www.couchbase.com`, leaving `www` as the username to be authenticated.
 
 For step-by-step instructions, see xref:manage:manage-security/enable-client-certificate-handling.adoc[Enable Client Certificate Handling].
 
