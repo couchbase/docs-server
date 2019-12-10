@@ -1,0 +1,64 @@
+= Transactions
+
+[abstract]
+_Transactions_ guarantee that multiple documents can be updated atomically.
+
+[#understanding-transactions]
+== Understanding Transactions
+
+_Distributed ACID Transactions_ are operations that ensure that when multiple documents need to be modified such that only the successful modification of all justifies the modification of any, either all the modifications do occur successfully; or none of them occurs.
+
+A transaction can be performed on any number of documents.
+For each document, the transaction puts the modified copy of the document into the xref:learn:data/extended-attributes-fundamentals.adoc[Extended Attributes] area of the document's meta data.
+Consequently, the changes that occur during the transaction prior to commitment &#8212; these constituting _uncommitted_ (or _dirty_) data &#8212; are non-readable by any operation other than this transaction itself.
+Only following commit of the documents modified by the transaction &#8212; when the modified data-copy is removed from the meta data area, and is written over the main body of the document’s data &#8212; do the corresponding changes become readable by other transactions and operations.
+This isolation-level is known as https://jepsen.io/consistency/models/read-committed[Read Committed].
+
+Note that this use of a document’s extended attributes area results in an approximate doubling of its pre-transaction size, while the transaction is underway.
+In consequence, transactions can only be used on documents whose maximum size is 10 MB (which is half of the maximum-permitted document-size, 20 MB).
+
+As well as making use of individual documents' extended attributes, transactions also create additional documents in each bucket that they access.
+These include _Active Transaction Records_ (up to 1024 of which can exist per bucket, and whose names are prefixed with `&#95;txn:atr-`), and _Transaction Client Records_ (one of which exists per bucket, duly named `&#95;txn:client-record`).
+These documents are automatically maintained by Couchbase Server, and should not be modified by any application.
+
+Only nodes that contain data to be updated are affected by a transaction.
+
+Multiple transactions can read the same document at the same time.
+If two transactions simultaneously attempt to write to the same document, one is allowed to proceed, while the other is obliged to retry.
+
+Transactions use _durable writes_, which are described in xref:learn:data/durability.adoc[Durability].
+
+Use of transactions requires _Network Time Protocol_ (NTP) to be used to synchronize time across all cluster-node.
+See xref:install:synchronize-clocks-using-ntp.adoc[Clock Sync with NTP], for details.
+
+[#indexes-and-transactions]
+=== Services and Transactions
+
+The indexes provided by the Index, Search, and Analytics Services are _not_ atomically updated with the commits performed by transactions: however, they are gradually updated in correspondence with the mutations that have occurred; and are as such _eventually consistent_.
+
+Neither the Query Service nor the Search Service sees uncommitted data.
+However, _snapshot isolation_ is _not_ provided: consequently, if a transaction performs a commit while a query or search is ongoing, then the query or search may return data from both prior to and subsequent to the commit.
+
+Note that the Query Service provides the xref:n1ql:n1ql-rest-api/index.adoc#table_xmr_grl_lt[At_Plus] feature, which allows queries to wait for indexes to be appropriately updated, following a transaction.
+
+[#limitations]
+== Limitations
+
+Transactions, which constitute an evolving technology, currently have the following limitations:
+
+* Only documents whose initial size is 10 MB or less can be included in a transaction.
+
+* Non-transactional updates should not be made to any document involved in a transaction while the transaction is itself in progress: this prevents the non-transactional update from being overwritten.
+
+* The number of writes required in a transaction is greater than the number required for non-transactional updates: writes are required to stage, to commit, and to update transaction records.
+Consequently, transactional updates may be less performant than non-transactional updates.
++
+Note that data within a single document is always updated atomically: therefore, whenever multiple key-value pairs are consistently required either all to be updated together or all to remain without update, their co-location within a single document, rather than their distribution across multiple documents, may best ensure the high performance of atomic updates.
+
+* _Cross Data Center Replication_ (XDCR) supports _eventual consistency_: however, it does _not_ support atomicity,
+and xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[Conflict Resolution] is threfore not performed with respect to transactions.
+Consequently, transactionally modified documents should only be replicated across clusters when no concurrent transactions involving the same documents might occur.
+
+[#creating-and-using-transactions]
+== Creating and Using Transactions
+For examples of creating and using transactions on Couchbase Server, see xref:3.0@java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Distributed Transactions from the Java SDK].
