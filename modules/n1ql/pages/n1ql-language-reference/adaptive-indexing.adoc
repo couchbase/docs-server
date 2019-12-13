@@ -6,6 +6,7 @@
 :createindex: xref:n1ql-language-reference/createindex.adoc
 :install-sample-buckets: xref:manage:manage-settings/install-sample-buckets.adoc
 :indexing-arrays: xref:n1ql-language-reference/indexing-arrays.adoc
+:partial-index: xref:learn:services-and-indexes/indexes/indexing-and-query-perf.adoc#partial-index
 
 Adaptive Indexes are a special type of GSI array index that can index all or specified fields of a document.
 Such an index is generic in nature, and it can efficiently index and lookup any of the index-key values.
@@ -444,6 +445,65 @@ For instance, consider a user profile or inventory search use case where a perso
 One approach is to create indexes on all possible attributes.
 If that query can include any of the attributes, then it may require creation of innumerable indexes.
 For example, a modest 20 attributes will result in 20 factorial (2.43&times;10^18^) indexes in order to consider all combinations of sort orders of the 20 attributes.
+
+== Partial Adaptive Indexes
+
+An adaptive index may also be a {partial-index}[partial index], as can be seen by examining examples <<C4>> and <<C5>>.
+In this case, you must ensure that any fields filtered by a WHERE clause in the index definition are also referenced by the {pairs}[PAIRS()] function.
+For example, the following query <<Q9>> cannot select the adaptive index defined in <<C9A>>.
+
+====
+[[C9A]]
+.C{counter:ai}A
+[source,n1ql]
+----
+CREATE INDEX ai_geo ON `travel-sample`(DISTINCT PAIRS({geo.alt, geo.lat, geo.lon})) WHERE type = "airport"; -- <1>
+----
+
+[[Q9]]
+.Q{ai}
+[source,n1ql]
+----
+EXPLAIN SELECT META(t).id FROM `travel-sample` t WHERE t.geo.alt > 1000 AND t.type = "airport";
+----
+
+.Result
+[source,json]
+----
+include::example$n1ql-language-reference/adaptive-idx-partial-1.jsonc[tag=excerpt]
+...
+----
+====
+
+<1> The WHERE clause filters on `type`, but the {pairs}[PAIRS()] function does not include the `type` field.
+<2> The query does not use the incorrectly-defined partial adaptive index.
+
+However, the same query <<Q9>> can select the index defined in <<C9B>>.
+
+====
+[[C9B]]
+.C{ai}B
+[source,n1ql]
+----
+CREATE INDEX ai_geo_type ON `travel-sample`(DISTINCT PAIRS({geo.alt, geo.lat, geo.lon, type})) WHERE type = "airport"; -- <1>
+----
+
+.Result
+[source,json]
+----
+include::example$n1ql-language-reference/adaptive-idx-partial-2.jsonc[tag=excerpt]
+...
+----
+====
+
+<1> The WHERE clause filters on `type`, and the {pairs}[PAIRS()] function includes the `type` field.
+<2> The query does an IntersectScan, including the correct partial adaptive index.
+
+Alternatively, you could use the `SELF` keyword to ensure that the fields used in the WHERE clause are included in the {pairs}[PAIRS()] function.
+Refer to <<C5>> for an example.
+
+An IntersectScan does not eliminate redundant queries, and may impact performance.
+Refer to <<section_m12_552_dbb>> for details.
 
 [[section_m12_552_dbb]]
 == Performance Implications
