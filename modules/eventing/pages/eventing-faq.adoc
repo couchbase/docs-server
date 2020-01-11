@@ -80,46 +80,47 @@ The Function in its purest form offers a rule to implemented closer to the data,
 Stored Procedures enforce a request-response model.
 A stored procedure will not be invoked automatically; it has to be invoked by a calling method.
 Functions are based on the idea of events.
-Changes to the data are events.
-These events trigger Functions, and hence this is not a request-response model in its purest sense.
+Changes to the data or mutations are the events that trigger Functions, and hence this is not a request-response model in its purest sense.
 
 
 * Do I need a separate middleware to consume the Functions? How do I consume changes in my middleware/application?
 +
-Database changes are consumed using the Function defined: there is no other programmatic way of accessing the changes (such as by using an SDK, or some other form of middleware). REST endpoints are exposed, to perform administrative operations
+No.
+Functions do not require any additional infrastructure mutations are consumed and acted upon by the defined Function. There is no other programmatic way of accessing the changes processed by a Function (such as by using an SDK, or some other form of middleware). REST endpoints are exposed, to perform administrative operations
 
 
 * Can I import my own JS libraries or Node Modules?
 +
 No.
-We do not allow import of node modules or external JS libraries.
+We do not allow import of node modules or external JS libraries or Node modules. Though you can define other Javascript functions inside a Function (outside the scope of OnUpdate and OnDelete) that can be invoked any number of times from either of the event handlers.
 
 
 * Are Functions supported for both Data Node and Document storage?
 +
-The Eventing Service listens to changes that appear in the DCP.
+The Eventing Service listens to changes that appear in the Database Change Protocol (DCP) stream.
 DCP is valid for the Data Service, and Functions operate on documents that are either in key-value or in document (JSON) format.
 
-
-* What happens when a Function is debugged?
+* Can a Function be debugged and what happens when a Function is debugged?
 +
-We block one of the mutations alone and hand it over to the debugger session.
-The rest of the mutations continue to be serviced by the event handler.
+Yes.
+Functions offer multiple diagnosability solutions (debugger, logs, and statistics), all designed to have minimal impact on overall 
+performance and scalbility. 
+When debugging a function a single mutation is blocked and handed off to the debugger session, while the rest of the mutations continue to be serviced by the event handler, refer to the https://docs.couchbase.com/server/6.5/eventing/eventing-debugging-and-diagnosability.html[eventing-debugging-and-diagnosability] section.
 
 
 * How to perform Functions lifecycle operations from CI/CD?
 +
-To perform Functions lifecycle operations from CI/CD, refer to https://developer.couchbase.com/documentation/server/6.0/cli/cbcli/couchbase-cli-eventing-function-setup.html[CLI Eventing] section.
+To perform Functions lifecycle operations from CI/CD, refer to the https://docs.couchbase.com/server/6.5/cli/cbcli/couchbase-cli-eventing-function-setup.html[CLI Eventing] section.
 
 
 * How to invoke a REST endpoint from inside the Function?
 +
-To invoke a REST Endpoint from inside the Function, refer to https://developer.couchbase.com/documentation/server/6.0/eventing/eventing-api.html[Functions REST API] section.
+To invoke a REST Endpoint from inside the Function, refer to the https://docs.couchbase.com/server/6.5/eventing/eventing-api.html[Functions REST API] section.
 
 
 * How does the Functions offering compare with the Couchbase’s Kafka Connector?
 +
-The Functions offering is about server-side processing or compute; it does not require any middleware to be deployed or managed.
+The Functions offering is about server-side processing or compute of busniss logic; it does not require any additional infrastructure layer or middleware to be deployed or managed.
 Couchbase’s Kafka connector is an SDK component that needs an application container or middleware to run.
 
 
@@ -127,20 +128,17 @@ Couchbase’s Kafka connector is an SDK component that needs an application cont
 
 * What languages are supported?
 +
-Javascript is the language to be used while creating Functions.
-Node modules cannot be imported: only simple Javascript can be used.
+Only JavaScript (ECMAScript 6) is supported. However, to support the ability to shard and scale Function execution automatically, some capabilities have been removed (Global state, Asynchrony, etc.), refer to the https://docs.couchbase.com/server/6.5/eventing/eventing-language-constructs.html[removed-lang-features] section.
 
 
 * Why can’t I create global variables?
 +
-We restrict the language model in such a way that chances of going wrong are minimized.
-As Functions are stateless compute entities, global variables do not have a good use-case, and therefore, they are not supported.
-Though you can define Javascript functions inside a Function (outside the scope of OnUpdate and OnDelete) that can be invoked any number of times from either of the event handlers.
+Functions do not allow global variables, this restriction is mandatory for the Function logic to shard and scale and remain agnostic during rebalance. All state must be saved and retrieved from persistence providers, therefore KV bucket(s) made available to the Function through bindings can be used to store any required global state.
 
 
 * What is in the "meta" Function parameter (OnUpdate, OnDelete)? Is this the metadata we currently write in order to figure out what has changed in the document?
 +
-These are the meta fields associated with the document. For more information, refer to the Link section.
+These are the meta fields associated with the document. For more information, refer to the https://docs.couchbase.com/server/6.5/learn/data/data.html#metadata[metadata] section.
 
 
 * What is the metadata bucket? Do I need to create a separate bucket?
@@ -150,8 +148,8 @@ To provide better resiliency and restartability semantics across Eventing nodes,
 ** All Eventing functions within a cluster can share the same metadata bucket (this is a best practice but not a requirement), regardless of the number of functions, or their source and destination buckets.
 ** Setting up a metadata bucket is a one-time activity for the cluster.
 ** The metadata bucket should be reserved for solely for Eventing housekeeping and not be used for any other data-storage.
-*** Each Eventing function always requires a fixed amount of space of about 1.94MB (1024 docs * 1884 bytes).
-*** If an Eventing function uses timers then an additional fixed amount of space of about 0.191MB (1024 * docs of 196 bytes) is needed.
+*** Each Eventing function always requires a fixed amount of space of about 2MB (1024 docs * 1884 bytes).
+*** If an Eventing function uses timers then an additional fixed amount of space of about 0.2MB (1024 * docs of 196 bytes) is needed.
 *** If an Eventing function uses timers then for each active timer an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed. Where the context can not be larger than 1024 bytes and the maximum number of active timers is based on both the business logic and the mutation rate.
 ** KV replicas should be enabled on the metadata bucket this is important for failure recovery.
 
@@ -161,12 +159,10 @@ To provide better resiliency and restartability semantics across Eventing nodes,
 Yes.
 More than one Function can be defined for the same bucket.
 This lets you process the change according to the business logic that you enforce.
-But there is no ordering enforced; for example, if bucket 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
-Also, database triggers suffered from scalability and diagnosability issues.
-Functions offer multiple diagnosability solutions and is highly scalable and performant.
+But there is no enforced ordering; for example, if bucket 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
 
 
-* Is it possible to get additional state during a Function execution? For example, can you read from the data service in a Function to fetch related data? For example, can we enrich the updated document with data from another document (using a document id)?
+* Is it possible to get additional state during a Function execution? For example, can you read from the data service in a Function to fetch related data -or- can your enrich the updated document with data from another document (using a document id)?
 +
 Yes.
 You can read from any other bucket, and enrich the document.
