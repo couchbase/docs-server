@@ -13,9 +13,9 @@ Few important aspects related to timers are listed below:
 * The metadata bucket stores information about timers and its association with an Eventing Function's handler.
 * Ensure that the metadata bucket is not deleted or flushed, or the keys in metadata bucket get updated.
 * Each active timer an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed. Where the context can not be larger than 1024 bytes.
-* With an increase in the usage of timers, the metadata bucket's space assignment must also be increased to accomadate all active timers and any potential backlog. 
+* With an increase in the usage of timers, the metadata bucket's space assignment must also be increased to accomadate all active timers and any potential backlog. If the use-case mandates large numbers of timers in the system, it is required that the space assigned to the metadata bucket be suitably high as well.
 * Due to runtime or programmatic errors in the function handler code, if triggering of a timer fails, then timer execution may get permanently blocked.
-* Bindings can be reused in timers. Bindings, created during the Eventing Function definition, can be accessed by the timer constructs in the handler code.
+* Bindings for bucket-aliases can be reused in timers. Bucket-aliases, created during the Eventing Function definition, can be accessed by the timer constructs in the handler code.
 * Timers get deleted when the associated Function is deleted or undeployed.
 
 == Language Constructs
@@ -38,14 +38,37 @@ In the createTimer syntax:
 
 A sample createTimer language construct is provided for reference.
 ----
-createTimer(DocTimerCallback, twoMinsPrior, meta.id, context)
+createTimer(DocTimerCallback, oneMinuteFromNow, meta.id, context)
 ----
 In the sample construct:
 
 * DocTimerCallback is the name of the function used in the Function handler code.
-* twoMinsPrior is a JavaScript Date object.
+* oneMinuteFromNow is a JavaScript Date object.
 * meta.id is a generic reference string that can be used in the Couchbase cluster.
 * context is the JavaScript object that is used in the Function handler code.
+
+Using the construct above here is a working Eventing Function that creates a timer that is scheduled to be executed 60 seconds from its creation time where the callback will create a document in the alias 'dest_bucket' which must be a 'read and write' bbinding to an existing bucket.
+----
+function DocTimerCallback(context) {
+   log('From DocTimerCallback', context);
+
+   // create a new document as per our received context
+   dest_bucket[context.docId] = context.random_text; // upsert a portion of the context
+}
+
+function OnUpdate(doc,meta) {
+   // you would typically  filter to mutations of interest perhaps by type and a needed condition
+   // if (doc.type != 'type_of_interest' || doc.needed_condition != true) return;
+   
+   // create a timestamp 60 seconds from now
+   var oneMinuteFromNow = new Date(); //get current time
+   oneMinuteFromNow.setSeconds(oneMinuteFromNow.getSeconds() + 60); //add 60 seconds to it
+   
+   // create a document to use as out for our context
+   var context = {docId : meta.id, random_text : "arbitrary text"};
+   createTimer(DocTimerCallback, oneMinuteFromNow, meta.id, context);
+}
+----
 
 === Sharding of Timers
 
