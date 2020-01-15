@@ -284,19 +284,27 @@ No conversion can occur.
 [#implicit-conversion-modes]
 == Implicit Conversion Modes
 
-Two _modes_ of implicit conversion are supported:
+Each filter expression requires implicit conversion to be applied to one of the following combinations:
 
-* Implicit Conversion to Constant Data-Type
+* _A Constant and a Variable_.
+The filter expression contains a user-specified constant and a variable, which are to be compared.
+Couchbase Server determines the data type of the constant, and attempts to apply this data type to the value of the variable.
 
-* Dynamic Implicit Conversion Between Field-Variables
+* _Two Variables_.
+The filter expression specifies two variables, which are to be compared.
+Couchbase Server determines the data type of the variables from the corresponding values in the JSON document to which filtering is currently being applied.
 
-These are described in the subsections below.
+These modes are described in the subsections below.
 
-[#implicit-conversion-to-constant-data-type]
-=== Implicit Conversion to Constant Data-Type
+[#implicit-conversion-of-constant-and-variable]
+=== Implicit Conversion of Constant and Variable.
 
-Data types cannot be explicitly defined by the user.
-However, the user can explicitly enter _constants_, when creating a filter expression: the data type for the constant is evaluated by Couchbase Server as part of its process for _tokenizing_ the expression (that is, parsing the expression into identifiable lexical components).
+When a constant and a variable are to be compared, Couchbase Server determines the data type of the constant, and attempts to apply this also to the value of the variable.
+
+[#data-type-conversion-of-user-specified-constants]
+==== Data-Type Conversion of User-Specified Constants
+
+When the user explicitly enters a _constant_ into a filter expression, the data type for the constant is evaluated by Couchbase Server, as part of its process for _tokenizing_ the expression (that is, parsing the expression into identifiable lexical components).
 
 The correspondences between token formats and duly assigned data types is described in the following table.
 
@@ -340,13 +348,13 @@ The correspondences between token formats and duly assigned data types is descri
 |===
 
 [#mathematical-data-types]
-==== Mathematical Data Types
+===== Mathematical Data Types
 
 Mathematical expressions may be entered as constants.
 
-===== Division
+_*Division*_
 
-When an expression includes a _division_ operation, the result of which is intended to be a decimal number, the operands themselves must be specified as (or, if variables, allowed to be implicitly cast to) decimals.
+When an expression includes a _division_ operation, the result of which is intended to be a decimal number, the operands themselves must be specified as (or, if they are variables, allowed to be implicitly cast to) decimals.
 
 For example, if `A == 4` returns `true`, then `1 / A == 0.25` returns `false`; because the expression `1 / A` casts `A` implicitly to `Int`, and duly returns an `Int`.
 Thus, `Int(1 / 4) == 0` returns `true`.
@@ -354,12 +362,74 @@ Thus, `Int(1 / 4) == 0` returns `true`.
 On the other hand, `1.0 / A == 0.25` returns `true`; because the expression `1.0 / A` casts `A` implicitly to `Float64`, and duly returns a `Float64`.
 Thus, `1.0 / 4.0 == 0.25` returns `true`.
 
-===== _Not-a-Number_ Values
+[#not-a-number-values]
+_*Not-a-Number Values*_
 
 `NaN` (_Not-a-Number_) float-values are considered _less_ than any other real number.
 
 Two `NaNs` do _not_ yield equality.
 Note, however, that the operators `&lt;&#61;` and `&#61;&gt;` return `true`: this differs from the `golang` standard (according to which these operators return `false`).
 
-[#dynamic-implicit-conversion]
-=== Dynamic Implicit Conversion Between Field Variables
+[#data-type-conversion-of-variable-values]
+==== Data-Type Conversion of Variable-Values, for Comparison with Constants
+
+When an expression includes both a constant and a variable, xref:xdcr-reference:xdcr-filtering-data-type-conversion.adoc#implicit-conversion-to-constant-data-type[Implicit Conversion to Constant Data-Type] is performed on the constant.
+Then, the data-type derived from evaluation of the constant is assigned, attemptedly, to the value represented by the variable.
+
+For example, given the expression `variable > 4.5`, the constant `4.5` is determined to be a `Float64`; and the value of `variable` is then attemptedly converted to `Float64`.
+
+If conversion of the variable's value into the data type specified by the user is not possible, collation comparison is performed.
+For example, given the expression `variable != true`, if the value of `variable` is not `Boolean`, collation comparison is performed, and `true` is returned, due to the data types being different.
+
+If the data-type of the user-specified constant is `Numeric`, and the value of the variable is also `Numeric`, the appropriate numeric data-type internal conversion is performed (see xref:xdcr-reference:xdcr-filtering-data-type-conversion.adoc#numeric-type-conversion[above]).
+
+If the value is `NaN`, the value is converted to the `Invalid` data-type, and collation comparison is performed.
+For example, given the expression `ASIN(variable) > 0`, if the value of `variable` is `93`, then `ASIN(93)`
+results in a `NaN` value, which is then duly converted to `Invalid`.
+Collation comparison is then performed, and returns that the `NaN` is smaller than the `Int`.
+
+Alternatively, given the expression `ASIN(variable) != 0`, collation comparison returns `true`, due to the comparison's being made between different data types (`Invalid` and `Int`).
+
+An explanation of comparisons with `NaN` values is provided in xref:xdcr-filtering-data-type-conversion.adoc#not-a-number-values[Not-a-Number Values], above.
+
+[#implicit-conversion-between-variables]
+=== Implicit Conversion between Variables
+
+When an expression consists entirely of variables (for example, `variable != otherVariable`), Couchbase Server retrieves the corresponding values from the JSON document to which filtering is currently being applied, and performs conversions on the values.
+
+The result of conversion may vary for each variable, document by document, based on changes encountered in JSON definitions.
+
+Couchbase Server performs conversion differently, according to whether both values are determined to be `Numeric`.
+
+==== Numeric Comparison
+
+If the values of both variables are determined to be `Numeric`, the appropriate numerical comparison from those described in xref:xdcr-filtering-data-type-conversion.adoc#data-type-conversion-of-user-specified-constants[Data Type Conversion of User-Specified Constants] is made.
+
+==== Non-Numeric Comparison
+
+If the values for the variables are not both numeric, then both require non-numeric conversion.
+Conversion is performed based on the following sequence:
+
+. Whether the perceived types support comparison.
+See the diagram in xref:xdcr-filtering-data-type-conversion.adoc#supported-type-conversions[Supported and Unsupported Type Conversions] for information.
+
+. Whether, if the perceived types _do_ support comparison, a successful attempt can be made to convert the less restrictive data type to the more restricted.
+See the table in xref:xdcr-filtering-data-type-conversion.adoc#supported-data-types[Supported Data Types], for information.
+
+. Whether, if the less restrictive data type _cannot_ be converted to the more restricted, the more restricted can be converted to the less.
+
+If conversion cannot be achieved by the above sequence, collation comparison is performed.
+
+For example, given the expression `variable1 > variable2`, where `variable1` is the `Boolean` value `true`, and `variable2` is the `String` value `"test"`:
+
+. The perceived types are checked as to whether they support direct comparison.
+They do not.
+
+. The `String` value `test` is attemptedly cast to a `Boolean`: which fails.
+
+. The `Boolean` value `true` is attemptedly cast to a `String`: which succeeds &#8212; the new `String` value being `"true"`.
+
+A comparison between the strings is now performed, with the result being `true`.
+
+Alternatively, given the same expression, where `variable1` is now the `String` value `"test"`, and `variable2` is a JSON array; conversion cannot be achieved by the sequence.
+Therefore, collation comparison is performed; the result of which is `false`, because `Array` is of lower precedence that `String`.
