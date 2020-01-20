@@ -72,7 +72,6 @@ What a Function sees is the actual event of the change, and hence it does not di
 +
 Not exactly.
 A Rules Engine enforces ordering and other semantics that is not possible out of the box with Functions.
-However, Functions can be used to implement one - even Rules Engine.
 The Function in its purest form offers a rule to implemented closer to the data, but cannot trigger another Function directly.
 
 
@@ -81,46 +80,63 @@ The Function in its purest form offers a rule to implemented closer to the data,
 Stored Procedures enforce a request-response model.
 A stored procedure will not be invoked automatically; it has to be invoked by a calling method.
 Functions are based on the idea of events.
-Changes to the data are events.
-These events trigger Functions, and hence this is not a request-response model in its purest sense.
+Changes to the data or mutations are the events that trigger Functions, and hence this is not a request-response model in its purest sense.
 
 
 * Do I need a separate middleware to consume the Functions? How do I consume changes in my middleware/application?
 +
-Database changes are consumed using the Function defined: there is no other programmatic way of accessing the changes (such as by using an SDK, or some other form of middleware). REST endpoints are exposed, to perform administrative operations
+No.
+Functions do not require any additional infrastructure mutations are consumed and acted upon by the defined Function. There is no other programmatic way of accessing the changes processed by a Function (such as by using an SDK, or some other form of middleware). REST endpoints are exposed, to perform administrative operations.
 
 
 * Can I import my own JS libraries or Node Modules?
 +
 No.
-We do not allow import of node modules or external JS libraries.
+We do not allow import of node modules or external JS libraries or Node modules. Though you can define other JavaScript functions inside a Function (outside the scope of OnUpdate and OnDelete) that can be invoked any number of times from either of the event handlers.
 
 
 * Are Functions supported for both Data Node and Document storage?
 +
-The Eventing Service listens to changes that appear in the DCP.
+The Eventing Service listens to changes that appear in the Database Change Protocol (DCP) stream.
 DCP is valid for the Data Service, and Functions operate on documents that are either in key-value or in document (JSON) format.
 
 
-* What happens when a Function is debugged?
+* Can Functions interact with external processes?
 +
-We block one of the mutations alone and hand it over to the debugger session.
-The rest of the mutations continue to be serviced by the event handler.
+Yes.
+Functions support a cURL API as a way of interacting with external entities or REST endpoints using HTTP. This functinality 
+allows propagation of data changes to other systems, notifying the application about interesting events, enriching documents 
+with data from external resources, and so on. The native cURL that lets users propagate events of interest to other APIs when 
+mutation rates are low.
+
+
+* Can a Function be debugged and what happens when a Function is debugged?
++
+Yes.
+Functions offer multiple diagnosability solutions (debugger, logs, and statistics), all designed to have minimal impact on overall 
+performance and scalability. 
+When debugging a function a single mutation is blocked and handed off to the debugger session, while the rest of the mutations continue to be serviced by the event handler, refer to the https://docs.couchbase.com/server/6.5/eventing/eventing-debugging-and-diagnosability.html[eventing-debugging-and-diagnosability] section.
+
+
+* Can the logic in a Function in production be altered while it is running?
++
+Yes.
+Functions can be "paused, edited and resumed" without losing a single mutation; as such continuity is maintained. Note this sequence is simailar to the operations of "undeploy, edited, and deployed with a feed boundary ‘From now’", however inthis later case you can lose mutations.
 
 
 * How to perform Functions lifecycle operations from CI/CD?
 +
-To perform Functions lifecycle operations from CI/CD, refer to https://developer.couchbase.com/documentation/server/6.0/cli/cbcli/couchbase-cli-eventing-function-setup.html[CLI Eventing] section.
+To perform Functions lifecycle operations from CI/CD, refer to the https://docs.couchbase.com/server/6.5/cli/cbcli/couchbase-cli-eventing-function-setup.html[CLI Eventing] section.
 
 
 * How to invoke a REST endpoint from inside the Function?
 +
-To invoke a REST Endpoint from inside the Function, refer to https://developer.couchbase.com/documentation/server/6.0/eventing/eventing-api.html[Functions REST API] section.
+To invoke a REST Endpoint from inside the Function, refer to the https://docs.couchbase.com/server/6.5/eventing/eventing-api.html[Functions REST API] section.
 
 
 * How does the Functions offering compare with the Couchbase’s Kafka Connector?
 +
-The Functions offering is about server-side processing or compute; it does not require any middleware to be deployed or managed.
+The Functions offering is about server-side processing or compute of business logic; it does not require any additional infrastructure layer or middleware to be deployed or managed.
 Couchbase’s Kafka connector is an SDK component that needs an application container or middleware to run.
 
 
@@ -128,20 +144,17 @@ Couchbase’s Kafka connector is an SDK component that needs an application cont
 
 * What languages are supported?
 +
-Javascript is the language to be used while creating Functions.
-Node modules cannot be imported: only simple Javascript can be used.
+Only JavaScript (ECMAScript 6) is supported. However, to support the ability to shard and scale Function execution automatically, some capabilities have been removed (Global state, Asynchrony, etc.), refer to the https://docs.couchbase.com/server/6.5/eventing/eventing-language-constructs.html[removed-lang-features] section.
 
 
 * Why can’t I create global variables?
 +
-We restrict the language model in such a way that chances of going wrong are minimized.
-As Functions are stateless compute entities, global variables do not have a good use-case, and therefore, they are not supported.
-Though you can define Javascript functions inside a Function (outside the scope of OnUpdate and OnDelete) that can be invoked any number of times from either of the event handlers.
+Functions do not allow global variables, this restriction is mandatory for the Function logic to shard and scale and remain agnostic during rebalance. All state must be saved and retrieved from persistence providers, therefore KV bucket(s) made available to the Function through bindings can be used to store any required global state.
 
 
 * What is in the "meta" Function parameter (OnUpdate, OnDelete)? Is this the metadata we currently write in order to figure out what has changed in the document?
 +
-These are the meta fields associated with the document. For more information, refer to the Link section.
+These are the meta fields associated with the document. For more information, refer to the https://docs.couchbase.com/server/6.5/learn/data/data.html#metadata[metadata] section.
 
 
 * What is the metadata bucket? Do I need to create a separate bucket?
@@ -151,24 +164,31 @@ To provide better resiliency and restartability semantics across Eventing nodes,
 ** All Eventing functions within a cluster can share the same metadata bucket (this is a best practice but not a requirement), regardless of the number of functions, or their source and destination buckets.
 ** Setting up a metadata bucket is a one-time activity for the cluster.
 ** The metadata bucket should be reserved for solely for Eventing housekeeping and not be used for any other data-storage.
-** As a rule of thumb the metadata bucket should be about 1/10 of the size of the source bucket. However if the source bucket is made up of very small documents, the sizing of the metadata bucket would trend towards the size of the source bucket. Note if the Eventing functions utilize timers then double this estimate.
+*** Each Eventing function always requires a fixed amount of space of about 2MB (1024 docs * 1884 bytes).
+*** If an Eventing function uses timers then an additional fixed amount of space of about 0.2MB (1024 * docs of 196 bytes) is needed.
+*** If an Eventing function uses timers then for each active timer an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed. Where the context can not be larger than 1024 bytes and the maximum number of active timers is based on both the business logic and the mutation rate.
 ** KV replicas should be enabled on the metadata bucket this is important for failure recovery.
 
 
 * Can there be more than one Function listening to changes to a bucket?
 +
 Yes.
-More than one Function can be defined for the same bucket.
+More than one Function can be defined for the same source bucket.
 This lets you process the change according to the business logic that you enforce.
-But there is no ordering enforced; for example, if bucket 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
-Also, database triggers suffered from scalability and diagnosability issues.
-Functions offer multiple diagnosability solutions and is highly scalable and performant.
+But there is no enforced ordering; for example, if bucket 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
 
 
-* Is it possible to get additional state during a Function execution? For example, can you read from the data service in a Function to fetch related data? For example, can we enrich the updated document with data from another document (using a document id)?
+* Is it possible to get additional state during a Function execution? 
 +
 Yes.
-You can read from any other bucket, and enrich the document.
+For example, you can fetch related data from another document (using a document id) from any other bucket that is exposed to the
+Function via a binding.  It is also possible to utilize the cURL API to read additional state from an external REST endpoint.
+
+
+* Is it possible to update state (or change a document) during a Function execution? 
++
+Yes.
+For example, you can your enrich or update a document with data from another document (using a document id) from any other bucket that is exposed to the Function via a binding with access level of "Read Write" inclusive of the source bucket.
 
 
 == Cluster Behavior
@@ -186,8 +206,15 @@ No. Functions do not lose any mutations during a rebalance operation.
 
 * I have Functions deployed on my cluster, when can I perform an Eventing rebalance operation?
 +
-The Function lifecycle operations (deploying, undeploying and deleting operations) +
-and the Eventing rebalance operation are mutually exclusive. The Eventing rebalance +
-operation fails when a Function lifecycle operation is currently in progress. Likewise, +
-when the Eventing rebalance operation is in progress, you cannot perform a Function +
+The Function lifecycle operations (deploying, undeploying, pausing, resuming, and deleting) 
+and the Eventing rebalance operation are mutually exclusive. The Eventing rebalance 
+operation fails when a Function lifecycle operation is currently in progress. Likewise, 
+when the Eventing rebalance operation is in progress, you cannot perform a Function 
 lifecycle operation.
+
+* How do I increase performance of a Function?
++
+You can either scale up vertically by adding additional workers (in the handler's settings) to increase performance  
+for a specific Function. 
+You can also scale out horizontally via Couchbase’s elastic scaling option by adding another node and rebalancing.  
+In this case each eventing node is assigned a subset of vBuckets note this increases overall performance for all Functions.

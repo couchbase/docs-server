@@ -1,45 +1,64 @@
 = Terminology
 
 [abstract]
-While using Functions, the following terminologies are used:
+While using Eventing Functions or Handlers, the following terminologies are used:
 
 == Functions
 
-Functions offers a computing paradigm using which developers can handle data changes.
-Functions are either *OnUpdate* or *OnDelete*.
-Resources are managed at or above a Function level, and the containing Function scopes the state of all handlers.
+Eventing Functions offers a computing paradigm using which developers can handle data changes via the handlers of *OnUpdate* or *OnDelete*. Resources are managed at or above the Eventing Function level, and the containing Eventing Function scopes the state of all handlers.
 
 == Handler
 
-A stateless, short-running code-fragment that reacts to a specified event.
-One or more handlers together constitute a Function.
-A handler must execute from start to finish, before a specified timeout-duration.
-Currently, *OnUpdate* and *OnDelete* are the two supported handlers.
-Couchbase Functions support multiple *OnUpdate*/*OnDelete* handlers during the Function definition process.
+A handler is a collection of JavaScript functions that together react to a class of events. A handler is stateless short running piece of code that must execute from start to end prior to a specified timeout duration. One or more handlers together constitute an Eventing Function.
 
-NOTE: In the Couchbase Server 6.0 BETA release, the handler code size is limited to 128KB.
+NOTE: In the 6.5 release, the handler code is compressed (with the compressed size is limited to 128KB).
+
+Eventing framework calls the following JavaScript functions as entry points to the handler.
+
+* Insert/Update Handler
+
+The *OnUpdate* handler gets called when a document is created or modified. Two major limitations exist. First, if a document is modified several times in a short duration, the calls may be coalesced into a single event due to deduplication. Second, it is not possible to discern between Create and Update operations.
+
+* Delete Handler
+
+The *OnDelete* handler gets called when a document is created or modified. Two major limitations exist. First, it is not possible to discern between Expiration and Delete operation. Second, it is not possible to get the value of the document that was just deleted or expired.
+
 
 == Statelessness
 
-The persistent state of a Function is captured by entities listed below, while any state that appears on the execution stack is ephemeral.
+The persistent state of a handler is captured in the below external elements, and all states that appears on the execution stack are ephemeral
 
-* The metadata bucket.
-* The document being observed and its Extended Attributes.
+* The metadata bucket (which in the future will eventually be a system collection).
+* The documents being observed and their extended attributes.
+* The storage providers bound to the handler.
+
+== Deduplication
+
+Couchbase does not store every version of a document permanently. Hence, when a Handler asks for mutation history of a document,  it sees a truncated history of the document. However, the final state of a document is always present in all such histories  (as the current state is always available in the database).
+
+Similarly, the KV data engine deduplicates multiple mutations made to any individual document rapidly in succession, to ensure  highest possible performance. So, when a document mutates rapidly, Handlers may not see all intermediate states, but in all  cases, will see the final state of the document.
+
+== Recursive Mutation
+
+An abbreviation of convenience of the term Potentially Recursive Mutation. When a Handler manipulates documents in a bucket that  serves as the source of mutations to this or any other Handler, a write originated by a Handler will cause a mutation to be seen  by itself or another handler. These are called potentially recursive mutations. 
+
+== Feed Boundary
+
+Feed Boundary is a time milestone used during an Eventing Function or Handler configuration. Using the Feed Boundary option, you can either invoke a handler on all data mutations available in the cluster (Everything) or choose to invoke a handler during future instances of data mutation, post deployment (From now).
 
 == Buckets
 
-There are two distinct buckets: source bucket and metadata bucket.
+There are two key buckets used by every Eventing Function or Handler: the source bucket and the metadata bucket.
 
 *Source Bucket*
 
-Couchbase Functions use a bucket to track data mutations. This bucket is termed as the source bucket. The source bucket can be either Couchbase or Ephemeral bucket type. However, memcached bucket types are not supported.
+Couchbase Eventing Functions use a bucket to track data mutations. This bucket is termed as the source bucket. The source bucket can be either Couchbase or Ephemeral bucket type. However, memcached bucket types are not supported.
 
-When you are creating a function, you need to specify a source bucket. The handler code polls this bucket to track data mutations.
+When you are creating a function, you need to specify a source bucket. The handler code watches this bucket via DCP to track data mutations.
 
-NOTE: You can use a common source bucket to listen to multiple Functions running different code.
+NOTE: You can use a common source bucket to listen to multiple Eventing Functions running different code.
 
-When a source bucket is deleted, all deployed functions associated with this source +
-bucket, are undeployed.
+When a source bucket is deleted, all deployed functions associated with this source bucket, are undeployed.
 
 
 After processing the handler code, documents can be stored in a different bucket. For understanding purposes, this bucket can be termed as a destination bucket.
@@ -48,75 +67,93 @@ At times, the handler code can trigger data mutations. To avoid cyclic generatio
 
 *Metadata Bucket*
 
-Metadata bucket stores artifacts such as timers, DCP streams, worker allocations along with internal checkpoint information.
+Metadata bucket stores artifacts (or configuration documents) such as, DCP streams, worker allocations, timer information, along with internal checkpoint information.
 
-When you are creating a Function, ensure that a separate bucket is destined as a +
-metadata bucket. You can use a common metadata bucket across multiple Functions.
+When you are creating an Eventing Function, ensure that a separate bucket is designated as a metadata bucket. You can use a common metadata bucket across multiple Eventing Functions.
 
-NOTE: At any point, refrain from deleting the metadata bucket. Also, ensure that the Function handler code does not perform a write operation on the metadata bucket.
+NOTE: At any point, refrain from deleting the metadata bucket. Also, ensure that your handler code does not perform a write operation on the metadata bucket.
 
-If a metadata bucket gets accidentally deleted, then all deployed functions are +
-undeployed and associated indexes get dropped.
+If a metadata bucket gets accidentally deleted, then all deployed functions are undeployed and associated indexes get dropped.
 
-== Workers
+== Eventing Function or Handler Settings
 
-Workers can be defined as an execution unit that is assigned a group of vBuckets.
-The worker units are used mostly during Function execution.
+The log levels, N1QL Consistency, Workers, and Script Timeout, are additional options available during the Eventing Function definition process.
+
+* *Log Levels*: Use log levels to determine the granularity of log messages.
++
+The available choices are: Info, Error, Debug, Warning, and Trace.
+* *N1QL Consistency*: The default consistency level of N1QL statements in the handler.
++
+This controls the consistency level for N1QL statements, but can be set on a per statement basis. The valid values are "None" and "Request".
+* *Workers*: Workers the number of worker processes to be started for the handler.
++
+Allows the handler to be scaled up (or vertical scaling). Each worker process supports two fixed threads of execution, however this setting is limited to a maximum of 64 for system optimization purposes. The system automatically generates a warning message if the number of workers exceeds a set threshold based upon cluster resources, however, in this case the handler can still be deployed.
+* *Language compatibility*: The language version of the handler for backward compatibility.
++ 
+If the semantics of a language construct changes in any given release the “language compatibility” setting will ensure an older handler will continue to see the runtime behavior that existed at the time it was authored, until such behavior is deprecated and removed. For example accessing non-existent items from a bucket returns undefined in 6.5 while in 6.0 an exception is thrown. 
+* *Script Timeout*: Script Timeout provides a timeout option to terminate a non-responsive Function.
++
+The entry points into the handler, e.g. OnUpdate and OnDelete, processing for each mutation must complete from start to finish prior to this specified timeout duration.
 
 [#section_mzd_l1p_m2b]
 == Bindings
 
-A binding allows separating of environment specific variables from the handler code.
+A binding is a construct that allows separating environment specific variables (example: bucket names, external endpoint URLs, credentials) from the handler source code. It provides a level of indirection between environment specific artifacts to symbolic names, to help moving a handler definition from development to production environments without changing code. Binding names must be valid JavaScript identifiers and must not conflict any built-in types.
 
-You can add bindings as a name-value pair, where name is the actual name of the bucket in the cluster, and value is the alias that you can use to refer to the bucket from your +
-handler code.
+An Eventing Function can have no binding, one binding, or several bindings.
 
-NOTE: Bindings are mandatory when your handler code performs any bucket related operations.
+*Bucket Bindings*
 
-Bindings ensure easy porting of source code across different environments. You can export-import Functions from test-to-test, test-to-production, or production-to-production environments, without making code changes.
+Bucket bindings allow JavaScript handlers to access Couchbase KV buckets. The buckets are then accessible by the bound name as a JavaScript map in the global space of the handler. 
 
-== Function Settings
+You can add bucket bindings via the 'bucket-alias' choice then entering a tuple of: alias-name, bucket-name, and an access level. Where the alias-name that you can use to refer to the bucket from your handler code; the bucket-name is the actual name of the bucket in the cluster; and the access level is either 'read only' or 'read and write'.
 
-The log levels, script timeout, and workers allocation are additional options available during the Function definition process.
+NOTE: One or more bucket bindings (or bucket-aliases) are mandatory when your handler code performs any bucket related operations.
 
-* *Log Levels*: Use log levels to determine the granularity of log messages.
-* *Script Timeout*: Script Timeout provides a timeout option to terminate a non-responsive Function.
-* *Workers*: Workers allocate the number of worker threads for a specific Function.
-+
-For a defined Function, Couchbase Server limits the maximum number of workers to 10.
-This upper limit is configured for system optimization purposes.
-In the Function definition, if the number of workers exceeds a set threshold, then the system automatically generates a warning message.
-However, this warning message does not prevent deployment of the Function.
+* Read Only Bindings: A binding with access level of "Read Only" allows reading documents from the bucket, but cannot be used to write (create, update or delete) documents in such a bucket. Attempting to do so will throw a runtime exception.
+
+* Read-Write Bindings: A binding with access level of "Read Write" allows both reading and writing (create, update, delete) of documents in the bucket.
+
+*URL Bindings*
+
+These bindings are utilized by the cURL language construct to access external resources. The binding specifies the endpoint, the protocol (http/https), and credentials if necessary. Cookie support can be enabled via the binding if desired when accessing trusted remote nodes. When a URL binding limits access through to be the URL specified or descendants of it. The target of a URL binding should not be a node that belongs to the Couchbase cluster.
+
+You can add URL bindings via the 'URL-alias' choice then entering the following: alias-name, URL, allow cookies setting, and security settings of validate SSL certificate and an auth type of (no auth, basic, bearer, and digest).
+
+= Operations
+
+The following operations are exposed through the UI, couchbase-cli and REST APIs.
 
 == Deploy
 
-The deploy operation activates a Function.
-Multiple Functions can be deployed in a cluster.
-Couchbase server performs source validations before deploying a Function, and only valid Functions get deployed.
-The deploy operation transpiles the code and creates the executable v8 artifacts.
-The source code of a deployed Function cannot be edited.
-The Function must be in a deployed status to process events.
-Once you deploy a Function, depending on the Feed Boundary conditions, the Function execution starts processing the data mutations.
-Deployment of a Function triggers actions such as creating of necessary metadata, initiating worker processes, calculating initial partitions, and creating checkpoints of processed stream data.
-To edit a deployed Function, you must first un-deploy the Function.
+The deploy operation activates an Eventing function or handler. Eventing functions or handlers can be deployed in a cluster.
 
-== Feed Boundary
+This operation activates a handler. Source validations are performed, and only valid handlers can be deployed. Deployment transpiles the code and creates the executable artifacts. The source code of an activated handler cannot be edited. Unless a handler is in deployed state, it will not receive or process any events. Deployment creates necessary metadata, spawns worker processes, calculates initial partitions, and initiates checkpointing of processed stream data.
 
-Feed Boundary is a time milestone used during a Function configuration.
-Using the Feed Boundary option, you can either invoke a Function on all data mutations available in the cluster or choose to invoke a Function during future instances of data mutation, post Function deployment.
+Deployment for DCP observer (or Feed Boundary) has two variations:
+
+* Deploy from Start: The Handler will see a deduplicated history of all documents, ending with the current value of each document. Hence, the Handler will see every document in the bucket at least once.
+
+* Deploy from Now: The handlers will see mutations from current time. In other words, the Handler will see only documents that mutate after it is deployed.
 
 == Undeploy
 
-An undeploy operation causes the Function to stop processing events.
-All allocated worker-processes get terminated, and any runtime resources acquired by the Function gets released.
-Functions in an undeployed state allow editing of the Function handler code.
-After a successful undeploy operation, system does not retain the previous state.
-During redeployment, the Eventing service cannot resume from a prior state before undeployment.
-An undeployed Function retains the memory of its prior deployment, if necessary.
-Newly created handlers start in an undeployed state.
+This operation causes the handler to stop processing events of all types and shuts down the worker processes associated with the handler. It deletes all timers created by the handler being undeployed and their context documents. It releases any runtime resources acquired by the handler. Handlers in undeployed state allow code to be edited. Newly created handlers start in Undeployed state.
+
+== Pause
+
+This stops all processing associated with a handler including timer callbacks. A handler in paused state can be edited. Handlers in Paused state can be either Resumed or Undeployed.
+
+== Resume
+
+This continues processing of a handler that was previously Paused. The backlog of mutations that occurred when the handler was paused will now be processed. The backlog of timers that came due when the handler was paused will now fire. Depending on the system capacity and how long the handler was paused, clearing the backlog may take some time before Handler moves on to current mutations and timers.
 
 == Delete
 
-When a Function gets deleted, the source code implementing the Function, all processing checkpoints, and other artifacts in the metadata provider are purged.
-Before deleting, make sure you have undeployed the Function.
+When a handler is deleted, the source code implementing the handler, all timers, all processing checkpoints and other artifacts in metadata provider is purged. A future handler by the same name has no relation to a prior deleted handler of the same name. Only undeployed handlers can be deleted.
 
+== Debug
+
+Debug is a special flag on a handler that causes the next event instance received by the handler be trapped and sent to a separate v8 worker with debugging enabled. The debug worker pauses the trapped event processing and opens a TCP port and generates a Chrome Developer Tools URL with a session cookie that can be used to control the debug worker. All other events, except the trapped event instance, continue unencumbered. If the debugged event instance completes execution, another event instance is trapped for debugging, and this continues till debugging is stopped, at which point any trapped instance runs to completion and debug worker becomes passive.
+
+Debugging is convenience feature intended to help during handler development and should not be used in production environments. Debugger does not provide correctness or functionality guarantees.
