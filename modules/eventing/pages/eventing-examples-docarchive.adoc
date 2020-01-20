@@ -1,0 +1,153 @@
+= Document Archival
+:tabs:
+
+*Goal*: Create a JavaScript Function that contains an *OnUpdate* handler, which when a document in an existing bucket is about to expire, a perfect copy is created in a different bucket.
+
+This example, *Document Archival* is very similar to the *Document Expiry* example.  However the goal here is to 
+create a robust archiving function and as such this example has a few  important differences.
+
+* We will archive a perfect copy to the target bucket.
+* The edge case ignored for brevity in *Document Expiry* for receiving a mutation a document within 
+  the 120 second window prior to expiration is covered (in this case we don't need a timer).  
+* The edge case ignored for brevity in *Document Expiry* for a missing source document when we 
+  trigger our callback is now caught and it is logged as an error.
+* No logging except for an error case of a missing document when we are archiving.
+* We will not rely on a Couchbase SDK, but rather on an expiry set on the bucket where all documents 
+  in a bucket will have an expiration of 10 minutes from the time of their first mutation or creation.
+
+*Implementation*: Create a JavaScript Function that contains an *OnUpdate* handler, which runs whenever a document is created (or mutated). The handler calls a timer routine, which executes a callback function, two minutes prior to any document’s established expiration. This function will archive an identical document with the same key, in a specified target bucket. The original document in the source bucket is not changed (and will be deleted automatically according to the bucket’s expiration time).
+
+*Preparations*:
+
+For this example, three buckets 'source', 'target', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
+
+For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+
+In addition we will use some data from *travel-sample* sample document set.
+
+NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+
+The 'source' bucket will have a 'Bucket Max Time-To-Live' or TTL of 600 seconds.
+
+*Procedure*:
+
+. If you don’t already have the bucket *travel-sample*' listed in the *Couchbase Web Console* > *Buckets* page you can load this document set as follows:
+** Access the *Couchbase Web Console* > *Settings* page
+** Select the *Sample Buckets* in the upper right banner. 
+** Check *travel-sample* checkbox.
+** Click *Load Sample Data*.
+. Update the advanced settings for the "source" bucket from the *Couchbase Web Console* > *Buckets* page
+** Expand the bucket "source" by clicking on it's row. 
+** In the expanded row Click *Edit*.
+** In the resulting dialog, expand the section "Advanced bucket settings" to view the advanced options.
+** For "Bucket Max Time-To-Live" check "Enable".
+** For "Bucket Max Time-To-Live" enter 600 for the number of seconds.
+** After configuring your settings for the bucket 'source' settings your screen should look like:
++
+image::docarchive_01_bsettings.png[,484]
+** Click *Save Changes*.
+. From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
+The *ADD FUNCTION* dialog appears.
+. In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
+ ** For the *Source Bucket* drop-down, select *source*.
+ ** For the *Metadata Bucket* drop-down, select *metadata*.
+ ** Enter *archive_before_expiry* as the name of the Function you are creating in the *Function Name* text-box.
+ ** [Optional Step] Enter text *Function that archives all documents in a bucket with a bucket TTL set*, in the *Description* text-box.
+ ** For the *Settings* option, use the default values.
+ ** For the *Bindings* option, add two bindings.
+ *** For the first binding, select "bucket alias", specify *src* as the "alias name" of the bucket, and select *source* as the associated bucket, and select "read only".
+ *** For the first binding, select the "bucket alias", specify *tgt* as the "alias name" of the bucket, and select *target* as the associated bucket, and select "read and write".
+ ** After configuring your settings your screen should look like:
++
+image::docarchive_01_fsettings.png[,484]
+** After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
+The *archive_before_expiry* dialog appears.
+
+. The *archive_before_expiry* dialog initially contains a placeholder code block.
+You will substitute your actual *archive_before_expiry code* in this block.
++
+image::docarchive_02_editor_with_default.png[,100%]
+** Copy the following Function, and paste it in the placeholder code block of *archive_before_expiry* dialog.
++
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+    // Only process for those documents that have a non-zero TTL
+    if (meta.expiration == 0 ) return;
+    // Note JavaScript Data() is in ms. and meta.expiration is in sec.
+    if (new Date().getTime()/1000 > (meta.expiration - 120)) {
+        // We are within 120 seconds of expriry just copy it now
+        // create a new document with the same ID but in the target bucket
+        // log('OnUpdate: copy src to tgt for DocId:', meta.id);        
+        tgt[meta.id] = doc;
+    } else {
+        // Compute 120 seconds prior from the TTL, note JavaScript Date() takes ms.
+        var twoMinsPrior = new Date((meta.expiration - 120) * 1000);
+        // Create a timer with a context to run in the future 120 before the expiry
+        // log('OnUpdate: create Timer '+meta.expiration+' - 120, for  DocId:',  meta.id);
+        createTimer(DocTimerCallback, twoMinsPrior , meta.id, meta.id);
+    }
+}
+function DocTimerCallback(context) {
+    // context is just our key to the document that will expire in 120 sec.
+    var doc = src[context]; 
+    if (doc !== undefined) {
+        // create a new document with the same ID but in the target bucket
+        // log('DocTimerCallback: copy src to tgt for DocId:', context);
+        tgt[context] = doc;
+    } else {
+        log('DocTimerCallback: issue missing value for DocId:', context);
+    }
+}
+----
++
+After pasting, the screen appears as displayed below:
++
+image::docarchive_03_editor_with_code.png[,100%]
+** Click *Save*.
+** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
+
+. From the *Eventing* screen, click *Deploy*.
+** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
+** Click *Deploy Function*.
+
+. The Eventing function is deployed and starts running within a few seconds. From this point, the defined Function is executed on all existing documents and on subsequent mutations.
+
+. From the *Couchbase Web Console* > *Query* page we will seed some data :
+** We use the NIQL Query Editor locate a large set of data in `travel-sample`
++
+[source,N1QL]
+----
+SELECT COUNT(*) FROM `travel-sample` where type = 'airport'
+----
+
+** We use the NIQL Query Editor to insert 1,968 items from `travel-sample` of type = "airport" into our 'source' bucket.
++
+[source,N1QL]
+----
+INSERT INTO `source`(KEY _k, VALUE _v)
+    SELECT META().id _k, _v FROM `travel-sample` _v WHERE type="airport";
+---- 
+
+. Now switch to the access the *Couchbase Web Console* > *Buckets* page. The Buckets in the UI the 'metadata' bucket will have 2048 documents related to the Eventing function 
+and "about" 3 x 1,968 additional documents related to the active timers.
+The key thing is that you should see 1,968 documents in the 'source' bucket (inserted via our N1QL query).
++
+image::docarchive_04_buckets.png[,100%]
++
+
+. Now wait a nine (9) minutes, look at the Buckets in the UI again you will see 1,968 documents in the 'source' bucket 
+and 1,968 documents in the 'target bucket'.
++
+image::docarchive_05_buckets.png[,100%]
+
+. Wait a few more minutes (a bit more than two minutes) past the 120 second window, then check the documents within the 
+ bucket 'source', you will find that none of the documents will be accessible as they have expired due to the buckets defined TTL. 
++
+NOTE: If you don’t actually try to access the documents in the bucket 'source' the UI will indicate they still exist until the expiry pager removes the tombstone for the deleted or expired documents (or an attempt to access them is made).
++
+image::docarchive_06_buckets.png[,100%]
+
+. Cleanup, go to the Eventing portion of the UI and undeploy the Function *archive_before_expiry*, this will remove 
+the 2048 documents from the 'metadata' bucket (in the Bucket view of the UI).  Remember you may only delete the 
+'metadata' bucket if there are no deployed Eventing functions.

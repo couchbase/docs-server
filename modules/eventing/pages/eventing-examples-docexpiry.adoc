@@ -1,19 +1,23 @@
-= Document Expiry and Archival
+= Document Expiry
+:tabs:
 
-*Goal*: When a document in an existing bucket is about to expire, a new document is created in a newly created bucket.
+*Goal*: When a document in an existing bucket is about to expire, a new document or is created in a different bucket.
 
-*Implementation*: Write an OnUpdate handler, which runs whenever a document is created or mutated.
+*Implementation*: 
+
+Create a JavaScript Function that contains an *OnUpdate* handler, which runs whenever a document is created (or mutated).
 The handler calls a timer routine, which executes a callback function, two minutes prior to any document’s established expiration.
-This function retrieves a specified value from the document, and stores it in a document of the same name, in a specified target bucket.
-The original document in the source bucket is not changed..
+This function retrieves a specified value from the document, and stores a document with the same key, in a specified target bucket.
+The original document in the source bucket is not changed (and will be deleted).
 
-For this example, the buckets created such as source, target, and metadata buckets, are used.
-A new document is created within the source bucket, and this document has its expiration — or Time To Live (TTL) — set to occur ten minutes after the document's creation.
+We will use a Couchbase SDK (either a Python 2.5 SDK script or a Java 2.7.7 SDK program) to create a document in the 'source' bucket with a key of *SampleDocument2*, and a value of *{'a_key': 'a_value'}* with its expiration (or TTL) set to 600 seconds or 10 minutes).
 
-Python script for this Example is provided for reference.
-Using the Couchbase SDK, you can create or modify the document expiration.
-In this example, the Couchbase SDK Python client creates a document and sets the document's expiration.
-
+[{tabs}] 
+====
+Python 2.5 SDK script::
++
+--
+[source,python]
 ----
 from couchbase.cluster import Cluster
 from couchbase.cluster import PasswordAuthenticator
@@ -21,29 +25,70 @@ import time
 cluster = Cluster('couchbase://localhost:8091')
 authenticator = PasswordAuthenticator('Administrator', 'password')
 cluster.authenticate(authenticator)
-
 cb = cluster.open_bucket('source')
 cb.upsert('SampleDocument2', {'a_key': 'a_value'})
 cb.touch('SampleDocument2', ttl=10*60)
 ----
++
+For information on the Couchbase Python SDK, refer to xref:python-sdk::start-using-sdk.adoc[Start Using the Python SDK].
+--
 
-The script imports a Couchbase cluster object, and authenticates against it, using (for demonstration purposes) the Full Administrator username and password (the cluster is assumed to be accessible on localhost).
-The script then opens the existing source bucket, and inserts a new document, named *SampleDocument2*, whose body is *{'a_key': 'a_value'}*.
+Java 2.7.7 SDK program::
++ 
+-- 
+[source,java]
+----
+import java.time.Duration;
+import com.couchbase.client.java.Bucket;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.CouchbaseCluster;
+import com.couchbase.client.java.document.JsonDocument;
+import com.couchbase.client.java.document.json.JsonObject;
+public class UpsertAndSetExpiry {
+    public static void main(String... args) throws Exception {
+        Cluster cluster  = CouchbaseCluster.create("localhost");
+        cluster.authenticate("Administrator", "password");
+        Bucket bucket = cluster.openBucket("source");
+        String docID = "SampleDocument2";
+        Duration dura = Duration.ofMinutes(10);
+        try {
+            JsonDocument doc = JsonDocument.create(
+                docID, (int)dura.getSeconds(),
+                JsonObject.create().put("a_key", "a_value") );
+            bucket.upsert(doc);
+            System.out.println("docID: " + docID + " expires in " + dura.getSeconds());
+        } catch (Exception e) {
+            System.out.println("upsert error for docID: " + docID + " " + e);
+        }
+        bucket.close();
+        cluster.disconnect();
+    }
+}
+----
++
+For information on the Couchbase Java SDK, refer to xref:java-sdk::start-using-sdk.adoc[Start Using the Java SDK].
+--
+====
 
-For information on installing the Couchbase Python SDK, refer to xref:java-sdk::start-using-sdk.adoc[Start Using the SDK].
-For information on using the Couchbase Python SDK to establish bucket-expiration, refer to xref:dotnet-sdk::document-operations.adoc[Document Operations].
+*Preparations*:
 
-*Procedure*
+For this example, three buckets 'source', 'target', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
 
-Proceed as follows:
+For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
 
-. Install the Couchbase SDK Python client and from the appropriate folder, start Python.
+NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+
+Make sure you can run the Python SDK script (above) to create or update a document in the 'source' bucket, with an expiration time of 600 seconds.
+
+*Procedure*:
+
+. Start the Python interpreter.
 +
 ----
 ./python
 ----
 
-. On the Python prompt, enter the provided code.
+. On the Python prompt, enter the provided code -or- cut and paste the entire script above.
 +
 ----
 >>> from couchbase.cluster import Cluster
@@ -60,61 +105,97 @@ OperationResult<rc=0x0, key='SampleDocument2', cas=0x1519ec8e686c0000>
 >>>
 ----
 
-. To verify bucket creation, access the *Buckets* screen from the *Couchbase Web Console* and click the *Document* tab of the *Source* bucket.
-The new document gets displayed.
-. [Optional Step] Click on a document's id to view the metadata information.
+. You now have a document in bucket 'source' with an expiration set. Type ^D (or ctrl-D) to close the Python session.
+. To verify that your new document was created, access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
+The new document gets displayed automatically (as this page will attempt to list the first few items).
+. [Optional Step] Click on the document's id, *SampleDocument2* to view the documents Data and also the documents Metadata information.  Note that the "expiration" field in the Metadata is non-zero (set to a  Unix timestamp in seconds since epoch).
 . From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
 The *ADD FUNCTION* dialog appears.
 . In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
  ** For the *Source Bucket* drop-down, select *source*.
  ** For the *Metadata Bucket* drop-down, select *metadata*.
- ** Enter *add_timer_before_expiry* as the name of the Function you are creating in the *FunctionName* text-box.
- ** Enter text *Function that adds timer before document expiry*, in the *Description* text-box.
+ ** Enter *add_timer_before_expiry* as the name of the Function you are creating in the *Function Name* text-box.
+ ** [Optional Step] Enter text *Function that adds timer before document expiry*, in the *Description* text-box.
  ** For the *Settings* option, use the default values.
  ** For the *Bindings* option, add two bindings.
-For the first binding specify *source* as the name of the bucket, and specify *src* as the associated value.
-For the second binding, specify *target* as the name of the bucket, and specify *tgt* as the associated value.
+ *** For the first binding, select "bucket alias", specify *src* as the "alias name" of the bucket, and select *source* as the associated bucket, and select "read only".
+ *** For the first binding, select "bucket alias", specify *tgt* as the "alias name" of the bucket, and select *target* as the associated bucket, and select "read and write".
+ ** After configuring your settings your screen should look like:
++
+image::docexpiry_01_settings.png[,484]
 . After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
 The *add_timer_before_expiry* dialog appears.
-. The *add_timer_before_expiry* dialog initially contains a placeholder code block.
+** The *add_timer_before_expiry* dialog initially contains a placeholder code block.
 You will substitute your actual *add_timer_before_expiry code* in this block.
 +
-image::casacade_del_withcode.png[,600]
-
-. Copy the following Function, and paste it in the placeholder code block of *add_timer_before_expiry* dialog.
+image::docexpiry_02_editor_with_default.png[,100%]
+** Copy the following Function, and paste it in the placeholder code block of *add_timer_before_expiry* dialog.
 +
 ----
 function OnUpdate(doc, meta) {
- if (meta.expiration > 0 ) //do only for those documents that have a non-zero TTL
-     {
-       var expiry = new Date(meta.expiration);
-       // Compute 2 minutes from the TTL timestamp
-        var twoMinsPrior = new Date(expiry.setMinutes(expiry.getMinutes()-2));
-        var context = {docID : meta.id};
-        createTimer(DocTimerCallback, twoMinsPrior , meta.id, context);
-        log('Added Doc Timer to DocId:', meta.id);
-      }
+    // Only process for those documents that have a non-zero TTL
+    if (meta.expiration == 0 ) return;
+    // Get the TTL and compute 2 minutes prior to the TTL, note JavaScript Date() takes msec.
+    var twoMinsPrior = new Date((meta.expiration - 2*60) * 1000);
+    // Create a context and then create a timer with our context
+    var context = { docID : meta.id, expiration : meta.expiration };
+    createTimer(DocTimerCallback, twoMinsPrior , meta.id, context);
+    log('OnUpdate add Timer 2 min. prior to TTL to DocId:',  meta.id);
 }
-function DocTimerCallback(context)
-     {
-       log('DocTimerCallback Executed for DocId:', String(context.docID));
-       tgt[context.docID] = "To Be Expired Key's Value is:" + JSON.stringify(src[context.docID]);
-       log('Doc Timer Executed for DocId', String(context.docID));
-     }
+function DocTimerCallback(context) {
+    log('DocTimerCallback 1 on DocId:', String(context.docID));
+    // create a new document with the same ID but in the target bucket
+    tgt[context.docID] = "To Be Expired in 2 min., Key's Value is:" + JSON.stringify(src[context.docID]);
+    log('DocTimerCallback 2 src expiry:', new Date(context.expiration  * 1000));
+    log('DocTimerCallback 3 tgt archive via Key:', String(context.docID));
+}
 ----
 +
 After pasting, the screen appears as displayed below:
 +
-image::casacade_del_withcode.png[,600]
+image::docexpiry_03_editor_with_code.png[,100%]
+** Click *Save*.
+** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
 
-. Click *Save*.
-. To return to the Eventing screen, click *Eventing* tab.
 . From the *Eventing* screen, click *Deploy*.
-. In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
-. Click *Deploy*.
-The function is deployed and starts running within a few seconds.
+** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
+** Click *Deploy Function*.
+
+. The Eventing function is deployed and starts running within a few seconds.  From this point, the defined Function is executed on all existing documents and on subsequent mutations.
+
+
+. Look at the Log for *add_timer_before_expiry* once it deploys (the "*Log*" link will appear once the function is deployed)
 +
-image::cascade_delete_buckets.png[,600]
+----
+2020-01-13T13:50:47.149-08:00 [INFO] "OnUpdate add Timer 2 min. prior to TTL to DocId:" "SampleDocument2"
+----
+
+. Now look at the Buckets in the UI the 'metadata' bucket will have 2048 documents related to the Eventing function and three (3) additional documents related to the timer, and of course the key thing is that you should see one (1) document in the 'source' bucket (poked in via the Python script).
 +
-As a result, a new document — like the original, named *SourceDocument2* — is created, with a value based on that of the original.
-After two minutes has elapsed, check the documents within the source bucket: the original *SourceDocument2* is no longer visible, having been removed at its defined expiration-time.
+image::docexpiry_04_buckets.png[,100%]
++
+
+. Wait a few minutes, return to Eventing in the UI and Look at the Log again for *add_timer_before_expiry* at two minutes before the TTL was scheduled the timer will have fired and executed DocTimerCallback (note the logs display by the "*Log*" link are in reverse time order)
++
+----
+2020-01-13T13:51:58.783-08:00 [INFO] "DocTimerCallback 3 tgt archive via Key:" "SampleDocument2"
+2020-01-13T13:51:58.783-08:00 [INFO] "DocTimerCallback 2 src expiry:" "2020-01-13T21:53:46.000Z"
+2020-01-13T13:51:58.781-08:00 [INFO] "DocTimerCallback 1 on DocId:" "SampleDocument2"
+2020-01-13T13:50:47.149-08:00 [INFO] "OnUpdate add Timer 2 min. prior to TTL to DocId:" "SampleDocument2"
+----
++
+The final result, is a new document containing data from the original, named *SourceDocument2* being written to the bucket 'target' with the same Key.
+
+. Now look at the Buckets in the UI again you will see one (1) document in the 'source' bucket and one (1) document in the 'target bucket'.
++
+image::docexpiry_05_buckets.png[,100%]
+
+. Wait a few more minutes (actual just bit more than two minutes) past the 120 second window, then check the document within the 
+ bucket 'source', you will find that it is missing and will not be accessible as it has expired due to the defined TTL on the document. 
++
+NOTE: If you don’t actually try to access the document in the bucket 'source' by clicking on the *Documents" link the UI will indicate it still exists until the expiry pager removes the tombstone for the deleted or expired documents (or an attempt to access it is made).
++
+image::docexpiry_06_buckets.png[,100%]
+
+. Cleanup, go to the Eventing portion of the UI and undeploy the Function *add_timer_before_expiry*, this will remove the 2048 documents from the 'metadata' bucket (in the Bucket view of the UI).  Remember you may only delete the 'metadata' bucket if there are no deployed Eventing functions.
+

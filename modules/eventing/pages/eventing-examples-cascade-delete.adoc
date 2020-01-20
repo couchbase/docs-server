@@ -1,95 +1,223 @@
 = Cascade Delete
 
-*Goal*: This example illustrates how to leverage the Eventing Service to perform a cascade delete operation.
-When a user is deleted, Couchbase Functions provide a reliable method to delete all the associated documents with the deleted user.
+*Goal*: This example illustrates how to leverage the Eventing Service to perform a cascade delete operation. When a user is deleted, Couchbase Functions provide a reliable method to delete all the associated documents related to the deleted user.
 
-This example requires you to create three buckets: users, metadata and transactions buckets.
+*Implementation*: Create a JavaScript Function that contains an *OnDelete* handler.
+The handler listens to mutations or data-changes within a specified, *users* source bucket.
+When a user within the source bucket gets deleted, the handler executes a routine to remove the deleted user.
+When the delete operation is complete, all associated documents of the delete user also get removed.
+
+*Preparations*:
+
+For this example, three buckets 'users', 'transactions', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
 
 For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
 
-*Implementation*: Create a JavaScript Function that contains an *OnDelete* handler.
-The handler listens to data-changes within a specified, *users* source bucket.
-When a user within the source bucket gets deleted, the handler executes a routine to remove the deleted user.
-When the delete operation is complete, all associated documents of the delete users get removed.
+NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
 
-Proceed as follows:
+*Procedure*:
 
-. From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*,to add a new Function.
-+
-image::functions_add_4exp3.png[,400]
-
-. In the *ADD FUNCTION* dialog, for individual Function elements, provide the below information:
- ** For the *Source Bucket* drop-down, select the *Users* that was created for this purpose.
- ** For the *Metadata Bucket* drop-down, select the *metadata* that was created for this purpose.
- ** Enter *delete_orphaned_txns* as the name of the Function you are creating in the *Function**Name* text-box.
- ** Enter *Delete Orphaned Transactions from the `transactions’ bucket when user_id is less than 10* in the *Description* text-box.
+. From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
+The *ADD FUNCTION* dialog appears.
+. In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
+ ** For the *Source Bucket* drop-down, select *users*.
+ ** For the *Metadata Bucket* drop-down, select *metadata*.
+ ** Enter *delete_orphaned_txns* as the name of the Function you are creating in the *Function Name* text-box.
+ ** [Optional Step] Enter text *Delete Orphaned Transactions from the `transactions’ bucket when user_id is greater than or equal to 100*, in the *Description* text-box.
  ** For the *Settings* option, use the default values.
- ** For the *Bindings* option, specify *users* as the *name* of the bucket and specify **src**_**user** as the associated *value*.
-. After providing all the required information in the *ADD FUNCTION* dialog, click *Next*: *Add Code*.
+ ** For the *Bindings* option, add one binding.
+ *** For the binding, select "bucket alias", specify *src_user* as the "alias name" of the bucket, and select *users* as the associated bucket, and select "read only".  *Note we will not be using this binding as we have no need of it because we will use N1QL.*
+ ** After configuring your settings your screen should look like:
++
+image::cascadedel_01_settings.png[,484]
+. After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
 The *delete_orphaned_txns* dialog appears.
+** The *delete_orphaned_txns* dialog initially contains a placeholder code block.
+You will substitute your actual *delete_orphaned_txns code* in this block.
 +
-The *delete_orphaned_txns* dialog initially contains a placeholder code block.
-You will substitute your actual *delete_orphaned_txns* code in this block.
+image::cascadedel_02_editor_with_default.png[,100%]
+** Copy the following Function, and paste it in the placeholder code block of *delete_orphaned_txns* dialog.
 +
-image::addfunctions-code_exp3.png[,400]
-
-. Copy the following Function, and paste it in the placeholder code block of the *delete_orphaned_txns* screen:
-+
+[source,javascript]
 ----
 function OnUpdate(doc, meta) {
-    log('OnUpdate document:', meta.id);
+    // debug only shows out mutations, we could delete this entire OnUpdate() function
+    log('OnUpdate NOOP id: ' + meta.id + ' document:',doc);
 }
-
 function OnDelete(meta) {
-    log('Document Deleted:', meta.id);
-    if(meta.id < 10)
-    {
-       try
-       {
-            var this_user_id = meta.id;
-            delete from `transactions` where user_id = TONUMBER($this_user_id);
-            log('Deleted Orphaned Transactions for User:', this_user_id);
+    // Ignore all keys not matching "user_#", allows other types in the source bucket
+    if ((meta.id).startsWith("user_") == false) return;
+    // implement a contrived filter, keep all user transactions where the user_id > 100
+    var id = meta.id;
+    var numeric_id = parseInt(id.substring(5));
+    if(!isNaN(numeric_id) && numeric_id >= 100) {
+       try  {
+            DELETE FROM `transactions` WHERE user_id = $numeric_id;
+            log('OnDelete: removed orphaned transactions for:', id);
+       } catch(e) {
+           log('OnDelete: Exception:', e)
        }
-       catch(e)
-       {
-           log('Exception:', e)
-       }
+    } else {
+        log('OnDelete: user_id < 100, kept orphaned transactions for:', id);
     }
 }
 ----
 +
 After pasting, the screen appears as displayed below:
 +
-image::ondelete-functions.png[,600]
-+
-The *OnDelete* handler is triggered for user delete transaction.
-The handler checks if the *user_id* is less than 10.
-When this condition is fulfilled, then an N1QL query is triggered to delete all user related information.
-The handler is then configured to record this delete operation in a Function specific application log file.
-.
+image::cascadedel_03_editor_with_code.png[,100%]
+** Click *Save*.
+** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
 
-. To return to the Eventing screen, click *Eventing*.
-The Function *delete_orphaned_txns* is listed as a defined Function.
-Currently, it is listed as *Undeployed* and *Paused*.
-. Click *Deploy*.
-. From the *Confirm Deploy Function* dialog, click *Deploy Function*.
-From this point, the defined Function is executed on all existing documents and on subsequent mutations.
-. Navigate to the *Couchbase Web Console* > *Query* page.
-Before deleting a user, a snapshot of *Query Result* from the *users* bucket is displayed:
-+
-image::queryresults_ondelerte.png[,400]
+. The *OnDelete* handler above is triggered for user delete transaction. The handler checks if the *user_id* is greater than or equal to 100 (_the contrived filter never deletes the orphaned transactions form any user with an id of < 100_). When this condition is fulfilled, then an N1QL query is triggered to delete all user related information. The handler also logs if the orphaned transactions were removed or kept to Function specific application log file.
 
-. The *Query Results* display users with **user_id**s from 1 to 10.
-. Navigate to the *Couchbase Web Console* > *Buckets* page.
-Delete two users from the *Users* bucket:
- ** Select *User4* from the list and click the *delete* icon.
- ** Select *User10* from the list and click the *delete* icon.
-. From the *Query Editor*, execute an N1QL query to check that all related records for the deleted users are removed from the cluster.
+. From the *Eventing* screen, click *Deploy*.
+** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
+** Click *Deploy Function*.
+
+. The Eventing function is deployed and starts running within a few seconds. From this point, the defined Function is executed on all existing documents and on subsequent mutations.
+
+. From the *Couchbase Web Console* > *Query* page we will seed some data :
+** First create some actual users (5 total)
++
+[source,N1QL]
+----
+INSERT INTO `users` (KEY,VALUE) 
+    VALUES ( "user_50",  { "user_id":  50, "name": "jeff shoemaker", "age": "77"} ),
+    VALUES ( "user_100", { "user_id": 100, "name": "john doe",       "age": "30"} ),
+    VALUES ( "user_101", { "user_id": 101, "name": "frank smith",    "age": "20"} ),
+    VALUES ( "user_102", { "user_id": 102, "name": "jenny jones",    "age": "47"} ),
+    VALUES ( "user_103", { "user_id": 103, "name": "jerry springer", "age": "28"} );  
+----
+** Next create some transactions (9 total) one or more for each of our users
+SELECT count(*) FROM `transactions`; SELECT count(*) FROM `users`;
++
+[source,N1QL]
+----
+INSERT INTO `transactions` (KEY,VALUE) 
+    VALUES ( "txid_999",  { "user_id":  50, "item": "vitamins", "price": 2.99} ),
+    VALUES ( "txid_1000", { "user_id": 100, "item": "milk", "price": 3.50} ),
+    VALUES ( "txid_1001", { "user_id": 100, "item": "cheese", "price": 2.50} ),
+    VALUES ( "txid_1002", { "user_id": 100, "item": "beer", "price": 7.89} ),
+    VALUES ( "txid_1003", { "user_id": 100, "item": "pizza", "price": 12.53} ),
+    VALUES ( "txid_1004", { "user_id": 101, "item": "lettuce", "price": 1.30} ),
+    VALUES ( "txid_1005", { "user_id": 101, "item": "salad dressing", "price": 4.15} ),
+    VALUES ( "txid_1006", { "user_id": 102, "item": "chicken", "price": 4.32} ),
+    VALUES ( "txid_1007", { "user_id": 103, "item": "steak", "price": 6.53} );   
+----
+** Next create some indices so that we can perform some N1QL queries.
++
+[source,N1QL]
+----
+CREATE PRIMARY INDEX `def_primary` ON `users`;
+CREATE PRIMARY INDEX `transactions` ON `transactions`;
+----
+** Before deleting a user to test our Eventing Function we will use the NIQL Query Editor to inspect our data we just made in the bucket in `users` we should have five (5) users.
++
+[source,N1QL]
+----
+SELECT * FROM `users` ORDER BY user_id;
+----
++
+After executing the above N1QL statement you should see a table of 'user' data as follows:
++
+image::cascadedel_04_qryusers.png[,100%]
+** Next use the NIQL Query Editor to inspect our data we just made in the bucket in `users` we should have nine (9) transactions.
++
+[source,N1QL]
+----
+SELECT * FROM `transactions` ORDER BY user_id;
+----
++
+After executing the above N1QL statement you should see a table of 'transaction' data as follows:
++
+image::cascadedel_05_qrytrans.png[,100%]
+** Now NIQL Query Editor print out our user count and our transaction count (copy-and-paste both statements together, e.g. a compound query).  This verifies that we have five (5) users and nine (9) transactions.
++
+[source,N1QL]
+----
+SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+----
+
+. Access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *users* bucket.
+** You should see five user records.
++
+image::cascadedel_06_usersdocs.png[,100%]
+** Click on the "trash can" icon to delete the document with the id *user_100*
+** Click "Continue" in the warning dialog to verify you want to delete the document
+** The *user_100* should no longer be listed
++
+image::cascadedel_07_del_100_usersdocs.png[,100%]
+
+. Access the *Couchbase Web Console* > *Query* and rerun your compound query as above. 
+** You will now have four (4) users and five (5) transactions.
++
+[source,N1QL]
+----
+SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+----
++
+After executing the above N1QL statement you should see a table showing counts as follows:
++
+image::cascadedel_08_reminingcounts.png[,100%]
+
+. Access the *Couchbase Web Console* > *Eventing* and click the *Log* link of the deployed *delete_orphaned_txns* Eventing function. 
+** This Function Log dialog lists log statements in reverse order (newest items first).
+** The most recent or top line should be similar to the following:
 +
 ----
-SELECT user_id, COUNT(1) FROM `Users` GROUP BY user_id ORDER BY user_id ASC;
+2020-01-17T11:33:38.457-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_100"
+----
+** The next four lines came from the OnUpdate handler of the *delete_orphaned_txns* Eventing function and show when you created your users. If you eiminate the function OnUpdate(doc, meta) {...} handler in your Eventing function you would not get the below messages. 
++
+----
+2020-01-17T11:28:36.556-08:00 [INFO] "OnUpdate NOOP id: user_102 document:" {"age":"47","name":"jenny jones","user_id":102}
+2020-01-17T11:28:36.547-08:00 [INFO] "OnUpdate NOOP id: user_100 document:" {"age":"30","name":"john doe","user_id":100}
+2020-01-17T11:28:36.503-08:00 [INFO] "OnUpdate NOOP id: user_50 document:" {"age":"77","name":"jeff shoemaker","user_id":50}
+2020-01-17T11:28:36.503-08:00 [INFO] "OnUpdate NOOP id: user_103 document:" {"age":"28","name":"jerry springer","user_id":103}
+2020-01-17T11:28:36.499-08:00 [INFO] "OnUpdate NOOP id: user_101 document:" {"age":"20","name":"frank smith","user_id":101}
+----
+
+. Access the *Couchbase Web Console* > *Query* and run the following N1QL statements
+** Verify counts in both bucket 'users' and bucket 'transactions'
++
+[source,N1QL]
+----
+SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+----
+** Delete all Users in bucket 'users'
++
+[source,N1QL]
+----
+DELETE FROM `users`;
+----
+** Verify counts again both bucket 'users' and bucket 'transactions' at this point you should only have one (1) transaction
++
+[source,N1QL]
+----
+SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+----
+** Look at the one (1) remaining transaction it should be related to user_id 50
++
+[source,N1QL]
+----
+SELECT * FROM `transactions`; 
 ----
 +
-image::query-results-ondelete.png[,400]
+After executing the above N1QL statement you should see only one 'transaction' item follows:
++
+image::cascadedel_09_kepttrans.png[,100%]
 
-. In the *Query Results* pane notice that user_ids, *user_id4* and *user_id 10* are removed as part of the cascade user delete operation.
+. Access the *Couchbase Web Console* > *Eventing* and click the *Log* link of the deployed *delete_orphaned_txns* Eventing function. 
+** The most recent four lines should be similar to the statements:
++
+----
+Function Log - delete_orphaned_txns
+2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: user_id < 100, kept orphaned transactions for:" "user_50"
+2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_103"
+2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_102"
+2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_101"
+----
+** Note, the transaction(s) associated with user_id were kept as per our business logic.
+
+. Cleanup, go to the Eventing portion of the UI and undeploy the Function *delete_orphaned_txns*, this will remove the 1024 documents from the 'metadata' bucket (in the Bucket view of the UI).  Remember you may only delete the 'metadata' bucket if there are no deployed Eventing functions.
