@@ -11,15 +11,63 @@ The handler calls a timer routine, which executes a callback function, two minut
 This function retrieves a specified value from the document, and stores a document with the same key, in a specified target bucket.
 The original document in the source bucket is not changed (and will be deleted).
 
-We will use a Couchbase SDK (either a Python 2.5 SDK script or a Java 2.7.11 SDK program) to create a document in the 'source' bucket with a key of *SampleDocument2*, and a value of *{'a_key': 'a_value'}* with its expiration (or TTL) set to 600 seconds or 10 minutes).
+*Preparations*:
+
+For this example, three buckets 'source', 'target', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
+
+For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+
+NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+
+Make sure you can run the Python SDK script (above) to create or update a document in the 'source' bucket, with an expiration time of 600 seconds.
+
+*Create a document with a TTL 10 minutes*
+
+The example requires a document to be created in the 'source' bucket with a key of *SampleDocument2*, a value of *{'a_key': 'a_value'}*, and most importanly that the document's expiration (or TTL) set to 600 seconds or 10 minutes). 
+
+There are several methods to make a test document with an experation set.  The easist is most likey using _cbc_.  However you can use any Couchbase SDK (the command-line KV client is compiled from the C SDK).  FOr example you can use a Python script or a Java program. 
 
 [{tabs}] 
-====
-Python 2.5 SDK script::
+The cbc binary, or KV client::
++
+--
+On Linux:
+[source]
+----
+/opt/couchbase/bin/cbc \
+    create SampleDocument2 -V '{"a_key": "a_value"}' -U couchbase://localhost/source \
+    -u Administrator -P password \
+    --expiry=600 
+----
+on macOS
+[source]
+----
+/Applications/Couchbase Server.app/Contents/Resources/couchbase-core/bin/cbc \
+     create SampleDocument2 -V '{"a_key": "a_value"}' -U couchbase://localhost/source \
+    -u Administrator -P password \
+    --expiry=600
+----
+on Windows
+[source]
+----
+C:\Program Files\Couchbase\Server\bin\cbc ^
+     create SampleDocument2 -V '{"a_key": "a_value"}' -U couchbase://localhost/source ^
+    -u Administrator -P password ^
+    --expiry=600
+----
+Use the command-line KV client, e.g. the _cbc_ binary, and cut-n-paste one of the the above to create the needed sample document.
+
+We are passing --expiry the number of time in seconds from now at which the item should expire. However if you want an expiry over 30 days you must use the number of seconds since Unix Epoch. 
+
+For information on the cbc tool, refer to xref:docs-sdk-c::webui-cli-access.adoc#using-the-command-line-kv-client[Using the command-line KV client].
+--
+
+Python SDK script::
 +
 --
 [source,python]
 ----
+# This is a Python 2.5 SDK example
 from couchbase.cluster import Cluster
 from couchbase.cluster import PasswordAuthenticator
 import time
@@ -30,13 +78,15 @@ cb = cluster.open_bucket('source')
 cb.upsert('SampleDocument2', {'a_key': 'a_value'})
 cb.touch('SampleDocument2', ttl=10*60)
 ----
-+
+Issue the command _python_ to start the Python interpreter then cut-n-paste the above to create the needed sample document.
+
 For information on the Couchbase Python SDK, refer to xref:python-sdk::start-using-sdk.adoc[Start Using the Python SDK].
 --
 
-Java 2.7.11 SDK program::
+Java SDK program::
 + 
 -- 
+A Java 2.7.11 SDK program example
 [source,java]
 ----
 import java.time.Duration;
@@ -66,45 +116,42 @@ public class UpsertAndSetExpiry {
     }
 }
 ----
-+
+A Java 3.0 SDK program example
+[source,java]
+----
+package com.jonstrabala;
+import java.time.Duration;
+import com.couchbase.client.java.*;
+import com.couchbase.client.java.json.JsonObject;
+import static com.couchbase.client.java.kv.UpsertOptions.upsertOptions;
+public class UpsertAndSetExpiry_v3 {
+    public static void main(String... args) throws Exception {
+    	Cluster cluster = Cluster.connect("localhost", "Administrator", "password");
+    	Bucket bucket = cluster.bucket("source");
+    	Collection collection = bucket.defaultCollection();
+    	String docID = "SampleDocument2";
+    	Duration dura = Duration.ofMinutes(10);
+    	try {
+    		collection.upsert(
+    			docID, JsonObject.create().put("a_key", "a_value"), 
+    			upsertOptions().expiry(dura) );
+    		System.out.println("docID: " + docID + " expires in " + dura.getSeconds());
+    	} catch (Exception e) {
+    		System.out.println("upsert error for docID: " + docID + " " + e);
+    	}
+        bucket = null;
+        collection = null;
+    	cluster.disconnect(Duration.ofSeconds(2000));
+    }
+}
+----
+Download the proper SDK and then compile and run one of the above Java programs
+
 For information on the Couchbase Java SDK, refer to xref:java-sdk::start-using-sdk.adoc[Start Using the Java SDK].
 --
 ====
 
-*Preparations*:
-
-For this example, three buckets 'source', 'target', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
-
-For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
-
-NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
-
-Make sure you can run the Python SDK script (above) to create or update a document in the 'source' bucket, with an expiration time of 600 seconds.
-
 *Procedure*:
-
-. Start the Python interpreter.
-+
-----
-./python
-----
-
-. On the Python prompt, enter the provided code -or- cut and paste the entire script above.
-+
-----
->>> from couchbase.cluster import Cluster
->>> from couchbase.cluster import PasswordAuthenticator
->>> import time
->>> cluster = Cluster('couchbase://localhost:8091')
->>> authenticator = PasswordAuthenticator('Administrator', 'password')
->>> cluster.authenticate(authenticator)
->>> cb = cluster.open_bucket('source')
->>> cb.upsert('SampleDocument2', {'a_key': 'a_value'})
-OperationResult<rc=0x0, key='SampleDocument2', cas=0x1519ec8cdee90000>
->>> cb.touch('SampleDocument2', ttl=10*60)
-OperationResult<rc=0x0, key='SampleDocument2', cas=0x1519ec8e686c0000>
->>>
-----
 
 . You now have a document in bucket 'source' with an expiration set. Type ^D (or ctrl-D) to close the Python session.
 . To verify that your new document was created, access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
