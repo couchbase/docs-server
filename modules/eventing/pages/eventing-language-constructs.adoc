@@ -15,11 +15,12 @@ Additionally, to optimize language-utilization of the server environment, some n
 
 The following JavaScript features have been removed and cannot be used in handlers:
 
-* Global State
-* Asynchrony
-* Browser and other Extensions
+* <<global_state,Global State>>
+* <<asynchrony,Asynchrony>>
+* <<browser_extensions,Browser and other Extensions>>
 
-_Global State_:
+[#global_state]
+*_Global State_:*
 
 Function handlers do not allow global variables. All state must be saved and retrieved from persistence providers. In Couchbase Server, the Data Service provider is used as a persistence provider. Therefore, all global states are contained in the Data Service bucket(s) made available to the Function handlers through bindings. This restriction is mandatory for the Function's handler logic to remain agnostic of the rebalance operation.
 
@@ -31,7 +32,8 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-_Asynchrony_:
+[#asynchrony]
+*_Asynchrony_:*
 
 Asynchrony, particularly asynchronous callbacks, to be useful needs to retain access to their parent scope. As such asynchrony forms a node specific, long-running state that prevents the capture of the entire state in the persistence providers. Therefore, Function handlers are restricted to executing as short-running, straight-line code, without sleep and wakeups. Limited asynchrony is added back through time observers. Time observers are designed specifically not to make the state node specific.
 
@@ -42,7 +44,8 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-_Browser and other Extensions_:
+[#browser_extensions]
+*_Browser and other Extensions_:*
 
 Function handlers execute as server-side code on Couchbase Server similar to the JavaScript code that is used in browsers.
 
@@ -62,11 +65,12 @@ function OnUpdate(doc, meta) {
 
 The following constructs have been added:
 
-* Bucket Accessors
-* Logging
-* Top level N1QL keywords such as SELECT, UPDATE, and INSERT
+* <<bucket_accessors,Bucket Accessors>>
+* <<logging,Logging>>
+* <<n1ql_statments,N1QL Statements>>
 
-_Bucket Accessors_:
+[#bucket_accessors]
+*_Bucket Accessors_:*
 
 Couchbase buckets, when bound to a Function, appear as a global JavaScript map.
 The map operations such as get, set and delete are exposed to the Data Service providers get, set, and delete operations respectively.
@@ -93,7 +97,9 @@ This sets the provided JavaScript value into the KV bucket the variable is bound
 +
 This deletes the provided key from the KV bucket the variable is bound to. If the object does not exist, this call is treated as a no-op. This operation throws an exception if the underlying bucket DELETE operation fails with an unexpected error.
 
-_Logging_:
+
+[#logging]
+*_Logging_:*
 
 An additional function, log() has been introduced to the language, which allows handlers to log user defined messages. These messages go into the eventing data directory and do not contain any system log messages. The function takes a string to write to the file. If non-string types are passed, a best effort string representation will be logged, but the format of these may change over time. This function does not throw exceptions.
 
@@ -104,22 +110,23 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-_N1QL Queries_:
+[#n1ql_statments]
+*_N1QL Statements_:*
 
-Top level N1QL keywords, such as SELECT, UPDATE, INSERT, are available as keywords in handlers. Operations that return values such as SELECT are accessible through a returned Iterable handle. Query results are streamed in batches to the Iterable handle as the iteration progresses through the result set.
-	
+Top level N1QL keywords, such as SELECT, UPDATE, INSERT and DELETE, are available as inline keywords in handlers. Operations that return values such as SELECT are accessible through a returned Iterable handle. N1QL Query results, via a SELECT, are streamed in batches to the Iterable handle as the iteration progresses through the result set.
+
 NOTE: N1QL DML statements cannot manipulate documents in the same bucket as the handler is listening for mutations on to avoid recursion. Workaround: use the exposed data service KV map in your Eventing function.
 
-JavaScript variables can be referred by N1QL statements using *$<variable>* syntax. Such parameters will be substituted with the corresponding JavaScript variable’s runtime value using N1QL named parameters substitution facility.
+JavaScript variables can be referred by N1QL statements using *$<variable>* syntax. Such parameters will be substituted with the corresponding JavaScript variable's runtime value using N1QL named parameters substitution facility.
 
 [source,javascript]
 ----
-function OnUpdate(doc, meta) {  
-    var strong = 70;  
-    var results = 
-        SELECT *                  // N1QL queries are embedded directly.
-        FROM `beer-samples`       // Token escaping is standard N1QL style.    
-        WHERE abv > $strong;      // Local variable reference using $ syntax.  
+function OnUpdate(doc, meta) {
+    var strong = 70;
+    var results =
+        SELECT *                  /* N1QL queries are embedded directly.    */
+        FROM `beer-samples`       /* Token escaping is standard N1QL style. */
+        WHERE abv > $strong;      // Local variable reference using $ syntax.
     for (var beer of results) {   // Stream results using 'for' iterator.
         log(beer);
         break;
@@ -130,27 +137,32 @@ function OnUpdate(doc, meta) {
 
 The call starts the query and returns a JavaScript Iterable object representing the result set of the query. The query is streamed in batches as the iteration proceeds. The returned handle can be iterated using any standard JavaScript mechanism including _for...of_ loops.
 
+In multiline N1QL statements (as above) you cannot use single line [.var]`// end of line comments like this` +
+prior to the terminating semicolon as it will cause a syntax error in the transpilation of the N1QL statement, however muliti-line [.var]`/* comments like this */` are allowed.
+
 The iterator is an input iterator (elements are read-only). The keyword _this_ cannot be used in the body of the iterator. The variables created inside the iterator are local to the iterator.
 
-The returned handle must be closed using the *close()* method defined on it, which stops the underlying N1QL query and releases associated resources.
+The returned handle must be closed using the [.var]`close()` method defined on it, which stops the underlying N1QL query and releases associated resources.
+
+NOTE: When a handler completes for a given mutation and exits all resources will be freed even if you omit the [.var]`close()` statement for your result set(s). However in some complex use cases such as nested N1QL lookups a failure to explicitly call [.var]`close()` after each result set is no longer needed can tie up an excessive amount of N1QL resources and lead to poor performance.
 
 All three operations, i.e., the N1QL statement, iterating over the result set, and closing the Iterable handle can throw exceptions if unexpected error arises from the underlying N1QL query.
 
-As N1QL is not syntactically part of the JavaScript language, the handler code is transpiled to identify valid N1QL statements which are then converted to a standard JavaScript function call that returns an Iterable object with addition of a *close()* method. 
+As N1QL is not syntactically part of the JavaScript language, the handler code is transpiled to identify valid N1QL statements which are then converted to a standard JavaScript function call that returns an Iterable object with addition of a [.var]`close()` method.
 
 You must use [.var]`$<variable>`, as per N1QL specification, to use a JavaScript variable in the query statement.
 The object expressions for substitution are not supported and therefore you cannot use the [.param]`meta.id` expression in the query statement.
 
 Instead of [.param]`meta.id` expression, you can use `var id = meta.id` in an N1QL query.
 
-* Invalid N1QL query
+* Invalid N1QL Statement
 +
 [source, N1QL]
 ----
 DELETE FROM `transactions` WHERE username = $meta.id;
 ----
 
-* Valid N1QL query
+* Valid N1QL Statement
 +
 [source, N1QL]
 ----
@@ -158,7 +170,8 @@ var id = meta.id;
 DELETE FROM `transactions` WHERE username = $id;
 ----
 
-When you use a N1QL query inside a Function handler, remember to use an escaped identifier for bucket names with special characters (`[.var]`bucket-name``).
+When you use a N1QL query inside a Function handler, remember to use an escaped identifier for bucket names with special characters
+(+++`+++[.param]`bucket-name`+++`+++).
 Escaped identifiers are surrounded by backticks and support all identifiers in JSON
 
 For example:
@@ -177,9 +190,21 @@ SELECT * FROM `beer-sample` WHERE type...
 SELECT * FROM beersample WHERE type ...
 ----
 
-_N1QL() call_
+[#build-in-functions]
+== Built-in Functions
 
-NOTE: The _N1QL()_ call  is documented below for reference purposes but should not used directly as doing so would bypass the various semantic and syntactic checks of the transpiler (notably: recursive mutation checks will no longer function, and the statement will need to manual escaping of all N1QL special sequences and keywords).
+The following built in functions have been added:
+
+* <<n1ql_call,The N1QL() function call>>
+* <<crc64_call,The crc64() function call>>
+
+
+[#n1ql_call]
+*_The N1QL() function call_:*
+
+The _N1QL()_ function call  is documented below for reference purposes but should not used directly as doing so would bypass the various semantic and syntactic checks of the transpiler (notably: recursive mutation checks will no longer function, and the statement will need to manual escaping of all N1QL special sequences and keywords).
+
+NOTE: In addition the _N1qlQuery()_ is now deprecated and has been replaced with the _N1QL()_ call which has a different parameter format.
 
 * _statement_
 +
@@ -201,20 +226,17 @@ This controls the consistency level for the statement. Normally, this defaults t
 +
 The call returns a JavaScript Iterable object representing the result set of the query. The query is streamed in batches as the iteration proceeds. The returned handle can be iterated using any standard JavaScript mechanism including for...of loops.
 
-* _close() Method on handle object (return value)_
+** _close() Method on handle object (return value)_
 +
-This releases the resources held by the N1QL query. If the query is still streaming results, the query is cancelled. 
+This releases the resources held by the N1QL query. If the query is still streaming results, the query is cancelled.
 
 * _Exceptions Thrown_
 +
 The N1QL() function throws an exception if the underlying N1QL query fails to parse or start executing. The returned Iterable handler throws an exception if the underlying N1QL query fails after starting. The close() method on the iterable handle can throw an exception if underlying N1QL query cancellation encounters an unexpected error.
 
 
-
-[#build-in-functions]
-== Built-in Functions
-
-* crc64()
+[#crc64_call]
+*_The crc64() function call_:*
 
 _crc64()_: This function calculates the CRC64 hash of an object using the ISO polynomial. The function
 takes one parameter, the object to checksum, and this can be any JavaScript object that can be
@@ -230,20 +252,20 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-The *crc64* function can be useful in case like suppressing a duplicate mutation from the Sync Gateway (or SG), when both the Sync Gateway & Eventing are leveraging same bucket. Basically, Sync gateway would update metadata of the document within the bucket - which in turn generates an event for Eventing to process. Eventing can’t differentiate between events from Sync Gateway vs other events(doc updates via SDK, N1QL and others).  A work around to this double mutation issue is possible via the *crc64()* function
+The *crc64* function can be useful in case like suppressing a duplicate mutation from the Sync Gateway (or SG), when both the Sync Gateway & Eventing are leveraging same bucket. Basically, Sync gateway would update metadata of the document within the bucket - which in turn generates an event for Eventing to process. Eventing can't differentiate between events from Sync Gateway vs other events(doc updates via SDK, N1QL and others).  A work around to this double mutation issue is possible via the *crc64()* function
 
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
     // Ignore documents created by sync gateway
     if(meta.id.startsWith("_sync") == true) return;
- 
+
     // Ignore documents whose body has not changed since we last saw it
     var prev_crc = checksum_bucket[meta.id];
     var curr_crc = crc64(doc);
     if (prev_crc === curr_crc) return;
     checksum_bucket[meta.id] = curr_crc;
- 
+
    // Business logic goes in here
 }
 ----
@@ -253,10 +275,13 @@ function OnUpdate(doc, meta) {
 
 Eventing Service or framework calls the following JavaScript functions as entry points to the handler.
 
-* OnUpdate Handler
-* OnDelete Handler
+* <<onupdate_handler,OnUpdate Handler>>
+* <<ondelete_handler,OnDelete Handler>>
 
-_OnUpdate Handler_: This handler gets called when a document is created or modified, e.g. Insert/Update. The handler listens to mutations (the creation or modification of documents) in the associated source Bucket. 
+[#onupdate_handler]
+*_OnUpdate Handler_:*
+
+This handler gets called when a document is created or modified, e.g. Insert/Update. The handler listens to mutations (the creation or modification of documents) in the associated source Bucket.
 
 A sample OnUpdate handler is displayed below:
 
@@ -273,12 +298,13 @@ function OnUpdate(doc, meta) {
 In this handler following limitations exist:
 
 * If a document is modified several times in a short duration, the calls may be coalesced into a single event due to deduplication.
-* It is not possible to distinguish between a Create and an Update operation. 
+* It is not possible to distinguish between a Create and an Update operation.
 
-_OnDelete Handler_:
+[#ondelete_handler]
+*_OnDelete Handler_:*
 
 This handler gets called when a document is deleted or removed due to an expiry.
-The handler listens to mutations (deletions or expirations) in the associated source Bucket. 
+The handler listens to mutations (deletions or expirations) in the associated source Bucket.
 
 A sample OnDelete handler is displayed below:
 
@@ -342,7 +368,7 @@ Reserved words as a variable name:
 function get_numip_first_3_octets(ip) {
     var grant = 0;
     if (ip) {
-	var parts = ip.split('.');
+        var parts = ip.split('.');
     }
 }
 ----
