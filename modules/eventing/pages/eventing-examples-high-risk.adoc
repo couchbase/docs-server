@@ -2,129 +2,671 @@
 :page-edition: Enterprise Edition
 
 *Goal*: This example illustrates how to leverage Eventing Service in the Banking and Financial domain.
-When a credit card transaction exceeds the user’s available credit limit, to indicate a high-risk transaction, an alert can be generated.
+When a credit card transaction either 1) exceeds the user’s available credit limit or 2) a transaction in a foreign currency is made -  a high-risk transaction, an alert can be generated.
 
+*Implementation*: 
 
-*Implementation*: Create a JavaScript Function that contains an *OnUpdate* handler.
-The handler listens to data-changes within a specified, *transactions* source bucket.
-When a document within the source bucket is created or mutated, the handler executes a user-defined routine.
-In this example, if the created or mutated document contains a high-risk transaction, a new document gets created in a specified, *flagged_transactions* bucket.
+Create a JavaScript Function that contains an *OnUpdate* handler.
+The handler listens to data-changes within a specified, *'register'* source bucket.
+When a document with type='transaction' within the source bucket is mutated, (created or changed), 
+the Eventing handler executes user-defined code to respond to the change in real time.
+
+*The Eventing function will*:
+
+. Lookup details from the customers card information specifically: date, spending limits, location, and default currency. This data is from bucket *'register'* with type='card'.
+. Lookup the exchange rates for the date from the transaction. This data is from bucket *'register'* with type='exchange_rates'.
+. Normalize the currencies from both the transaction and the spending limit into USD (at the correct days exchange rate).
+. Determine if a spending threshold is exceeded (this is high risk).
+. Determine if the purchase is a foreign purchase (this is high risk).
+. For all high-risk transaction generate a new document containing both some transaction information and some calculated data.
+. Write the new document representing the suspect transaction to the *'review'* bucket with type='transaction'.
+. [OPTIONAL] Use of cURL directly from Eventing, use of a custom application written in various Couchbase SDKs, or third-party integrations like Kafka can then read the items written to the *'review'* bucket (type='transaction') for further automated action.
 
 *Preparations*:
 
-For this example, four buckets 'flagged_transactions', 'users', 'transactions', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
+For this example, three buckets *'register'*, *'review'*, and *'metadata'*, are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
 
 For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
 
+NOTE: The *'metadata'* bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition, do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+
 *Procedure*:
+
+. Modify the *'review'* bucket to enable the ability to "flush" the items from the UI (_do not do this for the other two buckets_). Access the *Couchbase Web Console* > *Buckets* page, select the bucket '*review*' to expand the buckets view.
++
+image::high_risk_txns_01_bucket_edit.png[,100%]
++
+Now click on the *'Edit'* button to invoke the settings dialog for the '*review*' bucket. 
++
+* Expand the 'Advanced bucket settings' control, then scroll to the bottom of the dialog 
+and check the final control *'Flush [X] Enable'*.  
++
+image::high_risk_txns_03_bucket_settings.png[,484]
++
+To save this change click the *'Save Changes'* button. Your *'review'* bucket can now be flushed (as there is now a new button available for the action).
++
+image::high_risk_txns_04_bucket_edit.png[,100%]
++
+For more details on bucket settings and screen images refer to xref:manage:manage-buckets/create-bucket.adoc#couchbase-bucket-settings[Bucket Settings].
+
+. From the *Couchbase Web Console* > *Query* page, build an index for the *'register'* bucket and an index for the '*review*' bucket:
++
+[source,N1QL]
+----
+CREATE INDEX `adv_type` ON `register`(`type`);
+CREATE INDEX `adv_type` ON `review`(`type`);
+----
++
+Copy and paste the two lines of text (above) into the Query Workbench and click *'Execute'*
++
+image::high_risk_txns_05_create_indexes.png[,100%]
++
+Although the above indices are technically not needed for our Eventing function they will come in useful for exploring
+the documents imported to the *'register'* bucket and inserted into the '*review*' by our Eventing Function using the N1QL langague in the Query Workbench 
 
 . From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
 The *ADD FUNCTION* dialog appears.
 . In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
- ** For the *Source Bucket* drop-down, select *transactions*.
+ ** For the *Source Bucket* drop-down, select *register*.
  ** For the *Metadata Bucket* drop-down, select *metadata*.
- ** Enter *high_risks_transactions* as the name of the Function you are creating in the *Function Name* text-box.
- ** [Optional Step] Enter text *Functions that computes risky transaction and flags them*, in the *Description* text-box.
- ** Expand the *Settings* option
- *** Change only the *Language compatibility* which should be *6.0.0*.
- *** Unexpand the setting control
+ ** Enter *high_risk_txns* as the name of the Function you are creating in the *Function Name* text-box.
+ ** [Optional Step] Enter text *Flag items over credit threshold or a foreign transaction*, in the *Description* text-box.
+ ** For the *Settings* option, use the default values.
  ** For the *Bindings* option, add two bindings.
- *** For the first binding, select "bucket alias", specify *users* as the "alias name" of the bucket, and select *users* as the associated bucket, and select "read only".
- *** For the second binding, select "bucket alias", specify *high_risk* as the "alias name" of the bucket, and select *flagged_transactions* as the associated bucket, and select "read only".
-** After configuring your settings your screen should look like:
+  *** For the first binding, select "bucket alias", specify *register* as the "alias name" of the bucket, and select *register* as the associated bucket, and select "read only".
+  *** For the second binding, select "bucket alias", specify *review* as the "alias name" of the bucket, and select *review* as the associated bucket, and select "read and write".  
+ ** After configuring your settings your screen should look like:
 +
-image::highrisk_01_settings.png[,484]
+image::high_risk_txns_01_settings.png[,484]
 . After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
-The *high_risks_transactions* dialog appears.
-** The *high_risks_transactions* dialog initially contains a placeholder code block.
-You will substitute your actual *high_risks_transactions code* in this block.
+The *high_risk_txns* dialog appears.
+** The *high_risk_txns* dialog initially contains a placeholder code block.
+You will substitute your actual *high_risk_txns code* in this block.
 +
-image::highrisk_02_editor_with_default.png[,100%]
-** Copy the following Function, and paste it in the placeholder code block of *high_risks_transactions* dialog.
+image::high_risk_txns_02_default_code.png[,100%]
+** Copy the following Function and paste it in the placeholder code block of *high_risk_txns* dialog.
 +
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
+  if (doc.type != "transaction") return;
   try {
-    //log('txn id:', meta.id, '; user_id:', doc.user_id , ', doc.amount:', doc.amount);
-    var this_user = getUser(doc.user_id);
-    if (this_user) {
-      if (this_user['creditlimit'] < doc.amount) {
-        log('Txn[' + String(meta.id) + ']*****High Risk Transaction as Txn Amount:' + String(doc.amount) + ' exceeds Credit Limit:', this_user['creditlimit']);
-        doc["comments"] = "High Risk Transaction as Txn Amount exceeds Credit Limit " + String(this_user['creditlimit']);
-        doc["reason_code"] = "X-CREDIT";
-        high_risk[meta.id] = doc;
-        return;
-      } else {
-        if (doc.txn_currency != this_user['currency']) {
-          log('Txn[' + String(meta.id) + ']*****High Risk Transaction - Currency Mismatch:' + this_user['currency']);
-          doc["comments"] = "High Risk Transaction - Currency Mismatch:" + this_user['currency'];
-          doc["reason_code"] = "XE-MISMATCH";
-          high_risk[meta.id] = doc;
-          return;
-        }
-      }
-      //log('Acceptable Transaction:',doc.amount, ' for Credit Limit:', this_user['creditlimit']);
-    } else {
-      log('Txn[' + String(meta.id) + "] User Does not Exist:" + String(doc.user_id));
+    var verbose = 0; // logging - 0: minimal, 1: moderate, 2: massive 
+    if (verbose > 0) log(meta.id + ' Process transaction for doc.card: ' +
+      doc.card + ', doc.amount: ' + nformat(doc.amount, 0, 2));
+
+    // load the associated card info to this transaction
+    var card = register['card:' + doc.card];
+    if (!card) {
+      log(meta.id + ' warn card does not exist: ' + doc.card);
+      return;
     }
+
+    // load the the exchange rate table for the day of the transaction
+    var erid = 'exchange_rates:er-' + (doc.date).substr(0, 10);
+    var exchange_rates = register[erid];
+    if (!exchange_rates) {
+      log(meta.id + ' WARNING exchange_rates does not exist: ' + erid);
+      return;
+    }
+    var to_USD = exchange_rates['to_USD'];
+    var trxn_2_USD = to_USD[doc.currency];
+    var card_2_USD = to_USD[card['currency']];
+    if (!trxn_2_USD || !card_2_USD) {
+      log(meta.id + ' WARNING exchange_rates for either ' + card['currency'] +
+        ' or ' + doc.currency + ' does exist');
+      return;
+    }
+
+    // convert transcation charge and credit card limit into USD
+    var trxn_amount_USD = doc.amount / trxn_2_USD;
+    var card_thresh_USD = card['threshold'] / card_2_USD;
+
+    if (verbose > 1) {
+      log(meta.id + ' doc   ', doc);
+      log(meta.id + ' card  ', card);
+      log(meta.id + ' rates ', exchange_rates)
+    }
+    if (verbose > 0) {
+      log(meta.id + ' 1 doc.amount       ' + nformat(doc.amount, 8, 2) +
+        ', card_limit       ' + nformat(card['threshold'], 8, 2));
+      log(meta.id + ' 2 trxn_currency    ' + sformat(doc.currency, 8) +
+        ', card_currency    ' + sformat(card['currency'], 8));
+      log(meta.id + ' 3 trxn_2_USD       ' + nformat(trxn_2_USD, 8, 6) +
+        ', card_2_USD       ' + nformat(card_2_USD, 8, 6));
+      log(meta.id + ' 4 trxn_amount_USD  ' + nformat(trxn_amount_USD, 8, 2) +
+        ', card_thresh_USD  ' + nformat(card_thresh_USD, 8, 2));
+    }
+
+    // check if high risk due to over threshold limit
+    if (card_thresh_USD < trxn_amount_USD) {
+      var msg = 'High Risk Txn: amount: ' + nformat(doc.amount, 8, 2) + ' ' +
+        doc.currency + ' exceeds purchase threshold: ' +
+        nformat(card['threshold'], 8, 2) + ' ' + card['currency'];
+      log(meta.id + ' *** ' + msg);
+      doc["comments"] = msg; // append description to the document
+      doc["reason_code"] = 'X-CREDIT'; // append the code to the document
+      delete doc["city"]; // remove city sub document
+      review[meta.id] = doc; // save the modified document for review
+      return;
+    }
+
+    // check if high risk due to foreign purchase
+    if (doc.currency != card['currency']) {
+      var msg = 'High Risk Txn: currency mismatch card: ' +
+        card['currency'] + ' != txn: ' + doc.currency;
+      log(meta.id + ' *** ' + msg);
+      doc["comments"] = msg; // append description to the document
+      doc["reason_code"] = 'X-MISMATCH'; // append the code to the document
+      delete doc["city"]; // remove city sub document
+      review[meta.id] = doc; // save the modified document for review
+      return;
+    }
+    if (verbose > 0) log(meta.id + ' Charge by ' + card["firstname"] + ' ' +
+      card["lastname"] + ' appears normal in the amount of ' +
+      nformat(doc.amount, 0, 2) + ' ' + doc.currency);
   } catch (e) {
-    log('Error OnUpdate :', String(meta.id), e);
+    // there was some sort of processing error or Exception, notify the user
+    log(meta.id + 'ERROR in OnUpdate:', e);
   }
 }
 
-function OnDelete(meta) {
-  log('Document OnDelete:', meta.id);
+// right justify string with given width 
+function sformat(s, width) {
+  var str = s;
+  while (width > str.length) str = ' ' + str;
+  return str;
 }
 
-function getUser(userId) {
-  try {
-    if (userId != null) {
-      return user[userId];
-    }
-  } catch (e) {
-    log('Error getUser :', userId, '; Exception:', e);
-  }
-  return null;
+// right justify number with given width with given percision
+function nformat(n, width, prec) {
+  return sformat(n.toFixed(prec), width, prec);
 }
 ----
 +
 After pasting, the screen appears as displayed below:
 +
-image::highrisk_03_editor_with_code.png[,100%]
+image::high_risk_txns_03_code.png[,100%]
 ** Click *Save*.
 ** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
 
-. The OnUpdate handler is triggered for every transaction.
+. The *OnUpdate* handler above is triggered for every transaction. 
 The handler checks if the transaction amount is less than the user’s available credit limit.
 When this condition is breached, then this transaction is flagged as a high-risk transaction.
-The Function _high_risks_transactions_ then moves this transaction to a different bucket, _flagged_transactions_ bucket.
-When the transaction is moved to a new bucket, the handler enriches the document with predefined _comments_ and also provides a _reason code_*.* In the last part, the handler performs a currency validation step.
-If the transaction currency is other than the preconfigured home currency of the user, then the handler flags the transactions and moves it to a different bucket.
+In addition, the handler checks if a foreign currency purchase has occurred, this is also flagged as a high-risk transaction.
++
+The Function *high_risk_txns* then copies the transaction to a different bucket to the *review* bucket (but it removed some unneeded data and also adds some enriched data). The handler enriches the document with predefined _comments_ and also provides a _reason code_. In the last part, the handler performs a currency validation step.
++
+The handler also converts both the credit limit and the transaction amount to a common currency, in this case USD, based upon current exchange rates on the exact date of the given transaction.
 
-. From the *Eventing* screen, click *Deploy*.
+. Now we will seed the required sample data, there are a total of four (4) data files that need to be downloaded to your Couchbase instance via a "_Right click, Save Link As ...._" for remote instances "_Right click, Copy Link Address_" and use either the cURL or wget utility to download the files:
++
+[#optional-id1,cols="3,3,3,1,2",options="header"]    
+|===
+
+| *Data Set / File Name*
+| *Description*
+| *JSON type indicator*
+| *# Records*
+| *Download link*
+
+| cards.json
+| Credit card information
+| type='card'
+| 7
+| link:./_attachments/examples/high_risk/cards.json[Download,window=_blank]
+
+| merchants.json
+| Merchant information
+| type='merchant'
+| 5001
+| link:./_attachments/examples/high_risk/merchants.json[Download,window=_blank]
+
+| exchange_rates.json
+| Daily exchange rates
+| type='exchange_rates'
+| 422
+| link:./_attachments/examples/high_risk/exchange_rates.json[Download,window=_blank]
+
+| txns.json
+| Credit Card charges
+| type='transaction'
+| 417
+| link:./_attachments/examples/high_risk/txns.json[Download,window=_blank]
+
+
+|===
++
+An example record from the _cards.json_ file that you just downloaded encapsulates the information of a credit card:
++
+[source,console]
+----
+{
+  "type": "card",
+  "cardnumber": "4273-6623-8686-4599",
+  "firstname": "Winfred",
+  "lastname": "Raftery",
+  "street": "3965 I-80 E Off Ramp",
+  "mobile": "+1-617-555-1371",
+  "sms": true,
+  "city": {
+    "name": "Uxbridge",
+    "code": "MA",
+    "state": "Massachusetts",
+    "county": "Worcester",
+    "display": "Uxbridge"
+  },
+  "issued": "11/15",
+  "expiry": "6/19",
+  "ccv": 736,
+  "issuer": "Helena National Bank",
+  "maxcredit": 1000,
+  "threshold": 9500,
+  "country": "US",
+  "currency": "USD"
+}
+----
++
+An example record from the _merchants.json_ file that you just downloaded encapsulates the information of a merchant:
++
+[source,console]
+----
+{
+ "type": "merchant",
+ "merchantid": "merchant-501233450539197794-0",
+ "name": "FlightAware Inc",
+ "city": {
+  "name": "Bentonville",
+  "code": "IN",
+  "state": "Indiana",
+  "county": "Fayette",
+  "display": "Bentonville"
+ }
+}
+----
++
+An example record from the _exchange_rates.json_ file that you just downloaded encapsulates the information of a set of exchange rates:
++
+[source,console]
+----
+{
+  "type": "exchange_rates",
+  "erid": "er-2017-09-01",
+  "to_USD": {
+    "CAD": 1.2441275168,
+    "INR": 64.0331375839,
+    "EUR": 0.8389261745,
+    "USD": 1,
+    "SGD": 1.3545302013,
+    "GBP": 0.7724412752,
+    "CNY": 6.5591442953,
+    "AUD": 1.2601510067
+  }
+}
+----
+
+. An example record from the _txns.json_ file that you just downloaded encapsulates the information of a transaction or a card charge:
++
+[source,console]
+----
+{
+  "type": "transaction",
+  "txnid": "tx-1526311379-002",
+  "amount": 15.99,
+  "product": "Thread Bore Brush: .22 Caliber, Centerfire",
+  "card": "4273-6623-8686-4599",
+  "merchant": "GoodGuide Inc",
+  "city": {
+    "name": "Waseca",
+    "code": "MN",
+    "state": "Minnesota",
+    "county": "Waseca",
+    "display": "Otisco"
+  },
+  "date": "2018-05-14T20:52:59+05:30",
+  "currency": "USD"
+}
+----
+
+. The downloaded files now need to all be loaded into the *register* bucket, this can be done as follows:
++
+[{tabs}] 
+====
+Linux::
++
+--
+Assuming of the downloaded files needed are in /tmp (note your username and password may differ)
+[source%nowrap,console]
+----
+cd /opt/couchbase/bin/
+CB_USERNAME=Administrator
+CB_PASSWORD=password
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%txnid%' -d file:///tmp/txns.json
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%cardnumber%' -d file:///tmp/cards.json
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%merchantid%' -d file:///tmp/merchants.json
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%erid%' -d file:///tmp/exchange_rates.json
+----
+--
+
+macOS::
++
+--
+Assuming of the downloaded files needed are in /Users/$USER/Downloads (note your username and password may differ)
+[source%nowrap,console]
+----
+cd /Applications/Couchbase\ Server.app/Contents/Resources/couchbase-core/bin/
+CB_USERNAME=Administrator
+CB_PASSWORD=password
+
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%txnid%' -d file:///Users/$USER/Downloads/txns.json
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%cardnumber%' -d file:///Users/$USER/Downloads/cards.json
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%merchantid%' -d file:///Users/$USER/Downloads/merchants.json
+    
+./cbimport json -c http://localhost:8091 -u $CB_USERNAME -p $CB_PASSWORD -b register \
+    -f list -g '%type%:%erid%' -d file:///Users/$USER/Downloads/exchange_rates.json    
+----
+--
+
+Windows::
++ 
+-- 
+Assuming of the downloaded files needed are in "C:\Users\%USERNAME%\Downloads" (note your username and password may differ)
+[source%nowrap,console]
+----
+cd "C:\Program Files\Couchbase\Server\bin\" 
+SET CB_USERNAME=Administrator
+SET CB_PASSWORD=password
+
+cbimport json -c http://localhost:8091 -u %CB_USERNAME% -p %CB_PASSWORD% -b register ^
+    -f list -g '%type%:%txnid%' -d file:///C:/Users/%USERNAME%/Downloads/txns.json
+    
+cbimport json -c http://localhost:8091 -u %CB_USERNAME% -p %CB_PASSWORD% -b register ^
+    -f list -g '%type%:%cardnumber%' -d file:///C:/Users/%USERNAME%/Downloads/cards.json
+    
+cbimport json -c http://localhost:8091 -u %CB_USERNAME% -p %CB_PASSWORD% -b register ^
+    -f list -g '%type%:%merchantid%' -d file:///C:/Users/%USERNAME%/Downloads/merchants.json
+    
+cbimport json -c http://localhost:8091 -u %CB_USERNAME% -p %CB_PASSWORD% -b register ^
+    -f list -g '%type%:%erid%' -d file:///C:/Users/%USERNAME%/Downloads/exchange_rates.json    
+----
+--
+====
+
+. Access the *Couchbase Web Console* > *Buckets* page, notice that a total of 5,847 documents have been loaded into the bucket '*register*'.
++
+image::high_risk_txns_06_json_loaded.png[,100%]
+
+. We are now ready to start the Eventing function. From the *Couchbase Web Console* > *Eventing* screen:
+** click on the Function name *high_risk_txns* to expand and expose the Function controls.
++
+image::high_risk_txns_04_controls.png[,100%]
++
+** click *Deploy*.
 ** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
++
+image::high_risk_txns_05_deploy.png[,344]
++
 ** Click *Deploy Function*.
 
-. The Eventing function is deployed and starts running within a few seconds. From this point, the defined Function is executed on all existing documents and on subsequent mutations.
+. The Eventing function is deployed and starts running within a few seconds. From this point, the defined Function is executed on all existing documents and on subsequent mutations. After sufficient time has elapsed, there will be 40 new documents created in the *'review'* bucket as well as logs generated by the Handler's JavaScript code.
 
-
-. To check the results of the deployed Function, after a sufficient time elapse, access the *Couchbase Web Console* > *Buckets* page
-
-. Click _flagged_transactions_ bucket.
-All documents available in this bucket are transactions that are flagged as high-risk transactions.
+. To review the Eventing Application Log for *high_risk_txns* access the *Couchbase Web Console* > *Eventing* and 
+click the *Log* link of the deployed *high_risk_txns* Eventing function. 
+** Note the Function Log Dialog lists log statements in reverse order (newest items first).
 +
-image::highrisk_04_buckets.png[,%100]
+image::high_risk_txns_07_log.png[,100%]
 +
-This indicates that transactions which were flagged as high risk gets moved to the _flagged_transactions_ bucket.
+** the dialog should have data be similar to the following (only a few selected lines are displayed below):
++
+[source%nowrap,console]
+----
+2020-03-22T13:20:13.332-07:00 [INFO] "transaction:tx-1510327095-039 *** High Risk Txn: amount: 12130.00 USD exceeds purchase threshold: 9500.00 USD"
 
-. From the *Couchbase Web Console* > *Query* page, execute the below N1QL query:
+2020-03-22T13:20:13.323-07:00 [INFO] "transaction:tx-1505402809-074 *** High Risk Txn: currency mismatch card: USD != txn: EUR"
+
+2020-03-22T13:20:13.320-07:00 [INFO] "transaction:tx-1547615650-407 *** High Risk Txn: currency mismatch card: USD != txn: GBP"
+----
++
+** Alternatively you can locate the log file for your Eventing function "high_risk_txns.log" in the file system and inspect the output (only the last 10 lines are displayed below).  Below is a macOS logfile dump.
++
+[source%nowrap,console]
+----
+cd /Users/jon.strabala/Library/Application\ Support/Couchbase/var/lib/couchbase/data/@eventing
+
+tail -10 high_risk_txns.log 
+
+2020-03-22T13:20:13.319-07:00 [INFO] "transaction:tx-1521299600-109 *** High Risk Txn: amount: 12506.00 USD exceeds purchase threshold: 12000.00 USD" 
+
+2020-03-22T13:20:13.320-07:00 [INFO] "transaction:tx-1547615650-407 *** High Risk Txn: currency mismatch card: USD != txn: GBP" 
+
+2020-03-22T13:20:13.320-07:00 [INFO] "transaction:tx-1513350267-327 *** High Risk Txn: amount: 53500.00 USD exceeds purchase threshold: 25000.00 USD" 
+
+2020-03-22T13:20:13.323-07:00 [INFO] "transaction:tx-1505402809-074 *** High Risk Txn: currency mismatch card: USD != txn: EUR" 
+
+2020-03-22T13:20:13.332-07:00 [INFO] "transaction:tx-1510327095-039 *** High Risk Txn: amount: 12130.00 USD exceeds purchase threshold:  9500.00 USD" 
+
+2020-03-22T13:20:13.335-07:00 [INFO] "transaction:tx-1514388425-140 *** High Risk Txn: amount: 12506.00 USD exceeds purchase threshold: 12000.00 USD" 
+
+2020-03-22T13:20:13.335-07:00 [INFO] "transaction:tx-1517583691-198 *** High Risk Txn: amount: 12506.00 USD exceeds purchase threshold: 12000.00 USD" 
+
+2020-03-22T13:20:13.338-07:00 [INFO] "transaction:tx-1513263650-200 *** High Risk Txn: amount: 12506.00 USD exceeds purchase threshold: 12000.00 USD" 
+
+2020-03-22T13:20:13.340-07:00 [INFO] "transaction:tx-1514648212-166 *** High Risk Txn: amount: 12506.00 USD exceeds purchase threshold: 12000.00 USD" 
+
+2020-03-22T13:20:13.343-07:00 [INFO] "transaction:tx-1511710690-182 *** High Risk Txn: amount: 12506.00 USD exceeds purchase threshold: 12000.00 USD" 
+----
++
+The default directories for the Eventing Application Logs are as follows:
++
+[cols="20%,80%"]
+|===
+| Platform | Location
+
+| Linux
+| /opt/couchbase/var/lib/couchbase/data/@eventing/
+
+| Windows
+| C:\Program Files\Couchbase\Server\var\lib\couchbase\data\@eventing\ +
+(Assumes default installation location)
+
+| Mac OS X
+| /Users/<user>/Library/Application\ Support/Couchbase/var/lib/couchbase/data/@eventing/
+|===
+
+. To check the resulting documents of the deployed Function, access the *Couchbase Web Console* > *Buckets* page. You should see 40 new documents in this bucket.  All documents written to this bucket are transactions that are flagged as high-risk transactions.
++
+image::high_risk_txns_08_bucket.png[,%100]
++
+** Click the *Documents* link of the *review* bucket.
++
+image::high_risk_txns_08_bucket_documents.png[,%100]
++
+** You can select any document in the *review* bucket, in addition you can select by a specific KEY for example 'transaction:tx-1505315650-403' by cutting and pasting this ID (without quotes) into the *'Document ID'* text box and hitting a return
++ 
+image::high_risk_txns_08_bucket_documents_by_id.png[,%100]
++
+The resulting dialog indicates that a purchase of an iMac was flagged as the credit card's default currency was USD, but the purchase was in GBP, e.g. made with a merchant in a foreign country using a foreign currency.
++
+[source,console]
+----
+{
+  "type": "transaction",
+  "txnid": "tx-1505315650-403",
+  "amount": 5383.35,
+  "product": "Computer, iMac 64GB 4TB Nvme",
+  "card": "4273-6623-8686-4599",
+  "merchant": "Apple Regent Street",
+  "date": "2018-09-14T20:46:10+05:30",
+  "currency": "GBP",
+  "comments": "High Risk Txn: currency mismatch card: USD != txn: GBP",
+  "reason_code": "X-MISMATCH"
+}
+----
++
+image::high_risk_txns_08_bucket_documents_edit.png[,578]
+
+. From the *Couchbase Web Console* > *Query* page, run a few N1QL queries on the new documents create in the *'review*' bucket:
++
+*QUERY A*, see how many high-risk transactions we found
 +
 [source,N1QL]
 ----
-SELECT reason_code, COUNT(1), num_txns, SUM(amount) amount
-FROM `flagged_transactions`
-GROUP BY reason_code;
+SELECT COUNT(*) num_high_risk FROM review WHERE type='transaction';
 ----
 +
-image::highrisk_05_n1ql_query.png[,%100]
+image::high_risk_txns_09_n1ql_a.png[,%100]
++
+*QUERY B*, look at all the data and with a specific order
++
+[source,N1QL]
+----
+SELECT * FROM review WHERE type='transaction' ORDER BY currency, amount DESC;
+----
++
+image::high_risk_txns_09_n1ql_b.png[,%100]
++
+*QUERY C*, look at the summarized data and with a specific order and grouping
++
+[source,N1QL]
+----
+SELECT COUNT(*) count, reason_code, SUM(amount) total_amount, currency 
+FROM review WHERE type='transaction' 
+GROUP BY reason_code, currency;
+----
++
+image::high_risk_txns_09_n1ql_c.png[,%100]
++
+*QUERY D*, look at a transaction record or document by key.
++
+[source,N1QL]
+----
+SELECT * FROM register USE KEYS ('transaction:tx-1505315650-403');
+----
++
+image::high_risk_txns_09_n1ql_d.png[,%100]
++
+*QUERY E*, look at a card record or document by key.
++
+[source,N1QL]
+----
+SELECT * FROM register USE KEYS ('card:4273-6623-8686-4599');
+----
++
+image::high_risk_txns_09_n1ql_e.png[,%100]
++
+*QUERY F*, look at a flagged transaction record or document that we wrote by key.
++
+[source,N1QL]
+----
+SELECT * FROM review USE KEYS ('transaction:tx-1505315650-403');
+----
++
+image::high_risk_txns_09_n1ql_f.png[,%100]
+
+. The next step is to follow the Function logic in detail, to do this 'flush' all the generated documents in review, access 
+the *Couchbase Web Console* > *Buckets* page. You should see 40 documents in the '*review*' bucket.  Select the bucket '*review*' to expand the buckets view. Next click on the *'Flush'* button in a while the document count will drop to 0.
++
+image::high_risk_txns_10_flush_review.png[,%100]
+
+. From the *Couchbase Web Console* > *Eventing* page, click *Pause*.
++
+image::high_risk_txns_10_pause.png[,%100]
++
+** In the *Confirm Pause Function* dialog, click *Pause Function*.
++
+image::high_risk_txns_10_pause_confirm.png[,344]
++
+** The Eventing function is paused in a few seconds and can be edited. Click the *'Edit JavaScript'* button.
+** In the Editor dialog change the OnUpdate handler code from *'var verbose = 0'* to *'var verbose = 3'* you are only modifying line four of the *high_risk_txrns" Function as below:
++
+[source,JavaScript]
+----
+function OnUpdate(doc, meta) {
+  if (doc.type != "transaction") return;
+  try {
+    var verbose = 3; // logging - 0: minimal, 1: moderate, 2: massive 
+    // *** many lines not shown ***
+----
+** Click *'Save'*.
+** To return to the Eventing screen, click the *'< back to Eventing'* link (below the editor) or click *Eventing* tab.
+
+. From the *Eventing* screen, click *Resume*.
++
+image::high_risk_txns_10_resume.png[,%100]
+** In the *Confirm Resume Function* dialog, Click *Resume Function*.
++
+image::high_risk_txns_10_resume_confirm.png[,346]
+
+. The Eventing function is resumed the check point created when you 'Paused' the function and will start running within a few seconds. The defined Function is executed on all new document documents and on subsequent mutations. Until a mutation is triggered there will be no processing at all by our modified Handler's JavaScript code.
+
+. The next step is to create one mutation, to do this access 
+the *Couchbase Web Console* > *Buckets* page. 
+** Click the *Documents* link of the *register* bucket (the source of the mutations that our Function watches). 
+** Select the document 'transaction:tx-1505315650-403' by cutting and pasting this ID (without quotes) into the *'Document ID'* text box and hitting a return.  
++
+image::high_risk_txns_10_bucket_register_id.png[,%100]
++
+** This should display a single document, edit it by Clicking on it.
+** Adjust the document slightly from '"amount": 5383.35' to '"amount": 5383.36'
++
+image::high_risk_txns_10_modify.png[,580]
++
+** Click *'Save'*
+** Inspect the new data written to the "high_risk_txns.log" in the file system (or alternatively use the UI's Log link)
++
+[source%nowrap,console]
+----
+cd /Users/jon.strabala/Library/Application\ Support/Couchbase/var/lib/couchbase/data/@eventing
+
+tail -9 high_risk_txns.log 
+
+2020-03-22T14:24:25.495-07:00 [INFO] "transaction:tx-1505315650-403 Process transaction for doc.card: 4273-6623-8686-4599, doc.amount: 5383.36" 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 doc   " {"type":"transaction","txnid":"tx-1505315650-403","amount":5383.36,"product":"Computer, iMac 64GB 4TB Nvme","card":"4273-6623-8686-4599","merchant":"Apple Regent Street","city":{"name":"London","code":"W1B 2EL","county":"Westminster","display":"London Westminster"},"date":"2018-09-14T20:46:10+05:30","currency":"GBP"} 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 card  " {"type":"card","cardnumber":"4273-6623-8686-4599","firstname":"Winfred","lastname":"Raftery","street":"3965 I-80 E Off Ramp","mobile":"+1-617-555-1371","sms":true,"city":{"name":"Uxbridge","code":"MA","state":"Massachusetts","county":"Worcester","display":"Uxbridge"},"issued":"11/15","expiry":"6/19","ccv":736,"issuer":"Helena National Bank","maxcredit":1000,"threshold":9500,"country":"US","currency":"USD"} 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 rates " {"type":"exchange_rates","erid":"er-2018-09-14","to_USD":{"CAD":1.3008811703,"INR":71.8162374882,"EUR":0.8555051758,"USD":1,"SGD":1.3698348875,"GBP":0.7633501583,"CNY":6.8543074686,"AUD":1.3910514159}} 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 1 doc.amount        5383.36, card_limit        9500.00" 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 2 trxn_currency         GBP, card_currency         USD" 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 3 trxn_2_USD       0.763350, card_2_USD       1.000000" 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 4 trxn_amount_USD   7052.28, card_thresh_USD   9500.00" 
+
+2020-03-22T14:24:25.496-07:00 [INFO] "transaction:tx-1505315650-403 *** High Risk Txn: currency mismatch card: USD != txn: GBP" 
+----
++
+Above we see that for one mutation the Function *high_risk_txns* printed the following log messages:
+** The transaction document 'doc' that mutated (what you just changed)
+** The 'card' or credit card that the transaction was made with was looked up via the key _'card:' + doc.card_ from the bucket alias  register.
+** A daily 'rates' or exchange rates for the date of the transaction which was looked up via the key _'exchange_rates:er-' + (doc.date).substr(0, 10))_ from the bucket alias register.
+** Next a bit of information (4 lines) was emitted  to show what was done in order to make the final decision.
+** Finally, the last log line is the decision line if the transaction is considered 'High Risk'.
+The amount of information at this verbosity level would be excessive for millions of documents, however it can be very handy for developing and debugging Eventing handler JavaScript logic.
+
+. From the *Eventing* screen, click *Undeploy*.
++
+image::high_risk_txns_10_pause.png[,%100]
+** In the *Confirm Undeploy Function* dialog, Click *Undeploy Function*.
++
+image::high_risk_txns_11_undeploy_confirm.png[,346]
+
+. The Eventing function will be undeployed within a few seconds, this concludes the Example.
+
+. Cleanup, go to the Eventing portion of the UI and Undeploy the Function *high_risk_txns*, this will remove the 1024 documents (64 for macOS) from the 'metadata' bucket (in the Bucket view of the UI). Remember you may only delete the 'metadata' bucket if there are no deployed Eventing functions. Delete the *'register'* and *'review'* buckets and also the empty *'metadata*' bucket.
