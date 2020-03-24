@@ -131,3 +131,31 @@ Ensure that you configure the script timeout value after carefully evaluating th
 
 As a best practice use a combination of try-catch block and the application log options.
 This way you can monitor, debug and troubleshoot errors during the Function execution.
+
+== Why is it important that the metadata bucket be 100% memory resident?
+
+If the bucket you chose to hold your meta data spills over to disk access is not 100% resident, your Eventing system can essentially stall and/or slow down by orders of magnitude and you can also experience failures and/or missed mutations.
+
+Always make sure that the memory quota on your metadata bucket is sufficiently large to ensure a residency ratio of 100%.
+
+== Eventing worked fine when application was first deployed but now I am getting ETMPFAIL failures.
+
+A low residency ratio for either the source or the destination bucket (sometimes these two can be the same) can result in a system that's unable to keep up with rate of mutations and internal logic's required reads and writes to the data service.
+
+NOTE: Watch the number of documents in your buckets (source, metadata, and destination) and in particular pay close attention to the change in the resident ratio. Typically, this could be due to growth in your overall data set.
+
+For example, a high velocity Eventing function that is processing in excess of 12K mutations/sec with a source or destination bucket residency ratio of 100% can easily start to experience issues if the residency ratio drops below 18% (_this percentage isn't hard and fast and may vary based on a variety of factors such as the number of mutations acted on, the storage type, and so on_). 
+
+```
+2020-03-13T11:46:32.383-07:00 [INFO] "Exception: " {"message":{"code":392,"desc": \
+"Temporary failure received from server. Try again later","name":"LCB_ETMPFAIL"}, \
+"stack":"Error\n    at OnUpdate (MyEventingFunction.js:177:25)"}
+```
+
+The above error indicates that the system is under provisioned for the load.  Under the hood, Eventing will try to access to the data store five (5) times with a 200ms pause between attempts. If all of the attempts fail, the handler, in this case _MyEventingFunction_, throws an *ETMPFAIL* message. This is important to understand as trapping the above exception and retrying the same operation inside your handler will only exacerbate the issue and make things worse.  Of course your handler can take other actions such as creating a notification.
+
+There are two solutions: 
+
+. The first solution is to increase the memory quota of the bucket in question (thus increasing the resident ration).
+
+. The second solution is to add more Data nodes, faster disk IO, and more memory to eliminate the resource bottleneck.
