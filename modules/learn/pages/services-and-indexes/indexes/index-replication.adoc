@@ -2,10 +2,20 @@
 :page-partial:
 :page-aliases: indexes:index-replication,indexes:performance-consistency,understanding-couchbase:services-and-indexes/indexes/index-replication
 
+:index-service: xref:services-and-indexes/services/index-service.adoc
+:index-partitioning: xref:n1ql:n1ql-language-reference/index-partitioning.adoc
+:failover: xref:learn:clusters-and-availability/failover.adoc
+:database-change-protocol: xref:learn:clusters-and-availability/intra-cluster-replication.adoc#database-change-protocol
+:index-storage-mode: xref:manage:manage-settings/general-settings.adoc#index-storage-mode
+:index-storage-settings-via-cli: xref:manage:manage-settings/general-settings.adoc#index-storage-settings-via-cli
+:index-settings-via-rest: xref:manage:manage-settings/general-settings.adoc#index-settings-via-rest
+:query: xref:n1ql:query.adoc
+
 [abstract]
 The _Index Service_ ensures availability and performance through _replication_ and _partitioning_.
 The _consistency_ of query-results can be controlled per query.
 
+[[index-replication]]
 == Index Replication
 
 Secondary indexes can be replicated across cluster-nodes.
@@ -15,7 +25,7 @@ This ensures:
 * _High Performance_: If original and replica copies are available, incoming queries are load-balanced across them.
 
 Index-replicas can be created with the N1QL `CREATE INDEX` statement.
-Note that whenever a given number of index-replicas is specified for creation, the number must be less than the number of cluster-nodes currently running the xref:services-and-indexes/services/index-service.adoc[Index Service].
+Note that whenever a given number of index-replicas is specified for creation, the number must be less than the number of cluster-nodes currently running the {index-service}[Index Service].
 If it is not, the index creation fails.
 Note also that if, following creation of the maximum number of copies, the number of nodes running the Index Service decreases, Couchbase Server progressively assigns replacement index-replicas to any and all Index-Service nodes subsequently be added to the cluster, until the required number of index-replicas again exists for each replicated index.
 
@@ -26,6 +36,7 @@ In the following example, an index with two replicas is created.
 The active index is on `node1`, and the replicas are on `node2` and `node3`:
 +
 [#nodes-example2]
+[source,n1ql]
 ----
 CREATE INDEX productName_index1 ON bucket_name(productName, ProductID)
     WHERE type="product" USING GSI
@@ -37,6 +48,7 @@ The replicas are automatically distributed across those nodes of the cluster tha
 +
 In the following example, an index is created with two replicas, with no destination-nodes specified:
 +
+[source,n1ql]
 ----
 CREATE INDEX productName_index1 ON bucket_name(productName, ProductID)
     WHERE type="product" USING GSI
@@ -50,16 +62,18 @@ The default is `0`.
 If the default is changed to, say, `2`, creation of a single index is henceforth accompanied by the creation of two replicas, which are automatically distributed across the nodes of the cluster running the Index Service.
 No explicit specification within the `CREATE INDEX` statement is required.
 +
-With credentials that provide appropriate authorization, this default can be changed; by means of the `curl` command, as follows:
+With credentials that provide appropriate authorization, this default can be changed by means of the `curl` command, as follows:
 +
+[source,shell]
 ----
 curl -u <username>:<password> <host>:9102/settings -d "{\"indexer.settings.num_replica\": <num_replicas>}"
 ----
 +
 Note, however, that whenever explicit specification of replica-numbers is made within the `CREATE INDEX` statement, this explicit specification takes precedence over any established default.
 
-For further information on using N1QL, see xref:java-sdk::n1ql-query.adoc[Querying with N1QL].
+For further information on using N1QL, refer to {query}[Query Fundamentals].
 
+[[index-partitioning]]
 == Index Partitioning
 
 _Index Partitioning_ increases query performance, by dividing and spreading a large index of documents across multiple nodes. This feature is available only in Couchbase Server Enterprise Edition.
@@ -74,8 +88,9 @@ The benefits include:
 
 * Provision of a low-latency range query, while allowing indexes to be scaled out as needed.
 
-For detailed information, see xref:n1ql:n1ql-language-reference/index-partitioning.adoc[Index Partitioning].
+For detailed information, refer to {index-partitioning}[Index Partitioning].
 
+[[index-consistency]]
 == Index Consistency
 
 Whereas Couchbase Server handles data-mutations with _full consistency_ — all mutations to a given key are applied to the same vBucket, and become immediately available — it maintains indexes with degrees of _eventual consistency_, determined by means of the following query consistency-options, specified per query:
@@ -90,3 +105,40 @@ If index-maintenance is running behind, the query waits for it to catch up.
 
 For N1QL, the default consistency is `not_bounded`.
 // end::scan_consistency[]
+
+[[index-snapshots]]
+== Index Snapshots
+
+One or more index {database-change-protocol}[snapshots] are maintained on disk, to permit rapid recovery if node-failures are experienced.
+In cases where recovery requires an Index-Service node to be restarted, the node’s indexes are rebuilt from the snapshots retained on disk.
+
+By default, two index snapshots are stored on disk.
+You can change index snapshot settings via the {index-storage-settings-via-cli}[CLI] or the {index-settings-via-rest}[REST API].
+
+[[index-rollback]]
+== Index Rollback
+
+The index service also maintains a {database-change-protocol}[DCP failover log].
+If necessary, the data service can request the index service to return to a specified rollback point and update its history.
+
+You can change index rollback settings via the {index-storage-settings-via-cli}[CLI] or the {index-settings-via-rest}[REST API].
+
+[[index-rollback-after-failover]]
+=== Index Rollback After Failover
+
+When a data node {failover}[fails over], a replica data node is promoted to active.
+If the index service has more recent data than the new active data node, the data node issues a rollback request to the index service.
+
+In Couchbase Server 6.5 and later, when the index service receives the rollback request, it first attempts to revert to a stored index snapshot.
+If successful, the index service does not need to rebuild its indexes from scratch when the data node fails over.
+The index service can continue servicing query clients without interruption.
+
+If the index service cannot revert to a current index snapshot, it rebuilds all indexes from scratch.
+
+[NOTE]
+====
+If <<index-consistency,scan consistency>> is set to `not_bounded`, the index service may return stale data for a short time after reverting to a snapshot, until the index service is fully up-to-date with the new active data node.
+
+If <<index-consistency,scan consistency>> is set to `request_plus`, the index service will not perform any scans until a consistent snapshot is created.
+In this case, stale results are not returned.
+====
