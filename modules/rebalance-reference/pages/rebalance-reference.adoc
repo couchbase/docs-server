@@ -1,0 +1,348 @@
+= Rebalance Reference
+
+[abstract]
+Couchbase Server creates a _report_ for every rebalance that is performed.
+This section explains how to obtain the report, and how to read it.
+
+[#Obtaining-a-rebalance-report]
+== Obtaining a Rebalance Report
+
+Couchbase Server automatically creates a _rebalance report_ for every rebalance that occurs on the cluster.
+The report's content consists of a JSON document, which provides statistics for every service that has been involved in the rebalance.
+On conclusion of the rebalance, the report can be accessed in any of the following ways:
+
+* By means of Couchbase Web Console, as described in xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
+
+* By means of the REST API, as described in xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks].
+
+* By accessing the directory `/opt/couchbase/var/lib/couchbase/logs/reblance` on _any_ of the cluster nodes.
+A rebalance report is maintained here for (up to) the last _five_ rebalances performed.
+Each report is provided as a `*.json` file, whose name indicates the time at which the report was run &#8212; for example, `rebalance_report_2020-03-17T11:10:17Z.json`.
++
+For more information on logging, see xref:manage:manage-logging/manage-logging.adoc[Manage Logging].
+
+[#reading-a-rebalance-report]
+== Reading a Rebalance Report
+
+Each rebalance report consists of a JSON document whose principal object is `stage_info`.
+This itself contains an object corresponding to each rebalance _stage_: one stage has occurred for each of the services deployed on the cluster.
+Therefore, if all six services have been deployed, six stages occur in a successful rebalance; and objects for `analytics`, `eventing`, `search`, `index` `query`, and `data` are provided.
+
+Among the details provided for each service are the times at which rebalance-processes started and ended, the durations of rebalance-processes, and the numbers of documents already handled and still to be handled.
+When rebalance concludes successfully, a report is duly generated, with all fields corresponding to the successful completion of the rebalance-processes they represent.
+In cases where rebalance is interrupted (for example, by the user's left-clicking the *Stop Rebalance* button, in Couchbase Web Console, or due to auto-failover), a generated report will describe a partially unsuccessful rebalance; indicating, in certain fields, an incomplete or unstarted rebalance-process, by means of the value `false`.
+
+[#standard-fields]
+== Standard Fields
+
+Standard fields are provided for each stage.
+These are as follows:
+
+* `startTime`.
+The point in time at which the stage was started (or possibly, has been determined _not_ to have started).
+Specified as a UTC date/time string.
+
+* `completedTime`.
+The point in time at which the stage was completed (or possibly, has been determined _not_ to have completed).
+Specified as a UTC date/time string.
+
+* `timeTaken`.
+The amount of elapsed time since `startTime`.
+Specified as an integer, in milliseconds.
+The value is `undefined`, if the stage has been determined _not_ to have started.
+
+* `totalProgress`.
+The current, total progress that has been achieved for the stage.
+Specified as a percentage.
+In a completed report, the value is expected to be `100`.
+This is an _optional_ field, which may not appear if not implemented for the stage.
+
+* `perNodeProgress`.
+The current progress that has been achieved for the stage for each node.
+The value is an object, which itself provides a progress figure for each node.
+Each progress figure is specified as a floating-point number between `0.0` and `1.0`.
+In a completed report, the value is expected to be `1`.
+This is an _optional_ field, which may not appear if not implemented for the stage.
+
+* `subStage`.
+Details on any _substages_ that the stage may contain.
+For each _substage_, the standard fields are identical to those for each _stage_.
+This is an _optional_ field, which does not appear, if the stage contains no substages.
+(An example is _delta_recovery_, which is a substage reflected in the `data` output, when _Delta Recovery Warmup_ has been performed on one or more nodes running the Data Service, during rebalance of that service.)
+
+* `events`.
+An array of strings, each of which provides information on a significant event.
+The information may be a warning, an error message, or otherwise informational.
+This is an _optional_ field, which does not appear if not implemented for the stage, or if no significant events have occurred.
+
+* `details`.
+Further details of the stage.
+This is an _optional_ field, which is currently implemented for the `data` stage only (information provided below).
+
+* `rebalanceID`.
+A 32-bit string that is the identifier for the rebalance: for example, `"4f64c7dd5a1a452d3bcc3668307d64a6"`.
+
+* `nodesInfo`.
+Information on the nodes of the cluster, in relation to the rebalance.
+The following objects are provided &#8212; each consists of an array of strings, each of which represents a node.
+Where the category has no nodes, the array is empty.
+
+** `active_nodes`.
+The nodes included in the rebalance.
+
+** `keep_nodes`.
+The nodes that were intended to be part of the cluster, following rebalance.
+
+** `eject_nodes`.
+The nodes that were to be ejected by rebalance.
+
+** `delta_nodes`.
+The nodes on which Delta Recovery was to be performed.
+
+** `failed_nodes`.
+The nodes that were failed over prior to rebalance, and will be ejected from the cluster on successful rebalance.
+
+* `master_node`.
+The master node for the cluster, on which the _Master Services_ run &#8212; these are sometimes referred to as the _Orchestrator_.
+If this node is rebalanced out of the cluster, a new Orchestrator is elected by the Cluster Manager, on a surviving node.
+For further information, see xref:learn:clusters-and-availability/cluster-manager.adoc#ns-server[ns-server].
+
+* `completionMessage`.
+A message that signifies the way in which rebalance ended.
+For example, `"Rebalance completed successfully"`, or `"Rebalance stopped by user"`.
+
+If the report is downloaded by means of Couchbase Web Console, additional information in provided, concerning the download.
+
+[#standard-fields-example]
+=== Standard Fields Example
+
+The following example displays the initial section of a rebalance report, following a rebalance performed on a cluster consisting of the following nodes:
+
+* `10.143.194.101`, running the Data, Query, and Index Services.
+
+* `10.143.194.102`, running the Data and Search Services.
+
+* `10.143.194.103`, running the Analytics and Eventing Services.
+
+* `10.143.194.104`, running the Data Service.
+
+The rebalance follows an edit made to both buckets resident on the cluster, `beer-sample` and `travel-sample`, changing the number of replicas from 1 to 2, for each.
+This excerpt starts at the top of the structure, and stops at the point at which the Data Service `details` begin (these are described further below).
+
+----
+{
+  "stageInfo": {
+    "analytics": {
+      "totalProgress": 100,
+      "perNodeProgress": {
+        "ns_1@10.143.194.103": 1
+      },
+      "startTime": "2020-03-18T00:34:13.415-07:00",
+      "completedTime": "2020-03-18T00:34:14.724-07:00",
+      "timeTaken": 1310
+    },
+    "eventing": {
+      "totalProgress": 100,
+      "perNodeProgress": {
+        "ns_1@10.143.194.103": 1
+      },
+      "startTime": "2020-03-18T00:34:14.724-07:00",
+      "completedTime": "2020-03-18T00:34:14.939-07:00",
+      "timeTaken": 214
+    },
+    "search": {
+      "totalProgress": 100,
+      "perNodeProgress": {
+        "ns_1@10.143.194.102": 1,
+        "ns_1@10.143.194.104": 1
+      },
+      "startTime": "2020-03-18T00:34:12.453-07:00",
+      "completedTime": "2020-03-18T00:34:12.758-07:00",
+      "timeTaken": 306
+    },
+    "index": {
+      "totalProgress": 100,
+      "perNodeProgress": {
+        "ns_1@10.143.194.101": 1
+      },
+      "startTime": "2020-03-18T00:34:12.758-07:00",
+      "completedTime": "2020-03-18T00:34:13.415-07:00",
+      "timeTaken": 656
+    },
+    "data": {
+      "totalProgress": 100,
+      "perNodeProgress": {
+        "ns_1@10.143.194.101": 1,
+        "ns_1@10.143.194.102": 1,
+        "ns_1@10.143.194.104": 1
+      },
+      "startTime": "2020-03-18T00:33:36.969-07:00",
+      "completedTime": "2020-03-18T00:34:12.452-07:00",
+      "timeTaken": 35483,
+      "details": {
+        .
+        .
+        .
+----
+
+Each service thus has its stage-information provided in an object named after the service.
+Progress is provided for the whole cluster, and per node.
+Start times and completion times are provided, as are elapsed times.
+The Data Service contains the additional object, `details`, which is described immediately below.
+
+[#data-service-details]
+== Data Service Details
+
+The `details` provided for the Data Service are provided _per bucket_.
+Therefore, if the cluster contains the buckets `travel-sample` and `bucket-sample`, the `details` object provides a correspondingly named structure for each.
+
+The structure for each bucket may provide:
+
+* `compactionInfo`.
+Information on compaction, if it is performed for the bucket.
+If compaction is not performed, the `compactionInfo` structure is _not_ provided.
+If the `compactionInfo` structure _is_ provided, it gives the `averageTime` required for the bucket's compaction, _per node_, in seconds.
+
+* `vbucketLevelInfo`.
+Information on the _phases_ whereby the vBuckets were moved during rebalance.
+If no vBucket movement occurred, the `vbucketLevelInfo` structure is _not_ provided.
+If the `vbucketLevelInfo` structure _is_ provided, it includes the following:
+
+** Fields that provide the `averageTime` for the `move`, `backfill`, `takeover`, and `persistence` phases for the bucket.
+For an explanation of these terms, see xref:learn:clusters-and-availability/rebalance.adoc#rebalancing-the-data-service[Rebalance and the Data Service].
+Times are provided in seconds, to fourteen decimal places.
+The `totalCount` of vBuckets and `remainingCount` are also provided for the `move` phase: in a completed report, the `remainingCount` is expected to be zero.
+
+** `vbucketInfo`.
+Detailed information for each _moved_ vbucket that corresponds to the specified bucket.
+Note that vBuckets that were _not_ moved are not included.
+The information is as follows:
+
+*** `id`.
+The vBucket id, which is an integer between 0 and 1023 (or on MacOS, between 0 and 63).
+
+*** `beforeChain`.
+The _chain_ that this vBucket was part of, prior to rebalance.
+Each chain consists of one or more nodes, on each of which was located a vBucket containing an identical set of documents; one of the vBuckets being the _active_ vBucket, and the others (if other nodes are indeed specified) being the _replica_ vBuckets.
+The `beforeChain` is specified as an array of strings, each of which specifies a node; in the form `"ns_1@10.143.194.101"`.
+The first node in the list is the _master_ node, on which was located the active vBucket: any additional nodes in the list each hosted a replica vBucket.
+
+*** `afterChain`
+The chain of which this vBucket is a part, following rebalance.
+
+*** `move`.
+The `startTime` and `completedTime` for the move process that occurred, specified in each case as a UTC date/time string; plus the `timeTaken` for the move, in seconds.
+
+*** `backfill`, `takeover`, and `persistence` information, specified in the same way as the `move` information.
+
+*** `replicationInfo`.
+Node status-changes that have occurred due to rebalance.
+An object is provided for each node on which the vBucket has been promoted from replica to active, or has received mutations, or has been created.
+For each affected node, the `node` is identified, and its `inDocsTotal` (number of documents received or mutated) and `inDocsLeft` (number of documents still to be received or mutated) are specified, as integers.
+
+[#data-service-details-example]
+=== Data Service Details Example
+
+The following example provides part of the `details` section from the rebalance report described above, in xref:rebalance-reference:rebalance-reference.adoc#stage-info-standard-field-example[Standard Field Example].
+General information is provided on the `beer-sample` bucket, and specific information for the `beer-sample` vBucket whose id is `0`.
+
+----
+"details": {
+  "beer-sample": {
+    "compactionInfo": {
+      "perNode": {
+        "ns_1@10.143.194.101": {
+          "averageTime": 465.3636363636364
+        },
+        "ns_1@10.143.194.102": {
+          "averageTime": 267
+        },
+        "ns_1@10.143.194.104": {
+          "averageTime": 174.9090909090909
+        }
+      }
+    },
+    "vbucketLevelInfo": {
+      "move": {
+        "averageTime": 4082.2177734375,
+        "totalCount": 1024,
+        "remainingCount": 0
+      },
+      "backfill": {
+        "averageTime": 80.076171875
+      },
+      "takeover": {
+        "averageTime": 71.41837732160313
+      },
+      "persistence": {
+        "averageTime": 57.41973298599805
+      },
+      "vbucketInfo": [
+        {
+          "id": 0,
+          "beforeChain": [
+            "ns_1@10.143.194.101",
+            "ns_1@10.143.194.102"
+          ],
+          "afterChain": [
+            "ns_1@10.143.194.102",
+            "ns_1@10.143.194.101",
+            "ns_1@10.143.194.104"
+          ],
+          "move": {
+            "startTime": "2020-03-18T00:42:58.748-07:00",
+            "completedTime": "2020-03-18T00:43:02.341-07:00",
+            "timeTaken": 3593
+          },
+          "backfill": {
+            "startTime": "2020-03-18T00:42:59.446-07:00",
+            "completedTime": "2020-03-18T00:42:59.524-07:00",
+            "timeTaken": 77
+          },
+          "takeover": {
+          "startTime": "2020-03-18T00:43:01.548-07:00",
+          "completedTime": "2020-03-18T00:43:01.571-07:00",
+          "timeTaken": 22
+        },
+        "persistence": {
+          "startTime": "2020-03-18T00:43:01.528-07:00",
+          "completedTime": "2020-03-18T00:43:01.548-07:00",
+          "timeTaken": 21
+        },
+        "replicationInfo": {
+          "ns_1@10.143.194.102": {
+            "node": "ns_1@10.143.194.102",
+            "inDocsTotal": 0,
+            "inDocsLeft": 0
+          },
+          "ns_1@10.143.194.104": {
+            "node": "ns_1@10.143.194.104",
+            "inDocsTotal": 9,
+            "inDocsLeft": 0
+          }
+        }
+      },
+      .
+      .
+      .
+----
+
+The `compactionInfo` object contains the average time taken for compaction _per node_.
+The `vbucketLevelInfo` object provides an overall `averageTime` for each phase whereby vBuckets were moved, during rebalance.
+
+The `vbucketInfo` section provides a sequence of objects, one for each vBucket that was moved during rebalance.
+In this example, only the first of these (id `0`) is shown.
+The `beforeChain` indicates that prior to rebalance, the active vBucket resided on node `10.143.194.101`, with its single replica on node `10.143.194.102`.
+The `afterChain` indicates that following rebalance, the active vBucket resides on node `10.143.194.102`, and the two replicas reside on nodes `10.143.194.101` and `10.143.194.104` respectively.
+
+Date/time strings for `startTime` and `completedTime`, and an integer for `timeTaken`, are provided for each of the move stages for this vBucket.
+
+The `replicationInfo` object shows that `10.143.194.192` has become the host for the active bucket; with no documents having needed to be moved onto this node &#8212; since they already resided there within a replica vBucket, which was promoted to active during rebalance.
+It also shows that `9` documents were moved onto node `10.143.194.104` &#8212; since the rebalance process placed an additional replica there, in accordance with the pre-rebalance bucket-reconfiguration.
+
+[#see-also]
+== See Also
+
+General information on rebalance and Data-Service phases is provided in xref:learn:clusters-and-availability/rebalance.adoc[Rebalance].
+Information on performing a rebalance and downloading a report by means of Couchbase Web Console is provided in xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
+Details on obtaining rebalance status and accessing the latest rebalance report by means of the REST API are provided in xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks].
