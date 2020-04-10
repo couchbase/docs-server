@@ -1,0 +1,1 @@
+SELECT meta().id AS _k, _v FROM default _v;
