@@ -1,0 +1,154 @@
+= Couchbase Server Quickstart - ASP.NET Core First Query
+:imagesdir: ../assets/images/quickstart-aspnetcore31-cb65
+:sourcedir: ../examples/quickstart-aspnetcore31-cb65
+
+[abstract]
+Using the Couchbase .NET SDK in an ASP.NET Core application to create new database records in Couchbase and look them up. 
+
+== Prerequisite: Run Couchbase Server
+
+1. Couchbase Server 6.5 is already running.
+
+** An empty bucket named "default" has been created.
+
+** Both a primary index and an adaptive index have been created and built on the default bucket.
+
+** If you still need to perform these tasks please use the following:
+
+*** xref:quickstart-docker-image-manual.adoc[10-minute Couchbase Docker Container Configuration]
+//*** */ or run the following command(s) to run an automatically-configured CE docker image
+//<commands>
+
+2. Visual Studio is installed. This tutorial uses link:https://visualstudio.microsoft.com/vs/[Visual Studio] 2019 16.5.
+
+3. link:https://dotnet.microsoft.com/download/dotnet-core[.NET Core Runtime] is installed. This tutorial uses .NET Core 3.1
+
+4. A tool to make HTTP requests (e.g. link:https://curl.haxx.se/[cURL] or link:https://www.postman.com/[Postman]).
+
+== Step 1: Start a New Project in Visual Studio
+
+Open Visual Studio 2019 and create a new ASP.NET Core Web Application project.
+
+image::newProject.png[New Project dialog in Visual Studio 2019]
+
+Select the API template.
+
+image::templateSelect.png[Template select in Visual Studio]
+
+Install the latest link:https://github.com/couchbaselabs/Couchbase.Extensions[Couchbase.Extensions.DependencyInjection] package from NuGet. This will install both the Couchbase .NET SDK and a Dependency Injection extension for ASP.NET Core.
+
+[Note]
+====
+This open-source project is part of Couchbase Labs, and is not commercially supported by Couchbase, Inc.
+====
+
+You can do this via the UI or the command line like so:
+
+[source,Powershell]
+----
+Install-Package Couchbase.Extensions.DependencyInjection -Version 2.0.2
+----
+
+== Step 2: ASP.NET Core Configuration
+
+There are two steps to configure your new ASP.NET Core application.
+
+First, add a "Couchbase" section to the appsettings.json file. If you've followed along with the xref:quickstart-docker-image-manual.adoc[10-minute Couchbase Docker Container Configuration], then edit your appsettings.json file to add a Couchbase section as follows:
+
+[source,JavaScript]
+----
+include::{sourcedir}/quickstart-aspnetcore31-cb65/appsettings.json[]
+----
+
+The next step is to setup Couchbase in Startup.cs.
+
+To do this, first add `services.AddCouchbase(Configuration.GetSection("Couchbase"));` to the `ConfigureServices` method. Make sure to close the connection as well. You can do this in `Configure` with `IHostApplicationLifetime`. Here is the complete Startup.cs:
+
+[source,JavaScript]
+----
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Startup.cs[]
+----
+
+At this point, your ASP.NET Core application is now configured to use Couchbase.
+
+== Step 3: Create a new document
+
+Let's create two controller actions. These will correspond to two API endpoints: one will create a document and one will query a document.
+
+You can start with the `WeatherForecastController` that Visual Studio automatically generated, or you can create your own. In either case, create a constructor that has an `IBucketProvider` parameter. Use the bucketProvider to get an instance of a Couchbase bucket: `_bucket = bucketProvider.GetBucket("default")`.
+
+[source,C#,indent=0]
+----
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/WeatherForecastController.cs[tag=ctor]
+----
+
+Use this bucket object to insert plain C# objects into Couchbase. They will be serialized into JSON and stored with a key: `_bucket.Insert(key, forecast);`. Create an `InsertData` POST method like so:
+
+[source,C#,indent=0]
+----
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/WeatherForecastController.cs[tag=insert]
+----
+
+Compile and run your ASP.NET Core program locally with CTRL+F5. Use cURL or Postman or the HTTP tool of your choice to create a POST with JSON content to the specified route. The body of the post should look something like this:
+
+[source,JavaScript]
+----
+{
+	"Date" : "2020-04-14",
+	"TemperatureC" : 25,
+	"Summary" : "Today's weather is partly cloudy and warm."
+}
+----
+
+When the request is successful, the response will contain the generated ID:
+
+[source]
+----
+Inserted forecast with ID: d28a19d4-0c37-447f-b0c0-66a7f2af3c97
+----
+
+Now a single document should appear in your Couchbase bucket. Make a note of this key; you'll need it for the next step. 
+
+image::bucketOneDocument.png[Template select in Visual Studio]
+
+== Step 4: Query the document
+
+Create a second controller action called `GetData`. This will be for an API endpoint to retrieve a document given a key.
+
+For this tutorial, we'll write a N1QL (SQL for JSON) query to retrieve the document:
+
+[source,SQL]
+----
+SELECT w.*
+FROM default w
+WHERE META(w).id = 'd28a19d4-0c37-447f-b0c0-66a7f2af3c97'
+----
+
+`default` is the name of the bucket. `META(w).id` refers to the id/key that every document in the bucket has.
+
+To execute a N1QL query in .NET, start by creating a N1QL string with a named parameter for the key: `var n1ql = "SELECT w.* FROM default w WHERE META(w).id = $id";`.
+
+Use the string with `QueryRequest.Create(...)` to create a query object. Parameters and other settings can be supplied using this query object. Finally, use the `_bucket` object to execute the query.
+
+[source,C#,indent=0]
+----
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/WeatherForecastController.cs[tag=getdata]
+----
+
+Compile and run your ASP.NET Core program locally with CTRL+F5. Use cURL or Postman or the HTTP tool of your choice to create a GET with a querystring variable of id the specified route. Example: `\https://localhost:44316/?id=d28a19d4-0c37-447f-b0c0-66a7f2af3c97`
+
+The body of a successful response should look something like this:
+
+[source,JavaScript]
+----
+{
+    "date": "2020-04-14T00:00:00",
+    "temperatureC": 25,
+    "temperatureF": 76,
+    "summary": "Today's weather is partly cloudy and warm."
+}
+----
+
+== Done
+
+Be sure to check out the other quick start exercises. link:https://github.com/couchbase/docs-server/tree/release/6.5/modules/getting-started/examples/quickstart-aspnetcore31-cb65[The complete source code is available on GitHub].
