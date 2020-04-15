@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Linq;
+using System.Collections.Generic;
 using Couchbase.Core;
 using Couchbase.Extensions.DependencyInjection;
 using Couchbase.N1QL;
@@ -22,13 +22,13 @@ namespace QuickStart.Controllers
         // tag::getdata[]
         [HttpGet]
         [Route("/")]
-        public WeatherForecast GetData(string id = null)
+        public List<WeatherForecast> GetData(int temperatureC)
         {
-            var n1ql = "SELECT w.* FROM default w WHERE META(w).id = $id";
+            var n1ql = "SELECT w.* FROM default w WHERE w.temperatureC = $temperatureC";
             var query = QueryRequest.Create(n1ql);
-            query.AddNamedParameter("$id", id);
+            query.AddNamedParameter("$temperatureC", temperatureC);
             var result = _bucket.Query<WeatherForecast>(query);
-            return result.Rows.FirstOrDefault();
+            return result.Rows;
         }
         // end::getdata[]
 
