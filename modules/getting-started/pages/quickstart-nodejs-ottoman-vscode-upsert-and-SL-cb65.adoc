@@ -1,0 +1,167 @@
+= Couchbase Server Quickstart - SQL JSON Upsert and Lookup via Ottoman 2.6 & NodeJS SDK 2.6
+:imagesdir: ../assets/images
+:sourcedir: ../examples
+
+[abstract]
+Using SQL syntax and the Couchbase Query Workbench, create new database records in Couchbase and look them up with Ottoman. 
+
+== Prerequisite: Run Couchbase Server
+
+1. Couchbase Server 6.5 is already running.
+
+2. An empty bucket named "default" has been created.
+
+3. Both a primary index and an adaptive index have been created and built on the default bucket.
+
+If you still need to perform these tasks please use one of the following:
+
+* xref:quickstart-docker-image-manual-cb65-for-ottoman.adoc[5-minute Couchbase Docker Container Configuration]
+
+== Step 1: Create The Ottoman NodeJS Project
+
+In this exercise, we will be working with the Ottoman ODM (Object Document Mapper) in conjunction with the latest link:https://docs.couchbase.com/nodejs-sdk/2.6/start-using-sdk.html[NodeJS SDK v2.6]. There may be more recent versions of the SDK available, however; since we are working with Ottoman and it does not yet support SDK 3. 
+
+Remember you can get to the Couchbase Server Web UI at http://localhost:8091. 
+
+Next, we will create a project directory initializing npm and installing `couchbase`, `ottoman`, `dotenv`, and set up our config and `server.js` file.
+
+```sh
+mkdir first-query-ottoman && cd $_ && npm init -y && npm install couchbase ottoman dotenv && touch .env && echo -e "user=Administrator \npass=password \n" >> .env && touch server.js && code .
+```
+
+This will open up VS Code and put us into our project directory, we want to open the `server.js` file.
+
+We created a file named `.env` which we'll use to store our credentials for our database connection. We also created a `server.js` file that we will be adding our code to. In the code samples below, we will add each new section of code one after another. Let's get started building our Ottoman app.
+
+== Connecting to Couchbase Bucket
+
+Create a connection to our Couchbase Server running in Docker.
+
+```js
+var ottoman = require('ottoman')
+var couchbase = require('couchbase')
+
+var cluster = new couchbase.Cluster('localhost:8091')
+
+cluster.authenticate('Administrator', 'password')
+ottoman.bucket = cluster.openBucket('default')
+```
+
+== Creating an Ottoman Model
+
+Create a model for our `user` document. It will get auto-created and stored in our already created `task-management` bucket in Couchbase.
+
+```js
+var User = ottoman.model('User', {
+  firstName: 'string',
+  lastName: 'string',
+  email: 'string',
+  lyric: 'string'
+})
+```
+
+We have used just types of `string` in this model, that tells Ottoman what kind of data to use for each field in our model, we'll keep it simple for now. Ottoman supports many other types like `boolean`, integer`, and  `Date` to name a few. 
+
+== Create New Documents Using Our User Model
+
+Let's add a user to our database.
+
+```js
+var user_perry = new User({
+  firstName: 'Perry',
+  lastName: 'Mason',
+  email: 'perry.mason@acme.com',
+  lyric: 'Who can we get on the case?',
+})
+var user_tom = new User({
+  firstName: "Major",
+  lastName: "Tom",
+  email: "major.tom@acme.com",
+  lyric: "Send me up a drink",
+})
+var user_jerry = new User({
+  firstName: "Jerry",
+  lastName: "Wasaracecardriver",
+  email: "jerry.wasaracecardriver@acme.com",
+  lyric: "el sob number one",
+})
+```
+
+== Save Our Users
+
+Call Ottoman's `save()` method on each of these objects which will add them to our database so long as no errors occur.
+
+```js
+user_perry.save((err) => err
+  ? console.error(err)
+  : console.info(`success: user ${user_perry.firstName} added!`)
+)
+user_tom.save((err) => err
+  ? console.error(err)
+  : console.info(`success: user ${user_tom.firstName} added!`)
+)
+user_jerry.save((err) => err
+  ? console.error(err)
+  : console.info(`success: user ${user_jerry.firstName} added!`)
+)
+```
+
+With the `save()` method added, let's run our app. You should get one success message in the console and no errors.
+
+== First Query
+
+When we use Ottoman, and create a model, then persist documents to the database using the `save()` method, we can then use a `find()` method like below in conjunction with the Adaptive Index that was creatd during our database setup.
+
+```js
+User.find({lastName: 'Tom'}, {consistency: ottoman.Consistency.LOCAL},
+  (err, items) => console.log(
+    err ? err : console.log('Finding Tom and Jerry: ', JSON.stringify(items))
+  )
+);
+
+```
+
+The first two arguments to the `find()` method are our filter and options, let's look at it a little bit differently:
+
+```js
+var filters = { 
+  lastName: 'Tom'
+};
+
+var options = {
+  consistency: ottoman.Consistency.LOCAL
+};
+
+User.find(filters, options,
+  (err, items) => console.log(
+    err ? err : console.log('Finding Tom and Jerry: ', JSON.stringify(items))
+  )
+);
+```
+
+If we were expecting 20 or more records to be retrieved by that query we could page the results in the options to get the second page, like this:
+
+```js
+var options = {
+  limit: 10,
+  skip: 10
+  consistency: ottoman.Consistency.LOCAL
+};
+```
+
+== Summary
+
+We have created models in Ottoman, defined some documents and persited them to the database and then subsequently looked them up using the built in `find()` method. We have not yet touched on indexes other than the fact that we created two of them during the docker and indexes section of the quickstart.
+
+Couchbase will use the most efficient index for searching for our user by lastName, in that case it's the adaptive index that we can find in our Indexes tab of the Couchbase WebUI.
+
+If those indexes were not present, we would get an error in our applicaiton like:
+
+```sh
+"errors": [
+  {
+    "code": 4000,
+    "msg": "No index available on keyspace default that matches your query. Use CREATE INDEX or CREATE PRIMARY INDEX to create an index, or check that your expected index is online."
+  }
+]
+```
