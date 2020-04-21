@@ -1,0 +1,1 @@
+SELECT * FROM default WHERE firstName = "Jerry";
