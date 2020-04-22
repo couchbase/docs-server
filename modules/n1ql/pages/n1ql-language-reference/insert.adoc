@@ -156,6 +156,7 @@ You can specify a key using an expression, as shown here:
 [[example-2]]
 .Specify a key using an expression
 ====
+.Query
 [source,n1ql]
 ----
 INSERT INTO `travel-sample` ( KEY, VALUE )
@@ -172,6 +173,7 @@ If you don’t require the document key to be in a specific format, you can use 
 [[example-3]]
 .Generate a unique key
 ====
+.Query
 [source,n1ql]
 ----
 INSERT INTO `travel-sample` ( KEY, VALUE )
@@ -297,6 +299,7 @@ RETURNING *;
 [[example-7]]
 .Insert a NULL JSON document
 ====
+.Query
 [source,n1ql]
 ----
 INSERT INTO `travel-sample` (KEY, VALUE)
@@ -331,13 +334,13 @@ For details, see xref:n1ql-language-reference/select-syntax.adoc[SELECT Syntax].
 [[example-8]]
 .Insert with SELECT
 ====
-Query the `travel-sample` bucket for documents of `type` "airport" and `airportname` "Heathrow", and then insert the projection (2 documents) into the `travel-sample` bucket using unique keys generated using `UUID()`.
+Query the `travel-sample` bucket for documents of `type` "airport" and `airportname` "Heathrow", and then insert the projection (1 document) into the `travel-sample` bucket using a unique key generated using `UUID()`.
 
 .Query
 [source,n1ql]
 ----
-INSERT INTO `travel-sample` (KEY UUID(), VALUE _country)
-    SELECT _country FROM `travel-sample` _country
+INSERT INTO `travel-sample` (KEY UUID(), VALUE _airport)
+    SELECT _airport FROM `travel-sample` _airport
       WHERE type = "airport" AND airportname = "Heathrow"
 RETURNING *;
 ----
@@ -345,16 +348,25 @@ RETURNING *;
 .Results
 [source,json]
 ----
-{
-  "results": [],
-  "metrics": {
-    "elapsedTime": "24.777636ms",
-    "executionTime": "24.739281ms",
-    "resultCount": 0,
-    "resultSize": 0,
-    "mutationCount": 2
+[
+  {
+    "travel-sample": {
+      "airportname": "Heathrow",
+      "city": "London",
+      "country": "United Kingdom",
+      "faa": "LHR",
+      "geo": {
+        "alt": 83,
+        "lat": 51.4775,
+        "lon": -0.461389
+      },
+      "icao": "EGLL",
+      "id": 507,
+      "type": "airport",
+      "tz": "Europe/London"
+    }
   }
-}
+]
 ----
 ====
 
@@ -544,6 +556,7 @@ When a large number of documents are inserted, this may affect the performance o
 The following statement inserts a single JSON document into the `travel-sample` bucket with key "k001".
 The returning clause specifies the function `META().id` to return the key of the inserted document (metadata), and the wildcard (*) to return the inserted document.
 
+.Query
 [source,n1ql]
 ----
 INSERT INTO `travel-sample` ( KEY, VALUE )
@@ -555,8 +568,7 @@ INSERT INTO `travel-sample` ( KEY, VALUE )
 RETURNING META().id as docid, *;
 ----
 
-This results in:
-
+.Results
 [source,json]
 ----
 {
@@ -721,14 +733,14 @@ Instead of providing actual values, you can specify the data to be inserted usin
 [[example-13]]
 .Inserting Values using SELECT
 ====
-Query the `travel-sample` bucket for the field `_country` where the `airportname` is "Heathrow" and `type` is "airport".
+Query the `travel-sample` bucket for documents where the `airportname` is "Heathrow" and `type` is "airport".
 Then insert the result of the select statement (a well-formed JSON document) into the `travel-sample` bucket with a key generated using the `UUID()` function.
 
 .Query
 [source,n1ql]
 ----
-INSERT INTO `travel-sample` (key UUID(), value _country)
-    SELECT _country FROM `travel-sample` _country
+INSERT INTO `travel-sample` (KEY UUID(), VALUE _airport)
+    SELECT _airport FROM `travel-sample` _airport
       WHERE type = "airport" AND airportname = "Heathrow";
 ----
 
@@ -815,6 +827,7 @@ The result shows the META().id generated as a result of this concatenation (high
 ====
 Use the INSERT statement to create a copy of `bucket_1` under the new name `bucket_2`.
 
+.Query
 [source,n1ql]
 ----
 INSERT INTO bucket_2(key _k, value _v)
@@ -890,6 +903,8 @@ For brevity, we `SELECT` only 4 documents.
 [[example-17]]
 .Inserting Values Using Functions
 ====
+Set the parameter `$faa_code` using the cbq prompt, or the xref:tools:query-workbench.adoc#query-preferences[Run-Time Preferences] in the Query Workbench.
+
 .Parameters
 [source,console]
 ----
@@ -970,6 +985,7 @@ To execute using the REST API, skip to <<step-3>>.
  .. Set the parameters `$key` and `$faa_code` using the cbq prompt, or the xref:tools:query-workbench.adoc#query-preferences[Run-Time Preferences] in the Query Workbench.
 These values will be passed as parameters when executing the prepared statement `ins_india`.
 +
+.Parameters
 [source,console]
 ----
 cbq> \set -$key "airport_10001" ;
@@ -1140,8 +1156,8 @@ The query engine first scans the input values shown by the operator `ValueScan` 
 .Query
 [source,n1ql]
 ----
-EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
-    SELECT _country FROM `travel-sample` _country
+EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _airport)
+    SELECT _airport FROM `travel-sample` _airport
       WHERE type = "airport" AND airportname = "Heathrow";
 ----
 
@@ -1160,43 +1176,49 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
               "#operator": "IntersectScan", // <3>
               "scans": [
                 {
-                  "#operator": "IndexScan", // <1>
-                  "index": "def_type",
-                  "index_id": "aea49ebaf37e4015",
+                  "#operator": "IndexScan3", // <2>
+                  "as": "_airport",
+                  "index": "def_airportname",
+                  "index_id": "af738c1d1aa1f107",
+                  "index_projection": {
+                    "primary_key": true
+                  },
                   "keyspace": "travel-sample",
                   "namespace": "default",
                   "spans": [
                     {
-                      "Range": {
-                        "High": [
-                          "\"airport\""
-                        ],
-                        "Inclusion": 3,
-                        "Low": [
-                          "\"airport\""
-                        ]
-                      }
+                      "exact": true,
+                      "range": [
+                        {
+                          "high": "\"Heathrow\"",
+                          "inclusion": 3,
+                          "low": "\"Heathrow\""
+                        }
+                      ]
                     }
                   ],
                   "using": "gsi"
                 },
                 {
-                  "#operator": "IndexScan", // <2>
-                  "index": "def_airportname",
-                  "index_id": "1e6e52dd512a354f",
+                  "#operator": "IndexScan3", // <1>
+                  "as": "_airport",
+                  "index": "def_type",
+                  "index_id": "4877ed06167c9af8",
+                  "index_projection": {
+                    "primary_key": true
+                  },
                   "keyspace": "travel-sample",
                   "namespace": "default",
                   "spans": [
                     {
-                      "Range": {
-                        "High": [
-                          "\"Heathrow\""
-                        ],
-                        "Inclusion": 3,
-                        "Low": [
-                          "\"Heathrow\""
-                        ]
-                      }
+                      "exact": true,
+                      "range": [
+                        {
+                          "high": "\"airport\"",
+                          "inclusion": 3,
+                          "low": "\"airport\""
+                        }
+                      ]
                     }
                   ],
                   "using": "gsi"
@@ -1204,25 +1226,25 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
               ]
             },
             {
+              "#operator": "Fetch", // <4>
+              "as": "_airport",
+              "keyspace": "travel-sample",
+              "namespace": "default"
+            },
+            {
               "#operator": "Parallel",
               "~child": {
                 "#operator": "Sequence",
                 "~children": [
                   {
-                    "#operator": "Fetch", // <4>
-                    "as": "_country",
-                    "keyspace": "travel-sample",
-                    "namespace": "default"
-                  },
-                  {
                     "#operator": "Filter",
-                    "condition": "(((`_country`.`type`) = \"airport\") and ((`_country`.`airportname`) = \"Heathrow\"))"
+                    "condition": "(((`_airport`.`type`) = \"airport\") and ((`_airport`.`airportname`) = \"Heathrow\"))"
                   },
                   {
                     "#operator": "InitialProject",
                     "result_terms": [
                       {
-                        "expr": "`_country`"
+                        "expr": "`_airport`"
                       }
                     ]
                   },
@@ -1244,9 +1266,8 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
                 "alias": "travel-sample",
                 "key": "uuid()",
                 "keyspace": "travel-sample",
-                "limit": null,
                 "namespace": "default",
-                "value": "`_country`"
+                "value": "`_airport`"
               },
               {
                 "#operator": "Discard"
@@ -1256,7 +1277,7 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
         }
       ]
     },
-    "text": "INSERT INTO `travel-sample` (key UUID(), value _country) SELECT _country from `travel-sample` _country WHERE type = \"airport\" and airportname = \"Heathrow\";"
+    "text": "INSERT INTO `travel-sample` (KEY UUID(), VALUE _airport)\n    SELECT _airport FROM `travel-sample` _airport\n      WHERE type = \"airport\" AND airportname = \"Heathrow\";"
   }
 ]
 ----
@@ -1266,6 +1287,6 @@ The Query Engine first executes the `SELECT` statement and then uses the project
 <1> An `IndexScan` to find the documents that satisfy `type="airport"`.
 <2> A subsequent `IndexScan` for `airportname="Heathrow"`.
 <3> An `IntersectScan` to obtain the documents that satisfy both conditions of Step 1 and Step 2.
-<4> A `Fetch` for the value on the field `_country`.
+<4> A `Fetch` for the value on the document `_airport`.
 <5> An `Insert` of the value along with the auto-generated key into the `travel-sample` bucket.
 ====
