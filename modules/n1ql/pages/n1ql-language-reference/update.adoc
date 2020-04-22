@@ -1,58 +1,13 @@
 = UPDATE
 :page-topic-type: concept
+:imagesdir: ../../assets/images
 
+[abstract]
 UPDATE replaces a document that already exists with updated values.
 
-_update:_
+== Prerequisites
 
-----
-UPDATE keyspace-ref [use-keys-clause] [set-clause] [unset-clause] [where-clause] [limit-clause] [returning-clause]
-----
-
-_set-clause:_
-
-----
-SET path = expression [update-for] [ , path = expression [update-for] ]*
-----
-
-_update-for:_
-
-----
-FOR variable (IN | WITHIN) path  (, variable (IN | WITHIN) path)* [WHEN condition ] END
-----
-
-_unset-clause:_
-
-----
-UNSET path [update-for] (, path [ update-for ])*
-----
-
-_keyspace-ref:_ Specifies the keyspace for which to update the document.
-
-You can add an optional namespace-name to the keyspace-name in this way:
-
-namespace-name:keyspace-name.
-
-__use-keys-clause:__Specifies the keys of the data items to be updated.
-Optional.
-Keys can be any expression.
-
-__set-clause:__Specifies the value for an attribute to be changed.
-
-_unset-clause:_ Removes the specified attribute from the document.
-
-_update-for:_ The update for clause uses the FOR statement to iterate over a nested array and SET or UNSET the given attribute for every matching element in the array.
-
-__where-clause:__Specifies the condition that needs to be met for data to be updated.
-Optional.
-
-__limit-clause:__Specifies the greatest number of objects that can be updated.
-This clause must have a non-negative integer as its upper bound.
-Optional.
-
-__returning-clause:__Returns the data you updated as specified in the `result_expression`.
-
-*RBAC Privileges*
+=== RBAC Privileges
 
 User executing the UPDATE statement must have the _Query Update_ privilege on the target keyspace.
 If the statement has any clauses that needs data read, such as SELECT clause, or RETURNING clause, then _Query Select_ privilege is also required on the keyspaces referred in the respective clauses.
@@ -61,22 +16,25 @@ xref:learn:security/authorization-overview.adoc[Authorization].
 
 For example,
 
-To execute the following statement, user must have the _Query Update_ privilege on `pass:c[`travel-sample`]`.
-
+* To execute the following statement, user must have the _Query Update_ privilege on `pass:c[`travel-sample`]`.
++
+[source,n1ql]
 ----
 UPDATE `travel-sample` SET foo = 5
 ----
 
-To execute the following statement, user must have the _Query Update_ privilege on the `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`beer-sample`]`.
-
+* To execute the following statement, user must have the _Query Update_ privilege on the `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`beer-sample`]`.
++
+[source,n1ql]
 ----
 UPDATE `travel-sample`
 SET foo = 9
-WHERE city = (SELECT raw city FROM `beer-sample` WHERE type = "brewery"
+WHERE city IN (SELECT RAW city FROM `beer-sample` WHERE type = "brewery")
 ----
 
-To execute the following statement, user must have the _Query Update_ privilege on `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`travel-sample`]`.
-
+* To execute the following statement, user must have the _Query Update_ privilege on `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`travel-sample`]`.
++
+[source,n1ql]
 ----
 UPDATE `travel-sample`
 SET city = "San Francisco"
@@ -84,77 +42,368 @@ WHERE lower(city) = "sanfrancisco"
 RETURNING *
 ----
 
-*Example*
+== Syntax
 
-The following statement changes the "type" of the product, "odwalla-juice1" to "product-juice".
-
+[subs="normal"]
 ----
-UPDATE product USE KEYS "odwalla-juice1" SET type = "product-juice" RETURNING product.type
-
-"results": [
-        {
-            "type": "product-juice"
-        }
-    ]
+UPDATE <<update-target,update-target>> [<<update-hint,update-hint>>] [<<set-clause,set-clause>>] [<<unset-clause,unset-clause>>] [<<where-clause,where-clause>>] [<<limit-clause,limit-clause>>] [<<returning-clause,returning-clause>>]
 ----
 
-This statement removes the "type" attribute from the "product" keyspace for the document with the "odwalla-juice1" key.
+image::n1ql-language-reference/update.png["'UPDATE' update-target update-hint? set-clause? unset-clause? where-clause? limit-clause? returning-clause?"]
 
+[[update-target]]
+=== Update Target
+
+[subs="normal"]
 ----
-UPDATE product USE KEYS "odwalla-juice1" UNSET type RETURNING product.*
-
-"results": [
-        {
-            "productId": "odwalla-juice1",
-            "unitPrice": 5.4
-        }
-    ]
+update-target ::= <<keyspace-ref,keyspace-ref>> [ [ AS ] <<update-alias,alias>> ]
 ----
 
-This statement unsets the "gender" attribute in the "children" array for the document with the key, "dave" in the `tutorial` keyspace.
+image::n1ql-language-reference/merge-source-keyspace.png["( namespace ':' )? keyspace ( 'AS'? alias )?"]
 
+The update target is the keyspace which you want to update.
+
+[[keyspace-ref]]
+==== Keyspace Reference
+
+[subs="normal"]
 ----
-UPDATE tutorial t USE KEYS "dave" UNSET c.gender FOR c IN children END RETURNING t
-
-"results": [
-        {
-            "t": {
-                "age": 46,
-                "children": [
-                    {
-                        "age": 17,
-                        "fname": "Aiden"
-                    },
-                    {
-                        "age": 2,
-                        "fname": "Bill"
-                    }
-                ],
-                "email": "dave@gmail.com",
-                "fname": "Dave",
-                "hobbies": [
-                    "golf",
-                    "surfing"
-                ],
-                "lname": "Smith",
-                "relation": "friend",
-                "title": "Mr.",
-                "type": "contact"
-            }
-        }
-    ]
+keyspace-ref ::= [ _namespace_ ':' ] _keyspace_
 ----
 
-Starting version 4.5.1, the UPDATE statement has been improved to SET nested array elements.
-The FOR clause is enhanced to evaluate functions and expressions, and the new syntax supports multiple nested FOR expressions to access and update fields in nested arrays.
+image::n1ql-language-reference/from-keyspace-ref.png[]
+
+Keyspace reference for the update target.
+For more details, refer to xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+namespace::
+(Optional) The name or xref:n1ql-language-reference/identifiers.adoc[identifier] of the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[namespace] of the update target.
+
+keyspace::
+(Required) The name or xref:n1ql-language-reference/identifiers.adoc[identifier] of the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace] of the update target.
+
+[id="update-alias"]
+==== AS Alias
+
+Assigns another name to the keyspace reference.
+For details, refer to xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+alias::
+String to assign an alias.
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[[update-hint]]
+=== Update Hint
+
+You can use a `USE KEYS` hint on the update target to specify the keys of the data items to be updated.
+For details, refer to xref:n1ql-language-reference/hints.adoc#use-keys-clause[USE KEYS Clause].
+
+[[set-clause]]
+=== SET Clause
+
+[subs="normal"]
+----
+set-clause ::= SET <<path,path>> '=' _expr_ [ <<update-for,update-for>> ] [ ',' <<path,path>> '=' _expr_ [ <<update-for,update-for>> ] ]*
+----
+
+image::n1ql-language-reference/set-clause.png["'SET' path '=' expr update-for? (',' path '=' expr update-for?)*"]
+
+Specifies the value for an attribute to be changed.
+The value may be a generic expression term, a subquery, or an expression that resolves to nested array elements.
+
+[[unset-clause]]
+=== UNSET Clause
+
+[subs="normal"]
+----
+unset-clause ::= UNSET <<path,path>> [ <<update-for,update-for>> ] [ ',' <<path,path>> [ <<update-for,update-for>> ] ]*
+----
+
+image::n1ql-language-reference/unset-clause.png["'UNSET' path update-for? (',' path update-for?)*"]
+
+Removes the specified attribute from the document.
+
+[[update-for]]
+=== FOR Clause
+
+[subs="normal"]
+----
+update-for ::= ( FOR [ _name-var_ ':' ] _var_ ( IN | WITHIN ) <<path,path>> [ ',' [ _name-var_ ':' ] _var_ ( IN | WITHIN ) <<path,path>> ]* )+ [ WHEN _cond_ ] END
+----
+
+image::n1ql-language-reference/update-for.png["('FOR' (name-var ':')? var ('IN' | 'WITHIN') path (',' (name-var ':')? var ('IN' | 'WITHIN') path)*)+ ('WHEN' cond)? 'END'"]
+
+[#path,subs="normal"]
+----
+path::= _identifier_ [ '[' _expr_ ']' ]* [ '.' <<path,path>> ]
+----
+
+image::n1ql-language-reference/path.png["'identifier ('[' expr ']')* ( '.' path )?"]
+
+Uses the FOR statement to iterate over a nested array to SET or UNSET the given attribute for every matching element in the array.
+The FOR clause can evaluate functions and expressions, and the UPDATE statement supports multiple nested FOR expressions to access and update fields in nested arrays.
 Additional array levels are supported by chaining the FOR clauses.
-// <codeblock>Syntax</codeblock>
 
-.Example
+=== WHERE Clause
+
+[subs="normal"]
 ----
-UPDATE default
-    SET i.subitems = ( ARRAY OBJECT_ADD(s, 'new', 'new_value' )
-        FOR s IN i.subitems END )
-            FOR s IN ARRAY_FLATTEN(ARRAY i.subitems
-                FOR i IN items END, 1) END;
+where-clause ::= WHERE _cond_
 ----
+
+image::n1ql-language-reference/where-clause.png[]
+
+Specifies the condition that needs to be met for data to be updated.
+Optional.
+
+=== LIMIT Clause
+
+[subs="normal"]
+----
+limit-clause ::= LIMIT _expr_
+----
+
+image::n1ql-language-reference/limit-clause.png[]
+
+Specifies the greatest number of objects that can be updated.
+This clause must have a non-negative integer as its upper bound.
+Optional.
+
+=== RETURNING Clause
+
+[subs="normal"]
+----
+returning-clause ::= RETURNING ( _result-expr_ [ ',' _result-expr_ ]* | ( RAW | ELEMENT | VALUE ) _expr_ )
+----
+
+image::n1ql-language-reference/returning-clause.png["'RETURNING' (result-expr (',' result-expr)* | ('RAW' | 'ELEMENT' | 'VALUE') expr)"]
+
+Specifies the information to be returned by the operation as a query result.
+For more details, refer to xref:n1ql-language-reference/insert.adoc#returning-clause[RETURNING Clause].
+
+== Examples
+
+NOTE: For some of these examples, the Query Workbench may warn you that the query has no WHERE clause and will update all documents.
+In this case, you can ignore the warning: the USE KEYS hint in these examples ensures that the query updates only one document.
+
+[[example-1]]
+.Set an attribute
+====
+The following statement sets the nickname of the landmark "Tradeston Pedestrian Bridge" to "Squiggly Bridge".
+
+[source,n1ql]
+----
+UPDATE `travel-sample` USE KEYS "landmark_10090" SET nickname = "Squiggly Bridge" RETURNING `travel-sample`.nickname;
+----
+
+[source,json]
+----
+[
+  {
+    "nickname": "Squiggly Bridge"
+  }
+]
+----
+====
+
+[[example-2]]
+.Unset an attribute
+====
+This statement removes the `nickname` attribute from the `travel-sample` keyspace for the document with the key `landmark_10090`.
+
+[source,n1ql]
+----
+UPDATE `travel-sample` USE KEYS "landmark_10090" UNSET nickname RETURNING `travel-sample`.name;
+----
+
+[source,json]
+----
+[
+  {
+    "name": "Tradeston Pedestrian Bridge"
+  }
+]
+----
+====
+
+[[example-3]]
+.Set attributes in an array
+====
+This statement sets the `codeshare` attribute for each element in the `schedule` array for document `route_10003` in the `travel-sample` keyspace.
+
+[source,n1ql]
+----
+UPDATE `travel-sample` t USE KEYS "route_10003" SET s.codeshare = NULL FOR s IN schedule END RETURNING t;
+----
+
+[source,json]
+----
+[
+    {
+        "t": {
+            "airline": "AF",
+            "airlineid": "airline_137",
+            "destinationairport": "ATL",
+            "distance": 654.9546621929924,
+            "equipment": "757 739",
+            "id": 10003,
+            "schedule": [
+                {
+                    "codeshare": null,
+                    "day": 0,
+                    "flight": "AF986",
+                    "utc": "22:26:00"
+                },
+                ...
+                {
+                    "codeshare": null,
+                    "day": 6,
+                    "flight": "AF540",
+                    "utc": "11:07:00"
+                }
+            ],
+            "sourceairport": "TPA",
+            "stops": 0,
+            "type": "route"
+        }
+    }
+]
+----
+====
+
+[[example-4]]
+.Set nested array elements
+====
+[source,n1ql]
+----
+UPDATE `travel-sample` AS h USE KEYS "hotel_10025"
+SET i.ratings = OBJECT_ADD(i.ratings, "new", "new_value" ) FOR i IN reviews END
+RETURNING h.reviews[*].ratings;
+----
+
+[source,json]
+----
+[
+  {
+    "ratings": [
+      {
+        "Cleanliness": 5,
+        "Location": 4,
+        "Overall": 4,
+        "Rooms": 3,
+        "Service": 5,
+        "Value": 4,
+        "new": "new_value"
+      },
+      {
+        "Business service (e.g., internet access)": 4,
+        "Check in / front desk": 4,
+        "Cleanliness": 4,
+        "Location": 4,
+        "Overall": 4,
+        "Rooms": 3,
+        "Service": 3,
+        "Value": 5,
+        "new": "new_value"
+      }
+    ]
+  }
+]
+----
+====
+
+[[example-5]]
+.Access nested arrays
+====
+.Query
+[source,n1ql]
+----
+UPDATE `travel-sample` AS h USE KEYS "hotel_10025"
+UNSET i.new FOR i IN
+  (ARRAY j.ratings FOR j IN reviews END)
+END
+RETURNING h.reviews[*].ratings;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "ratings": [
+      {
+        "Cleanliness": 5,
+        "Location": 4,
+        "Overall": 4,
+        "Rooms": 3,
+        "Service": 5,
+        "Value": 4
+      },
+      {
+        "Business service (e.g., internet access)": 4,
+        "Check in / front desk": 4,
+        "Cleanliness": 4,
+        "Location": 4,
+        "Overall": 4,
+        "Rooms": 3,
+        "Service": 3,
+        "Value": 5
+      }
+    ]
+  }
+]
+----
+====
+
+[[example-6]]
+.Update a document with the results of a subquery
+====
+.Query
+[source,n1ql]
+----
+UPDATE `travel-sample` AS a
+SET hotels = 
+  (SELECT  h.name, h.id 
+  FROM  `travel-sample` AS h  
+  WHERE h.type = "hotel" AND h.city = "Nice")
+WHERE a.faa ="NCE"
+RETURNING a;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "a": {
+      "airportname": "Cote D\\'Azur",
+      "city": "Nice",
+      "country": "France",
+      "faa": "NCE",
+      "geo": {
+        "alt": 12,
+        "lat": 43.658411,
+        "lon": 7.215872
+      },
+      "hotels": [
+        {
+          "id": 20419,
+          "name": "Best Western Hotel Riviera Nice"
+        },
+        ...
+        {
+          "id": 20421,
+          "name": "NH Nice"
+        }
+      ],
+      "icao": "LFMN",
+      "id": 1354,
+      "type": "airport",
+      "tz": "Europe/Paris"
+    }
+  }
+]
+----
+====
