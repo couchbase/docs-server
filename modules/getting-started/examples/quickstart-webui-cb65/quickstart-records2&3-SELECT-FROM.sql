@@ -1,5 +1,3 @@
-UPSERT INTO default (KEY _k, VALUE _v)
-
 SELECT x._k, x._v
 FROM [
   {
@@ -8,7 +6,7 @@ FROM [
       "firstName" : "Major",
       "lastName" : "Tom",
       "email" : "major.tom@acme.com",
-      "lyric" : "Send me up a drink",
+      "tagLine" : "Send me up a drink",
       "type" : "user"
       }
     },
@@ -18,7 +16,7 @@ FROM [
       "firstName" : "Jerry",
       "lastName" : "Wasaracecardriver",
       "email" : "jerry.wasaracecardriver@acme.com",
-      "lyric" : "el sob number one",
+      "tagLine" : "el sob number one",
       "type" : "user"
       }
     }

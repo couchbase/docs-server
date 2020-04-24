@@ -4,7 +4,7 @@ SELECT
     "firstName" : "Perry",
     "lastName" : "Mason",
     "email" : "perry.mason@acme.com",
-    "lyric" : "Who can we get on the case?",
+    "tagLine" : "Who can we get on the case?",
     "type" : "user"
     } AS _v
 ;
