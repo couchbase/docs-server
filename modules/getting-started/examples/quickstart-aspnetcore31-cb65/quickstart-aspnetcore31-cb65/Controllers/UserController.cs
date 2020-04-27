@@ -8,12 +8,12 @@ using Microsoft.AspNetCore.Mvc;
 namespace QuickStart.Controllers
 {
     [ApiController]
-    public class WeatherForecastController : ControllerBase
+    public class UserController : ControllerBase
     {
         // tag::ctor[]
         private readonly IBucket _bucket;
 
-        public WeatherForecastController(IBucketProvider bucketProvider)
+        public UserController(IBucketProvider bucketProvider)
         {
             _bucket = bucketProvider.GetBucket("default");
         }
@@ -22,12 +22,12 @@ namespace QuickStart.Controllers
         // tag::getdata[]
         [HttpGet]
         [Route("/")]
-        public List<WeatherForecast> GetData(int temperatureC)
+        public List<User> GetData(string email)
         {
-            var n1ql = "SELECT w.* FROM default w WHERE w.temperatureC = $temperatureC";
+            var n1ql = "SELECT d.* FROM default d WHERE d.email = $email";
             var query = QueryRequest.Create(n1ql);
-            query.AddNamedParameter("$temperatureC", temperatureC);
-            var result = _bucket.Query<WeatherForecast>(query);
+            query.AddNamedParameter("$email", email);
+            var result = _bucket.Query<User>(query);
             return result.Rows;
         }
         // end::getdata[]
@@ -35,7 +35,7 @@ namespace QuickStart.Controllers
         // tag::insert[]
         [HttpPost]
         [Route("/")]
-        public string InsertData(WeatherForecast forecast)
+        public string InsertData(User forecast)
         {
             var key = Guid.NewGuid().ToString();
             _bucket.Insert(key, forecast);

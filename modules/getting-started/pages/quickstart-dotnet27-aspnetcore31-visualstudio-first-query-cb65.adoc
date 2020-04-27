@@ -42,12 +42,17 @@ Install the latest link:https://github.com/couchbaselabs/Couchbase.Extensions[Co
 This open-source project is part of Couchbase Labs, and is not commercially supported by Couchbase, Inc.
 ====
 
-You can do this via the UI or the command line like so:
+You can do this via Visual Studio's Package Manager Console like so:
 
 [source,Powershell]
 ----
 Install-Package Couchbase.Extensions.DependencyInjection -Version 2.0.2
 ----
+
+[Note]
+====
+Alternatively, you can use the NuGet UI by right-clicking "Dependencies" in Solution Explore and then "Manage NuGet Packages".
+====
 
 == Step 2: ASP.NET Core Configuration
 
@@ -62,31 +67,40 @@ include::{sourcedir}/quickstart-aspnetcore31-cb65/appsettings.json[]
 
 The next step is to setup Couchbase in Startup.cs.
 
-To do this, first add `services.AddCouchbase(Configuration.GetSection("Couchbase"));` to the `ConfigureServices` method. Make sure to close the connection as well. You can do this in `Configure` with `IHostApplicationLifetime`. Here is the complete Startup.cs:
+To do this, first add `services.AddCouchbase(Configuration.GetSection("Couchbase"));` to the `ConfigureServices` method. Make sure to close the connection as well. You can do this in the `Configure` method by adding an `IHostApplicationLifetime` parameter. Here is the complete Startup.cs:
 
-[source,JavaScript]
+[source,C#]
 ----
 include::{sourcedir}/quickstart-aspnetcore31-cb65/Startup.cs[]
 ----
+<1> Add Couchbase service to ASP.NET Core
+<2> Dispose of Couchbase on ASP.NET Core shutdown
 
 At this point, your ASP.NET Core application is now configured to use Couchbase.
 
 == Step 3: Create a new document
 
-Let's create two controller actions. These will correspond to two API endpoints: one will create a document and one will query a document.
-
-You can start with the `WeatherForecastController` that Visual Studio automatically generated, or you can create your own. In either case, create a constructor that has an `IBucketProvider` parameter. Use the bucketProvider to get an instance of a Couchbase bucket: `_bucket = bucketProvider.GetBucket("default")`.
+Start by creating a simple "model" class to represent a user. 
 
 [source,C#,indent=0]
 ----
-include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/WeatherForecastController.cs[tag=ctor]
+include::{sourcedir}/quickstart-aspnetcore31-cb65/User.cs[tag=user]
+----
+
+Let's create two controller actions. These will correspond to two API endpoints: one will create a document and one will query a document.
+
+You can rename the `WeatherForecastController` to `UserController` or delete that file and create your own. In either case, create a constructor that has an `IBucketProvider` parameter. Use the bucketProvider to get an instance of a Couchbase bucket: `_bucket = bucketProvider.GetBucket("default")`.
+
+[source,C#,indent=0]
+----
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/UserController.cs[tag=ctor]
 ----
 
 Use this bucket object to insert plain C# objects into Couchbase. They will be serialized into JSON and stored with a key: `_bucket.Insert(key, forecast);`. Create an `InsertData` POST method like so:
 
 [source,C#,indent=0]
 ----
-include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/WeatherForecastController.cs[tag=insert]
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/UserController.cs[tag=insert]
 ----
 
 Compile and run your ASP.NET Core program locally with CTRL+F5. Use cURL or Postman or the HTTP tool of your choice to create a POST with JSON content to the specified route. The body of the post should look something like this:
@@ -94,9 +108,10 @@ Compile and run your ASP.NET Core program locally with CTRL+F5. Use cURL or Post
 [source,JavaScript]
 ----
 {
-	"Date" : "2020-04-14",
-	"TemperatureC" : 25,
-	"Summary" : "Today's weather is partly cloudy and warm."
+    "firstName" : "Major",
+    "lastName" : "Tom",
+    "email" : "major.tom@acme.com",
+    "tagLine" : "Send me up a drink"
 }
 ----
 
@@ -107,9 +122,10 @@ And example of a cURL command to make this request would be:
 curl --location --request POST 'https://localhost:44316/' \
 --header 'Content-Type: application/json' \
 --data-raw '{
-	"Date" : "2020-04-14",
-	"TemperatureC" : 25,
-	"Summary" : "Today'\''s weather is partly cloudy and warm."
+    "firstName" : "Major",
+    "lastName" : "Tom",
+    "email" : "major.tom@acme.com",
+    "tagLine" : "Send me up a drink"
 }'
 ----
 
@@ -125,35 +141,35 @@ When the request is successful, the response will contain the generated ID:
 Inserted forecast with ID: d28a19d4-0c37-447f-b0c0-66a7f2af3c97
 ----
 
-Now a single document should appear in your Couchbase bucket. Make a note of this key; you'll need it for the next step. 
+Now a single document should appear in your Couchbase bucket. Feel free to add multiple users in this way.
 
 image::bucketOneDocument.png[Template select in Visual Studio]
 
 == Step 4: Query the document
 
-Create a second controller action called `GetData`. This will be for an API endpoint to retrieve documents, given a temperature.
+Create a second controller action called `GetData` in UserController.cs. This will be for an API endpoint to retrieve documents, given an email address.
 
 For this tutorial, we'll write a N1QL (SQL for JSON) query to retrieve the document:
 
 [source,SQL]
 ----
-SELECT w.*
-FROM default w
-WHERE w.temperatureC = 25
+SELECT d.*
+FROM default d
+WHERE d.email = "major.tom@acme.com"
 ----
 
 If you've written SQL before, this should look familiar. But instead of querying a table, `default` is the name of the bucket.
 
-To execute a N1QL query in .NET, start by creating a N1QL string with a named parameter for the key: `var n1ql = "SELECT w.* FROM default w WHERE w.temperatureC = $temperatureC";`.
+To execute a N1QL query in .NET, start by creating a N1QL string with a named parameter for email: `var n1ql = "SELECT d.* FROM default d WHERE d.email = $email";`.
 
 Use the string with `QueryRequest.Create(...)` to create a query object. Parameters and other settings can be supplied using this query object. Finally, use the `_bucket` object to execute the query.
 
 [source,C#,indent=0]
 ----
-include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/WeatherForecastController.cs[tag=getdata]
+include::{sourcedir}/quickstart-aspnetcore31-cb65/Controllers/UserController.cs[tag=getdata]
 ----
 
-Compile and run your ASP.NET Core program locally with CTRL+F5. Use cURL or Postman or the HTTP tool of your choice to create a GET with a querystring variable of id the specified route. Example: `\https://localhost:44316/?id=d28a19d4-0c37-447f-b0c0-66a7f2af3c97`
+Compile and run your ASP.NET Core program locally with CTRL+F5. Use cURL or Postman or the HTTP tool of your choice to create a GET with a querystring variable of id the specified route. Example: `\https://localhost:44316/?email=major.tom@acme.com`
 
 The body of a successful response should look something like this:
 
@@ -161,10 +177,10 @@ The body of a successful response should look something like this:
 ----
 [
     {
-        "date": "2020-04-14T00:00:00",
-        "temperatureC": 25,
-        "temperatureF": 76,
-        "summary": "Today's weather is partly cloudy and warm."
+        "firstName" : "Major",
+        "lastName" : "Tom",
+        "email" : "major.tom@acme.com",
+        "tagLine" : "Send me up a drink"
     }
 ]
 ----
