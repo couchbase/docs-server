@@ -3,7 +3,7 @@
 :sourcedir: ../examples
 
 [abstract]
-Before we get started with Ottoman, we need to ensure you have Couchbase up and running with a data bucket and a few indexes in place so that we can do basic queries. Using SQL syntax and the Couchbase Query Workbench, we will take care of creating those indexes, you don't need to know much about them for the quickstart, just know that we need them so that after we create and upsert a few documents we can turn around and look them up with the query API in Ottoman. 
+Before we get started with Ottoman and Node JS, we need to ensure you have Couchbase up and running. We will create a data bucket and two indexes for basic queries. Using Couchbase's N1QL query syntax, we will create two indexes, a primary and adaptive index. After we upsert our records, these indexes will allow us to look up our documents with the Query API in Ottoman. 
 
 == Prerequisites: Three Steps required to Query our Bucket
 
@@ -17,21 +17,40 @@ If you still need to perform these tasks please use one of the following:
 
 * xref:quickstart-docker-image-manual-cb65-for-ottoman.adoc[5-minute Couchbase Docker Container Configuration]
 
-== Step 1: Create The Ottoman NodeJS Project
+== Step 1: Create The Ottoman Node JS Project
 
-In this exercise, we will be working with the link:https://github.com/couchbaselabs/node-ottoman[Ottoman ODM (Object Document Mapper)] in conjunction with the link:https://docs.couchbase.com/nodejs-sdk/2.6/start-using-sdk.html[NodeJS SDK v2.6]. Currently, Ottoman can use Couchbase NodeJS SDK version 2.6 but does not yet support the latest version 3 the SDK with added support for collections. 
+In this exercise, we will be working with the link:https://github.com/couchbaselabs/node-ottoman[Ottoman 2.6 ODM (Object Document Mapper)] in conjunction with the link:https://docs.couchbase.com/nodejs-sdk/2.6/start-using-sdk.html[NodeJS SDK v2.6.11] or any minor version that is higher will do. I'm using Node JS version 12.14 and NPM version 6.13, you can find these version numbers for Node and NPM by running the following command:
+
+```sh
+node --version
+npm --version
+```
 
 NOTE: you can get to the Couchbase Server Web UI at any time by visiting link:https://localhost:8091[localhost:8091]. 
 
-With Couchbase Server up and running we can create our project directory for our NodeJS application that will be using Couchbase SDK and Ottoman.
+Let's first create a project directory named `first-query-ottoman`, change directories into that directory and initialize NPM:
 
 ```sh
-mkdir first-query-ottoman && cd $_ && npm init -y && npm install couchbase ottoman && touch server.js && code .
+mkdir first-query-ottoman && cd $_ && npm init
+```
+
+NOTE: The double ampersands (`&&`)are just a way of chaining multiple shell commands. The `$_` command simply captures our last used argument which in our case was the directory that we created.
+
+Now with a node package manager and manifest (`package.json`) in place, let's add Couchbase and ottoman to our dependencies for the project:
+
+```sh
+npm install couchbase ottoman
+```
+
+Now we will create a file named `server.js` and launch Visual Studio Code:
+
+```sh
+touch server.js && code .
 ```
 
 This command has set up a project directory and enabled npm, installed `couchbase` and `ottoman` as well as created a `server.js` file and finally opened up our VS Code editor to the project root. 
 
-Let's open that `server.js` file, this is where we'll be adding our code.
+Open `server.js` file, this is where we'll add our code.
 
 Taking each code sample below, we will add each new block of code done after one another.
 
@@ -58,11 +77,11 @@ var User = ottoman.model('User', {
   firstName: 'string',
   lastName: 'string',
   email: 'string',
-  lyric: 'string'
+  tagline: 'string'
 })
 ```
 
-This is a very simple model with only four fields, but we are starting with a simple example on purpose. Ottoman does support other data types like `boolean`, integer`, and `Date` and a model can also define indexes similar to the ones we set up manually. For now, we are going to skip letting Ottoman set up our indexes as we already have them.
+Ottoman does support other data types like `boolean`, integer`, and `Date`. A model can also define indexes similar to the ones we set up manually. For now, we are going to skip letting Ottoman set up our indexes as we already have them in place.
 
 == Create New User Documents
 
@@ -73,19 +92,19 @@ var user_perry = new User({
   firstName: 'Perry',
   lastName: 'Mason',
   email: 'perry.mason@acme.com',
-  lyric: 'Who can we get on the case?',
+  tagLine : 'Who can we get on the case?'
 })
 var user_tom = new User({
   firstName: 'Major',
   lastName: 'Tom',
   email: 'major.tom@acme.com',
-  lyric: 'Send me up a drink',
+  tagLine : 'Send me up a drink'
 })
 var user_jerry = new User({
   firstName: 'Jerry',
   lastName: 'Wasaracecardriver',
   email: 'jerry.wasaracecardriver@acme.com',
-  lyric: 'el sob number one',
+  tagLine : 'el sob number one'
 })
 ```
 
@@ -96,34 +115,54 @@ Call Ottoman's `save()` method on each of these objects which will add them to o
 ```js
 user_perry.save((err) => {
   if (err) throw err
-  console.info(`success: user ${user_perry.firstName} added!`)
+  console.log(`success: user ${user_perry.firstName} added!`)
 })
 user_tom.save((err) => {
   if (err) throw err
-  console.info(`success: user ${user_tom.firstName} added!`)
+  console.log(`success: user ${user_tom.firstName} added!`)
 })
 user_jerry.save((err) => {
   if (err) throw err
-  console.info(`success: user ${user_jerry.firstName} added!`)
+  console.log(`success: user ${user_jerry.firstName} added!`)
 })
 ```
 
-With the `save()` method added, let's run our app. You should get one success message in the console and no errors.
+Now that we have added the code to save (persist) each record to the database, let's run our app for the first time with Node:
 
-== Our First Query
+```sh
+node server
+```
 
-When we use Ottoman, and create a model, then persist documents to the database using the `save()` method, we can then use a `find()` method like below in conjunction with the Adaptive Index that was created during our database setup.
+You should get three success messages in the console.
+
+```sh
+success: user Perry added!
+success: user Major added!
+success: user Jerry added!
+```
+
+If we open our Web UI at link:https://localhost:8091[localhost:8091] and navigate to the "Buckets" tab, we can see that two records were added to the `default` bucket. 
+
+NOTE: You can edit the document in place by clicking the pencil icon or remove them individually with the trash icon. You can also edit the buckets and in the section "Advanced bucket settings" enable Flush. When flushed, all items in the bucket are removed. This is a quick way to remove all documents.
+
+Let's remove these three documents, write some more code that will add the documents, and then turn around and query them.
+
+== Write a Query with Ottoman's Query API
+
+In Ottoman, we can retrieve records from our bucket using the adaptive index we have in place by calling the `find()` method.
 
 ```js
 User.find({ lastName: 'Tom' }, { consistency: ottoman.Consistency.LOCAL },
-   (err, items) => {
-    if (err) throw err
-    console.log('Finding Tom and Jerry: ', JSON.stringify(items))
+  (err, items) => {
+    if (err) throw err;
+    console.log('Query results: ', items)
   }
-)
+);
 ```
 
-The first two arguments to the `find()` method are our filter and options, let's look at it a little bit differently:
+The first two arguments to the `find()` method are `filter` and `options`. 
+
+Instead of passing objects along as parameters, let's write our code to define the filter and options as objects first and then pass them into the function as arguments.
 
 ```js
 var filters = { 
@@ -135,9 +174,9 @@ var options = {
 }
 
 User.find(filters, options,
-   (err, items) => {
+  (err, items) => {
     if (err) throw err
-    console.log('Found Tom and Jerry: ', JSON.stringify(items))
+    console.log('Query Result: ', items)
   }
 )
 ```
@@ -152,11 +191,30 @@ var options = {
 }
 ```
 
-== Summary
+Let's run Node again and now we should get the same three success messages and an object returned to us that we queried for:
 
-We have created models in Ottoman, defined some documents, and persisted them to the database. We then subsequently looked them up using the built-in `find()` method which used the Ottoman Query API for Couchbase. We have not yet touched on indexes other than the fact that we created two of them during the docker and indexes section of the quickstart.
+```sh
+node server
+```
 
-NOTE: If those indexes were not present, if we had not set them up or let Ottoman do it for us (an option we did not explore yet) we would get an error when running our application upon query:
+You should see results similar to the following in your command line:
+
+```sh
+success: user Perry added!
+success: user Major added!
+success: user Jerry added!
+Query results:  [
+  User {
+    _id: '7dac3b61-a83f-4374-a545-c1fda64f17de',
+    firstName: 'Major',
+    lastName: 'Tom',
+    email: 'major.tom@acme.com',
+    tagLine: 'Send me up a drink'
+  }
+]
+```
+
+NOTE: In our case indexes were added manually, if not Ottoman would have given us this error message:
 
 ```sh
 "errors": [
@@ -167,6 +225,12 @@ NOTE: If those indexes were not present, if we had not set them up or let Ottoma
 ]
 ```
 
+== Summary
+
+We have created models in Ottoman, defined some documents, and persisted them to the database. We then subsequently looked them up using the built-in `find()` method which used the Ottoman Query API for Couchbase. We have not yet touched on indexes other than the fact that we created two of them during the docker and indexes section of the quickstart.
+
+If you would like to continue learning about Ottoman, I suggest checking out the link:http://ottomanjs.com/[Ottoman Documentation].
+
 == Exercise Complete
 
-Congratulations!  You have substantially engaged with the world's most powerful JSON document database using the most advanced SQL++ query technology. Know that our query language N1QL was run under the hood too but we did not have to write any N1QL yet. That's pretty powerful, Ottoman did all the heavy lifting for us!
+Congratulations! You have engaged with the world's most powerful JSON document database by using Ottoman. Know that our query language N1QL was run under the hood too but we did not have to write any N1QL, you can learn more about it with our link:https://query-tutorial.couchbase.com/tutorial[N1QL Tutorial] if you are interested in exploring our query language for Couchbase.
