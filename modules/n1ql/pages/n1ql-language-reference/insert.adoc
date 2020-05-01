@@ -1,4 +1,5 @@
 = INSERT
+:imagesdir: ../../assets/images
 
 [abstract]
 Use the INSERT statement to insert one or more new documents into an existing keyspace.
@@ -9,9 +10,566 @@ The INSERT statement can compute and return any expression based on the actual i
 
 TIP: Use the xref:n1ql-language-reference/upsert.adoc[UPSERT] statement if you want to overwrite a document with the same key, in case it already exists.
 
-*Example 1*: The following statement inserts a single JSON document into the `travel-sample` bucket with key "k001".
+Install the sample bucket `travel-sample` before proceeding to run the examples in this topic.
+See xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for information on how to install the sample buckets and xref:java-sdk::sample-application.adoc#datamodel[Travel App Data Model] for details about the travel-sample data model.
+
+[#insert-prerequisites]
+== Prerequisites
+
+The INSERT statement must include the following:
+
+* Name of the keyspace to insert the document.
+* Unique document key.
+* A well-formed JSON document specified as key-value pairs, or the projection of a SELECT statement which generates a well-formed single JSON to insert.
+See and for details.
+* Optionally, you can specify the values or an expression to be returned after the INSERT statement completes successfully.
+
+=== Security Requirements
+
+You should have read-write permission to the bucket, to be able to insert documents into a bucket.
+Any user who has the bucket credentials or any Couchbase administrator should be able to insert documents into a bucket.
+This includes the bucket administrator for the specified bucket, the cluster administrator, and the full administrator roles.
+See xref:learn:security/roles.adoc[Roles] for details about access privileges for various administrators.
+
+WARNING: You cannot insert documents into a SASL bucket if you have a read-only role for the SASL bucket.
+
+=== RBAC Privileges
+
+User executing the INSERT statement must have the _Query Insert_ privilege on the target keyspace/bucket.
+
+If the statement has any SELECT or RETURNING data-read clauses, then the _Query Select_ privilege is also required on the keyspaces referred in the respective clauses.
+For more details about roles and privileges, see xref:learn:security/authorization-overview.adoc[Authorization].
+
+For example,
+
+* To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]`.
++
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+VALUES ("key1", { "type" : "hotel", "name" : "new hotel" })
+----
+
+* To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]` and the _Query Select_ privilege on `pass:c[`travel-sample`]`.
++
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+VALUES ("key1", { "type" : "hotel", "name" : "new hotel" }) RETURNING *
+----
+
+* To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`beer-sample`]`.
++
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY foo, VALUE bar)
+SELECT foo, bar FROM `beer-sample`
+----
+
+* To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`travel-sample`]`.
++
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY foo, VALUE bar)
+SELECT "foo" || meta().id, bar FROM `travel-sample` WHERE type = "hotel"
+----
+
+[#insert-syntax]
+== Syntax
+
+[subs="normal"]
+----
+insert ::= INSERT INTO <<insert-target,insert-target>> ( <<insert-values,insert-values>> | <<insert-select,insert-select>> ) [ <<returning-clause,returning-clause>> ]
+----
+
+image::n1ql-language-reference/insert.png["'INSERT' 'INTO' insert-target ( insert-values | insert-select ) returning-clause?"]
+
+[[insert-target]]
+=== Insert Target
+
+[subs="normal"]
+----
+insert-target ::= <<insert-target-ref,keyspace-ref>> [ [ AS ] <<insert-target-alias,alias>> ]
+----
+
+image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+
+The insert target is the keyspace into which the documents are inserted.
+Ensure that the keyspace exists before trying to insert a document.
+
+[[insert-target-ref]]
+==== Keyspace Reference
+
+[subs="normal"]
+----
+keyspace-ref ::= [ _namespace_ ':' ] _keyspace_
+----
+
+image::n1ql-language-reference/from-keyspace-ref.png["( namespace ':' )? keyspace"]
+
+Keyspace reference for the insert target.
+For more details, refer to xref:n1ql-language-reference/from.adoc#from-keyspace-ref[Keyspace Reference].
+
+namespace::
+(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-heirarchy[namespace] of the insert target.
+Currently, only the `default` namespace is available.
+If the namespace name is omitted, the default namespace in the current session is used.
+
+keyspace::
+(Required) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the bucket name or xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace] of the insert target.
+
+For example, `default:{backtick}travel-sample{backtick}` indicates the `travel-sample` keyspace in the `default` namespace.
+
+[[insert-target-alias]]
+==== AS Alias
+
+Assigns another name to the keyspace reference.
+For details, refer to xref:n1ql-language-reference/from.adoc#section_ax5_2nx_1db[AS Clause].
+
+alias::
+String to assign an alias.
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[[insert-values]]
+=== Insert Values
+
+[subs="normal"]
+----
+insert-values::= [ "(" [ PRIMARY ] KEY , VALUE ")" ] <<values-clause,values-clause>>
+----
+
+image::n1ql-language-reference/insert-values.png["( '(' 'PRIMARY'? 'KEY' ',' 'VALUE' ')' )? values-clause"]
+
+Specifies one or more documents to be inserted using the VALUES clause.
+Each document requires a unique key and the values must be specified as a well-formed JSON document.
+
+NOTE: The keyword PRIMARY is optional.
+There is no syntactic difference between PRIMARY KEY and KEY.
+
+The document key should be unique within the Couchbase bucket.
+It can be a string or an expression that produces a string.
+
+You can specify a key using an expression, as shown here:
+
+[[example-2]]
+.Specify a key using an expression
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` ( KEY, VALUE )
+                    VALUES ( "airline" || TOSTRING(1234),
+                    { "callsign": "" } )
+                    RETURNING META().id;
+----
+====
+
+The KEY cannot be MISSING or NULL, and it cannot duplicate an existing key.
+
+If you don’t require the document key to be in a specific format, you can use the function xref:n1ql-language-reference/metafun.adoc[UUID()] to generate a unique key as shown here:
+
+[[example-3]]
+.Generate a unique key
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` ( KEY, VALUE )
+            VALUES ( UUID(),
+                    { "callsign": "" } )
+RETURNING META().id;
+----
+====
+
+TIP: Since the document key is auto-generated, you can find the value of the key by specifying META().id in the returning clause.
+
+[[values-clause]]
+==== VALUES Clause
+
+[subs="normal"]
+----
+values-clause ::= VALUES "(" _key_ "," _value_ ")" [ "," [ VALUES ] "(" _key_ "," _value_ ")" ]{asterisk}
+----
+
+image::n1ql-language-reference/values-clause.png["'VALUES' '(' key ',' value ')' ( ',' 'VALUES'? '(' key ',' value ')' )*"]
+
+key::
+A string, or an expression resolving to a string, representing the ID of the document to be inserted.
+
+value::
+A well-formed JSON object, or an expression resolving to a well-formed JSON object, representing the body of the document to be inserted.
+(See http://json.org/example.html[^] for examples of well-formed JSON.)
+
+You can insert NULL or empty or MISSING values.
+
+[[example-4]]
+.Insert an empty value
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+    VALUES ( "airline::432",
+              { "callsign": "",
+                "country" : "USA",
+                "type" : "airline"} )
+RETURNING META().id as docid;
+----
+
+.Results
+[source,json]
+----
+{
+    "requestID": "9100f45b-0489-4b91-8b8a-110d525683e0",
+    "signature": {
+        "id": "json"
+    },
+    "results": [
+        {
+            "docid": "airline::432"
+        }
+    ],
+    "status": "success",
+    "metrics": {
+        "elapsedTime": "1.384451ms",
+        "executionTime": "1.36097ms",
+        "resultCount": 1,
+        "resultSize": 44,
+        "mutationCount": 1
+    }
+}
+----
+====
+
+[[example-5]]
+.Insert a NULL value
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+    VALUES ( "airline::1432",
+            { "callsign": NULL,
+              "country" : "USA",
+              "type" : "airline"} )
+RETURNING *;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "travel-sample": {
+      "callsign": null,
+      "country": "USA",
+      "type": "airline"
+    }
+  }
+]
+----
+====
+
+[[example-6]]
+.Insert a MISSING value
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+    VALUES ( "airline::142",
+            { "callsign": MISSING,
+              "country" : "USA",
+              "type" : "airline"} )
+RETURNING *;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "travel-sample": {
+      "country": "USA",
+      "type": "airline"
+    }
+  }
+]
+----
+====
+
+[[example-7]]
+.Insert a NULL JSON document
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+    VALUES ( "1021",
+              { } )
+              RETURNING *;
+----
+====
+
+For more examples illustrating the variations of the values-clause, see <<insert-examples>>.
+
+[[insert-select]]
+=== Insert Select
+
+[subs="normal"]
+----
+insert-select::= "(" [ PRIMARY ] KEY _key_ [ "," VALUE _value_ ] ")" <<select-statement,select>>
+----
+
+image::n1ql-language-reference/insert-select.png["'(' 'PRIMARY'? 'KEY' key ( ',' 'VALUE' value )? ')' select"]
+
+Use the projection of a SELECT statement which generates a well-formed JSON to insert.
+
+key::
+A string, or an expression resolving to a string, representing the ID of the document to be inserted.
+
+value::
+[Optional] An object, or an expression resolving to an object, representing the body of the document to be inserted.
+This may be an alias assigned by the SELECT statement.
+If the VALUE is omitted, the entire JSON document generated by the SELECT statement is inserted.
+
+If the project of a SELECT statement generates multiple JSON documents, then your INSERT statement must handle the generation of unique keys for each of the documents.
+
+[[select-statement]]
+==== SELECT Statement
+
+SELECT statements let you retrieve data from specified keyspaces.
+For details, see xref:n1ql-language-reference/select-syntax.adoc[SELECT Syntax].
+
+[[example-8]]
+.Insert with SELECT
+====
+Query the `travel-sample` bucket for documents of `type` "airport" and `airportname` "Heathrow", and then insert the projection (1 document) into the `travel-sample` bucket using a unique key generated using `UUID()`.
+
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY UUID(), VALUE _airport)
+    SELECT _airport FROM `travel-sample` _airport
+      WHERE type = "airport" AND airportname = "Heathrow"
+RETURNING *;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "travel-sample": {
+      "airportname": "Heathrow",
+      "city": "London",
+      "country": "United Kingdom",
+      "faa": "LHR",
+      "geo": {
+        "alt": 83,
+        "lat": 51.4775,
+        "lon": -0.461389
+      },
+      "icao": "EGLL",
+      "id": 507,
+      "type": "airport",
+      "tz": "Europe/London"
+    }
+  }
+]
+----
+====
+
+See <<Example_15_copy_bucket>> to use the INSERT statement to copy one bucket's data to another bucket.
+
+[[returning-clause]]
+=== RETURNING Clause
+
+[subs="normal"]
+----
+returning-clause::= RETURNING ( <<result-expr,result-expr>> [ "," <<result-expr,result-expr>> ]{asterisk} | ( RAW | ELEMENT | VALUE ) expr )
+----
+
+image::n1ql-language-reference/returning-clause.png["'RETURNING' ( result-expr ( ',' result-expr )* | ( 'RAW' | 'ELEMENT' | 'VALUE' ) expr )"]
+
+Specifies the fields that must be returned as part of the results object.
+
+[[result-expr]]
+==== Result Expression
+
+[subs="normal"]
+----
+result-expr::= ( [ xref:n1ql-intro/queriesandresults.adoc#paths[path] "." ] "*" | expr [ [ AS ] alias ] )
+----
+
+image::n1ql-language-reference/result-expr.png["( path '.' )? '*' | expr ( 'AS'? alias )?"]
+
+Specifies an expression on the inserted documents, that will be returned as output.
+Use `*` to return all the fields in all the documents that were inserted.
+
+[[example-9]]
+.Return the document ID and country
+====
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+    VALUES ( "airline_24444",
+            { "callsign": "USA-AIR",
+              "country" : "USA",
+              "type" : "airline"})
+RETURNING META().id as docid, country;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "country": "USA",
+    "docid": "airline_24444"
+  }
+]
+----
+====
+
+[[example-10]]
+.Return the document ID and an expression
+====
+Use the `UUID()` function to generate the key and show the usage of the `RETURNING` clause to retrieve the generated document key and the last element of the `callsign` array with an expression.
+
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+    VALUES ( UUID(),
+            { "callsign": [ "USA-AIR", "America-AIR" ],
+              "country" : "USA",
+              "type" : "airline"} )
+RETURNING META().id as docid, callsign[ARRAY_LENGTH(callsign)-1];
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "$1": "America-AIR",
+    "docid": "2bdfd7d1-a5ca-475b-827c-3b18af8f4f62"
+  }
+]
+----
+====
+
+== Result
+
+The INSERT statement returns the requestID, the signature, results including the keyspace and JSON document inserted, status of the query, and metrics.
+
+* [.out]`requestID`: Request ID of the statement generated by the server.
+* [.out]`signature`: Signature of the fields specified in the returning clause.
+* [.out]`results`: If the query specified the returning clause, then results contains one or more fields as specified in the returning clause.
+If not, returns an empty results array.
+* [.out]`errors`: Returns the error codes and messages if the statement fails with errors.
+Returned only when the statement fails with errors.
+Errors can also include timeouts.
+* [.out]`status`: Status of the statement - "[.out]``successful``" or "[.out]``errors``".
+* [.out]`metrics`: Provides metrics for the statement such as [.out]`elapsedTime`, [.out]`executionTime`, [.out]`resultCount`, [.out]`resultSize`, and [.out]`mutationCount`.
+For more information, see <<insert-metrics>>.
+
+[#insert-metrics]
+=== Metrics
+
+The INSERT statement returns the following metrics along with the results and status:
+
+* [.out]`elapsedTime`: Total elapsed time for the statement.
+* [.out]`executionTime`: Time taken by Couchbase Server to execute the statement.
+This value is independent of network latency, platform code execution time, and so on.
+* [.out]`resultCount`: Total number of results returned by the statement.
+In case of `INSERT` without a `RETURNING` clause, the value is `0`.
+* [.out]`resultSize`: Total number of results that satisfy the query.
+* [.out]`mutationCount`: Specifies the number of documents that were inserted by the `INSERT` statement.
+
+[#insert-monitoring]
+=== Monitoring
+
+You can use the query monitoring API to gather diagnostic information.
+For example, if you are performing a bulk insert using a `SELECT` statement, you can use the query monitoring API to get the number of documents being inserted.
+Check [.api]`system:active_requests` catalog for more information on monitoring active queries.
+For more information, see xref:tools:query-monitoring.adoc[Query Monitoring].
+
+You can also take a look at the bucket metrics from the Web Console.
+To do so, go to the Data Buckets tab and click the bucket that you want to monitor.
+In the General Bucket Analytics screen, scroll to the Query section to gather information such as requests/sec, selects/sec and so on.
+
+[#insert-restrictions]
+== Restrictions
+
+When inserting documents into a specified keyspace, keep in mind the following restrictions which would help avoid errors during execution.
+
+* The keyspace must exist.
+The INSERT statement returns an error if the keyspace does not exist.
+* Do not insert a document with a duplicate key.
+If you are inserting multiple documents, the statement aborts at the first error encountered.
+* Timeouts can affect the completion of an INSERT statement, especially when performing bulk inserts.
+Ensure that the timeout is set to a reasonable value that allows the bulk insert operation to complete.
++
+To set the indexer timeout, use the following command:
++
+----
+curl <host>:9102/settings -u <username>:<password> -d  '{"indexer.settings.scan_timeout": <some integer>}'
+----
++
+For example,
++
+[source,console]
+ $ curl localhost:9102/settings -u Administrator:password -d  '{"indexer.settings.scan_timeout": 1200}'
++
+Use the following command to retrieve the indexer settings:
++
+----
+curl -X GET http://localhost:9102/settings -u Administrator:password
+----
+
+* When inserting multiple documents, no cleanup or rollback is done for the already inserted documents if the INSERT operations hits an error.
+This means, when you are inserting 10 documents, if the INSERT operation fails when inserting the 6th document, the operator quits and exits.
+It does not rollback the first five documents that were inserted.
+Nor does it ignore the failure and continue to insert the remaining documents.
+
+[#insert-performance]
+== Performance and Best Practices
+
+When a single INSERT statement is executed, N1QL prepares the statement, scans the values and then inserts the document.
+When inserting a large number of  documents, you can improve the performance of the INSERT statement by using one of the following techniques:
+
+* Batching the documents to perform bulk inserts, which decreases the latency and increases the throughput.
+The INSERT statement sends documents to the data node in batches, with a default batch size of 16.
+You can configure this value using the xref:settings:query-settings.adoc#pipeline_batch_req[pipeline_batch] request-level parameter, or the xref:settings:query-settings.adoc#pipeline-batch-srv[pipeline-batch] service-level setting.
+Note that the maximum batch size is (2^32 -1) and specifying a value higher than the maximum batch size may increase the memory consumption.
+The following example command sets the pipeline-batch size to 32 instead of the default 16:
++
+[source,console]
+----
+curl -v -X POST http://127.0.0.1:8093/admin/settings  -d '{ "debug":true, "pipeline-batch": 32 }' -u Administrator:password
+----
+
+* Use the xref:settings:query-settings.adoc#max_parallelism_req[max_parallelism] request-level parameter, or the xref:settings:query-settings.adoc#max-parallelism-srv[max-parallelism] service-level setting when inserting multiple documents.
+* When performing bulk inserts, use prepared statements or multiple values.
+* When new documents are inserted, the indexes are updated.
+When a large number of documents are inserted, this may affect the performance of the cluster.
+
+[#insert-examples]
+== Examples
+
+[[example-1]]
+.Overview
+====
+The following statement inserts a single JSON document into the `travel-sample` bucket with key "k001".
 The returning clause specifies the function `META().id` to return the key of the inserted document (metadata), and the wildcard (*) to return the inserted document.
 
+.Query
+[source,n1ql]
 ----
 INSERT INTO `travel-sample` ( KEY, VALUE )
   VALUES
@@ -22,8 +580,8 @@ INSERT INTO `travel-sample` ( KEY, VALUE )
 RETURNING META().id as docid, *;
 ----
 
-This results in:
-
+.Results
+[source,json]
 ----
 {
   "requestID": "06c5acc1-69d3-4aad-9c11-b90a9bc895d8",
@@ -50,433 +608,17 @@ This results in:
   }
 }
 ----
+====
 
-See also:
-
-* <<insert-examples,Examples>> for more examples.
-* <<insert-syntax>> for the complete syntax along with railroad diagrams.
-* <<insert-semantics>> for more information about the parameters of the INSERT statement, and any restrictions or limitations.
-* <<insert-explain-plan>> to understand how N1QL executes the INSERT statement.
-
-[#insert-prerequisites]
-== Prerequisites
-
-The INSERT statement must include the following:
-
-* Name of the keyspace to insert the document.
-* Unique document key.
-* A well-formed JSON document specified as key-value pairs, or the projection of a SELECT statement which generates a well-formed single JSON to insert.
-See and for details.
-* Optionally, you can specify the values or an expression to be returned after the INSERT statement completes successfully.
-
-*Install the travel-sample Bucket*
-
-Install the sample bucket `travel-sample` before proceeding to run the examples in this topic.
-See xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for information on how to install the sample buckets and xref:java-sdk::sample-application.adoc#datamodel[Travel App Data Model] for details about the travel-sample data model.
-
-*Security Requirements*
-
-You should have read-write permission to the bucket, to be able to insert documents into a bucket.
-Any user who has the bucket credentials or any Couchbase administrator should be able to insert documents into a bucket.
-This includes the bucket administrator for the specified bucket, the cluster administrator, and the full administrator roles.
-See xref:learn:security/roles.adoc[Roles] for details about access privileges for various administrators.
-
-WARNING: You cannot insert documents into a SASL bucket if you have a read-only role for the SASL bucket.
-
-*RBAC Privileges*
-
-User executing the INSERT statement must have the _Query Insert_ privilege on the target keyspace/bucket.
-
-If the statement has any SELECT or RETURNING data-read clauses, then the _Query Select_ privilege is also required on the keyspaces referred in the respective clauses.
-For more details about roles and privileges, see xref:learn:security/authorization-overview.adoc[Authorization].
-
-For example,
-
-To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]`.
-
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-VALUES ("key1", { "type" : "hotel", "name" : "new hotel" })
-----
-
-To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]` and the _Query Select_ privilege on `pass:c[`travel-sample`]`.
-
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-VALUES ("key1", { "type" : "hotel", "name" : "new hotel" }) RETURNING *
-----
-
-To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`beer-sample`]`.
-
-----
-INSERT INTO `travel-sample` (KEY foo, VALUE bar)
-SELECT foo, bar FROM `beer-sample`
-----
-
-To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`]` and _Query Select_ privilege on `pass:c[`travel-sample`]`.
-
-----
-INSERT INTO `travel-sample` (KEY foo, VALUE bar)
-SELECT "foo" || meta().id, bar FROM `travel-sample` WHERE type = "hotel"
-----
-
-[#insert-syntax]
-== Syntax
-
-`insert::= INSERT INTO keyspace-ref ( insert-values | insert-select ) [ returning-clause ]`
-
-.Railroad Diagram: insert
-image::n1ql-language-reference/insert.png[]
-
-`keyspace-ref::= [ namespace : ] keyspace [ [ AS ] alias ]`
-
-.Railroad Diagram: keyspace-ref
-image::n1ql-language-reference/keyspace-ref.png[]
-
-`namespace::= identifier`
-
-.Railroad Diagram: namespace
-image::n1ql-language-reference/namespace.png[]
-
-`keyspace::= identifier`
-
-.Railroad Diagram: keyspace
-image::n1ql-language-reference/keyspace.png[]
-
-`insert-values::= [ "(" [ PRIMARY ] KEY , VALUE ")" ] values-clause`
-
-.Railroad Diagram: insert-values
-image::n1ql-language-reference/insert-values.png[]
-
-`values-clause::= VALUES "(" expr , expr ")" [, [VALUES] "(" expr , expr ")" ]*`
-
-.Railroad Diagram: values-clause
-image::n1ql-language-reference/values-clause.png[]
-
-`insert-select::= "(" [ PRIMARY ] KEY expr [ , VALUE expr ] ")" select`
-
-.Railroad Diagram: insert-select
-image::n1ql-language-reference/insert-select.png[]
-
-`returning-clause::= RETURNING result-expr [ , result-expr ]* ] | ( RAW | ELEMENT | VALUE ) expr`
-
-.Railroad Diagram: returning-clause
-image::n1ql-language-reference/returning-clause.png[]
-
-`result-expr::= ( [ path.]"*" | expr [ [ AS ] alias ] )`
-
-.Railroad Diagram: result-expr
-image::n1ql-language-reference/result-expr.png[]
-
-`path::= identifier ( ("[" expr "]" )*[.path] ) | ( [ ("[" expr "]" )*].path )`
-
-.Railroad Diagram: path
-image::n1ql-language-reference/path.png[]
-
-`alias::= identifier`
-
-.Railroad Diagram: alias
-image::n1ql-language-reference/alias.png[]
-
-`expr:= ( literal | identifier | nested-expr | case-expr | logical-term | comparison-term | arithmetic-term | concatenation-term | function-call | subquery-expr | collection-expr | construction-expr | "(" expr")" )`
-
-.Railroad Diagram: expr
-image::n1ql-language-reference/expr.png[]
-
-`identifier::= unescaped-identifier | escaped-identifier`
-
-.Railroad Diagram: identifier
-image::n1ql-language-reference/identifier.png[]
-
-`unescaped-identifier::= [a-zA-Z_] ( [0-9a-zA-Z_$] )*`
-
-.Railroad Diagram: unescaped-identifier
-image::n1ql-language-reference/unescaped-identifier.png[]
-
-`pass:c[escaped-identifier::= `JSON-string`]`
-
-.Railroad Diagram: escaped-identifier
-image::n1ql-language-reference/escaped-identifier.png[]
-
-[#insert-semantics]
-== Semantics/Description
-
-keyspace-ref:: Specifies the keyspace into which the documents are inserted.
-
-namespace;;
-Namespace of the keyspace.
-Currently only default namespace is available.
-
-keyspace;;
-Specifies the keyspace name into which the document(s) are inserted.
-Ensure that the keyspace exists before trying to insert a document.
-For more information on keyspaces, see xref:n1ql-intro/sysinfo.adoc[Keyspaces].
-
-alias;;
-Specifies an alias name for the keyspace, which can be used in rest of the query for brevity, or to differentiate multiple references to the same keyspace.
-For more information on aliases, see xref:n1ql-language-reference/identifiers.adoc#identifier-alias[Aliases].
-
-+
-Here are some examples of keyspace, namespace, and an alias:
-
-* Keyspace - `pass:c[`travel-sample`]`
-* Namespace and keyspace - `pass:c[default:`travel-sample`]`
-* Keyspace with alias - `pass:c[default:`travel-sample` AS t]`
-
-insert-values::
-Specifies one or more documents to be inserted using the keyspace (PRIMARY KEY, VALUE) clause.
-Each document requires a unique key and the values must be specified as a well-formed JSON document.
-+
-The document key should be unique within the Couchbase bucket.
-It can be a string or an expression that produces a string.
-+
-*Example 2*: You can specify a key using the following expression: `"airline" || TOSTRING(1234)` as shown here:
-+
-----
-INSERT INTO `travel-sample` ( KEY, VALUE )
-                    VALUES ( "airline" || TOSTRING(1234),
-                    { "callsign": "" } )
-                    RETURNING META().id;
-----
-+
-NOTE: The keyword PRIMARY is optional.
-There is no syntactic difference between PRIMARY KEY and KEY.
-+
-The KEY cannot be MISSING or NULL, and it cannot duplicate an existing key.
-+
-*Example 3*: If you don’t require the document key to be in a specific format, you can use the function xref:n1ql-language-reference/metafun.adoc[UUID()] to generate a unique key as shown here:
-+
-----
-INSERT INTO `travel-sample` ( KEY, VALUE )
-            VALUES ( UUID(),
-                    { "callsign": "" } )
-RETURNING META().id;
-----
-+
-TIP: Since the document key is auto-generated, you can find the value of the key by specifying META().id in the returning clause.
-
-values-clause;;
-Specify the values as a well-formed JSON.
-(See http://json.org/example.html[^] for examples of a well-formed JSON.
-)
-+
-You can insert NULL or empty or MISSING values.
-+
-*Example 4*: Insert an empty value.
-+
-.Query
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-    VALUES ( "airline::432",
-              { "callsign": "",
-                "country" : "USA",
-                "type" : "airline"} )
-RETURNING META().id as docid;
-----
-+
-.Results
-----
-{
-    "requestID": "9100f45b-0489-4b91-8b8a-110d525683e0",
-    "signature": {
-        "id": "json"
-    },
-    "results": [
-        {
-            "docid": "airline::432"
-        }
-    ],
-    "status": "success",
-    "metrics": {
-        "elapsedTime": "1.384451ms",
-        "executionTime": "1.36097ms",
-        "resultCount": 1,
-        "resultSize": 44,
-        "mutationCount": 1
-    }
-    }
-----
-+
-*Example 5*: Insert a NULL value.
-+
-.Query
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-    VALUES ( "airline::1432",
-            { "callsign": NULL,
-              "country" : "USA",
-              "type" : "airline"} )
-RETURNING *;
-----
-+
-.Results
-----
-[
-  {
-    "travel-sample": {
-      "callsign": null,
-      "country": "USA",
-      "type": "airline"
-    }
-  }
-]
-----
-+
-*Example 6*: Insert a MISSING value.
-+
-.Query
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-    VALUES ( "airline::142",
-            { "callsign": MISSING,
-              "country" : "USA",
-              "type" : "airline"} )
-RETURNING *;
-----
-+
-.Results
-----
-[
-  {
-    "travel-sample": {
-      "country": "USA",
-      "type": "airline"
-    }
-  }
-  ]
-----
-+
-*Example 7*: Insert a NULL JSON document.
-+
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-    VALUES ( "1021",
-              { } )
-              RETURNING *;
-----
-+
-For more examples illustrating the variations of the values-clause, see <<insert-examples>>.
-
-insert-select::
-Use the projection of a SELECT statement which generates a well-formed JSON to insert.
-+
-If the project of a SELECT statement generates multiple JSON documents, then your INSERT statement must handle the generation of unique keys for each of the documents.
-+
-*Example 8*: Query the `travel-sample` bucket for documents of `type` "airport" and `airportname` "Heathrow", and then insert the projection (2 documents) into the `travel-sample` bucket using unique keys generated using `UUID()`.
-+
-.Query
-----
-INSERT INTO `travel-sample` (KEY UUID(), VALUE _country)
-    SELECT _country FROM `travel-sample` _country
-      WHERE type = "airport" AND airportname = "Heathrow"
-RETURNING *;
-----
-+
-.Results
-----
-{
-  "results": [],
-  "metrics": {
-    "elapsedTime": "24.777636ms",
-    "executionTime": "24.739281ms",
-    "resultCount": 0,
-    "resultSize": 0,
-    "mutationCount": 2
-  }
-}
-----
-+
-See <<Example_15_copy_bucket,Example 15>> to use the INSERT statement to copy one bucket's data to another bucket.
-
-select;;
-SELECT statements let you retrieve data from specified keyspaces.
-For details, see xref:n1ql-language-reference/select-syntax.adoc[SELECT Syntax].
-
-returning-clause::
-Specifies the fields that must be returned as part of the results object.
-Use * to return all the fields in all the documents that were inserted.
-result-expr;;
-Specifies an expression on the inserted documents, that will returned as output.
-+
-*Example 9*: Return the document ID and country.
-+
-.Query
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-    VALUES ( "airline_24444",
-            { "callsign": "USA-AIR",
-              "country" : "USA",
-              "type" : "airline"})
-RETURNING META().id as docid, country;
-----
-+
-.Results
-----
-[
-  {
-    "country": "USA",
-    "docid": "airline_24444"
-  }
-]
-----
-+
-*Example 10*: Use the `UUID()` function to generate the key and show the usage of the `RETURNING` clause to retrieve the generated document key and the last element of the `callsign` array with an expression.
-+
-.Query
-----
-INSERT INTO `travel-sample` (KEY, VALUE)
-    VALUES ( UUID(),
-            { "callsign": [ "USA-AIR", "America-AIR" ],
-              "country" : "USA",
-              "type" : "airline"} )
-RETURNING META().id as docid, callsign[ARRAY_LENGTH(callsign)-1];
-----
-+
-.Results
-----
-[
-  {
-    "$1": "America-AIR",
-    "docid": "2bdfd7d1-a5ca-475b-827c-3b18af8f4f62"
-  }
-]
-----
-+
-The INSERT statement returns the requestID, the signature, results including the keyspace and JSON document inserted, status of the query, and metrics.
-
-* [.out]`requestID`: Request ID of the statement generated by the server.
-* [.out]`signature`: Signature of the fields specified in the returning clause.
-* [.out]`results`: If the query specified the returning clause, then results contains one or more fields as specified in the returning clause.
-If not, returns an empty results array.
-* [.out]`errors`: Returns the error codes and messages if the statement fails with errors.
-Returned only when the statement fails with errors.
-Errors can also include timeouts.
-* [.out]`status`: Status of the statement - "[.out]``successful``" or "[.out]``errors``".
-* [.out]`metrics`: Provides metrics for the statement such as [.out]`elapsedTime`, [.out]`executionTime`, [.out]`resultCount`, [.out]`resultSize`, and [.out]`mutationCount`.
-For more information, see <<insert-metrics>>.
-
-path;;
-Paths support nested data.
-They use the dot notation syntax to identify the logical location of an attribute within a document.
-Paths provide a method to find data in document structures without having to retrieve the entire document or handle it within an application.
-For more information, see xref:n1ql-intro/queriesandresults.adoc#paths[Paths].
-
-expr;; N1QL expressions can be an identifier, a literal value, operators, function calls,  or queries.
-
-identifier::
-An identifier uniquely identifies an object in a query and can be used to refer to a value in the current context of a query.
-Identifiers are case sensitive and can be used for bucket names, field names within documents, and array indexes.
-For more information, see xref:n1ql-language-reference/identifiers.adoc[Identifiers].
-
-[#insert-examples]
-== Examples
-
-Inserting a Single Document::
 The simplest use case of an INSERT statement is to insert a single document into the keyspace.
-+
-*Example 11*: Insert a new document with `key` "1025" and `type` "airline" into the `travel-sample` bucket.
-+
+
+[[example-11]]
+.Inserting a Single Document
+====
+Insert a new document with `key` "1025" and `type` "airline" into the `travel-sample` bucket.
+
 .Query
+[source,n1ql]
 ----
 INSERT INTO `travel-sample` (KEY,VALUE)
   VALUES ( "1025",
@@ -490,8 +632,9 @@ INSERT INTO `travel-sample` (KEY,VALUE)
             } )
 RETURNING *;
 ----
-+
+
 .Results
+[source,json]
 ----
 {
     "requestID": "d735943c-4031-49a6-9320-c1c3daeb09a1",
@@ -521,21 +664,18 @@ RETURNING *;
     }
 }
 ----
+====
 
-Performing Bulk Inserts::
-Use the INSERT statement to batch insert multiple documents using the following syntax:
-+
-----
-INSERT INTO keyspace (KEY, VALUE)
-  VALUES ( "1", { "value": "one" } ),
-  VALUES ( "2", { "value": "two" } ),
-  …,
-  VALUES ( "n", { "value": "n" } );
-----
-+
-*Example 12*: Insert two documents with `key` "airline_4444" and "airline_4445" of `type` "airline" into the `travel-sample` bucket:
-+
+You can batch insert multiple documents using multiple VALUES clauses.
+The VALUES keyword itself is optional in the second and later iterations of the clause.
+
+[[example-12]]
+.Performing Bulk Inserts
+====
+Insert two documents with `key` "airline_4444" and "airline_4445" of `type` "airline" into the `travel-sample` bucket:
+
 .Query
+[source,n1ql]
 ----
 INSERT INTO `travel-sample` (KEY,VALUE)
 VALUES ( "airline_4444",
@@ -555,8 +695,9 @@ VALUES ( "4445", { "callsign": "AIR-X",
       "type": "airline"} )
 RETURNING *;
 ----
-+
+
 .Results
+[source,json]
 ----
 {
     "requestID": "1068fcc9-f133-475c-90e9-6b32eb5b5f10",
@@ -597,21 +738,26 @@ RETURNING *;
     }
 }
 ----
+====
 
-Inserting Values using SELECT::
 Instead of providing actual values, you can specify the data to be inserted using the SELECT statement which selects the data from an existing bucket.
-+
-*Example 13*: Query the `travel-sample` bucket for the field `_country` where the `airportname` is "Heathrow" and `type` is "airport".
+
+[[example-13]]
+.Inserting Values using SELECT
+====
+Query the `travel-sample` bucket for documents where the `airportname` is "Heathrow" and `type` is "airport".
 Then insert the result of the select statement (a well-formed JSON document) into the `travel-sample` bucket with a key generated using the `UUID()` function.
-+
+
 .Query
+[source,n1ql]
 ----
-INSERT INTO `travel-sample` (key UUID(), value _country)
-    SELECT _country FROM `travel-sample` _country
+INSERT INTO `travel-sample` (KEY UUID(), VALUE _airport)
+    SELECT _airport FROM `travel-sample` _airport
       WHERE type = "airport" AND airportname = "Heathrow";
 ----
-+
+
 .Results
+[source,json]
 ----
 {
   "results": [],
@@ -624,12 +770,16 @@ INSERT INTO `travel-sample` (key UUID(), value _country)
   }
 }
 ----
+====
 
-Inserting Values Using a Combination Key, Generated Using the Project and Functions/Operators::
-*Example 14*: Generate a document key as a combination of the projection and some function, such as `<countryname>::<system-clock>`.
+[[example-14]]
+.Inserting Values Using a Combination Key, Generated Using the Project and Functions/Operators
+====
+Generate a document key as a combination of the projection and some function, such as `<countryname>::<system-clock>`.
 The SELECT statement retrieves the country name "k1" and concatenates it with a delimiter "::" and the system clock function using the string `concat` operator "[.code]``||``".
-+
+
 .Query
+[source,n1ql]
 ----
 INSERT INTO `travel-sample` (KEY k1||"::"||clock_str(), value t)
     SELECT DISTINCT t.country AS k1,t
@@ -637,10 +787,11 @@ INSERT INTO `travel-sample` (KEY k1||"::"||clock_str(), value t)
       WHERE type = "airport" LIMIT 5
 RETURNING META().id as docid, *;
 ----
-+
+
 The result shows the META().id generated as a result of this concatenation (highlighted below).
-+
+
 .Results
+[source,json]
 ----
 [
   {
@@ -681,43 +832,52 @@ The result shows the META().id generated as a result of this concatenation (high
   }
 ]
 ----
+====
 
-[[Example_15_copy_bucket]]Using Insert to Copy Bucket Data to Another Bucket::
-*Example 15*: Use the INSERT statement to create a copy of `bucket_1` under the new name `bucket_2`:
-+
+[[Example_15_copy_bucket]]
+.Using Insert to Copy Bucket Data to Another Bucket
+====
+Use the INSERT statement to create a copy of `bucket_1` under the new name `bucket_2`.
+
+.Query
+[source,n1ql]
 ----
 INSERT INTO bucket_2(key _k, value _v)
     SELECT META().id _k, _v
       FROM bucket_1 _v;
 ----
+====
 
-Inserting Values Using Subqueries::
 Sub-queries can be used with INSERT in the insert-select form of the statement.
 The `SELECT` part can be any sophisticated query in itself.
-+
-*Example 16*: Insert a new `type` in documents from all hotels in the cities that have landmarks.
 
-. The inner most `SELECT` finds all cities that have landmarks.
-. The outer `SELECT` finds the hotels that are in the cities selected by the inner query in Step 1.
-It also adds a new `type` attribute with the value "landmark_hotels" to the projected result.
-For brevity, we `SELECT` only 4 documents.
-. Finally, the `INSERT` statement inserts the result of Step 2 with `UUID()` generated keys.
+[[example-16]]
+.Inserting Values Using Subqueries
+====
+Insert a new `type` in documents from all hotels in the cities that have landmarks.
 
-+
 .Query
+[source,n1ql]
 ----
-INSERT INTO `travel-sample` (KEY UUID())
-    SELECT x.name, x.city, "landmark_hotels" AS type
+INSERT INTO `travel-sample` (KEY UUID()) -- <3>
+    SELECT x.name, x.city, "landmark_hotels" AS type -- <2>
       FROM `travel-sample` x
       WHERE x.type = "hotel" and x.city WITHIN
-        ( SELECT DISTINCT t.city
+        ( SELECT DISTINCT t.city -- <1>
             FROM `travel-sample` t
             WHERE t.type = "landmark" )
       LIMIT 4
 RETURNING *;
 ----
-+
+
+<1> The inner most `SELECT` finds all cities that have landmarks.
+<2> The outer `SELECT` finds the hotels that are in the cities selected by the inner query in Step 1.
+It also adds a new `type` attribute with the value "landmark_hotels" to the projected result.
+For brevity, we `SELECT` only 4 documents.
+<3> Finally, the `INSERT` statement inserts the result of Step 2 with `UUID()` generated keys.
+
 .Results
+[source,json]
 ----
 [
   {
@@ -750,27 +910,38 @@ RETURNING *;
   }
 ]
 ----
+====
 
-Inserting Values Using Functions:: *Example 17*: Use multiple functions during the INSERT:
+[[example-17]]
+.Inserting Values Using Functions
+====
+Set the parameter `$faa_code` using the cbq prompt, or the xref:tools:query-workbench.adoc#query-preferences[Run-Time Preferences] in the Query Workbench.
 
-* `UUID()` function to generate unique key for the document being inserted.
-* The string concatenation operator `||` to join "airport_" and the `UUID`.
-* `UPPER` string function to insert only uppercase values of the `FAA` code.
-
-+
-.Query
+.Parameters
+[source,console]
 ----
 cbq> \set -$faa_code "blr" ;
-cbq> INSERT INTO `travel-sample` (KEY, VALUE)
-      VALUES ("airport_" || UUID(),
+----
+
+.Query
+[source,n1ql]
+----
+INSERT INTO `travel-sample` (KEY, VALUE)
+      VALUES ("airport_" || UUID(), -- <1><2>
              { "type" : "airport",
                "tz" : "India Standard Time",
                "country" : "India",
-               "faa" : UPPER($faa_code)} )
+               "faa" : UPPER($faa_code)} ) -- <3>
 RETURNING *;
 ----
-+
+The query uses multiple functions during the INSERT:
+
+<1> `UUID()` function to generate unique key for the document being inserted.
+<2> The string concatenation operator `||` to join "airport_" and the `UUID`.
+<3> `UPPER` string function to insert only uppercase values of the `FAA` code.
+
 .Results
+[source,json]
 ----
 {
     "requestID": "ab03d366-b079-4c7e-b9e9-935b9797b59a",
@@ -797,19 +968,20 @@ RETURNING *;
     }
 }
 ----
+====
 
-Inserting Values Using Prepared Statements::
-*Example 18*: Prepare an `INSERT` statement and show how to execute it by passing parameters with cbq and REST.
-+
-NOTE: The Query Workbench currently cannot pass the parameters, and hence can’t run parametrized queries.
-+
+[[example-18]]
+.Inserting Values Using Prepared Statements
+====
+Prepare an `INSERT` statement and execute it by passing parameters.
 The `INSERT` statement has some of the attribute values preset while it takes the document `key` and airport `faa_code` as parameters.
 
 . Prepare the `INSERT` statement.
 +
 .Query
+[source,n1ql]
 ----
-cbq> PREPARE ins_india FROM
+PREPARE ins_india FROM
       INSERT INTO `travel-sample` (KEY, VALUE)
         VALUES ( $key,
                 { "type" : "airport",
@@ -818,88 +990,15 @@ cbq> PREPARE ins_india FROM
                   "faa" : $faa_code} )
 RETURNING *;
 ----
-+
-.Results
-----
-{
-    "requestID": "29e9af37-61df-4c3b-a12f-1c145ff66ad3",
-    "signature": "json",
-    "results": [
-        {
-            "encoded_plan": "H4sIAAAJbogA/5ySQW/bPgzFv4rAfw9t4f9hO/rWQzYYG7IiTgsMSZASNtNqk2WNooOkgffZR8VI2nTZpSdJ5E9PfNDbAfmqraleBocecoAMPDakO+vj0vraopbaQIzSMuQ7+O/lACX96lSAFPldPVlXM6nI7BS66eSpZfucqD30LpV7dB2VlQ6ZwTrtoxZns4uftM3Mbg5V23nh7RxyM4cizT2HTLcrxFS70HWZnKaabAMNIFoOLcuAyvOr26YU9DVybaa2UbpfLKDPTme6RUbnyOlIDW4OJxsbyD8cvLzLbEm+LnwkFsXQWUxmhXFN7v+ITXDpujqPASs603K2sQK575wb/vMA1rTCzslfTgpvxaK75fYHVelRpqjcUoibuB+PNiGBkdxK21FQT8Id9Yu3Wp+sf1HSdiIgsF1bR4/p23aHMfLTufOP/VutUpiwgb1EtI8epWNKCtfavFYbILRRp6pPAZnMMbVmxW1jinE5mkx1mX4zDyevPZjLL6Pvmbm/+Xo3uhqW0lwe8zRkxJwNiflnShJxTKI5F0XzKov9lTGT0fRuMi7Gn43a+RMAAP//+P56E48DAAA=",
-            "name": "ins_india",
-            "operator": {
-                "#operator": "Sequence",
-                "~children": [
-                    {
-                        "#operator": "Authorize",
-                        "child": {
-                            "#operator": "Sequence",
-                            "~children": [
-                                {
-                                    "#operator": "ValueScan",
-                                    "values": "[[$key, {\"country\": \"India\", \"faa\": $faa_code, \"type\": \"airport\", \"tz\": \"India Standard Time\"}]]"
-                                },
-                                {
-                                    "#operator": "Parallel",
-                                    "maxParallelism": 1,
-                                    "~child": {
-                                        "#operator": "Sequence",
-                                        "~children": [
-                                            {
-                                                "#operator": "SendInsert",
-                                                "alias": "travel-sample",
-                                                "keyspace": "travel-sample",
-                                                "limit": null,
-                                                "namespace": "default"
-                                            },
-                                            {
-                                                "#operator": "InitialProject",
-                                                "result_terms": [
-                                                    {
-                                                        "expr": "self",
-                                                        "star": true
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "#operator": "FinalProject"
-                                            }
-                                        ]
-                                    }
-                                }
-                            ]
-                        },
-                        "privileges": {
-                            "default:travel-sample": 2
-                        }
-                    },
-                    {
-                        "#operator": "Stream"
-                    }
-                ]
-            },
-            "signature": {
-                "*": "*"
-            },
-            "text": "prepare ins_india from INSERT INTO `travel-sample` (KEY, VALUE) VALUES ($key, {\"type\" : \"airport\", \"tz\" : \"India Standard Time\", \"country\" : \"India\", \"faa\" : $faa_code})  RETURNING *"
-        }
-    ],
-    "status": "success",
-    "metrics": {
-        "elapsedTime": "2.726566ms",
-        "executionTime": "2.682386ms",
-        "resultCount": 1,
-        "resultSize": 3461
-    }
-}
-----
 
-. Execute the prepared statement using cbq.
-To execute using the REST API, skip to Step 3.
- .. Open a cbq prompt and set the environment variables `$key` and `$faa_code`.
+. [[step-2,Step 2]]Execute the prepared statement using the cbq shell or the Query Workbench.
+To execute using the REST API, skip to <<step-3>>.
+
+ .. Set the parameters `$key` and `$faa_code` using the cbq prompt, or the xref:tools:query-workbench.adoc#query-preferences[Run-Time Preferences] in the Query Workbench.
 These values will be passed as parameters when executing the prepared statement `ins_india`.
 +
+.Parameters
+[source,console]
 ----
 cbq> \set -$key "airport_10001" ;
 cbq> \set -$faa_code "DEL" ;
@@ -907,154 +1006,74 @@ cbq> \set -$faa_code "DEL" ;
 
  .. Execute the prepared statement `ins_india`.
 +
+.Query
+[source,n1ql]
 ----
-cbq> execute ins_india;
-{
-    "requestID": "b6c08546-95a4-4619-9b54-d93a6ac42aa6",
-    "signature": null,
-    "results": [
-        {
-            "default": {
-                "country": "India",
-                "faa": "DEL",
-                "type": "airport",
-                "tz": "India Standard Time"
-            }
+EXECUTE ins_india;
+----
++
+.Results
+[source,json]
+----
+[
+    {
+        "default": {
+            "country": "India",
+            "faa": "DEL",
+            "type": "airport",
+            "tz": "India Standard Time"
         }
-    ],
-    "status": "success",
-    "metrics": {
-        "elapsedTime": "2.128772ms",
-        "executionTime": "2.08428ms",
-        "resultCount": 1,
-        "resultSize": 195,
-        "mutationCount": 1
     }
-}
+]
 ----
-. Execute the prepared statement using REST API.
-To execute using the cbq shell, go to Step 2.
+
+. [[step-3,Step 3]]Execute the prepared statement using REST API.
+To execute using the cbq shell or the Query Workbench, go to <<step-2>>.
+
  .. Insert another airport by passing `$key` and `$faa_code` as REST parameters.
 +
+.Query
 [source,console]
 ----
 $ curl -v http://localhost:8093/query/service -d 'prepared="ins_india"&$key="airport_10002"&$faa_code="BLR"'
-
-> POST /query/service HTTP/1.1
-> User-Agent: curl/7.37.1
-> Host: localhost:8093
-> Accept: */*
-> Content-Length: 57
-> Content-Type: application/x-www-form-urlencoded
->
-* upload completely sent off: 57 out of 57 bytes
-< HTTP/1.1 200 OK
-< Content-Length: 542
-< Content-Type: application/json; version=1.5.0
-< Date: Wed, 10 Aug 2016 23:12:55 GMT
-<
-{
-    "requestID": "adb2f0ec-8d55-490e-a4ce-2b09737c7b23",
-    "signature": {
-        "*": "*"
-    },
-    "results": [
-        {
-            "travel-sample": {
-                "country": "India",
-                "faa": "BLR",
-                "type": "airport",
-                "tz": "India Standard Time"
-            }
+----
++
+.Results
+[source,json]
+----
+[
+    {
+        "travel-sample": {
+            "country": "India",
+            "faa": "BLR",
+            "type": "airport",
+            "tz": "India Standard Time"
         }
-    ],
-    "status": "success",
-    "metrics": {
-        "elapsedTime": "4.390041ms",
-        "executionTime": "4.350285ms",
-        "resultCount": 1,
-        "resultSize": 201,
-        "mutationCount": 1
     }
+]
+----
+
+[NOTE]
+--
+The REST parameters should not have any spaces around `&` when passing multiple parameters.
+For example, the following REST API call throws an error because of spaces before the `$faa_code` parameter.
+
+[source,console]
+----
+$ curl -v http://localhost:8093/query/service -d 'prepared="ins_india"&$key="airport_10002" & $faa_code="BLR"'
+----
+
+[source,json]
+----
+"errors": [
+    {
+        "code": 5010,
+        "msg": "Error evaluating VALUES. - cause: No value for named parameter $faa_code."
     }
+]
 ----
-+
-NOTE: The REST parameters should not have any spaces around ‘&’ when passing multiple parameters.
-For example, the following REST API throws an error because of spaces before the `$faa_code` parameter.
-
- $ curl -v http://localhost:8093/query/service -d 'prepared="ins_india"&$key="airport_10002" & $faa_code="BLR"'
- * Connected to localhost (::1) port 8093 (#0)
- > POST /query/service HTTP/1.1
- > User-Agent: curl/7.37.1
- > Host: localhost:8093
- > Accept: */*
- > Content-Length: 59
- > Content-Type: application/x-www-form-urlencoded
- >
- * upload completely sent off: 59 out of 59 bytes
- < HTTP/1.1 200 OK
- < Content-Length: 490
- < Content-Type: application/json; version=1.5.0
- < Date: Wed, 10 Aug 2016 23:12:41 GMT
- <
- {
-     "requestID": "13fa81a2-84a6-4db4-b51f-474be4b86006",
-     "signature": {
-         "*": "*"
-     },
-     "results": [
-     ],
-     "errors": [
-         {
-             "code": 5010,
-             "msg": "Error evaluating VALUES. - cause: No value for named parameter $faa_code."
-         }
-     ],
-     "status": "errors",
-     "metrics": {
-         "elapsedTime": "328.022µs",
-         "executionTime": "288.106µs",
-         "resultCount": 0,
-         "resultSize": 0,
-         "errorCount": 1
-     }
- }
- * Connection #0 to host localhost left intact
-
-[#insert-restrictions]
-== Restrictions
-
-When inserting documents into a specified keyspace, keep in mind the following restrictions which would help avoid errors during execution.
-
-* The keyspace must exist.
-The INSERT statement returns an error if the keyspace does not exist.
-* Do not insert a document with a duplicate key.
-If you are inserting multiple documents, the statement aborts at the first error encountered.
-* Timeouts can affect the completion of an INSERT statement, especially when performing bulk inserts.
-Ensure that the timeout is set to a reasonable value that allows the bulk insert operation to complete.
-+
-To set the indexer timeout, use the following command:
-+
-----
-curl <host>:9102/settings -u <username>:<password> -d  '{"indexer.settings.scan_timeout": <some integer>}'
-----
-+
-For example,
-
- $ curl localhost:9102/settings -u Administrator:password -d  '{"indexer.settings.scan_timeout": 1200}'
-+
-Use the following command to retrieve the indexer settings:
-+
-----
-curl -X GET http://localhost:9102/settings -u Administrator:password
-----
-+
-See xref:n1ql-rest-api/extimeout.adoc[Request Timeout] for more information on timeouts.
-
-* When inserting multiple documents, no cleanup or rollback is done for the already inserted documents if the INSERT operations hits an error.
-This means, when you are inserting 10 documents, if the INSERT operation fails when inserting the 6th document, the operator quits and exits.
-It does not rollback the first five documents that were inserted.
-Nor does it ignore the failure and continue to insert the remaining documents.
+--
+====
 
 [#insert-explain-plan]
 == Explain Plan
@@ -1062,11 +1081,11 @@ Nor does it ignore the failure and continue to insert the remaining documents.
 To understand how the INSERT statement is executed by N1QL, let us take a look at two examples.
 For detailed explanation about the EXPLAIN plan, see the xref:n1ql-language-reference/explain.adoc#topic_11_4[EXPLAIN] statement.
 
-*Simple INSERT Statement Using KEY VALUE Pairs to Insert Two Documents*
-
-*Example 19*: The query engine first scans the input values shown by the operator "ValueScan" to obtain the input values, and then it inserts the documents into the specified keyspace (shown by the operator `SendInsert`).
-
+[[example-19]]
+.Simple INSERT Statement Using KEY VALUE Pairs to Insert Two Documents
+====
 .Query
+[source,n1ql]
 ----
 EXPLAIN INSERT INTO `travel-sample` (KEY,VALUE)
 VALUES ( "1025",
@@ -1084,6 +1103,7 @@ RETURNING *;
 ----
 
 .Results
+[source,json]
 ----
 {
     "requestID": "30d33a23-9635-439a-8676-7f95812aabcc",
@@ -1139,25 +1159,22 @@ RETURNING *;
     }
 }
 ----
+The query engine first scans the input values shown by the operator `ValueScan` to obtain the input values, and then it inserts the documents into the specified keyspace (shown by the operator `SendInsert`).
+====
 
-*INSERT Statement Using the Projection of a Select Statement to Generate Values*
-
-*Example 20*: The Query Engine first executes the `SELECT` statement and then uses the projection to insert into the `travel-sample` bucket, performing the operations in the order listed:
-
-. An `IndexScan` to find the documents that satisfy `type="airport"`.
-. A subsequent `IndexScan` for `airportname="Heathrow"`.
-. An `IntersectScan` to obtain the documents that satisfy both conditions of Step 1 and Step 2.
-. A `Fetch` for the value on the field `_country`.
-. An `Insert` of the value along with the auto-generated key into the `travel-sample` bucket.
-
+[[example-20]]
+.INSERT Statement Using the Projection of a Select Statement to Generate Values
+====
 .Query
+[source,n1ql]
 ----
-EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
-    SELECT _country FROM `travel-sample` _country
+EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _airport)
+    SELECT _airport FROM `travel-sample` _airport
       WHERE type = "airport" AND airportname = "Heathrow";
 ----
 
 .Results
+[source,json]
 ----
 [
   {
@@ -1168,46 +1185,52 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
           "#operator": "Sequence",
           "~children": [
             {
-              "#operator": "IntersectScan",                     / Step 3
+              "#operator": "IntersectScan", // <3>
               "scans": [
                 {
-                  "#operator": "IndexScan",                     / Step 1
-                  "index": "def_type",
-                  "index_id": "aea49ebaf37e4015",
+                  "#operator": "IndexScan3", // <2>
+                  "as": "_airport",
+                  "index": "def_airportname",
+                  "index_id": "af738c1d1aa1f107",
+                  "index_projection": {
+                    "primary_key": true
+                  },
                   "keyspace": "travel-sample",
                   "namespace": "default",
                   "spans": [
                     {
-                      "Range": {
-                        "High": [
-                          "\"airport\""
-                        ],
-                        "Inclusion": 3,
-                        "Low": [
-                          "\"airport\""
-                        ]
-                      }
+                      "exact": true,
+                      "range": [
+                        {
+                          "high": "\"Heathrow\"",
+                          "inclusion": 3,
+                          "low": "\"Heathrow\""
+                        }
+                      ]
                     }
                   ],
                   "using": "gsi"
                 },
                 {
-                  "#operator": "IndexScan",                    / Step 2
-                  "index": "def_airportname",
-                  "index_id": "1e6e52dd512a354f",
+                  "#operator": "IndexScan3", // <1>
+                  "as": "_airport",
+                  "index": "def_type",
+                  "index_id": "4877ed06167c9af8",
+                  "index_projection": {
+                    "primary_key": true
+                  },
                   "keyspace": "travel-sample",
                   "namespace": "default",
                   "spans": [
                     {
-                      "Range": {
-                        "High": [
-                          "\"Heathrow\""
-                        ],
-                        "Inclusion": 3,
-                        "Low": [
-                          "\"Heathrow\""
-                        ]
-                      }
+                      "exact": true,
+                      "range": [
+                        {
+                          "high": "\"airport\"",
+                          "inclusion": 3,
+                          "low": "\"airport\""
+                        }
+                      ]
                     }
                   ],
                   "using": "gsi"
@@ -1215,25 +1238,25 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
               ]
             },
             {
+              "#operator": "Fetch", // <4>
+              "as": "_airport",
+              "keyspace": "travel-sample",
+              "namespace": "default"
+            },
+            {
               "#operator": "Parallel",
               "~child": {
                 "#operator": "Sequence",
                 "~children": [
                   {
-                    "#operator": "Fetch",                    / Step 4
-                    "as": "_country",
-                    "keyspace": "travel-sample",
-                    "namespace": "default"
-                  },
-                  {
                     "#operator": "Filter",
-                    "condition": "(((`_country`.`type`) = \"airport\") and ((`_country`.`airportname`) = \"Heathrow\"))"
+                    "condition": "(((`_airport`.`type`) = \"airport\") and ((`_airport`.`airportname`) = \"Heathrow\"))"
                   },
                   {
                     "#operator": "InitialProject",
                     "result_terms": [
                       {
-                        "expr": "`_country`"
+                        "expr": "`_airport`"
                       }
                     ]
                   },
@@ -1251,13 +1274,12 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
             "#operator": "Sequence",
             "~children": [
               {
-                "#operator": "SendInsert",                   / Step 5
+                "#operator": "SendInsert", // <5>
                 "alias": "travel-sample",
                 "key": "uuid()",
                 "keyspace": "travel-sample",
-                "limit": null,
                 "namespace": "default",
-                "value": "`_country`"
+                "value": "`_airport`"
               },
               {
                 "#operator": "Discard"
@@ -1267,61 +1289,16 @@ EXPLAIN INSERT INTO `travel-sample` (key UUID(), value _country)
         }
       ]
     },
-    "text": "INSERT INTO `travel-sample` (key UUID(), value _country) SELECT _country from `travel-sample` _country WHERE type = \"airport\" and airportname = \"Heathrow\";"
+    "text": "INSERT INTO `travel-sample` (KEY UUID(), VALUE _airport)\n    SELECT _airport FROM `travel-sample` _airport\n      WHERE type = \"airport\" AND airportname = \"Heathrow\";"
   }
 ]
 ----
 
-[#insert-best-practices]
-== Best Practices
+The Query Engine first executes the `SELECT` statement and then uses the projection to insert into the `travel-sample` bucket, performing the operations in the order listed:
 
-When inserting multiple documents, configure pipeline-batch and max-parallelism query parameters for better performance.
-See the following section on Performance for details on how to set these parameters.
-
-[#insert-performance]
-== Performance
-
-When a single INSERT statement is executed, N1QL prepares the statement, scans the values and then inserts the document.
-When inserting a large number of  documents, you can improve the performance of the INSERT statement by using one of the following techniques:
-
-* Batching the documents to perform bulk inserts, which decreases the latency and increases the throughput.
-The INSERT statement sends documents to the data node in batches, with a default batch size of 16.
-You can configure this value by passing the pipeline-batch parameter as an argument to the cbq engine, or using the REST API parameter for query service.
-Note that the maximum batch size is (2^32 -1) and specifying a value higher than the maximum batch size may increase the memory consumption.
-The following example command sets the pipeline-batch size to 32 instead of the default 16:
-+
-----
-curl -v -X POST http://127.0.0.1:8093/admin/settings  -d '{ "debug":true, "pipeline-batch": 32 }' -u Administrator:password
-----
-
-* Use max-parallelism when inserting multiple documents.
-* When performing bulk inserts, use prepared statements or multiple values.
-* When new documents are inserted, the indexes are updated.
-When a large number of documents are inserted, this may affect the performance of the cluster.
-
-[#insert-metrics]
-== Metrics
-
-The INSERT statement returns the following metrics along with the results and status:
-
-* [.out]`elapsedTime`: Total elapsed time for the statement.
-* [.out]`executionTime`: Time taken by Couchbase Server to execute the statement.
-This value is independent of network latency, platform code execution time, and so on.
-* [.out]`resultCount`: Total number of results returned by the statement.
-In case of `INSERT` without a `RETURNING` clause, the value is `0`.
-* [.out]`resultSize`: Total number of results that satisfy the query.
-* [.out]`mutationCount`: Specifies the number of documents that were inserted by the `INSERT` statement.
-
-[#insert-monitoring]
-== Monitoring
-
-You can use the query monitoring API to gather diagnostic information.
-For example, if you are performing a bulk insert using a `SELECT` statement, you can use the query monitoring API to get the number of documents being inserted.
-Check [.api]`system:active_requests` catalog for more information on monitoring active queries.
-The REST API for bucket statistics is available at . CLI tools like `cbstats` provide detailed stats about the cluster.
-The same information can also be obtained using cbq shell or REST API.
-For more information, see xref:tools:query-monitoring.adoc[Query Monitoring].
-
-You can also take a look at the bucket metrics from the Web Console.
-To do so, go to the Data Buckets tab and click the bucket that you want to monitor.
-In the General Bucket Analytics screen, scroll to the Query section to gather information such as requests/sec, selects/sec and so on.
+<1> An `IndexScan` to find the documents that satisfy `type="airport"`.
+<2> A subsequent `IndexScan` for `airportname="Heathrow"`.
+<3> An `IntersectScan` to obtain the documents that satisfy both conditions of Step 1 and Step 2.
+<4> A `Fetch` for the value on the document `_airport`.
+<5> An `Insert` of the value along with the auto-generated key into the `travel-sample` bucket.
+====
