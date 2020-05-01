@@ -22,7 +22,7 @@ namespace QuickStart.Controllers
         // tag::getdata[]
         [HttpGet]
         [Route("/")]
-        public List<User> GetData(string email)
+        public List<User> GetUserByEmail(string email)
         {
             var n1ql = "SELECT d.* FROM default d WHERE d.email = $email";
             var query = QueryRequest.Create(n1ql);
@@ -35,11 +35,11 @@ namespace QuickStart.Controllers
         // tag::insert[]
         [HttpPost]
         [Route("/")]
-        public string InsertData(User forecast)
+        public string InsertUser(User user)
         {
             var key = Guid.NewGuid().ToString();
-            _bucket.Insert(key, forecast);
-            return "Inserted forecast with ID: " + key;
+            _bucket.Insert(key, user);
+            return "Inserted user with ID: " + key;
         }
         // end::insert[]
     }
