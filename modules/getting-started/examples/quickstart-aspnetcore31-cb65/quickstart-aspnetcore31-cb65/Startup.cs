@@ -21,7 +21,7 @@ namespace QuickStart
         {
             services.AddControllers();
 
-            services.AddCouchbase(Configuration.GetSection("Couchbase"));
+            services.AddCouchbase(Configuration.GetSection("Couchbase")); // <1>
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -43,7 +43,7 @@ namespace QuickStart
                 endpoints.MapControllers();
             });
 
-            appLifetime.ApplicationStopped.Register(() =>
+            appLifetime.ApplicationStopped.Register(() => // <2>
             {
                 app.ApplicationServices.GetRequiredService<ICouchbaseLifetimeService>().Close();
             });

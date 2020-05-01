@@ -28,19 +28,19 @@ namespace FirstQuery
                 Email = "perry.mason@acme.com",
                 FirstName = "Perry",
                 LastName = "Mason",
-                Lyric = "Who can we get on the case?"
+                TagLine = "Who can we get on the case?"
             };
             var user00002 = new User {
                 Email = "major.tom@acme.com",
                 FirstName = "Major",
                 LastName = "Tom",
-                Lyric = "Send me up a drink"
+                TagLine = "Send me up a drink"
             };
             var user00003 = new User {
                 Email = "jerry.wasaracecardriver@acme.com",
                 FirstName = "Jerry",
                 LastName = "Wasaracecardriver",
-                Lyric = "el sob number one"
+                TagLine = "el sob number one"
             };                             
             bucket.Upsert("USER::00001", user00001);
             bucket.Upsert("USER::00002", user00002);
@@ -53,7 +53,7 @@ namespace FirstQuery
             foreach(var result in results)
             {
                 Console.WriteLine($"{result.FirstName} {result.LastName} {result.Email}");
-                Console.WriteLine($"{result.Lyric}");
+                Console.WriteLine($"{result.TagLine}");
                 Console.WriteLine();
             }
             // end::linq[]
@@ -68,7 +68,7 @@ namespace FirstQuery
         public string Email {get;set;}
         public string FirstName {get;set;}
         public string LastName {get;set;}
-        public string Lyric {get;set;}
+        public string TagLine {get;set;}
         public string Type {get;} = "user";
     }
     // end::user[]
