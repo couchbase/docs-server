@@ -15,6 +15,15 @@
 :collection-op-any: {n1ql}/collectionops.adoc#collection-op-any
 :schema-output: {n1ql}/infer.adoc#schema-output
 
+// Aggregate function cross-references
+:min: {n1ql}/aggregatefun.adoc#min
+:max: {n1ql}/aggregatefun.adoc#max
+:sum: {n1ql}/aggregatefun.adoc#sum
+:count: {n1ql}/aggregatefun.adoc#count
+:countn: {n1ql}/aggregatefun.adoc#countn
+:avg: {n1ql}/aggregatefun.adoc#avg
+:aggregate-quantifier: {n1ql}/aggregatefun.adoc#aggregate-quantifier
+
 // Indexing and Query Performance cross-references
 :indexing-and-query-perf: xref:learn:services-and-indexes/indexes/indexing-and-query-perf.adoc
 :secondary-index: {indexing-and-query-perf}#secondary-index
@@ -110,8 +119,8 @@ __required__
 
 |**adviseinfo** +
 __required__
-|An array of objects giving index information.
-|< <<information,Information>> > array
+|An object giving index information.
+|<<information,Information>>
 |===
 
 [[information]]
@@ -173,6 +182,14 @@ If the query specifies an alias for this keyspace, the alias is appended to the 
 This may help to distinguish the indexes for either side of a JOIN operation.
 |string
 
+|**index_property** +
+__optional__
+|The <<pushdown-properties,index pushdowns>> supported by the index.
+
+This field is only returned for covering indexes.
+If no index pushdowns are supported by the covering index, this field does not appear.
+|string
+
 |**index_status** +
 __optional__
 |Information on the status of the index, stating whether the index is identical to the recommended index, or whether the index is an optimal covering index.
@@ -183,7 +200,7 @@ If the index is not identical to the recommended index, or if it is not an optim
 
 |**recommending_rule** +
 __optional__
-|The rules used to generate the recommendation.
+|The <<recommendation-rules,rules>> used to generate the recommendation.
 
 This field is only returned for recommended indexes, or for current indexes if they are identical to the recommended index.
 |string
@@ -206,79 +223,147 @@ Within each recommended index, if there is more than one index key, they are sor
 . Leading array index for UNNEST
 |The query uses a predicate which applies to individual elements in an unnested array.
 
-Example: `UNNEST schedule AS x WHERE x.day = 1`
+.Example
+----
+UNNEST schedule AS x WHERE x.day = 1
+----
 |An {array-index}[array index], where the leading index key is an array expression indexing all elements in the unnested array.
 
-|[start=2]
+|[#rule-2,reftext="Rule 2",start=2]
 . Equality / NULL / MISSING
 |The query has a predicate with an {comparisonops}[equality], {comparisonops}[IS NULL], or {comparisonops}[IS MISSING] expression.
 
-Example: `WHERE id = 10`
-|A {secondary-index}[secondary index], where one index key is the field referenced by the predicate expression.
+.Examples
+----
+WHERE ANY v IN schedule SATISFIES v.utc = "19:00" END
+
+WHERE LOWER(name) = "john"
+
+WHERE id = 10
+----
+|If the predicate contains an {collection-op-any}[ANY] expression: an {array-index}[array index], where the index key is an array expression recursively indexing all elements referenced by the predicate expression.
+
+If the predicate contains an indexable function: a {functional-index}[functional index], where the index key contains the function referenced by the predicate expression.
+
+Otherwise: a {secondary-index}[secondary index], where one index key is the field referenced by the predicate expression.
 
 |[start=3]
 . IN predicates
 |The query has a predicate with an {collection-op-in}[IN] expression.
 
-Example: `WHERE id IN [10, 20]`
-|A {secondary-index}[secondary index], where one index key is the field referenced by the predicate expression.
+.Examples
+----
+WHERE ANY v IN schedule SATISFIES v.utc IN ["19:00", "20:00"] END
+
+WHERE LOWER(name) IN ["jo", "john"]
+
+WHERE id IN [10, 20]
+----
+|Refer to <<rule-2>>.
 
 |[start=4]
 . Not less than / between / not greater than
 |The query has a predicate with a {comparisonops}[+<=+], {comparisonops}[BETWEEN], or {comparisonops}[+>=+] expression.
 
-Example: `WHERE id >= 10`
-|A {secondary-index}[secondary index], where one index key is the field referenced by the predicate expression.
+.Examples
+----
+WHERE ANY v IN schedule SATISFIES v.utc BETWEEN "19:00" AND "20:00" END
+
+WHERE LOWER(name) BETWEEN "jo" AND "john"
+
+WHERE id BETWEEN 10 AND 25
+----
+|Refer to <<rule-2>>.
 
 |[start=5]
-. Less than / between / greater than
-|The query has a predicate with a {comparisonops}[<], {comparisonops}[BETWEEN], or {comparisonops}[>] expression.
+. Less than / greater than
+|The query has a predicate with a {comparisonops}[<] or {comparisonops}[>] expression.
 
-Example: `WHERE id BETWEEN 10 AND 25`
-|A {secondary-index}[secondary index], where one index key is the field referenced by the predicate expression.
+.Examples
+----
+WHERE ANY v IN schedule SATISFIES v.utc > "19:00" END
+
+WHERE LOWER(name) > "jo"
+
+WHERE id > 10 AND id < 25
+----
+|Refer to <<rule-2>>.
 
 |[start=6]
-. Array predicate
-|The query has a predicate with an {collection-op-any}[ANY] expression.
-
-Example: `WHERE ANY v IN schedule SATISFIES v.utc > "19:00" END`
-|An {array-index}[array index], where the index key is an array expression recursively indexing all elements referenced by the predicate expression.
-
-|[start=7]
 . Derived join filter as leading key
 |The query has a {join}[join] using an ON clause which filters on the left-hand side keyspace.
 
-Example: `FROM {backtick}travel-sample{backtick} r JOIN {backtick}travel-sample{backtick} a ON r.airlineid = META(a).id`
+.Example
+----
+FROM `travel-sample` r JOIN `travel-sample` a ON r.airlineid = META(a).id
+----
 |A {secondary-index}[secondary index], where the leading index key is the field from the left-hand side keyspace in the ON clause.
 
-|[start=8]
+|[start=7]
 . IS NOT NULL / MISSING / VALUED predicates
 |The query has a predicate with {comparisonops}[IS NOT NULL], {comparisonops}[IS NOT MISSING], or {comparisonops}[IS NOT VALUED].
 
-Example: `WHERE id IS NOT NULL`
+.Examples
+----
+WHERE ANY v IN schedule SATISFIES v.utc IS NOT NULL END
+
+WHERE LOWER(name) IS NOT NULL
+
+WHERE id IS NOT NULL
+----
+|Refer to <<rule-2>>.
+
+|[start=8]
+. LIKE predicates
+|The query has a predicate with a {comparisonops}[LIKE] expression, where there is a `%` wildcard at the start of the match string.
+
+.Example
+----
+WHERE name LIKE "%base"
+----
 |A {secondary-index}[secondary index], where one index key is the field referenced by the predicate expression.
 
 |[start=9]
-. Functional predicates
-|The query contains an indexable function.
-
-Example: `WHERE LOWER(name) = "john"`
-|A {functional-index}[functional index], where the index key contains the function referenced by the predicate expression.
-
-|[start=10]
 . Non-static join predicate
 |The query has a {join}[join] using an ON clause in which neither the left-hand side source object nor the right-hand side source object is static.
 
-Example: `FROM {backtick}travel-sample{backtick} r JOIN {backtick}travel-sample{backtick} a ON r.airline = a.iata`
+.Example
+----
+FROM `travel-sample` r JOIN `travel-sample` a ON r.airline = a.iata
+----
 |A {secondary-index}[secondary index], where one index key is the field from the right-hand side keyspace in the ON clause.
 
-|[start=11]
+|[start=10]
 . Flavor for partial index
 |The query includes filters on a particular {schema-output}[flavor] of document.
 
-Example: `WHERE type = "hotel"`
+.Example
+----
+WHERE type = "hotel"
+----
 |A {partial-index}[partial index] for that flavor of document.
 |===
+
+[[pushdown-properties]]
+=== Pushdown Properties
+
+ifeval::['{page-component-version}' == '6.6']
+_(Introduced in Couchbase Server 6.6)_
+endif::[]
+
+The index advisor optimizes any covering indexes that it recommends, in order to support the following pushdowns:
+
+* LIMIT pushdown
+* OFFSET pushdown
+* ORDER pushdown
+* Partial GROUP BY and aggregates pushdown
+* Full GROUP BY and aggregates pushdown
+
+The GROUP BY and aggregate pushdowns support aggregation using the {min}[MIN()], {max}[MAX()], {sum}[SUM()], {countn}[COUNTN()], and {avg}[AVG()] functions, with the {aggregate-quantifier}[DISTINCT] aggregate quantifier if necessary.
+
+The GROUP BY and aggregate pushdowns may be _full_ or _partial_.
+Full pushdown means the indexer handles the group aggregation fully, and the query engine can skip the entire operator.
+Partial pushdown means the indexer sends part of the group aggregation to the query, and the query engine merges the intermediate groups to create the final group and aggregation.
 
 === Index Names
 
@@ -305,25 +390,23 @@ ADVISE SELECT * FROM `travel-sample` a WHERE a.type = 'hotel' AND a.country = 'F
     "#operator": "Advise",
     "advice": {
       "#operator": "IndexAdvice",
-      "adviseinfo": [
-        {
-          "current_indexes": [
-            {
-              "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
-              "keyspace_alias": "travel-sample_a"
-            }
-          ],
-          "recommended_indexes": {
-            "indexes": [
-              {
-                "index_statement": "CREATE INDEX adv_country_type ON `travel-sample`(`country`) WHERE `type` = 'hotel'",
-                "keyspace_alias": "travel-sample_a",
-                "recommending_rule": "Index keys follow order of predicate types: 2. equality/null/missing, 11. flavor for partial index."
-              }
-            ]
+      "adviseinfo": {
+        "current_indexes": [
+          {
+            "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+            "keyspace_alias": "travel-sample_a"
           }
+        ],
+        "recommended_indexes": {
+          "indexes": [
+            {
+              "index_statement": "CREATE INDEX adv_country_type ON `travel-sample`(`country`) WHERE `type` = 'hotel'",
+              "keyspace_alias": "travel-sample_a",
+              "recommending_rule": "Index keys follow order of predicate types: 2. equality/null/missing, 10. flavor for partial index."
+            }
+          ]
         }
-      ]
+      }
     },
     "query": "SELECT * FROM `travel-sample` a WHERE a.type = 'hotel' AND a.country = 'France';"
   }
@@ -346,31 +429,29 @@ ADVISE SELECT airportname FROM `travel-sample` WHERE type = 'airport' AND geo.al
     "#operator": "Advise",
     "advice": {
       "#operator": "IndexAdvice",
-      "adviseinfo": [
-        {
-          "current_indexes": [
+      "adviseinfo": {
+        "current_indexes": [
+          {
+            "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+            "keyspace_alias": "travel-sample"
+          }
+        ],
+        "recommended_indexes": {
+          "covering_indexes": [
             {
-              "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+              "index_statement": "CREATE INDEX adv_geo_alt_type_airportname ON `travel-sample`(`geo`.`alt`,`airportname`) WHERE `type` = 'airport'",
               "keyspace_alias": "travel-sample"
             }
           ],
-          "recommended_indexes": {
-            "covering_indexes": [
-              {
-                "index_statement": "CREATE INDEX adv_geo_alt_type_airportname ON `travel-sample`(`geo`.`alt`,`airportname`) WHERE `type` = 'airport'",
-                "keyspace_alias": "travel-sample"
-              }
-            ],
-            "indexes": [
-              {
-                "index_statement": "CREATE INDEX adv_geo_alt_type ON `travel-sample`(`geo`.`alt`) WHERE `type` = 'airport'",
-                "keyspace_alias": "travel-sample",
-                "recommending_rule": "Index keys follow order of predicate types: 1. Common leading key for disjunction (5. less than/between/greater than), 11. flavor for partial index."
-              }
-            ]
-          }
+          "indexes": [
+            {
+              "index_statement": "CREATE INDEX adv_geo_alt_type ON `travel-sample`(`geo`.`alt`) WHERE `type` = 'airport'",
+              "keyspace_alias": "travel-sample",
+              "recommending_rule": "Index keys follow order of predicate types: 1. Common leading key for disjunction (5. less than/greater than), 10. flavor for partial index."
+            }
+          ]
         }
-      ]
+      }
     },
     "query": "SELECT airportname FROM `travel-sample` WHERE type = 'airport' AND geo.alt NOT BETWEEN 0 AND 100;"
   }
@@ -393,19 +474,17 @@ ADVISE SELECT * FROM `travel-sample` WHERE type LIKE 'air%'or type LIKE 'rou%';
     "#operator": "Advise",
     "advice": {
       "#operator": "IndexAdvice",
-      "adviseinfo": [
-        {
-          "current_indexes": [
-            {
-              "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
-              "index_status": "SAME TO THE INDEX WE CAN RECOMMEND",
-              "keyspace_alias": "travel-sample",
-              "recommending_rule": "Index keys follow order of predicate types: 1. Common leading key for disjunction (4. not less than/between/not greater than)."
-            }
-          ],
-          "recommended_indexes": "No index recommendation at this time."
-        }
-      ]
+      "adviseinfo": {
+        "current_indexes": [
+          {
+            "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+            "index_status": "SAME TO THE INDEX WE CAN RECOMMEND",
+            "keyspace_alias": "travel-sample",
+            "recommending_rule": "Index keys follow order of predicate types: 1. Common leading key for disjunction (4. not less than/between/not greater than)."
+          }
+        ],
+        "recommended_indexes": "No index recommendation at this time."
+      }
     },
     "query": "SELECT * FROM `travel-sample` WHERE type LIKE 'air%'or type LIKE 'rou%';"
   }
@@ -428,18 +507,16 @@ ADVISE SELECT type FROM `travel-sample` WHERE type LIKE 'air%'or type LIKE 'rou%
     "#operator": "Advise",
     "advice": {
       "#operator": "IndexAdvice",
-      "adviseinfo": [
-        {
-          "current_indexes": [
-            {
-              "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
-              "index_status": "THIS IS AN OPTIMAL COVERING INDEX.",
-              "keyspace_alias": "travel-sample"
-            }
-          ],
-          "recommended_indexes": "No index recommendation at this time."
-        }
-      ]
+      "adviseinfo": {
+        "current_indexes": [
+          {
+            "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+            "index_status": "THIS IS AN OPTIMAL COVERING INDEX.",
+            "keyspace_alias": "travel-sample"
+          }
+        ],
+        "recommended_indexes": "No index recommendation at this time."
+      }
     },
     "query": "SELECT type FROM `travel-sample` WHERE type LIKE 'air%'or type LIKE 'rou%';"
   }
@@ -462,17 +539,15 @@ ADVISE SELECT * FROM `travel-sample` LIMIT 5;
     "#operator": "Advise",
     "advice": {
       "#operator": "IndexAdvice",
-      "adviseinfo": [
-        {
-          "current_indexes": [
-            {
-              "index_statement": "CREATE PRIMARY INDEX def_primary ON `travel-sample`",
-              "keyspace_alias": "travel-sample"
-            }
-          ],
-          "recommended_indexes": "No index recommendation at this time."
-        }
-      ]
+      "adviseinfo": {
+        "current_indexes": [
+          {
+            "index_statement": "CREATE PRIMARY INDEX def_primary ON `travel-sample`",
+            "keyspace_alias": "travel-sample"
+          }
+        ],
+        "recommended_indexes": "No index recommendation at this time."
+      }
     },
     "query": "SELECT * FROM `travel-sample` LIMIT 5;"
   }
