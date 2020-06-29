@@ -10,17 +10,20 @@
 :index-type: xref:n1ql-language-reference/hints.adoc#index-type
 :isstring: xref:n1ql-language-reference/typefun.adoc#isstring
 :isnumber: xref:n1ql-language-reference/typefun.adoc#isnumber
+:covering-indexes: xref:n1ql:n1ql-language-reference/covering-indexes.adoc
 :query-settings: xref:settings:query-settings.adoc
 :fts-creating-indexes: xref:fts:fts-creating-indexes.adoc
 :inserting-a-child-field: xref:fts:fts-creating-indexes.adoc#inserting-a-child-field
+:pre-constructed-analyzers: xref:fts:fts-using-analyzers.adoc#pre-constructed-analyzers
 :simple-queries: xref:fts:fts-query-types.adoc#simple-queries
+:index_pushdowns: xref:learn:services-and-indexes/indexes/index_pushdowns.adoc
 
 [abstract]
 You can use a full-text index when running a N1QL query.
 For a N1QL query to be able to use a full-text index, the full-text index and the N1QL query must both meet certain requirements.
 
-In prior versions of Couchbase Query it was possible to perform an FTS search within a N1QL query using {searchfun}[search functions].
-Starting with Couchbase Server 6.6, it is possible to use a full-text index when running a N1QL query, even if the query does not not contain a search function.
+In prior versions of Couchbase Query, it was possible to perform an FTS search within a N1QL query using {searchfun}[search functions].
+Starting with Couchbase Server 6.6, it is also possible to use a full-text index within a N1QL query that does not contain a search function.
 A full-text index may offer advantages over a GSI index when performing text-based or language-aware queries.
 
 The full-text index must meet certain requirements to be usable by a N1QL query; similarly, the N1QL query must have certain characteristics to be able to use the full-text index.
@@ -57,11 +60,11 @@ This is not possible with a full-text index.
 [[restrictions]]
 === Restrictions
 
-Because of the semantic differences described above, there are several restrictions on the way the query engine can make use of full-text indexes.
+Because of the semantic differences described above, there are several restrictions to the way the query engine can make use of full-text indexes.
 
-* A full-text index cannot be used as a covering index.
-* LIMIT and OFFSET clauses cannot be pushed down to a full-text index.
-* Aggregate functions and Window functions cannot be pushed down to a full-text index.
+* A full-text index cannot be used as a {covering-indexes}[covering index].
+* LIMIT and OFFSET clauses may be used with a full-text index, but they cannot be {index_pushdowns}[pushed down to the indexer].
+* Aggregate functions and Window functions may be used with a full-text index, but they cannot be {index_pushdowns}[pushed down to the indexer].
 
 Queries only make use of full-text indexes to find the access path to the required data.
 The query engine then fetches the data from the data service.
@@ -81,13 +84,17 @@ For further details, refer to {build-index}[BUILD INDEX].
 
 Assuming that there is no search function in the query predicate, there are two ways to specify that you would like to use a full-text index with a N1QL query:
 
-* Use the {index-type}[USE FTS] hint in the N1QL query
-* Set the `use_fts` {query-settings}[request-level parameter] to `true`
+* Use the `USE FTS` hint in the N1QL query.
+For full details, refer to {index-type}[USE Clause].
 
-When using an index hint, it is possible to specify mixed index types for a query -- `FTS` and `GSI`.
+* Set the `use_fts` request-level parameter to `true`.
+For full details, refer to {query-settings}[Settings and Parameters].
+
+When using an index hint, you may specify preferred indexes by name, or simply specify the preferred index type -- `FTS` or `GSI`.
+It is possible to specify mixed index types.
 
 [[ex-usage-1]]
-.Specifying any FTS index
+.Use FTS, no index specified
 ====
 [source,n1ql]
 ----
@@ -105,7 +112,7 @@ In this case:
 . If none of the full-text indexes qualify, the query engine considers other available GSI and primary indexes, following existing rules.
 
 [[ex-usage-2]]
-.Specifying any FTS or GSI index
+.Use FTS or GSI, no index specified
 ====
 [source,n1ql]
 ----
@@ -124,7 +131,7 @@ In this case:
 . If none of the full-text indexes qualify, the query engine considers other available GSI and primary indexes, following existing rules.
 
 [[ex-usage-3]]
-.Specifying named FTS and GSI indexes
+.Prefer the specified FTS and GSI indexes
 ====
 [source,n1ql]
 ----
@@ -144,8 +151,8 @@ In this case:
 
 In all cases, if the query meets the requirements to use a full-text index, and a qualified full-text index is selected, the query is transformed into an FTS {simple-queries}[simple query] (_not_ a query string query), and the simple query is run against the qualified full-text index.
 
-[NOTE]
-However, if the query predicate contains a search function, none of this applies -- instead, an index is selected for the query according to the method described on the {searchfun}[Search Functions] page.
+[IMPORTANT]
+If the query predicate contains a search function, none of this applies -- instead, an index is selected for the query according to the method described on the {searchfun}[Search Functions] page.
 
 [[fts-requirements]]
 == Full-Text Index Requirements
@@ -155,7 +162,7 @@ In order to use a full-text index with a N1QL query, the full-text index must me
 [[analyzer]]
 === Analyzer
 
-The full-text index _must_ use the keyword analyzer.
+The full-text index _must_ use the {pre-constructed-analyzers}[keyword analyzer].
 
 [[type-mappings]]
 === Type Mappings
@@ -178,11 +185,13 @@ If the full-text index has multiple custom type mappings, all the fields that yo
 
 Child mappings and fields mapped under top level type mappings can all be used within a query, provided they are enabled.
 
+When {inserting-a-child-field}[creating a full-text definition in the Couchbase Web Console], the child fields listed by field name or by *searchable as* may be used within a N1QL query.
+
+NOTE: The type field in a custom type mapped index is _not_ searchable.
+
 [[ex-indexed-fields]]
 .Child fields that may be used in a query
 ====
-In the following index definition, the `id` and `reviews.review.author` fields may be searched within a query.
-
 [source,json]
 ----
 {
@@ -198,7 +207,7 @@ In the following index definition, the `id` and `reviews.review.author` fields m
             "enabled": true,
             "dynamic": false,
             "fields": [{
-                "name": "author",
+                "name": "author", // <.>
                 "type": "text",
                 "index": true,
                 "analyzer": "keyword"
@@ -212,23 +221,24 @@ In the following index definition, the `id` and `reviews.review.author` fields m
     "enabled": true,
     "dynamic": false,
     "fields": [{
-        "name": "id",
+        "name": "id", // <.>
         "type": "number",
         "index": true
       }]
   }
 }
 ----
+
+In this index definition, the following fields may be searched within a query:
+
+<.> The `reviews.review.author` field
+<.> The `id` field
 ====
-
-When {inserting-a-child-field}[creating a full-text definition in the Couchbase Web Console], the child fields listed by field name or by *searchable as* may be used within a N1QL query.
-
-NOTE: The "type" field in a custom type mapped index is not searchable.
 
 [[query-requirements]]
 == Query Requirements
 
-In order to use a full-text index with a N1QL query, the query must meet certain requirements.
+In order to use a full-text index with a N1QL query, the query must also meet certain requirements.
 
 [[conditional-expression]]
 === Conditional Expression for Custom Type Mappings
@@ -263,7 +273,7 @@ If you have several expressions within the WHERE clause, the query engine needs 
 [[ex-conditional-2]]
 .Conditional expression for a custom type mapping with a complex predicate
 ====
-The following query is ambiguous and cannot be used with the full-text index defined in <<ex-conditional-1>>:
+The following query is ambiguous, and cannot be used with the full-text index defined in <<ex-conditional-1>>:
 
 [source,n1ql]
 ----
@@ -272,7 +282,7 @@ FROM `bucket` USE INDEX (USING FTS)
 WHERE type = "hotel" AND country = "US" OR country = "CAN";
 ----
 
-The following queries are unambiguous and can be used with the full-text index defined in <<ex-conditional-1>>:
+With brackets setting the priority of the AND and OR operators, the following queries are unambiguous, and can be used with the full-text index defined in <<ex-conditional-1>>:
 
 [source,n1ql]
 ----
@@ -312,26 +322,25 @@ The following predicates can be used with a full-text index with multiple custom
 
 [source,n1ql]
 ----
-type = "xyz"
-
-(type = "xyz" OR type = "abc")
+WHERE type = "xyz"
+WHERE (type = "xyz" OR type = "abc")
 ----
 
 The following predicate cannot be used with a full-text index with multiple custom type mappings:
 
 [source,n1ql]
 ----
-type = "xyz" OR type = "abc"
+WHERE type = "xyz" OR type = "abc"
 ----
 ====
 
 [[n1ql-predicates]]
 === N1QL Predicates
 
-N1QL predicates can be used with a full-text search query as long as they meet certain requirements, as detailed below,
+N1QL predicates can be used with a full-text search query, as long as they meet certain requirements, as detailed below.
 
 [[equality]]
-==== Equality
+==== Equality Expressions
 
 You can use an equality expression with a full-text index, as long as the field is either explicitly indexed, or if the indexing is dynamic within the keyword analyzer.
 
@@ -342,9 +351,9 @@ The following predicates can be used with a dynamic keyword index:
 
 [source,n1ql]
 ----
-a = "12"
-b = true
-c = 13
+WHERE a = "12"
+WHERE b = true
+WHERE c = 13
 ----
 ====
 
@@ -357,16 +366,16 @@ The following predicates can be used with this full-text index:
 
 [source,n1ql]
 ----
-a = "12"
-b = true
+WHERE a = "12"
+WHERE b = true
 ----
 
 The following predicates cannot be used with this full-text index:
 
 [source,n1ql]
 ----
-c = "13" -- <.>
-d = "N/A" -- <.>
+WHERE c = "13" -- <.>
+WHERE d = "N/A" -- <.>
 ----
 
 <.> `c` is indexed as numeric
@@ -397,7 +406,7 @@ WHERE LOWER(state) = "california" -- <.>
 ====
 
 [[and]]
-==== AND
+==== AND Expressions
 
 You can use an `AND` expression with a full-text index.
 Partial sargability is supported: this means that one or both of the requested child expressions must be indexed for the query to use a full-text index.
@@ -412,8 +421,8 @@ The following expressions can be used with the full-text index:
 
 [source,n1ql]
 ----
-a = "12" AND b = "34" -- <.>
-a = "12" AND d = "56" -- <.>
+WHERE a = "12" AND b = "34" -- <.>
+WHERE a = "12" AND d = "56" -- <.>
 ----
 
 <.> Searches for `a` and `b` using the full-text index
@@ -423,7 +432,7 @@ The following expressions cannot be used with the full-text index:
 
 [source,n1ql]
 ----
-d = "56" AND e = "78" -- <.>
+WHERE d = "56" AND e = "78" -- <.>
 ----
 
 [start=3]
@@ -431,7 +440,7 @@ d = "56" AND e = "78" -- <.>
 ====
 
 [[or]]
-==== OR
+==== OR Expressions
 
 You can use an `OR` expression with a full-text index.
 Partial sargability is not supported: all the requested child expressions must be indexed.
@@ -457,7 +466,7 @@ The following expressions cannot be used with the full-text index:
 
 [source,n1ql]
 ----
-a = "12" OR d = "56" -- <.>
+WHERE a = "12" OR d = "56" -- <.>
 ----
 
 <.> `d` is not indexed (false negatives)
@@ -477,7 +486,7 @@ The following predicate can be used with this full-text index:
 
 [source,n1ql]
 ----
-type = "X" AND name = "abc" AND age = 10 -- <.>
+WHERE type = "X" AND name = "abc" AND age = 10 -- <.>
 ----
 <.> No chance of false negatives, all fields are sargable
 
@@ -485,8 +494,8 @@ The following predicates cannot be used with this full-text index:
 
 [source,n1ql]
 ----
-type = "X" OR name = "abc" AND age = 10 -- <.>
-type = "X" AND name = "abc" OR age = 10 -- <.>
+WHERE type = "X" OR name = "abc" AND age = 10 -- <.>
+WHERE type = "X" AND name = "abc" OR age = 10 -- <.>
 ----
 <.> This is treated as an OR expression: `(type = "X") OR (name = "abc" AND age = 10)`
 <.> This is treated as an OR expression: `(type = "X" AND name = "abc") OR (age = 10)`
@@ -499,7 +508,7 @@ However, the following predicate can be used with this full-text index:
 
 [source,n1ql]
 ----
-type = "X" AND (name = "abc" OR age = 10) -- <.>
+WHERE type = "X" AND (name = "abc" OR age = 10) -- <.>
 ----
 <.> Brackets alter the order of precedence so there is no chance of false negatives
 ====
@@ -521,13 +530,13 @@ The following range expressions can be used with a full-text index:
 
 [source,n1ql]
 ----
-a >= 10 AND a <= 20
-b >= "hot" AND b <= "hotel"
-c >= "2020-03-01" AND c <= "2020-04-01" -- <.>
+WHERE a >= 10 AND a <= 20
+WHERE b >= "hot" AND b <= "hotel"
+WHERE c >= "2020-03-01" AND c <= "2020-04-01" -- <.>
 
-type = "xyz" AND a >= 10 AND a <= 20
-a >= 10 AND a <= 20 AND type = "xyz"
-type = "xyz" AND (a >= 10 AND a <= 20) -- <.>
+WHERE type = "xyz" AND a >= 10 AND a <= 20
+WHERE a >= 10 AND a <= 20 AND type = "xyz"
+WHERE type = "xyz" AND (a >= 10 AND a <= 20) -- <.>
 ----
 
 <.> Ranges are deterministic, range boundaries are of similar type, and maximum range boundary comes after minimum range boundary
@@ -537,17 +546,17 @@ The following range expressions cannot be used with a full-text index:
 
 [source,n1ql]
 ----
-a >= 10
-b < "hotel"
-c > "2020-03-01"
-a >= 10 OR a <= 20 -- <.>
+WHERE a >= 10
+WHERE b < "hotel"
+WHERE c > "2020-03-01"
+WHERE a >= 10 OR a <= 20 -- <.>
 
-a <= 20 AND a >= 10
-a >= 20 AND a <= 10 -- <.>
+WHERE a <= 20 AND a >= 10
+WHERE a >= 20 AND a <= 10 -- <.>
 
-a >= 10 AND a <= "hot" -- <.>
+WHERE a >= 10 AND a <= "hot" -- <.>
 
-a >= 10 AND type = "xyz" AND a <= 20 -- <.>
+WHERE a >= 10 AND type = "xyz" AND a <= 20 -- <.>
 ----
 
 <.> Ranges are open-ended (non-deterministic)
@@ -574,8 +583,8 @@ The following open-ended ranges can be used with a full-text index:
 
 [source,n1ql]
 ----
-ISSTRING(name) AND name >= "abhi" -- <.>
-ISNUMBER(age) AND age > 30 -- <.>
+WHERE ISSTRING(name) AND name >= "abhi" -- <.>
+WHERE ISNUMBER(age) AND age > 30 -- <.>
 ----
 
 <.> An open-ended range specifying any string later than "abhi".
@@ -583,7 +592,7 @@ ISNUMBER(age) AND age > 30 -- <.>
 ====
 
 [[like]]
-==== LIKE
+==== LIKE Expressions
 
 You can use a `LIKE` expression with a full-text index, as long as the `LIKE` expression contains a simple string, or a string followed by the `%` wildcard.
 
@@ -598,15 +607,15 @@ The following predicates may be used with a full-text index:
 
 [source,n1ql]
 ----
-a LIKE "hotel" -- <.>
-a LIKE "hote%" -- <.>
+WHERE a LIKE "hotel" -- <.>
+WHERE a LIKE "hote%" -- <.>
 ----
 <.> The query engine treats this expression as the equality expression `a = "hotel"`
 <.> The query engine treats this expression as the range `+++a >= "hote" AND a <= "hotf"+++`
 ====
 
 [[between]]
-==== BETWEEN
+==== BETWEEN Expressions
 
 You can use a `BETWEEN` expression with a full-text index.
 The range specified by the `BETWEEN` expression must respect the rules outlined in the <<ranges>> section above.
@@ -619,13 +628,13 @@ The following predicate may be used with a full-text index:
 
 [source,n1ql]
 ----
-a BETWEEN 10 AND 20 -- <.>
+WHERE a BETWEEN 10 AND 20 -- <.>
 ----
 <.> The query engine treats this expression as the range `+++a >= 10 AND a <= 20+++`
 ====
 
 [[any-in-satisfies]]
-==== ANY ... IN ... SATISFIES
+==== ANY ... IN ... SATISFIES Expressions
 
 :any-in-satisfies: pass:q[`ANY` ... `IN` ... `SATISFIES`]
 
@@ -701,18 +710,18 @@ Assume that a full-text index definition contains the following type mapping ove
 
 The following predicates may be used with the above full-text index:
 
-[source,n1ql]
+// no source language because hl.js highlights this snippet incorrectly
 ----
-type = "hotel" AND ANY r in reviews SATISFIES r.author = "xyz" END
+WHERE type = "hotel" AND ANY r in reviews SATISFIES r.author = "xyz" END
 
-type = "hotel" AND ANY r in reviews SATISFIES r.ratings.Cleanliness = 5 OR r.ratings.Overall = 4 END
+WHERE type = "hotel" AND ANY r in reviews SATISFIES r.ratings.Cleanliness = 5 OR r.ratings.Overall = 4 END
 
-type = "hotel" AND ANY r in reviews SATISFIES r.ratings.Cleanliness = 5 OR r.ratings.Overall = 4 END AND ANY p in public_likes SATISFIES p LIKE "xyz" END
+WHERE type = "hotel" AND ANY r in reviews SATISFIES r.ratings.Cleanliness = 5 OR r.ratings.Overall = 4 END AND ANY p in public_likes SATISFIES p LIKE "xyz" END
 ----
 ====
 
 [[every-in-satisfies]]
-==== EVERY ... IN ... SATISFIES
+==== EVERY ... IN ... SATISFIES Expressions
 
 :every-in-satisfies: pass:q[`EVERY` ... `IN` ... `SATISFIES`]
 
@@ -724,14 +733,14 @@ The {every-in-satisfies} expression must operate over an array, which may be an 
 ====
 The following predicate may be used with the full-text index whose definition is given under <<any-in-satisfies>>:
 
-[source,n1ql]
+// no source language because hl.js highlights this snippet incorrectly
 ----
-EVERY r IN reviews SATISFIES r.ratings.Cleanliness = 5 END
+WHERE EVERY r IN reviews SATISFIES r.ratings.Cleanliness = 5 END
 ----
 ====
 
 [[any-and-every-in-satisfies]]
-==== ANY AND EVERY ... IN ... SATISFIES
+==== ANY AND EVERY ... IN ... SATISFIES Expressions
 
 :any-and-every-in-satisfies: pass:q[`ANY AND EVERY` ... `IN` ... `SATISFIES`]
 
@@ -743,24 +752,24 @@ The {any-and-every-in-satisfies} expression must operate over an array, which ma
 ====
 The following predicate may be used with the full-text index whose definition is given under <<any-in-satisfies>>:
 
-[source,n1ql]
+// no source language because hl.js highlights this snippet incorrectly
 ----
-ANY AND EVERY r IN reviews SATISFIES r.ratings.Cleanliness = 5 END
+WHERE ANY AND EVERY r IN reviews SATISFIES r.ratings.Cleanliness = 5 END
 ----
 ====
 
 [[not]]
-==== NOT
+==== NOT Expressions
 
 You cannot use a complex `NOT` expression with a full-text index.
 
 [[joins]]
 === JOINs
 
-JOINs may be used with a full-text index as long as the JOIN predicate meets the requirements to be used with a full-text index.
+JOINs may be used with a full-text index, as long as the JOIN predicate meets the requirements to be used with a full-text index.
 Refer to <<n1ql-predicates>> above.
 
 [[pagination]]
-=== ORDER, LIMIT, OFFSET
+=== ORDER, LIMIT, and OFFSET
 
 The LIMIT, OFFSET, and ORDER clauses can be used with a full-text index when the index uses the default type mapping or a single custom type mapping.
