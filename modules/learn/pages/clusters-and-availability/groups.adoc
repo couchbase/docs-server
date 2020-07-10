@@ -2,11 +2,8 @@
 :page-aliases: understanding-couchbase:clusters-and-availability/groups
 
 [abstract]
-Individual server-nodes can be assigned to specific _groups_, within a
-Couchbase Cluster.
-This allows _active_ vBuckets to be maintained on a different group from that
-of their corresponding _replica_ vBuckets; so that if a group goes offline,
-bucket-data remains available on another group.
+Individual server-nodes can be assigned to specific _groups_, within a Couchbase Cluster.
+This allows both  _active vBuckets_ and GSI _indexes_ to be maintained on groups different from those of their corresponding _replica vBuckets_ and _index replicas_; so that if a group goes offline, and active vBuckets and indexes are thereby lost, replicas remain available on one or more other groups.
 
 [#understanding-server-group-awareness]
 == Understanding Server Group Awareness
@@ -14,35 +11,42 @@ bucket-data remains available on another group.
 _Server Group Awareness_ provides enhanced availability.
 Specifically, it protects a cluster from large-scale infrastructure failure, through the definition of _groups_.
 Each group is created by an appropriately authorized administrator, and specified to contain a subset of the nodes within a Couchbase Cluster.
-Following group-definition and rebalance, the active vBuckets for any defined bucket are located on one group, while the corresponding replicas are located on another group.
-This allows _Group Failover_ to be enabled, so that if an entire group goes offline, its replica vBuckets, which remain available on another group, can be automatically promoted to active status.
+Following group-definition and rebalance, the active vBuckets for any defined bucket are located on one group, while the corresponding replicas are located on another group: indexes and _index replicas_, maintained by the Index Service, are distributed across groups in a similar way.
+This allows _Group Failover_ to be enabled, so that if an entire group goes offline, and active vBuckets and indexes are thereby inaccessible, the replica vBuckets and replica indexes that remain available on another group can be automatically promoted to active status.
 
 Groups should be defined in accordance with the physical distribution of cluster-nodes.
 For example, a group should only include the nodes that are in a single _server rack_, or in the case of cloud deployments, a single _availability zone_.
 Thus, if the server rack or availability zone becomes unavailable due to a power or network failure, Group Failover, if enabled, allows continued access to the affected data.
 
-Data-protection is optimal when groups are assigned _equal numbers of nodes_, and vBuckets are therefore distributed such that none ever occupies the same group as its associated active vBucket.
-By contrast, when groups are _not_ assigned equal numbers of nodes, rebalance can only produce a _best effort_ redistribution of replica vBuckets: this may result in replica vBuckets occupying the same group as their associated active vBuckets; meaning that data may be lost if such a group becomes unavailable.
+Protection is optimal when groups are assigned _equal numbers of nodes_, and replica vBuckets and index replicas are thereby distributed such that none ever occupies the same group as its associated active vBucket or index.
+By contrast, when groups are _not_ assigned equal numbers of nodes, rebalance can only produce a _best effort_ redistribution of replicas: this may result in one or more replica vBuckets and/or index replicas each occupying the same group as their associated active vBuckets or indexes; meaning that vBucket data and/or index data may be lost if such a group becomes unavailable.
 
-Server Group Awareness is only available in Couchbase Server Enterprise Edition.
+Note the following:
 
-*General notes about Server Group Awareness:*
+* Server Group Awareness is only available in Couchbase Server Enterprise Edition.
 
-* Server Group Awareness only applies to the Data Service.
+* Server Group Awareness only applies to the Data and Index Services.
+
 * If a cluster contains only one node, or only one group of nodes, enabling Group Failover has no effect; meaning that failover can only be performed on a per-node basis.
+
 * Failover should be enabled for server groups only if three or more server groups have been established, and sufficient capacity exists to absorb the load of any failed-over group.
-* When you initialize a new Couchbase Server cluster, the first node, and all subsequent nodes, are automatically placed in a server group named Group 1.
-Once you create additional server groups, you are required to specify a server group when adding additional cluster nodes.
+
+* When a new Couchbase Server cluster is initialized, and no server groups are explicitly defined, the first node, and all subsequently added nodes, are automatically placed in a server group named Group 1.
+Once additional server groups are created, a destination server group must be specified for every node that is subsequently added to the cluster.
 
 For information on failing over individual nodes, see
 xref:manage:manage-nodes/fail-nodes-over.adoc[Fail a Node over and Rebalance].
-
 For information on vBuckets, see xref:buckets-memory-and-storage/buckets.adoc[Buckets].
-
 For information on the standard (non-Group-based) distribution of replica vBuckets across a cluster, see xref:clusters-and-availability/replication-architecture.adoc[Availability].
 
+[#server-groups-and-vbuckets]
+== Server Groups and vBuckets
+
+The distribution of vBuckets across groups is exemplified below.
+In each illustration, all servers are assumed to be running the Data Service.
+
 [#vbucket-distribution-across-equal-groups]
-== Equal Groups
+=== Equal Groups
 
 The following illustration shows how vBuckets are distributed across two groups; each group containing four of its cluster's eight nodes.
 
@@ -52,7 +56,7 @@ image::clusters-and-availability/groups-two-equal.png[,720,align=left]
 Note that Group 2 contains all the replica vBuckets that correspond to active vBuckets on Group 1; while conversely, Group 1 contains all the replica vBuckets that correspond to active vBuckets on Group 2.
 
 [#vbucket-distribution-across-unequal-groups]
-== Unequal Groups
+=== Unequal Groups
 
 The following illustration shows how vBuckets are distributed across two groups: Group 1 contains four nodes, while Group 2 contains five.
 
@@ -66,7 +70,7 @@ Server 9 contains its own active vBuckets, plus replica vBuckets for Group 1.
 This means that if Group 2 were to go offline, _Group Failover_ would not preserve the replica vBuckets for Server 9, since these only existed on Group 2 itself.
 
 [#node-failover-across-groups]
-== Node-Failover Across Groups
+=== Node-Failover Across Groups
 
 When an individual node within a group goes offline, rebalance provides a _best effort_ redistribution of replica vBuckets.
 This keeps all data available, but results in some data being no longer protected by the Groups mechanism.
@@ -79,6 +83,67 @@ With the active vBuckets on Server 2 no longer accessible, the replica vBuckets 
 The data originally active on Server 2 is thereby kept available.
 Note, however, that if Group 2 were now to go offline, the data originally active on Server 2 would be lost, since it now exists only on Group 2 servers.
 
+[#server-groups-and-indexes]
+== Server Groups and Indexes
+
+Indexes and index replicas can only be located on nodes that run the Index Service.
+
+As described in xref:learn:services-and-indexes/indexes/index-replication.adoc#index-replication[Index Replication], the Index Service allows index replicas to be defined in either of two ways:
+
+* By establishing the number of replicas required, for a given index, without the actual node-locations of the replicas being specified.
+This is itself accomplished in either of the following ways:
+
+** By providing, as the argument to the `WITH` clause, the `num_replica` key, with an accompanying integer that is the desired number of replicas.
+
+** By specifying the number of index-replicas to be created by the Index Service whenever `CREATE INDEX` is invoked.
+
+* By establishing the number of replicas required, for a given index, with the actual node-locations for the index itself and each of its replicas being specified.
+This is accomplished by providing, as the argument to the `WITH` clause, an array of nodes.
+
+Examples of these different forms of replica-definition are provided in xref:learn:services-and-indexes/indexes/index-replication.adoc#index-replication[Index Replication].
+
+If the node-locations for index and replicas _are_ specified, by means of the `WITH` clause and node-array, this user-defined topology is duly followed in the locating of index and replicas across the cluster, and any server groups that may have been defined.
+In this case, it is the administrator's responsibility to ensure that optimal index-availability has been achieved, so as to handle possible instances of node or group failure.
+
+If the node-locations for index and replicas are _not_ specified, the node-locations are automatically provided by Couchbase Server, based on its own estimates of how to provide the highest index-availability.
+Such distributions are exemplified as follows.
+
+[#optimal-distribution]
+=== Optimal Distribution
+
+When the number of index replicas created for a given index is at least one less than the total number of groups for the cluster, and each group contains sufficient nodes running the Index Server, automatic distribution ensures that each index and index replica resides on its own group.
+(Indexes and index replicas always exist each on their own Index Server node, with index-creation failing if there is an insufficiency of such nodes to accommodate the specified number of index replicas &#8212; see xref:learn:services-and-indexes/indexes/index-replication.adoc#index-replication[Index Replication].)
+
+For example:
+
+image::clusters-and-availability/groups-indexes-two-equal.png[,720,align=left]
+
+Here, two groups have been defined.
+Each group contains one Index Server node.
+Two indexes have been defined, each with one index replica.
+Therefore, automatic distribution has assigned both indexes to the Index Server node in group 1, and both index replicas to the Index Server node in group 2.
+This ensures that, should either group become inaccessible, the surviving group continues to bear an instance of the Index Server, with both indexes thus available.
+
+Note that an alternative outcome to the automatic distribution would have been for each index to be assigned to a different group, and each index replica to be assigned to the group on which its corresponding index did _not_ reside.
+
+[#best-effort-distribution]
+=== Best-Effort Distribution
+
+When the number of index replicas created for a given index is not at least one less than the total number of groups for the cluster, but the cluster bears enough Index Server nodes to accommodate all defined indexes and index replicas, automatic distribution produces an outcome based on _best effort_.
+For example:
+
+image::clusters-and-availability/groups-indexes-three-unequal-1.png[,720,align=left]
+
+Here, again, two groups have been defined.
+Each group now contains two Index Server nodes.
+Two indexes have been defined: one with two index replicas, the other with one.
+Automatic distribution has assigned each index to its own node in Group 1; and has assigned, for each index, a corresponding index replica to its own node in Group 2.
+However, since one index has _two_ replicas defined, the second of these has been assigned to the second Index Server node in Group 1.
+Consequently, an index and one of its replicas have both been assigned to the same group; and will both be lost, in the event of that group becoming inaccessible.
+
+Note that an alternative outcome to the automatic distribution would have been for the second index replica to be assigned to Server 8, in Group 2.
+Consequently, both the index replicas of one index would be assigned to the same group; and both would be lost, in the event of that group becoming inaccessible.
+
 [#adding-multiple-groups]
 == Adding Multiple Groups
 
@@ -87,28 +152,27 @@ When multiple groups are to be added to a cluster simultaneously, the additions 
 [#group-failover-and-service-availability]
 == Group Failover and Service Availability
 
-When groups are defined to correspond to racks or availability zones, other services required for data access &#8212; such as the Index Service and the Search Service &#8212; should be deployed so as to ensure their own continued availability, during the outage of a rack or zone.
+When groups are defined to correspond to racks or availability zones, all services required for data access &#8212; such as the Index Service and the Search Service &#8212; should be deployed so as to ensure their own continued availability, during the outage of a rack or zone.
 
 For example, given a cluster:
 
 * Whose Data Service deployment supports two Server Groups, each corresponding to one of two racks
+
 * Whose data must be continuously accessed by the Index and Search Services
 
-At a minimum, one instance of the Index Service and one instance of the Search Service should be deployed on each rack; and all indexes should be similarly replicated.
+At a minimum, one instance of the Index Service and one instance of the Search Service should be deployed on each rack.
 
 [#defining-groups-and-enabling-group-failover]
 == Defining Groups and Enabling Group Failover
 
 To define and manage groups:
 
-* With Couchbase Web Console, see
-xref:manage:manage-groups/manage-groups.adoc[Manage Groups].
+* With Couchbase Web Console, see xref:manage:manage-groups/manage-groups.adoc[Manage Groups].
 * With CLI, see xref:cli:cbcli/couchbase-cli-group-manage.adoc[group-manage].
 * With the REST API, see xref:rest-api:rest-rza.adoc[Server Groups API].
 
 To enable Group Failover:
 
-* With Couchbase Web Console, see
-xref:manage:manage-settings/change-failover-settings.adoc[Node Availability].
+* With Couchbase Web Console, see the information provided for the *Node Availability* settings panel, in xref:manage:manage-settings/change-failover-settings.adoc[Node Availability].
 * With CLI, see xref:cli:cbcli/couchbase-cli-setting-autofailover.adoc[setting-autofailover].
 * With the REST API, see xref:rest-api:rest-cluster-autofailover-enable.adoc[Enabling and Disabling Auto-Failover].
