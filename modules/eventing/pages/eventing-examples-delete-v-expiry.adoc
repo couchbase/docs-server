@@ -1,0 +1,264 @@
+= Delete v Expiry
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: DIfferntiate between a deltion or an expiration.
+
+*Implementation*: 
+
+Create a JavaScript Function that contains an *OnDelete* handler, which runs whenever a document is deleted or expired (or mutated).
+The handler merely logs weather the document was deleted or was expired via a bucket or document TTL.
+This function accesses the 'expired' field of the second argument to the handler.
+
+*Preparations*:
+
+For this example, two buckets *'source'* and *'metadata'*, are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make both buckets with minimum size of 100MB.
+
+For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+
+NOTE: The *'metadata'* bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+
+You will need to run _cbc_ (the command-line KV client) or alternatively an SDK python script or Java program to create or update a document in the 'source' bucket, with an expiration time of 600 seconds.
+
+*Procedure*:
+
+. The example requires a document to be created in the 'source' bucket with a key of *SampleDocument2*, a value of *{'a_key': 'a_value'}*, and most importantly that the document's expiration (or TTL) set to 600 seconds or 10 minutes). 
++
+There are several methods to make a test document with an expiration set. The easiest is most likely using _cbc_.  However you can use any Couchbase SDK (the command-line KV client is compiled from the C SDK).  For example you can use a Python script or a Java program. 
++
+[{tabs}] 
+====
+The cbc binary, or KV client::
++
+--
+On Linux::
+[source,console]
+----
+/opt/couchbase/bin/cbc \
+    create SampleDocument2 -V '{"a_key": "a_value"}' -U couchbase://localhost/source \
+    -u Administrator -P password \
+    --expiry=600 
+----
+on macOS
+[source,console]
+----
+/Applications/Couchbase\ Server.app/Contents/Resources/couchbase-core/bin/cbc \
+     create SampleDocument2 -V '{"a_key": "a_value"}' -U couchbase://localhost/source \
+    -u Administrator -P password \
+    --expiry=600
+----
+on Windows
+[source,console]
+----
+"C:\Program Files\Couchbase\Server\bin\cbc" ^
+     create SampleDocument2 -V "{'a_key': 'a_value'}" -U couchbase://localhost/source ^
+    -u Administrator -P password ^
+    --expiry=600
+----
+Use the command-line KV client, e.g. the _cbc_ binary, and cut-n-paste one of the above commands to create the needed sample document.
+
+We are passing --expiry the number of time in seconds from now at which the item should expire. However if you want an expiry over 30 days you must use the number of seconds since Unix Epoch.
+
+On macOS (or OS-X) if you get a 'dyld: Library not loaded' when running _cbc_ a solution is documented in https://issues.couchbase.com/browse/MB-37768[MB-37768^].
+
+For information on the cbc tool, refer to xref:2.10@c-sdk::webui-cli-access.adoc#using-the-command-line-kv-client[Using the command-line KV client].
+--
+
+Python SDK script::
++
+--
+[source,python]
+----
+# This is a Python 2.5 SDK example
+from couchbase.cluster import Cluster
+from couchbase.cluster import PasswordAuthenticator
+import time
+cluster = Cluster('couchbase://localhost:8091')
+authenticator = PasswordAuthenticator('Administrator', 'password')
+cluster.authenticate(authenticator)
+cb = cluster.open_bucket('source')
+cb.upsert('SampleDocument2', {'a_key': 'a_value'})
+cb.touch('SampleDocument2', ttl=10*60)
+----
+Issue the command _python_ to start a Python session then cut-n-paste the above to create the needed sample document.  Type ^D (or ctrl-D) to close the Python session.
+
+For information on the Couchbase Python SDK, refer to xref:2.5@python-sdk::start-using-sdk.adoc[Start Using the Python SDK].
+--
+
+Java SDK program::
++ 
+-- 
+A Java 2.7.11 SDK program example
+[source,java]
+----
+// Original Bucket API
+import java.time.Duration;
+import com.couchbase.client.java.Bucket;
+import com.couchbase.client.java.Cluster;
+import com.couchbase.client.java.CouchbaseCluster;
+import com.couchbase.client.java.document.JsonDocument;
+import com.couchbase.client.java.document.json.JsonObject;
+public class UpsertAndSetExpiry {
+    public static void main(String... args) throws Exception {
+        Cluster cluster  = CouchbaseCluster.create("localhost");
+        cluster.authenticate("Administrator", "password");
+        Bucket bucket = cluster.openBucket("source");
+        String docID = "SampleDocument2";
+        Duration dura = Duration.ofMinutes(10);
+        try {
+            JsonDocument doc = JsonDocument.create(
+                docID, (int)dura.getSeconds(),
+                JsonObject.create().put("a_key", "a_value") );
+            bucket.upsert(doc);
+            System.out.println("docID: " + docID + " expires in " + dura.getSeconds());
+        } catch (Exception e) {
+            System.out.println("upsert error for docID: " + docID + " " + e);
+        }
+        bucket.close();
+        cluster.disconnect();
+    }
+}
+----
+A Java 3.0 SDK program example
+[source,java]
+----
+// New Collections API
+package com.jonstrabala;
+import java.time.Duration;
+import com.couchbase.client.java.*;
+import com.couchbase.client.java.json.JsonObject;
+import static com.couchbase.client.java.kv.UpsertOptions.upsertOptions;
+public class UpsertAndSetExpiry_v3 {
+    public static void main(String... args) throws Exception {
+    	Cluster cluster = Cluster.connect("localhost", "Administrator", "password");
+    	Bucket bucket = cluster.bucket("source");
+    	Collection collection = bucket.defaultCollection();
+    	String docID = "SampleDocument2";
+    	Duration dura = Duration.ofMinutes(10);
+    	try {
+    		collection.upsert(
+    			docID, JsonObject.create().put("a_key", "a_value"), 
+    			upsertOptions().expiry(dura) );
+    		System.out.println("docID: " + docID + " expires in " + dura.getSeconds());
+    	} catch (Exception e) {
+    		System.out.println("upsert error for docID: " + docID + " " + e);
+    	}
+        bucket = null;
+        collection = null;
+    	cluster.disconnect(Duration.ofSeconds(2000));
+    }
+}
+----
+Download the proper SDK and then compile and run one of the above Java programs
+
+For information on the Couchbase Java SDK, refer to xref:java-sdk:hello-world:start-using-sdk.adoc[Start Using the Java SDK].
+--
+====
+
+. You now have a document in bucket 'source' with an expiration set. 
+. To verify that your new document was created, access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
+The new document gets displayed automatically (as this page will attempt to list the first few items).
+. [Optional Step] Click on the document's id, *SampleDocument2* to view the documents Data and also the documents Metadata information.  Note that the "expiration" field in the Metadata is non-zero (set to a  Unix timestamp in seconds since epoch).
+. From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
+The *ADD FUNCTION* dialog appears.
+. In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
+ ** For the *Source Bucket* drop-down, select *source*.
+ ** For the *Metadata Bucket* drop-down, select *metadata*.
+ ** Enter *delete_v_expiry* as the name of the Function you are creating in the *Function Name* text-box.
+ ** [Optional Step] Enter text *Function to show how to determine if a document removal is an expiration or a deletion*, in the *Description* text-box.
+ ** For the *Settings* option, use the default values.
+ ** Skip the *Bindings* options
+ ** After configuring your settings your screen should look like:
++
+image::del_v_expiry_01_settings.png[,484]
+. After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
+The *delete_v_expiry* dialog appears.
+** The *delete_v_expiry* dialog initially contains a placeholder code block.
+You will substitute your actual *delete_v_expiry* code in this block.
++
+image::del_v_expiry_02_editor_with_default.png[,100%]
+** Copy the following Function, and paste it in the placeholder code block of *delete_v_expiry* dialog.
++
+[source,javascript]
+----
+function OnDelete(meta, options) {
+    if (options.expired) {
+        log("doc expired:",meta.id);
+    } else {
+        log("doc deleted:",meta.id);
+    }
+}
+----
++
+After pasting, the screen appears as displayed below:
++
+image::del_v_expiry_03_editor_with_code.png[,100%]
+** Click *Save*.
+** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
+
+. From the *Eventing* screen, click *Deploy*.
+** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
+** Click *Deploy Function*.
+
+. The Eventing function is deployed and starts running within a few seconds.  From this point, the defined Function is executed on all existing documents and on subsequent mutations.
+
+. When its expiration time is reached, an item is deleted as soon as one of the following occurs:
+
+* An attempt is made to access the item.
+* The expiry pager is run (default every 60 mnutes).
+* Compaction is run. 
+
+. Therefore we first wait the 10 minute period from the creation of SampleDocument2 and then we will try to access it.  
+
+. Access the *Couchbase Web Console* > *Buckets* page you may see document count or one or zero depending if the expiry pager has run.
++
+image::del_v_expiry_04_editor_view_bkt.png[,100%]
+
+. Access the *Couchbase Web Console* > *Buckets* page for a second time.  
+You should see the document count is zero for the bucket *source* as we have attempted to access the item and it has been recognized and marked as an expired tombstone.
++
+image::del_v_expiry_04b_editor_view_bkt.png[,100%]
+
+. Access the *Couchbase Web Console* > *Eventing* page, click the function name *delete_v_expire* you should see statistics under the Deployment Statistics:
++
+image::del_v_expiry_04_expiration.png[,800]
+
+. CLick the "Log" link for *delete_v_expiry* to view the activity (the "*Log*" link will appear in the upper right of the Function's controls once the function is deployed)
++
+----
+2020-08-02T17:28:02.635-07:00 [INFO] "doc expired:" "SampleDocument2"
+----
++
+image::del_v_expiry_05_log_expired.png[,100%]
+
+. Now lets create another document and perform a normal delete on it. Access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
+** You should see no user records.
+** Click *Add Document* in the upper right banner
+** In the *Add Document* dialog, specify the name *SampleDocument3* as the *New Document ID*
+** Click *Save*.
+** In the *Edit Document* dialog, the following text is displayed:
++
+----
+{
+"click": "to edit",
+"with JSON": "there are no reserved field names"
+}
+----
+** Click *Save*.
+
+. Now Click the trash can icon to delete the *SampleDocument3* you just created.  Select *Continue* to confirm the deletion.
+
+. Access the *Couchbase Web Console* > *Eventing* page, click the function name *delete_v_expire* you should see statistics under the Deployment Statistics:
++
+image::del_v_expiry_06_deletion.png[,800]
+
+. CLick the "Log" link for *delete_v_expiry* to view the activity (the "*Log*" link will appear in the upper right of the Function's controls once the function is deployed)
++
+----
+2020-08-02T17:29:25.223-07:00 [INFO] "doc deleted:" "SampleDocument3"
+----
++
+image::del_v_expiry_06_log_deleted.png[,100%]
+
+. Cleanup, go to the Eventing portion of the UI and undeploy the Function *delete_v_expiry*, this will remove the 1024 documents from the 'metadata' bucket (in the Bucket view of the UI).  
+Remember you may only delete the 'metadata' bucket if there are no deployed Eventing functions.
