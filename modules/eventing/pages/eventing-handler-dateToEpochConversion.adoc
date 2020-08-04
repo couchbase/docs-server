@@ -18,7 +18,7 @@ dateToEpochConversion::
 --
 [source,javascript]
 ----
-function convertStrToEpoch(key, val, regx, rename, millis) {
+function convertStrToEpoch(key, val, control) {
     // We want to convert string dates to a Epoch tstamp, first we utilize
     // a regex to filter, then if that passes we use Date.parse(..)
     // to  convert string to numeric timestamps, finally if the last argument
@@ -27,20 +27,21 @@ function convertStrToEpoch(key, val, regx, rename, millis) {
     // Date.parse("2009/06/29 13:30:10", "yyyy/MM/dd HH:mm:ss");
     // Date.parse("2020-06-24 09.55.22 -07:00", "yyyy-MM-dd HH:mm:ss Z");
 
-    var regxres = val.match(regx);
+    for (var i=0;i<control.length;i++) {
+    var regxres = val.match(control[i].regx);
     if (regxres !== null) {
         var dt = Date.parse(val);
         if (dt && dt !== null && !isNaN(dt)) {
             var suffix = "";
             var epochMs = dt // .getTime();
-            if (key !== "" && rename) {
-                if (millis) {
+            if (key !== "" && control[i].rename) {
+                if (control[i].millis) {
                     suffix = "_ms";
                 } else {
                     suffix = "_sec";
                 }
             }
-            if (millis) {
+            if (control[i].millis) {
                 val = epochMs;
             } else {
                 val = Math.round(epochMs / 1000);
@@ -48,14 +49,15 @@ function convertStrToEpoch(key, val, regx, rename, millis) {
             return { "key": key + suffix, "val": val,  "epoch_ok": true };
         }
     }
+    }
     return { "key": key, "val": val, "epoch_ok": false };
 }
 
-function converTsStringsToEpochNumbers(obj, regx, rename, millis) {
+function converTsStringsToEpochNumbers(obj, control) {
     // This does a deepCopy or deepClone but applies convertStrToEpoch where needed
     // process terminal strings
     if (obj && typeof obj === 'string') {
-        var retval = convertStrToEpoch("", obj, regx, rename, millis);
+        var retval = convertStrToEpoch("", obj, control);
         if (retval.epoch_ok) obj = retval.val;
         return obj;
     } 
@@ -65,45 +67,33 @@ function converTsStringsToEpochNumbers(obj, regx, rename, millis) {
     // process Object
     let newObj = {};
     if (Array.isArray(obj)) {
-        newObj = obj.map(item => converTsStringsToEpochNumbers(item, regx, rename, millis));
+        newObj = obj.map(item => converTsStringsToEpochNumbers(item, control));
     } else {
         Object.keys(obj).forEach((k) => {
             var retval = { "key": k, "val": obj[k] };
             if (obj[k] && typeof obj[k] === 'string') {
-                retval = convertStrToEpoch(k, obj[k], regx, rename, millis);
+                retval = convertStrToEpoch(k, obj[k], control);
             }
-            return newObj[retval.key] = converTsStringsToEpochNumbers(retval.val, regx, rename, millis);
+            return newObj[retval.key] = converTsStringsToEpochNumbers(retval.val, control);
         })
     }
     return newObj;
 }
 
-function converTsStringsToEpochMillis(obj, regx, rename, millis) {
-    return converTsStringsToEpochNumbers(obj, regx, rename, true);
-}
-
-function converTsStringsToEpochSec(obj, regx, rename, millis) {
-    return converTsStringsToEpochNumbers(obj, regx, rename, false);
-}
-
 function OnUpdate(doc, meta) {
     if (doc.type !== "my_data_type") return;
 
-    var newdoc = doc;
-    var regx = null;
     var rename_with_ms_or_sec = true;  // rename our fields
+    // Apply four (4) different dattime search patterns across the entire document
+    var control = [
+        { "regx": /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d.\d+$/g, "millis": true, "rename": true },
+        { "regx": /^\d\d\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d$/g, "millis": false, "rename": true },
+        { "regx": /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d.\d+ .\d\d:\d\d$/g, "millis": false, "rename": true },
+        { "regx": /^\d\d\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d .\d\d:\d\d$/g, "millis": true, "rename": true }
+    ];
+    var newdoc = converTsStringsToEpochNumbers(doc, control);
 
-    // Apply four (4) different search patterns to the entire document
-    regx = /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d.\d+$/g;
-    newdoc = converTsStringsToEpochMillis(newdoc, regx, rename_with_ms_or_sec);
-    regx = /^\d\d\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d$/g;
-    newdoc = converTsStringsToEpochSec(newdoc, regx, rename_with_ms_or_sec);
-    regx = /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d.\d+ .\d\d:\d\d$/g;
-    newdoc = converTsStringsToEpochMillis(newdoc, regx, rename_with_ms_or_sec);
-    regx = /^\d\d\d\d\/\d\d\/\d\d \d\d:\d\d:\d\d .\d\d:\d\d$/g;
-    newdoc = converTsStringsToEpochSec(newdoc, regx, rename_with_ms_or_sec);
-
-    // alias src_bkt to a source bucket of rev 6.5+ in r/w mode
+    // alias src_bkt to our source bucket. Since rev 6.5+ allowed to be in r/w mode
     src_bkt["new_" + meta.id] = newdoc;
 }
 ----
