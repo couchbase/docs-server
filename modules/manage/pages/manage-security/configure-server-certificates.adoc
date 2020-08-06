@@ -306,21 +306,16 @@ sudo cp ./private/pkey.key /opt/couchbase/var/lib/couchbase/inbox/pkey.key
 sudo chmod a+x /opt/couchbase/var/lib/couchbase/inbox/pkey.key
 ----
 
-. _Upload_ and, in order to activate, _reload_ the root certificate for the cluster.
-+
-The root certificate is uploaded and reloaded with the following REST commands:
+. _Upload_ the root certificate for the cluster.
+Use the following REST command:
 +
 ----
 curl -X POST --data-binary "@./ca.pem" \
 http://Administrator:password@10.143.192.102:8091/controller/uploadClusterCA
-
-curl -X POST \
-http://Administrator:password@10.143.192.102:8091/node/controller/reloadCertificate
 ----
 +
-The root certificate is now deployed and ready for use.
-This can be verified by means of Couchbase Web Console.
-Access the *Security* screen, by means of the *Security* tab in the left-hand navigation bar.
+The root certificate is now activated for the entire cluster, and ready for use.
+This can be verified by means of Couchbase Web Console: access the *Security* screen, by means of the *Security* tab in the left-hand navigation bar.
 Then, left-click on the *Root Certificate* tab, located on the upper, horizontal navigation bar.
 [#see-root-certificate-with-couchbase-web-console]
 The screen appears as follows:
@@ -328,6 +323,16 @@ The screen appears as follows:
 image::manage-security/rootCertificateWithSignedCert.png[600,align=left]
 +
 As this indicates, the signed certificate has now been substituted for the default certificate (an example of whose appearance is provided in xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Root Certificate]).
+
+. _Reload_ the node certificate from disk, for the current node:
++
+----
+curl -X POST \
+http://Administrator:password@10.143.192.102:8091/node/controller/reloadCertificate
+----
++
+The node certificate is now activated for the current node.
+Note that when, as is typical, the cluster contains more than one node, this step must be performed on _each node_ of the cluster, with each individual IP address thereby specified in turn.
 
 [#configure-client-access-simple]
 === Configuring Client Access
@@ -487,7 +492,7 @@ EOF
 The `extendedKeyUsage` value `serverAuth` indicates that the certificate will be used for server authentication.
 The `keyUsage` value `digitalSignature` specifies that the certificate's public key can be used in the verifying of information-origin; while `keyEncipherment` allows the public key to be used in the encrypting of symmetric keys.
 
-. Generate the private key to be used for each individual cluster-node.
+. Generate the private key to be used for the individual cluster-node.
 +
 ----
 openssl genrsa -out private/couchbase.node.svc.key 2048
@@ -566,7 +571,8 @@ sudo cp ./pkey.key /opt/couchbase/var/lib/couchbase/inbox/pkey.key
 sudo chmod a+x /opt/couchbase/var/lib/couchbase/inbox/pkey.key
 ----
 
-. Upload and activate the root certificate.
+. Upload the root certificate, thereby activating it for the entire cluster.
+Then, reload the node certificate from disk, for the current node.
 +
 ----
 cd ../root
@@ -576,9 +582,11 @@ http://Administrator:password@10.143.192.102:8091/controller/uploadClusterCA
 
 curl -X POST http://Administrator:password@10.143.192.102:8091/node/controller/reloadCertificate
 ----
-
++
+Note that when, as is typical, the cluster contains more than one node, the `/node/controller/reloadCertificate` command must be executed on each node, specifying the IP address of the node on which execution is occurring.
++
 This concludes the certificate-deployment process.
-The root certificate can be examined by means of Couchbase Web Console, as shown in xref:manage:manage-security/configure-server-certificates.adoc#see-root-certificate-with-couchbase-web-console[Step 10] of the previous example on this page.
+The root certificate can be examined by means of Couchbase Web Console, as shown in xref:manage:manage-security/configure-server-certificates.adoc#see-root-certificate-with-couchbase-web-console[Step 11] of the previous example on this page.
 
 [#configure-client-access-advanced]
 === Configuring Client Access
@@ -601,7 +609,7 @@ Each `chain.pem` should be generated from a new, unique private key (`pkey.key`)
 * If created on the same system as all other keys and certificates, the `chain.pem` and `pkey.key` for each node must be independently transferred onto the node they are intended to protect.
 An inbox must be created on that node, and the `chain.pem` and `pkey.key` files then moved there.
 
-* The root certificate for the cluster, referred to above as `ca.pem`, must be reloaded individually for each node in the cluster, after the `chain.pem` and `pkey.key` file have been moved into the node's inbox.
+* The node certificate must be reloaded individually for each node in the cluster, after the `chain.pem` and `pkey.key` file have been moved into the node's inbox.
 Each reload command must therefore specify the node's own IP address.
 
 Since this is a gradual process, prior to its conclusion, the certificates for the cluster will go through periods of mismatch.
@@ -610,12 +618,12 @@ Error messages are duly provided:
 * When the root certificate is uploaded and reloaded for any one of the nodes in the cluster, it becomes the root certificate for all the nodes in the cluster.
 However, for each node whose corresponding `chain.pem` and `pkey.key` files have not yet been copied to its inbox, the following error message appears on the *Root Certificate* panel of the Couchbase Web Console *Security* screen: `Warning: ns_1:<ip-address>: Certificate is not signed with cluster CA`.
 +
-Respond by copying the `chain.pem` and `pkey.key` for the node into its inbox, then perform a reload of the cluster certificate, specifying the IP address of the node.
+Respond by copying the `chain.pem` and `pkey.key` for the node into its inbox, then perform a reload of the node certificate, specifying the IP address of the node.
 This coordinates and activates the new certificates for the node, and removes the error message.
 
 * If a new cluster certificate is uploaded and reloaded for a node _before_ the node's `chain.pem` and `pkey.pem` have been copied into the node's inbox, the successful reload gives the following error message: `"Unable to read certificate chain file /opt/couchbase/var/lib/couchbase/inbox/chain.pem. The file does not exist"`.
 +
-Respond by copying the `chain.pem` and `pkey.pem` files to the inbox, and then uploading and reloading the cluster certificate, specifying the node's IP address.
+Respond by copying the `chain.pem` and `pkey.pem` files to the inbox, and then reloading the node certificate, specifying the node's IP address.
 This coordinates and activates the new certificates for the node.
 
 [#adding-new-nodes]
@@ -633,7 +641,7 @@ This is because a node can be joined to a cluster only prior to the node's provi
 * A node can be _added_ to a cluster only after the appropriate certificates have been deployed on it, as a provisioned, one-node cluster.
 If certificate-preparation has not been completed, the following error message appears in the *Add Server Node* dialog of Couchbase Web Console: `Attenton: Prepare join failed. failed to establish TLS connection to <ip-address>:8091: "unknown ca"`.
 
-Therefore, to perform node-addition, prepare a `chain.pem` and `pkey.key` for the node; transfer these files to the running node, create an inbox, and move the files into the inbox; then upload and reload the cluster certificate for the cluster to which the node is to be added.
+Therefore, to perform node-addition, prepare a `chain.pem` and `pkey.key` for the node; transfer these files to the running node, create an inbox, and move the files into the inbox; then upload the root certificate for the cluster to which the node is to be added; the reload the node certificate for the node that is to be added.
 When this sequence has been completed, the new node can be added to the cluster.
 (Note that although other aspects of the node's prior provisioning will be erased by the addition, the new certificates will remain in place.)
 
