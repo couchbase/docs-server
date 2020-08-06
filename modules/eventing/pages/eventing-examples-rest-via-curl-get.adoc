@@ -148,30 +148,40 @@ function CreateRecurringTimer(context) {
         nextSchedule = thirtySecFromNow;
     } else {
         // must be: context.mode === "via_callback"
-        // Create a timestamp 1 day form now for timers 2 to N
+        // Create UTC timestamp to fire a Timer for tomorrow do this for timers 2 to N
         var tomorrow = new Date();
         tomorrow.setHours(0,0,0,0);
         tomorrow.setDate(tomorrow.getDate() + 1);
-        //  Depending on your local you may need to adjust this for example
-        // in Los Angeles, CA, USA it will excute 7 hours later than GMT.
         nextSchedule = tomorrow;
     }
-    log("Finish CreateRecurringTimer nextSchedule", nextSchedule)
+    log("Finish CreateRecurringTimer (local time) nextSchedule", localISOTime(nextSchedule));
     createTimer(RecurringTimerCallback, nextSchedule, context.id, context);
+}
+
+function localISOTime (indate) {
+    // JavaScript works wih dates as UTC times, but sometimes we prefer to see local time
+    return new Date(indate.getTime() - indate.getTimezoneOffset() * 60 * 1000)
+        .toISOString().split(/[TZ]/).slice(0, 2).join('T');
 }
 
 function RecurringTimerCallback(context) {
     log('From RecurringTimerCallback: timer fired', context);
     // do any sort of recurring work here, just update a date_stamp in a doc
     var now = new Date();
+    var nowLoc = localISOTime(now);
     var dt_beg = now.getTime();
-    // Generate a YYYY-MM-DD string, depending on your local you may need to adjust this
-    var apiReqDate = now.toISOString().substring(0, 10);
+    // Generate a YYYY-MM-DD string in UTC for Yesterday
+    var yesterday = new Date();
+    yesterday.setHours(0,0,0,0);
+    yesterday.setDate(yesterday.getDate() - 1);
+    var apiReqDateUtc = yesterday.toISOString().substring(0, 10);
+    // Generate a YYYY-MM-DD string in Local Time for Yesterday
+    var apiReqDateLoc = localISOTime(yesterday).substring(0, 10);
     try {
         // ==============================
         // Perform a cURL GET here
         var request = {
-            path: apiReqDate
+            path: apiReqDateUtc
         };
         //  perform the cURL reques using the URL alias form the settings
         var response = curl('GET', exchangeRateApi, request);
@@ -189,15 +199,17 @@ function RecurringTimerCallback(context) {
             
             // write status doc - we succeded
             src_bkt["cur_" + context.id] = {
-                "last_update": now, "apiReqDate": apiReqDate,
-                "curl_success": true,  "valid": true, "millis": curl_time_ms
+                "last_update_loc": nowLoc,
+                "last_update_utc": now, "apiReqDateUtc": apiReqDateUtc,
+                "curl_success": true,  "valid": true, "curl_time_ms": curl_time_ms
             };
             
         } else {
             // write status doc - we failed
             src_bkt["cur_" + context.id] = {
-                "last_update": now, "apiReqDate": apiReqDate,
-                "curl_success": true, "body_valid": false,  "millis": curl_time_ms
+                "last_update_loc": nowLoc,
+                "last_update_utc": now, "apiReqDateUtc": apiReqDateUtc,
+                "curl_success": true, "body_valid": false,  "curl_time_ms": curl_time_ms
             };
         }
     } catch (e) {
@@ -206,8 +218,9 @@ function RecurringTimerCallback(context) {
             ' (curl ERROR ' + e + ' took ' + curl_time_ms + ' ms.)');
         // write status doc - we failed
         src_bkt["cur_" + context.id] = {
-            "last_update": now, "apiReqDate": apiReqDate,
-            "curl_success": false, "body_valid": false, "millis": curl_time_ms
+            "last_update_loc": nowLoc,
+            "last_update_utc": now, "apiReqDateUtc": apiReqDateUtc,
+            "curl_success": false, "body_valid": false, "curl_time_ms": curl_time_ms
         };
     }
     // rearm the timer
@@ -216,7 +229,6 @@ function RecurringTimerCallback(context) {
 
 function OnUpdate(doc, meta) {
     // You would typically filter to mutations of interest 
-    log(doc,meta.id);
     if (doc.type !== 'recurring_timer') return;
     if (doc.active === false) {
         if (cancelTimer(RecurringTimerCallback, meta.id)) {
