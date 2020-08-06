@@ -1,0 +1,284 @@
+= External REST via cURL via Recurring Timer  NOT DONE WOK IN PROGRESS
+:page-edition: Enterprise Edition
+
+*Goal*: Demonstrate accessing a cURL REST end point via a recurring Eventing Timer to fetch Daily Exchange Rate data.
+
+*Implementation*: Implementation: Create a JavaScript function that contains an *OnUpdate* handler and a Timer callback function. The handler listens for mutations or data-changes within a specified, source bucket.When any document within the bucket is created or modified, the handler creates a callback in the future to execute a user-defined routine to fetch exchange rates. In this example, we rely on a control document which if the created or altered controls whether a Recurring Timer will be created or canceled.
+
+** *Test 1*: The control document is created or mutated in such a way a Timer is created and fires approximately 30 seconds in the future at which point a document is fetetch from an External Rest endpoint (this is the user work) and this docuemnt is written to the source bucket . The original control document, in the source bucket, is not changed.  The Timer is re-armed and will execute again until canceled.
+
+** *Test 2*: The control document mutated in such a way that any existing Timer with the reference of the control documents id (meta.id) is canceled, this has no effect if the Timer created has already fired.
+
+*Preparations (Common)*
+
+For this example, two buckets 'source' and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
+
+For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+
+NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+
+*Setup*:
+
+. Access the *Couchbase Web Console* > *Buckets* page.
+** You should see the following once you have created your buckets
++
+image::recurring_timer_01_buckets.png[,800]
+
+. Click click the *Documents* link of the *source* bucket.
+** You should see no user records.
++
+image::recurring_timer_01_documents.png[,800]
++
+** Click *Add Document* in the upper right banner
+** In the *Add Document* dialog, specify the name *recurring_timer::1* as the *New Document ID*
++
+image::recurring_timer_01_add_document.png[,350]
++
+** Click *Save*.
+** In the *Edit Document* dialog, the following text is displayed:
++
+----
+{
+"click": "to edit",
+"with JSON": "there are no reserved field names"
+}
+----
+** Replace the above text with the following JSON document via a cut-n-paste
++
+----
+{
+  "type": "recurring_timer",
+  "id": 1,
+  "active": false
+}
+----
++
+image::recurring_timer_01_docdata.png[,484]
++
+** Click *Save*.
+
+. From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
+The *ADD FUNCTION* dialog appears.
+. In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
+ ** For the *Source Bucket* drop-down, select *source*.
+ ** For the *Metadata Bucket* drop-down, select *metadata*.
+ ** Enter *external_rest_via_curl* as the name of the Function you are creating in the *Function Name* text-box.
+ ** [Optional Step] Enter text *"Explore using an external REST endpoint to fetch daily data every dat using recurring timers"*, in the *Description* text-box.
+  ** For the *Settings* option, use the default values.
+ ** For the *Bindings* option, add just one bindings.
+ *** For the binding, select the "bucket alias", specify *src_bkt* as the "alias name" of the bucket, and select *source* as the associated bucket, and select "read and write".
+ ** After configuring your settings your screen should look like:
++
+image::ext_rest_via_curl_01_settings.png[,484]
+. After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
+The *ext_rest_via_curl* dialog appears.
+** The *ext_rest_via_curl* dialog initially contains a placeholder code block.
+You will substitute your actual *ext_rest_via_curl* code in this block.
++
+image::ext_rest_via_curl_02_editor_with_default.png[,100%]
+** Copy the following Function, and paste it in the placeholder code block of *external_rest_via_curl* dialog.
++
+[source,javascript]
+----
+function CreateRecurringTimer(context) {
+    log('From CreateRecurringTimer: creating timer', context.mode, context.id);
+    var nextSchedule = null;
+    if (context.mode === "via_onupdate") {
+        // Create a timestamp 30 seconds from now for the initial Timer
+        var thirtySecFromNow = new Date(); // Get current time & add 30 sec. to it.
+        thirtySecFromNow.setSeconds(thirtySecFromNow.getSeconds() + 30);
+        nextSchedule = thirtySecFromNow;
+    } else {
+        // must be: context.mode === "via_callback"
+        // Create a timestamp 1 day form now for timers 2 to N
+        var tomorrow = new Date();
+        tomorrow.setHours(0,0,0,0);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        //  Depending on your local you may need to adjust this
+        nextSchedule = tomorrow;
+    }
+    log("Finish CreateRecurringTimer nextSchedule", nextSchedule)
+    createTimer(RecurringTimerCallback, nextSchedule, context.id, context);
+}
+
+function RecurringTimerCallback(context) {
+    log('From RecurringTimerCallback: timer fired', context);
+    // do any sort of recurring work here, just update a date_stamp in a doc
+    var now = new Date();
+    var dt_beg = now.getTime();
+    // Generate a YYYY-MM-DD string, depending on your local you may need to adjust this
+    var apiReqDate = now.toISOString().substring(0, 10);
+    try {
+        // Perform a cURL GET here
+        var request = {
+            path: apiReqDate
+        };
+        //  perform the cURL reques using the URL alias form the settings
+        var response = curl('GET', exchangeRateApi, request);
+        var curl_time_ms = new Date().getTime() - dt_beg;
+        var status = "OKAY";
+        if (response.status != 200 && response.status != 302) {
+            status = "FAIL";
+        }
+        log('USER FUNCTION DONE ' + status + 
+            ' (curl ' + response.status + ' took ' + curl_time_ms + ' ms.)');
+        if (response && response.body && response.body.date && response.body.base) {
+            // write our exchange lookup table document, we will do this 365 times a year
+            src_bkt["exchange::" + response.body.date] = response.body;
+            
+            // write status doc - we succeded
+            src_bkt["cur_" + context.id] = {
+                "last_update": now, "apiReqDate": apiReqDate,
+                "curl_success": true,  "valid": true, "millis": curl_time_ms
+            };
+            
+        } else {
+            // write status doc - we failed
+            src_bkt["cur_" + context.id] = {
+                "last_update": now, "apiReqDate": apiReqDate,
+                "curl_success": true, "body_valid": false,  "millis": curl_time_ms
+            };
+        }
+    } catch (e) {
+        var curl_time_ms = new Date().getTime() - dt_beg;
+        log('USER FUNCTION DONE ' + status + 
+            ' (curl ERROR ' + e + ' took ' + curl_time_ms + ' ms.)');
+        // write status doc - we failed
+        src_bkt["cur_" + context.id] = {
+            "last_update": now, "apiReqDate": apiReqDate,
+            "curl_success": false, "body_valid": false, "millis": curl_time_ms
+        };
+    }
+    // rearm the timer
+    CreateRecurringTimer({ "id": context.id, "mode": "via_callback" })
+}
+
+function OnUpdate(doc, meta) {
+    // You would typically filter to mutations of interest 
+    log(doc,meta.id);
+    if (doc.type !== 'recurring_timer') return;
+    if (doc.active === false) {
+        if (cancelTimer(RecurringTimerCallback, meta.id)) {
+            log('From OnUpdate: canceled active Timer, doc.active', doc.active, meta.id);
+        } else {
+            log('From OnUpdate: no active Timer to cancel, doc.active', doc.active, meta.id);
+        }
+    } else {
+        log('From OnUpdate: create/overwrite doc.active', doc.active, meta.id);
+        CreateRecurringTimer({  "id": meta.id, "mode": "via_onupdate" });
+    }
+}
+----
++
+After pasting, the screen appears as displayed below:
++
+image::ext_rest_via_curl_03_editor_with_code.png[,100%]
+** Click *Save*.
+** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
+
+. The *OnUpdate* routine specifies that when a change occurs to data within the bucket, actions will be processed according to the field within the document.  First we ignore all documents that do not have a doc.type of "recurring_timer" this is the control document.  Next we use the field "active" to determine which action we take.  
+
+* If "active" is true we will create a series of Timers that will fire approximately 30 seconds in the future.
+* If "active" is false we will cancel the existing Timer if any.
+* In the event a Timer created by this Function fires the callback *RecurringTimerCallback* executes and will write a new document with the a similar KEY (as the "source" bucket) but with "cur_" prepended into the "source" bucket.
+
+. From the *Eventing* screen, click *Deploy*.
+** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
+** Click *Deploy Function*.
+
+. The Eventing function is deployed and starts running within a few seconds. From this point, the defined Function is executed on all existing documents and will also more importantly it will also run on subsequent mutations.
+
+== *Test 1: Create a Recurring Timer and allow the Timer to Fire and Rearm:*
+
+. Access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
+** Edit the control document recurring_timer::1 it should look like:
++
+----
+{
+  "type": "recurring_timer",
+  "id": 1,
+  "active": false
+}
+----
++
+Now change "active" to true to create a mutation, then Click *Save*.  This will create a mutation and then the Function will generate the first of a series of recurring Timers.  The control document is now:
++
+----
+{
+  "type": "recurring_timer",
+  "id": 1,
+  "active": true
+}
+----
+
+. Access the *Couchbase Web Console* > *Eventing* page and click on the Function *external_rest_via_curl* then Click the "Log" link for Deployed Function *external_rest_via_curl* to view the activity.  
+** Here we see from the Application log that we created a timer (the log is in reverse order and the bottom message was a NOOP because doc.active was false).
++
+----
+2020-08-03T14:33:57.680-07:00 [INFO] "From OnUpdate: create/overwrite doc.active" true "recurring_timer::1"
+2020-08-03T14:33:57.680-07:00 [INFO] "From CreateRecurringTimer: creating timer" "via_onupdate" "recurring_timer::1"
+----
++
+image::ext_rest_via_curl_04_log_active1.png[,680,align=left]
+
+. Wait about 2 minutes and click the "Log" link for Deployed Function *external_rest_via_curl* to view the activity.  
+** Here we see the timer fired and executed the callback *RecurringTimerCallback* near our scheduled time and re-arming as expected.
++
+----
+2020-08-03T14:35:42.819-07:00 [INFO] "From CreateRecurringTimer: creating timer" "via_callback" "recurring_timer::1"
+2020-08-03T14:35:42.818-07:00 [INFO] "From RecurringTimerCallback: timer fired" {"id":"recurring_timer::1","mode":"via_callback"}
+2020-08-03T14:35:07.821-07:00 [INFO] "From CreateRecurringTimer: creating timer" "via_callback" "recurring_timer::1"
+2020-08-03T14:35:07.819-07:00 [INFO] "From RecurringTimerCallback: timer fired" {"id":"recurring_timer::1","mode":"via_callback"}
+2020-08-03T14:34:32.818-07:00 [INFO] "From CreateRecurringTimer: creating timer" "via_callback" "recurring_timer::1"
+2020-08-03T14:34:32.817-07:00 [INFO] "From RecurringTimerCallback: timer fired" {"id":"recurring_timer::1","mode":"via_onupdate"}
+2020-08-03T14:33:57.680-07:00 [INFO] "From OnUpdate: create/overwrite doc.active" true "recurring_timer::1"
+2020-08-03T14:33:57.680-07:00 [INFO] "From CreateRecurringTimer: creating timer" "via_onupdate" "recurring_timer::1"
+----
++
+image::ext_rest_via_curl_04_log_active2.png[,800,align=left]
+
+. Now check the results of the callback, access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
+** Edit the new document *cur_recurring_timer::1* and you will see the data written by the Timer's callback:
++
+----
+{
+  "last_update": "2020-08-03T21:38:02.820Z"
+}
+----
+** Click *Cancel* to close the editor.
+
+. Wait about 30 seconds and repeat the above, the emulated "work" of this Eventing function is merely writing a time stamp to the *cur_recurring_timer::1* document about every 30 seconds.
+
+== *Test 2: Cancel the Recurring Timer:*
+
+. Access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *source* bucket.
+** Edit the control document *recurring_timer::1* it should look like:
++
+----
+{
+  "type": "recurring_timer",
+  "id": 1,
+  "active": true
+}
+----
++
+Now change "a_number" to 2 to create a mutation, then Click *Save*.  The control document is now:
++
+----
+{
+  "type": "recurring_timer",
+  "id": 1,
+  "active": false
+}
+----
+
+. Access the *Couchbase Web Console* > *Eventing* page and click on the Function *external_rest_via_curl* then Click the "Log" link for Deployed Function *external_rest_via_curl* to view the activity.  
+** Here we see from the Application log that we canceled the sequence, the recurring timer has stopped.
++
+----
+2020-08-03T14:41:33.279-07:00 [INFO] "From OnUpdate: canceled active Timer, doc.active" false "recurring_timer::1"
+----
+
+*Cleanup*:
+
+Cleanup, go to the Eventing portion of the UI and undeploy the Function *external_rest_via_curl*, this will remove the 2048 documents for each function from the 'metadata' bucket (in the Bucket view of the UI). Remember you may only delete the 'metadata' bucket if there are no deployed Eventing functions.
