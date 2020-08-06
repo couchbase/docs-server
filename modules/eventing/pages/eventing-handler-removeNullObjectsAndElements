@@ -1,0 +1,167 @@
+= Function: removeNullObjectsAndElements
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: Recursively remove all nulls and empty items from a document.
+
+* This function *removeNullObjectsAndElements* will recursively prune nulls and empty items from a given JSON document
+* Requires a metdata bucket and a source bucket aliased to "src_bkt" in mode read+write.
+* Will operate on all documents with doc.type === "my_data_to_prune".
+
+
+[{tabs}] 
+====
+removeNullObjectsAndElements::
++
+--
+[source,javascript]
+----
+function removeNullParts(obj) {
+    // remove any null Objects
+    Object.keys(obj).forEach(k =>
+        (obj[k] && typeof obj[k] === 'object') && removeNullParts(obj[k]) ||
+        (!obj[k] && obj[k] !== undefined) && delete(obj[k]) // 6.6+ can use "delete obj[k]""
+    );
+    Object.keys(obj).forEach(k =>
+        (obj[k] && Array.isArray(obj[k])) &&
+        (obj[k] = obj[k].filter(element => element !== null))
+    );
+    return obj;
+}
+
+function removeEmptyParts(obj) {
+    if (obj !== null && typeof obj == "object") {
+        Object.entries(obj).forEach(([k, v]) => {
+            if (obj[k] && typeof obj[k] === 'object') {
+                // recurse
+                removeEmptyParts(obj[k])
+                // collapse out null's in Array if any
+                if (obj[k] && Array.isArray(obj[k])) {
+                    obj[k] = obj[k].filter(element => element !== null)
+                }
+                // remove empty [] array items and {} object items
+                if (
+                    (obj[k] && Array.isArray(obj[k]) && obj[k].length === 0) ||
+                    (obj[k] && !Array.isArray(obj[k]) && Object.keys(obj[k]).length === 0)
+                ) {
+                    delete(obj[k]) // 6.6+ can use "delete obj"    
+                }
+            }
+        });
+    } else {
+        // obj is a number or a string
+    }
+    return obj;
+}
+
+function OnUpdate(doc, meta) {
+    if (doc.type !== "my_data_to_prune") return;
+    
+    // make a new doc without any nulls
+    newdoc = removeNullParts(doc);
+    // make a new doc without {} [] empties
+    newdoc = removeEmptyParts(newdoc);
+    
+    // alias src_bkt to our source bucket. Since rev 6.5+ allowed to be in r/w mode
+    src_bkt[meta.id] = newdoc;
+}
+----
+--
+
+Input Data/Mutation::
++
+--
+[source,json]
+----
+INPUT: KEY my_data_type::1001
+
+{
+  "type": "my_data_to_prune",
+  "id": 1001,
+  "a_first_super_long_name_right_here": 111,
+  "b": "my object",
+  "c": "",
+  "d": null,
+  "f": {
+    "v": 1,
+    "x": "",
+    "y": null,
+    "m": {
+      "a": "asd"
+    }
+  },
+  "f2": {
+    "v": 1,
+    "x": "",
+    "y": null,
+    "m": {
+      "a": "asd",
+      "b": null,
+      "c": null,
+      "a_second_super_long_name_right_here": 222,
+      "ary1": [
+        null,
+        1,
+        null,
+        2,
+        null,
+        3
+      ],
+      "ary2": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          5,
+          null,
+          6
+        ],
+        {
+          "a": 1
+        },
+        {
+          "b": 2
+        },
+        {
+          "c": 3,
+          "d": null
+        },
+        {
+          "e": null
+        },
+        [
+          null,
+          null,
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "a_third_super_long_name_right_here": {
+    "x": 1,
+    "y": 2,
+    "z": null
+  }
+}
+
+----
+--
+
+Output Data/Mutation::
++ 
+-- 
+[source,json]
+----
+UPDATED/OUTPUT: KEY my_data_to_prune::1001
+{
+TBD
+}
+----
+--
+====
