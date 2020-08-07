@@ -8,7 +8,7 @@
 * Requires a metdata bucket, a source bucket, and a bucket called "destination"
 * Needs a Binding of type Bucket Alias (as documented in the Scriptlet).
 * Will operate on any mutation of the KEY "basic_bkt_ops::1".
-* The final document is delete, so we are interest in the Application log file.
+* The final document is delete, so we are interest in the Application log file (newest first).
 * For more detail refer to xref:eventing:eventing-language-constructs.html#bucket_accessors[Bucket Accessors]
 
 [{tabs}] 
@@ -20,25 +20,31 @@ basicBucketOps::
 ----
 // To run need a Binding in this Function's Settings to apublic API as follows:
 // 1. Bucket Alias
-// 2. dst_buckt
+// 2. dst_bkt
 // 3. destination
+// 4. read+write
 function OnUpdate(doc, meta) {
   // filter out non-interesting docs
   if (doc.type !== "basic_bkt_ops") return;
   // Assuming 'dst_bkt' is a bucket alias binding in this case to a non source bucket
   log("OnUpdate got mutation for id",meta.id,"doc",doc);
+ 
+  // make a key based on the meta.id of the input mutation
+  var dst_key = "dst_" + meta.id;
+  // make a document to write, include the input mutation's doc
+  var doc_to_wr = {"status":3, "mutation": doc};
   
   // this is a bucket SET operation.
-  dst_bkt["dst_" + meta.id] = {"status":3, "mutation": doc};    
-  log('wrote {"status":3} to dst_bkt with id","dst_" + meta.id);
-  
+  dst_bkt[dst_key] = doc_to_wr;
+  log("wrote "+doc_to_wr+" to dst_bkt with id",dst_key);
+
   // this is a bucket GET operation.
-  var val = dst_bkt["dst_" + meta.id];                         
-  log('read "+val+" from dst_bkt with id","dst_" + meta.id);
-  
+  var doc_read = dst_bkt[dst_key];
+  log("read "+doc_read+" from dst_bkt with id",dst_key);
+
   // this is a bucket DEL operation.
-  delete dst_bkt["dst_" + meta.id];            
-  log('deleted id from dst_bkt with id","dst_" + meta.id);
+  delete dst_bkt[dst_key];
+  log("deleted "+dst_key+" from dst_bkt");
 }
 ----
 --
@@ -48,9 +54,10 @@ Input Data/Mutation::
 --
 [source,json]
 ----
-INPUT: KEY basicBucketOps::1
+INPUT: KEY basic_bkt_ops::1
 
 {
+  "type": "basic_bkt_ops",
   "test": true
 }
 
@@ -62,7 +69,9 @@ Output Data/Logged::
 -- 
 [source,json]
 ----
-TBD
+2020-08-06T17:04:34.535-07:00 [INFO] "read [object Object] from dst_bkt with id" "dst_basic_bkt_ops::1"
+2020-08-06T17:04:34.534-07:00 [INFO] "deleted dst_basic_bkt_ops::1 from dst_bkt"
+2020-08-06T17:04:34.533-07:00 [INFO] "wrote [object Object] to dst_bkt with id" "dst_basic_bkt_ops::1"
 ----
 --
 ====
