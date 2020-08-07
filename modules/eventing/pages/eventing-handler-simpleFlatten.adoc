@@ -1,0 +1,107 @@
+= Function: simpleFlatten
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: Flatten a document for integratoin with a non-NOSQL RDBMS.
+
+* This function *simpleFlatten* shows how a document can be flattend into a RDBMS importable record.
+* Requires a metdata bucket, a source bucket, and a destination bucket aliases to "dst_bkt" in mode read+write.
+* Will operate on all documents with doc.type === "tosync".
+* Will write tranformed or flatted documents to the destination bucket with same type and id.
+* The destination bucket can be shared (or replicated via XCDR to a business partner).
+* Will also remove the flatted documnet in the destination bucket when the original source document is removed.
+* Note since the document is not available during an OnDelete we will flter by KEY prefix starting with "tosync:".
+
+[{tabs}] 
+====
+simpleFlatten::
++
+--
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+    // filter
+    if (!doc.type || doc.type !== "tosync") return;
+   
+    log("OnUpdate IN  id: "+meta.id+", doc:      ",doc);
+    try {
+        // convert
+        var oracleDoc = {
+            // flatten items simple 1:1 map
+            "id": doc.id, "type":doc.type,    
+            // flatten subdoc
+            "a_sub_aa": doc.a.aa, "a_sub_ab": doc.a.ab,  "a_sub_ac": doc.a.ac,
+            // flatten array
+            "b_ary_0": doc.b[0], "b_ary_1": doc.b[1], "b_ary_2": doc.b[2]      
+        }
+        // log
+        log("OnUpdate OUT id: "+meta.id+", oracleDoc:",oracleDoc);
+    } catch (e) {
+        log ("Error on convert: "+e+", id:",meta.id);
+    }
+    // save
+    try {
+        dst_bkt[meta.id] = oracleDoc;
+    } catch (e) {
+        log("Error on save: "+e+", id:", meta.id);
+    }
+}
+
+function OnDelete(meta, options) {
+    // filter
+    if (!(meta.id.startsWith("tosync:"))) return;
+   
+    log("OnDelete expired=" + options.expired +" REM id: "+meta.id);
+    try {
+        delete dst_bkt[meta.id];
+    } catch (e) {
+        log("Error on delete: "+e+", id:",meta.id);
+    }
+}
+----
+--
+
+Input Data/Mutation::
++
+--
+[source,json]
+----
+INPUT: KEY tosync::1
+
+{
+  "id": 1,
+  "type": "tosync",
+  "a": {
+    "aa": 1,
+    "ab": 2,
+    "ac": 3
+  },
+  "b": [
+    1,
+    3,
+    7
+  ]
+}
+----
+--
+
+Output Data/Mutation::
++ 
+-- 
+[source,json]
+----
+UPDATED/OUTPUT: KEY tosync::1
+
+{
+  "id": 1,
+  "type": "tosync",
+  "a_sub_aa": 1,
+  "a_sub_ab": 2,
+  "a_sub_ac": 3,
+  "b_ary_0": 1,
+  "b_ary_1": 3,
+  "b_ary_2": 7
+}
+----
+--
+====
