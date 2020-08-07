@@ -1,0 +1,186 @@
+= Function: Keep the Last N User Items
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: Keep the last N user notifications (these could be any documents) seen related to a user ID
+
+* This function *keepLastN* demonstrates how to keep a user record with the last N activities.
+* Requires a metdata bucket and a source bucket
+* Will operate on any mutation with a KEY starting with "nu:" of the form nu:#:#
+* The KEY "nu:#:# contains two numbers the first # is an increasing notification #, the second # is the user ID
+* Anytime we insert a new record we want to remove the earliest notification record for the user so we only have at most N records for each user.
+* For our test we will keep just the three (3) most recent notifications per user ID.
+
+[{tabs}] 
+====
+keepLastN::
++
+--
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+    const MAX_RETRY = 16;
+    const MAX_ARRAY = 3;
+    
+    // will process ALL data like nu:#:#
+    var parts = meta.id.split(':');
+    if (!parts || parts.length != 3 || parts[0] != "nu") return;
+    var ntfy_id = parseInt(parts[1]);
+    var user_id = parseInt(parts[2]);
+    //log("Doc created/updated " +  meta.id + " ntfy_id " + ntfy_id  + " user_id " + user_id);
+
+    var insert_json = {"nid": ntfy_id, doc};
+    // this can be simplified in version 6.6.1 when CAS is added to Eventing
+    for (var tries=0; tries < 16; tries++) {
+        var user_doc = addToNtfyArray(src_bkt, user_id, insert_json, MAX_ARRAY);
+        if (user_doc == null) {
+            // do nothing
+            return;
+        }
+        var random_csum = user_doc.random;
+        // this is a read write alias to the functions source bucket
+        src_bkt["user_plus_ntfys:" + user_id] = user_doc;
+        user_doc = src_bkt["user_plus_ntfys:" + user_id];
+        if (random_csum !== user_doc.random) {
+            // failure need to retry
+            tries++;
+        } else {
+            // success could even delete the input notification doc here
+            return;
+        }
+    }
+    log ("FAILED to insert id: " + meta.id, doc)
+}
+
+function addToNtfyArray(src_bkt, user_id, insert_json, max_ary) {
+    var ntfy_id = insert_json.nid;
+    var random_csum;
+    var user_doc = src_bkt["user_plus_ntfys:" + user_id];
+    if (!user_doc) {
+        // generate unique random #
+        random_csum = Math.random();
+        user_doc = { "type": "user_plus_ntfys", "id": user_id, "notifications" : [], "random": random_csum };
+        user_doc.notifications.push(insert_json);
+    } else {
+        if (user_doc.notifications[0].nid >= ntfy_id && user_doc.notifications.length === max_ary) {
+            // do nothing this is older data, we assume that nid always increases
+            return null;
+        } else {
+            // find insert position
+            for(var i=0; i<=user_doc.notifications.length + 1 ; i++) {
+                if (i < user_doc.notifications.length && user_doc.notifications[i].nid === ntfy_id) {
+                    // do nothing this is duplicate data we already have it, assume no updates to notifys
+                    return null;
+                }  
+                if (i == user_doc.notifications.length || user_doc.notifications[i].nid > ntfy_id) {
+                    // add to array middle or end
+                    user_doc.notifications.splice(i, 0, insert_json);
+                    random_csum = Math.random();
+                    // update unique random #
+                    user_doc.random = random_csum;
+                    break;
+                }
+            }
+        }
+        while (user_doc.notifications.length > max_ary) {
+            // ensure proper size
+            user_doc.notifications.shift();
+        }
+    }
+    return user_doc;
+}
+----
+--
+
+Input Data/Mutation::
++
+--
+----
+We want to create a test doc set
+
+  ┌─────────┬─────────────────────────┐
+  │ key     │  data                   │
+  ├─────────┼─────────────────────────┤
+  │  nu:1:1 │ {"somekey":"someValue"} │
+  │  nu:2:2 │ {"somekey":"someValue"} │
+  │  nu:3:1 │ {"somekey":"someValue"} │
+  │  nu:4:1 │ {"somekey":"someValue"} │
+  │  nu:5:1 │ {"somekey":"someValue"} │
+  │  nu:6:2 │ {"somekey":"someValue"} │
+  │  nu:7:2 │ {"somekey":"someValue"} │
+  │  nu:8:1 │ {"somekey":"someValue"} │
+  │  nu:9:2 │ {"somekey":"someValue"} │
+  │ nu:10:2 │ {"somekey":"someValue"} │
+  └─────────┴─────────────────────────┘
+
+Use the Query tool to insert some data (you do not need an Index)
+
+  INSERT INTO `source` (KEY,VALUE)
+  VALUES ( "nu:1:1",  {"somekey":"someValue"} ),
+  VALUES ( "nu:2:2",  {"somekey":"someValue"} ),
+  VALUES ( "nu:3:1",  {"somekey":"someValue"} ),
+  VALUES ( "nu:4:1",  {"somekey":"someValue"} ),
+  VALUES ( "nu:5:1",  {"somekey":"someValue"} ),
+  VALUES ( "nu:6:2",  {"somekey":"someValue"} ),
+  VALUES ( "nu:7:2",  {"somekey":"someValue"} ),
+  VALUES ( "nu:8:1",  {"somekey":"someValue"} ),
+  VALUES ( "nu:9:2",  {"somekey":"someValue"} ),
+  VALUES ( "nu:10:2", {"somekey":"someValue"} );  
+----
+--
+
+Output Data/Mutation::
++ 
+-- 
+[source,json]
+----
+NEW/OUTPUT: KEY user_plus_ntfys:1
+
+{
+  "type": "user_plus_ntfys",
+  "id": 1,
+  "notifications": [{
+    "nid": 4,
+    "doc": {
+      "somekey": "someValue"
+    }
+  }, {
+    "nid": 5,
+    "doc": {
+      "somekey": "someValue"
+    }
+  }, {
+    "nid": 8,
+    "doc": {
+      "somekey": "someValue"
+    }
+  }],
+  "random": 0.9071605464143964
+}
+
+NEW/OUTPUT: KEY user_plus_ntfys:2
+
+{
+  "type": "user_plus_ntfys",
+  "id": 2,
+  "notifications": [{
+    "nid": 7,
+    "doc": {
+      "somekey": "someValue"
+    }
+  }, {
+    "nid": 9,
+    "doc": {
+      "somekey": "someValue"
+    }
+  }, {
+    "nid": 10,
+    "doc": {
+      "somekey": "someValue"
+    }
+  }],
+  "random": 0.5637501636850883
+}
+----
+--
+====
