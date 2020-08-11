@@ -69,7 +69,7 @@ The following constructs have been added:
 
 * <<bucket_accessors,Bucket Accessors>>
 * <<logging,Logging>>
-* <<n1ql_statments,N1QL Statements>>
+* <<n1ql_statements,N1QL Statements>>
 
 [#bucket_accessors]
 *_Bucket Accessors_:*
@@ -112,7 +112,7 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-[#n1ql_statments]
+[#n1ql_statements]
 *_N1QL Statements_:*
 
 Top level N1QL keywords, such as SELECT, UPDATE, INSERT and DELETE, are available as inline keywords in handlers. Operations that return values such as SELECT are accessible through a returned Iterable handle. N1QL Query results, via a SELECT, are streamed in batches to the Iterable handle as the iteration progresses through the result set.
@@ -127,7 +127,7 @@ function OnUpdate(doc, meta) {
     var strong = 70;
     var results =
         SELECT *                  /* N1QL queries are embedded directly.    */
-        FROM `beer-sample`       /* Token escaping is standard N1QL style. */
+        FROM `beer-sample`        /* Token escaping is standard N1QL style. */
         WHERE abv > $strong;      // Local variable reference using $ syntax.
     for (var beer of results) {   // Stream results using 'for' iterator.
         log(beer);
@@ -140,7 +140,7 @@ function OnUpdate(doc, meta) {
 The call starts the query and returns a JavaScript Iterable object representing the result set of the query. The query is streamed in batches as the iteration proceeds. The returned handle can be iterated using any standard JavaScript mechanism including _for...of_ loops.
 
 In multiline N1QL statements (as above) you cannot use single line [.var]`// end of line comments like this` +
-prior to the terminating semicolon as it will cause a syntax error in the transpilation of the N1QL statement, however muliti-line [.var]`/* comments like this */` are allowed.
+prior to the terminating semicolon as it will cause a syntax error in the transpilation of the N1QL statement, however multiline [.var]`/* comments like this */` are allowed.
 
 The iterator is an input iterator (elements are read-only). The keyword _this_ cannot be used in the body of the iterator. The variables created inside the iterator are local to the iterator.
 
@@ -254,12 +254,12 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-The *crc64* function can be useful in case like suppressing a duplicate mutation from the Sync Gateway (or SG), when both the Sync Gateway & Eventing are leveraging same bucket. Basically, Sync gateway would update metadata of the document within the bucket - which in turn generates an event for Eventing to process. Eventing can't differentiate between events from Sync Gateway vs other events(doc updates via SDK, N1QL and others).  A work around to this double mutation issue is possible via the *crc64()* function
+The *crc64* function can be useful in cases like suppressing a duplicate mutation from the Sync Gateway (or SG), when both the Sync Gateway & Eventing are leveraging same bucket. Basically, Sync Gateway would update metadata of the document within the bucket, which in turn generates an event for Eventing to process. Eventing can't differentiate between events from Sync Gateway vs other events(doc updates via SDK, N1QL and others).  A workaround to this double mutation issue is possible via the *crc64()* function
 
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
-    // Ignore documents created by sync gateway
+    // Ignore documents created by Sync Gateway
     if(meta.id.startsWith("_sync") == true) return;
 
     // Ignore documents whose body has not changed since we last saw it
@@ -271,6 +271,7 @@ function OnUpdate(doc, meta) {
    // Business logic goes in here
 }
 ----
+Note, if multiple Eventing functions (or handlers) share the same Sync Gateway crc64() checksum documents real mutations will be suppressed and missed. In this use case make the checksum documents unique to each handler, i.e. checksum_bucket["handler1:" + meta.id], checksum_bucket["handler2:" + meta.id], etc..
 
 [#handler-signatures]
 == Handler Signatures
@@ -285,6 +286,11 @@ Eventing Service or framework calls the following JavaScript functions as entry 
 
 This handler gets called when a document is created or modified, e.g. Insert/Update. The handler listens to mutations (the creation or modification of documents) in the associated source Bucket.
 
+In this handler the following limitations exist, both limitations arise due to KV engine design choices and may be revisited in the future:
+
+* If a document is modified several times in a short duration, the calls may be coalesced into a single event due to deduplication.
+* It is not possible to distinguish between a Create and an Update operation.
+
 A sample OnUpdate handler is displayed below:
 
 [source,javascript]
@@ -297,34 +303,39 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-In this handler following limitations exist:
-
-* If a document is modified several times in a short duration, the calls may be coalesced into a single event due to deduplication.
-* It is not possible to distinguish between a Create and an Update operation.
 
 [#ondelete_handler]
 *_OnDelete Handler_:*
 
 This handler gets called when a document is deleted or removed due to an expiry.
-The handler listens to mutations (deletions or expirations) in the associated source Bucket.
+The handler listens to mutations (deletions or expirations) in the associated source Bucket.  As of release 6.6.0 it is now possible to determine if the document was deleted or expired, this is accomplished via the optional argument "options" a JavaScript map object with a boolean entry named 'expired'.
+
+In this handler the following limitation exists, this limitation arises due to KV engine design choices and may be revisited in the future:
+
+* It is not possible to distinguish if the document was removed is a Delete operation or removed as a result of a document expiration.
 
 A sample OnDelete handler is displayed below:
 
 [source,javascript]
 ----
-function OnDelete(meta) {
+function OnDelete(meta,options) {
+    if (options.expired) log("Document expired", meta.id);
     var addr = meta.id;
     var res = SELECT id from orders WHERE shipaddr = $addr;
     for (var id of res) {
-      log("Address invalidated for pending order: " + id);
+        log("Address invalidated for pending order: " + id);
     }
-  }
+}
 ----
 
-In this handler the following limitations exist:
+Note pre 6.6.0 argument syntax is still fully supported, albeit you will not be able to differentiate deletion from expiry.
 
-* It is not possible to distinguish if the document was removed is a Delete operation or removed as a result of a document expiration.
-* It is not possible to get the value of the document that was just deleted or expired.
+[source,javascript]
+----
+function OnDelete(meta) {
+    log("Document deleted or expired", meta.id);
+}
+----
 
 == Reserved Words
 
