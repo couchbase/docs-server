@@ -1,0 +1,81 @@
+= Function: fixEmailDomains
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: Redact Sensitive Data prior to sharing.
+
+* This function *fixEmailDomains* will fix email domains by ensuring only a top level domain is used.
+* Example given an Email address like _jack.smith@mailhost.company.com_ we update it to use only the top level domain _jack.smith@company.com_.
+* Requires a metadata bucket and a source bucket, and a source bucket aliased to "src_bkt" in mode read+write.
+* Will operate on all documents where doc.type === "employees".
+
+[{tabs}] 
+====
+fixEmailDomains::
++
+--
+[source,javascript]
+----
+function fixEmailDomain(doc,fieldname,emaildomain) {
+    /*
+    * doc:         the mutated document
+    * fieldname:   the name of the email field in "doc" to update
+    * emaildomain: the domain to use, for example @mycompany.com
+    */
+    if (emaildomain.charAt(0) !== '@') return false;
+    var domary = emaildomain.substr(1).split(".");
+    var re = new RegExp('@.+?\.' + domary[0] +  '\.' + domary[1] + '$');
+    if (re.test(doc[fieldname])) {
+        var tmp = doc[fieldname].replace(re, emaildomain);
+        doc[fieldname] = tmp;
+        return true;
+    }
+    return false;
+}
+
+function OnUpdate(doc, meta) {
+    if (doc.type !== "employees") return;
+
+    // normalize email addresses
+    if (fixEmailDomain(doc,'email',"@bigmovies.com")) {
+        try {
+            log('OnUpdate: updated field email',doc.email);
+            src_bkt[meta.id] = doc;
+        } catch (e) {
+            log('OnUpdate: error',e);
+        }
+    }
+}
+----
+--
+
+Input Data/Mutation::
++
+--
+[source,json]
+----
+INPUT: KEY employees::1001
+
+{
+  "type": "employees",
+  "id": 1001,
+  "email": "will.smith@mailhost.bigmovies.com"
+}
+----
+--
+
+Output Data/Mutation::
++ 
+-- 
+[source,json]
+----
+UPDATED/OUTPUT: KEY employees::1001
+
+{
+  "type": "employees",
+  "id": 1001,
+  "email": "will.smith@bigmovies.com"
+}
+----
+--
+====
