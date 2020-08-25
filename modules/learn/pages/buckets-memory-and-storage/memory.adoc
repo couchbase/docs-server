@@ -57,13 +57,27 @@ Minimum-required memory-quotas (which are the quota-defaults initially provided 
 == Initialization and Warmup
 
 When Couchbase Server is restarted on a node, the node goes through a _warmup process_ before it restarts the handling of data requests.
-During this warmup process, data on disk is sequentially reloaded into memory.
+During this warmup process, data on disk is sequentially reloaded into memory for each bucket.
 The time required for the reload depends on the size and configuration of the system, the amount of data persisted on the node, and the ejection policy configured for the buckets.
 
-Frequently used items are identified via a scanner process, which examines an _access log_, and obtains the appropriate keys.
-Corresponding items are then loaded with the highest priority.
-The scanner process is configurable, via the CLI utility `cbepctl`, with the `flush_param` parameter.
+On a given Data Service node, a bucket's data is loaded in accordance with determinations made by the _access scanner_.
+This program runs by default once every day.
+It checks the _resident ratio_ &#8212; which is the percentage, on the current node, of bucket-items currently in memory:
+
+* If the ratio is below 95%, the access scanner generates a new _access log_, which records the documents that have been most frequently accessed during the last 24 hours.
+If and when data-loading subsequently occurs, the new access log is consulted, the recorded document-keys obtained, and the corresponding documents loaded with the highest priority.
+
+* If the ratio is above 95%, the access scanner does _not_ generate a new access log.
+Instead, it deletes any existing access log, and exits.
+If and when data-loading subsequently occurs, since no access log exists, loading occurs with no priority-order (this being, in cases of extremely high resident ratio, the more performative loading procedure).
+
+[#configuring-the-access-scanner]
+=== Configuring the Access Scanner
+
+The access scanner is configurable, via the CLI utility `cbepctl`, with the `flush_param` parameter.
 This utility also provides the parameters `warmup_min_memory_threshold` and `warmup_min_item_threshold`, which can be used to schedule the resumption of traffic before all items have been reloaded into memory.
+
+Note that the access scanner is a highly CPU-intensive process, whose configurable start-time should ideally be established as different for each Data Service node in the cluster.
 See xref:cli:cbepctl/set-flush_param.adoc[set flush_param].
 
 [#ejection]
