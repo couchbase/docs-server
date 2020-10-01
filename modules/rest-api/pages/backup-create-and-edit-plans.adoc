@@ -1,31 +1,189 @@
 = Create and Edit Plans
 
 [abstract]
+The Backup Service REST API allows _plans_ to be created and edited.
+A plan specifies one or more _tasks_.
+Once created, a plan can be used in the creation of a _repository_.
 
 [#http-methods-and-uris]
 == HTTP Methods and URIs
 
 ----
+POST /plan/<new-plan-id>
 
+PUT /plan/<existing-plan-id>
 ----
+
+The `<plan-id>` must be a plan-name that is unique across the cluster.
+The POST method creates a new plan, so named.
+The PUT method edits an existing plan of the specified name.
 
 [#description]
 == Description
+
+A _plan_, once defined, is used in the creation of a _repository_; thereby allowing data from the cluster to be regularly backed up and, if appropriate, allowing existing backups to be periodically merged.
+A plan is defined by being specified as the JSON payload to the `POST /plan/<plan-id>` HTTP method and URI.
+An existing plan can be edited by means of the `PUT /plan/<plan-id>` HTTP method and URI: the complete, new specification for the plan being specified as the JSON payload.
 
 [#curl-syntax]
 == Curl Syntax
 
 ----
+curl -X POST <backup-node-ip-address-or-domain-name>:8097/plan/<new-plan-id>
+  -u <username>:<password>
+  -d <plan-description>
 
+curl -X PUT <backup-node-ip-address-or-domain-name>:8097/plan/<existing-plan-id>
+  -u <username>:<password>
+  -d <plan-description>
+----
+
+The `plan-description` contains the following:
+
+* A plan-name that is unique across the cluster.
+
+* An optional _description_ of the plan.
+
+* An array containing the Couchbase Services whose data is to be backed up.
+
+* An array of one or more _tasks_.
+Each tasks contains the following:
+
+** A task-name that is unique across the plan.
+
+** The _type_ of the task, which can be `BACKUP` or `MERGE`.
+
+** Whether the task should be a _full backup_ or not: a full backup (rather than an incremental backup), can only be specified as `true` when the task-type is `BACKUP`; otherwise, a full backup must be specified as `null`.
+
+** The _schedule_ for the task, containing the following:
+
+*** The type of job, which must correspond to the task-type, `BACKUP` or `MERGE`.
+
+*** The _period_ of the task, which can be either of the following:
+
+*** One of the following time-units: `MINUTES`, `HOURS`, `DAYS`, `WEEKS`.
+
+*** A weekday, such as `MONDAY`, `TUESDAY`, `WEDNESDAY`, etc.
+
+*** The _frequency_ of the task, which can be an integer between `1` and `200`, inclusive.
+If the task specifies a time-unit, the frequency indicates the number of time-units that must elapse between each repetition of the task: for example, `20` and `MINUTES` means that the task is to be performed once every twenty minutes.
+If the task specifies a weekday, the frequency indicates for how many instances of the weekday the task should continue to be performed, once per day: for example, `20` and `TUESDAY` means that the task is to be performed once every Tuesday for the next twenty Tuesdays.
+
+*** A _time_ at which the task is to be performed, each day.
+This is only to be specified when a weekday is used: in such cases, the task will be performed once on the specified weekday, at the specified time.
+
+** Additional _options_ for the task.
+If the task is a backup, the value must be `null`.
+If the task is a merge, the value must an object, featuring an _offset start_ and _offset end_, specified as integers.
+The _start_ indicates the most recent, and the _end_ indicates the least recent day whose backups are to be merged: therefore `0` and `2` indicate that the backups to be merged are those for today, yesterday, and the day before yesterday.
+
+Syntactically therefore, the `plan-description` is as follows:
+
+----
+{
+  "name": <test-plan-name>,
+  "description": <test-plan-description>,
+  "services": [ < "data" | "gsi" | "views" | "ft" | "eventing" | "cbas" > ],
+  "tasks": [
+    {
+      "name": <task-name>,
+      "task_type": < "BACKUP" | "MERGE" >,
+      "full_backup": < "null" | "true" >,
+      "schedule": {
+        "job_type": < "BACKUP" | "MERGE" >,
+        "frequency": <integer-from-1-to-200-inclusive>,
+        "period":
+          < "MINUTES" | "HOURS" | "DAYS" | "WEEKS" > |
+            < "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" |
+              "FRIDAY" | "SATURDAY" | "SUNDAY" >
+      }
+      "options": < "null" | "true" >
+    }
+  ]
+}
 ----
 
 [#responses]
 == Responses
 
+Successful plan-creation returns `200 OK`; with the message, `The plan was created`.
+An incorrectly specified plan returns `400`; with the message, `The plan was not valid`.
+An internal error returns `500`; with the message, `Could not add the plan due to an internal error`.
+
+Failure to authenticate returns `401 Unauthorized`.
+An incorrectly specified URI returns `404 Object Not Found`.
+An incorrectly specified method returns `404 Object Not Found`, and returns the object `{"status":404,"msg":"requested plan not found"}`.
+
 
 [#examples]
 == Examples
 
+The following example creates a plan for performing weekly full backups, and monthly merges, for one year.
+Formatted, the plan is as follows:
+
+----
+{
+  "name": "BackupAndMergePlan",
+  "description": "A plan for backing up and merging.",
+  "services": [
+    "data"
+  ],
+  "tasks": [
+    {
+      "name": "BackupEveryTuesdayForOneYear",
+      "task_type": "BACKUP",
+      "schedule": {
+        "job_type": "BACKUP",
+        "frequency": 52,
+        "period": "TUESDAY",
+        "time": "22:00"
+      },
+      "options": null,
+      "full_backup": true
+    },
+    {
+      "name": "MergeOncePerMonth",
+      "task_type": "MERGE",
+      "full_backup": null,
+      "schedule": {
+        "job_type": "MERGE",
+        "frequency": 4,
+        "period": "WEEKS",
+        "time": "22:00"
+      },
+      "options": {
+        "offset_start": 0,
+        "offset_end": 28
+      }
+    }
+  ]
+}
+----
+
+The plan is thus named `BackupAndMergePlan` and specifies that data from the Data Service alone be handled.
+The plan features two tasks.
+The first, `BackupEveryTuesdayForOneYear` specifies that a full backup be perfomed every Tuesday, at `22:00`, for the next 52 Tuesdays.
+The second, `MergeOncePerMonth`, specifies that a merge occur every four weeks, and that all builds that have occurred from the current day back to 28 days ago be included.
+
+The call is executed as follows:
+
+----
+curl -v -X POST http://127.0.0.1:8091/_p/backup/api/v1/plan/BackupAndMergePlan -u Administrator:password -d '{"name": "BackupAndMergePlan","description": "A plan for backing up and merging.","services": ["data"],"tasks": [{"name": "BackupEveryTuesdayForOneYear","task_type": "BACKUP","schedule": {"job_type": "BACKUP","frequency": 52,"period": "TUESDAY","time": "22:00"},"options": null,"full_backup": true},{"name": "testTask3","task_type": "MERGE","full_backup": null,"schedule": {"job_type": "MERGE","frequency": 4,"period": "WEEKS","time": "22:00"},"options": {"offset_start": 0,"offset_end":28}}]}'
+----
+
+If the call is successful, `200 OK` is returned.
+
+The following use of the `PUT` method modifies the existing plan, specifying a backup time of `21:00`:
+
+----
+curl -v -X PUT http://127.0.0.1:8091/_p/backup/api/v1/plan/BackupAndMergePlan -u Administrator:password -d '{"name": "BackupAndMergePlan","description": "A plan for backing up and merging.","services": ["data"],"tasks": [{"name": "BackupEveryTuesdayForOneYear","task_type": "BACKUP","schedule": {"job_type": "BACKUP","frequency": 52,"period": "TUESDAY","time": "21:00"},"options": null,"full_backup": true},{"name": "testTask3","task_type": "MERGE","full_backup": null,"schedule": {"job_type": "MERGE","frequency": 4,"period": "WEEKS","time": "22:00"},"options": {"offset_start": 0,"offset_end":28}}]}'
+----
+
+Again, if the call is successful, `200 OK` is returned.
 
 [#see-also]
 == See Also
+
+An overview of the Backup Service is provided in xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
+A step-by-step guide to using Couchbase Web Console to configure and use the Backup Service is provided in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Manage Backup and Restore].
+Information on using the Backup Service REST API to include a defined plan in a repository-definition is provided in xref:rest-api:backup-create-repository.adoc[Create a Repository].
