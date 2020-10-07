@@ -1,0 +1,98 @@
+= Function/Benchmark: fasterToLocalString 
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: Explore faster local time zone date formating.
+
+* This function *fasterToLocalString*  demonstrates a faster alternative to the built-in JavaScript function *toLocalString*.
+* As of Couchbase 6.6.0 the *fasterToLocalString* implementation is 708X faster.  This demonstrates that all date conversion should be benchmarked.
+* Requires a metadata bucket, a source bucket.
+* Will operate on any mutation where doc.type === "basic_bkt_ops".
+* Deploy from now
+* Only mutate one document as this is a benchmark of ICU performance.
+
+[{tabs}] 
+====
+fasterToLocalString::
++
+--
+[source,javascript]
+----
+// To run need a Binding in this Function's Settings as follows:
+// 1. Deploy from now
+// 2. Mutate one document in the source bucket
+// 3. Inspect the log files
+function fasterToLocalString(d) {
+    // adjust the input date by the UTC offset
+    var dadj = new Date(d.getTime() - d.getTimezoneOffset() * 60 * 1000);
+    var hr = dadj.getUTCHours();
+    var min = dadj.getUTCMinutes();
+    var sec = dadj.getUTCSeconds();
+    var strLocalDate = (dadj.getUTCMonth()+1) + "/" + dadj.getUTCDate() + "/" + dadj.getUTCFullYear() + ", " +
+        ((hr < 13) ? hr : (hr - 12)) + ":" +
+        ((min<10) ? "0"+min : min) + ":" +
+        ((sec<10) ? "0"+sec : sec) +
+        ((hr < 12) ? " AM" : " PM");
+    // should be the same as d.toLocaleString('en-US')
+    return strLocalDate;
+}
+
+function OnUpdate(doc, meta) {
+    var cnt = 20000;
+    var d = new Date();
+    var tbeg, tend;
+
+    if (true) {
+        // This crash a debug session refer to eventing-debugging-and-diagnosability.html
+        // however it always work in no-debug but is very slow.
+        tbeg = Date.now();
+        for (var i=1; i<=cnt; i++) {
+            var res = d.toLocaleString('en-US');
+            if (i % cnt == 0)
+                log("d.toLocaleString('en-US') ",res);
+        }
+        tend = Date.now();
+        log("d.toLocaleString('en-US') ", tend-tbeg + " ms.");
+    }
+    
+    if (true) {
+        tbeg = Date.now();
+        for (var i=1; i<=cnt; i++) {
+            var res = fasterToLocalString(d);
+            if (i % cnt == 0)
+                log("fasterToLocalString(d)   ",res);
+        }
+        tend = Date.now();
+        log("fasterToLocalString(d)   ", tend-tbeg + " ms.");
+    }
+}
+----
+--
+
+Input Data/Mutation::
++
+--
+[source,json]
+----
+Create/Mutate any single document in the source bucket
+
+----
+--
+
+Output Data/Logged::
++ 
+-- 
+This below messages are from the Application log in the file system (the UI would display the messages in reverse order)
+
+[source,json]
+----
+2020-09-16T18:40:48.430-07:00 [INFO] "d.toLocaleString('en-US') " "9/16/2020, 6:40:32 PM"
+2020-09-16T18:40:48.430-07:00 [INFO] "d.toLocaleString('en-US') " "16299 ms."
+2020-09-16T18:40:48.453-07:00 [INFO] "fasterToLocalString(d)   " "9/16/2020, 6:40:32 PM"
+2020-09-16T18:40:48.453-07:00 [INFO] "fasterToLocalString(d)   " "23 ms."
+----
+
+The above was run on a single Eventing node 12 cores at 2.2 GHz, shows that the v8 runner is not 
+performant for the built-in function toLocaleString. We can use fasterToLocalString and do 708 more conversions in the same amount of time.
+--
+====
