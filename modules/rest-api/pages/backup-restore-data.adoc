@@ -1,0 +1,142 @@
+= Restore Data
+
+[abstract]
+The Backup Service REST API supports the restoration of data from an active, imported, or archived repository into either the host cluster or into another cluster running the Backup Service.
+
+[#http-methods-and-uris]
+== HTTP Methods and URIs
+
+----
+POST /cluster/self/repository/< "active" | "imported" | "archived" >/<repository-id>/restore
+----
+
+[#description]
+== Description
+
+Documents from a specified repository are restored from that repository to the cluster.
+The repository can be active, imported, or archived.
+Details of the restoration must be specified as a JSON payload.
+
+[#curl-syntax]
+== Curl Syntax
+
+----
+curl -X POST http://<backup-node-ip-address-or-domain-name>:8097/cluster/self/\
+repository/< "active" | "imported" | "archived" >/\
+<repository-id>/restore
+  -u <username>:<password>
+  -d <restore-specification>
+----
+
+The `username` and `password` must identify an administrator with the Full Admin role.
+The `repository-id` must be the name of an active, imported, or archived repository, according to the statement's preceding path-parameter.
+
+The `restore-specification` must be a JSON document containing the following:
+
+* The _target_, which is the IP address or qualified domain-name of the cluster onto which the data is to be restored.
+Note that this need not be the host cluster, and need not be a cluster running the Backup Service.
+Port `8091` should be specified.
+
+* The username and password of an administrator for the target cluster who has the Full Admin role.
+
+* Optionally, whether data that resides in one bucket (on the repository) is to be restored onto another (on the cluster).
+The default is for data to be restored to the same bucket.
+
+* Optionally, whether the intended destination bucket for the restore should be automatically created.
+The default value is `false`.
+
+* Optionally, whether empty collections should be removed from the restore.
+The default value is `false`.
+
+* Optionally, whether data for each specific service should be included or omitted from the restore.
+The default value is to include all.
+
+* Optionally, the first and last backups within the repository that are to be included in the restore, along with all backups that occurred in between them.
+The default is to include all backups.
+
+* Optionally, regular expressions to filter documents' keys and values, to constrain the documents that are included in the restore.
+The default is to apply no constraints.
+
+* Optionally, whether the bucket configuration from the repository should be restored to the bucket currently on the cluster.
+The default is not to restore the old configuration.
+
+* Optionally, whether earlier versions of documents (on the repository) should be permitted to overwrite later versions (on the cluster).
+The default is _not_ to permit this.
+
+* Optionally, an updated timestamp for the keys.
+This should only be specified when a new expiration value is established for the documents to be restored; and _must_ be set when `all` documents are granted a new expiration.
+The timestamp value can be specified either as a time in RFC3339 format, or `0`: `0` means there is no expiration applied.
+
+* Optionally, a new expiration (_time-to-live_) value for the documents being restored.
+This parameter can either be set to `none`, `all` or `expired`; and should be only used when the timestamp for the documents is also updated.
+If `none` is specified, TTL values are not changed: this is the default.
+If `all` is specified, TTL values for all documents are replaced with the value of the new timestamp.
+If `expired` is specified, TTL values are changed only for documents that have already expired.
+
+Syntactically, the `restore-specification` is as follows:
+
+----
+{
+  "target": <ip-address-or-domain-name>":8091",
+  "user": <username>,
+  "password": <password>",
+  "auto_create_buckets": < true | false >,
+  "auto_remove_collections": < true | false >,
+  "disable_analytics": < true | false >,
+  "disable_data": < true | false >,
+  "disable_eventing": < true | false >,
+  "disable_ft": < true | false >,
+  "disable_gsi_indexes": < true | false >,
+  "disable_views": < true | false >,
+  "end": <earliest-backup-to-include>,
+  "filter_keys": <regular-expression>,
+  "filter_values": <regular-expression>,
+  "force_updates": < true | false >,
+  "map_data": < old-bucket"="new-bucket >,
+  "start": <latest-backup-to-include>,
+  "enable_bucket_config": < true | false >,
+  "replace_ttl": < "all" | "none" | "expired" >,
+  "replace_ttl_with": < RFC3339-time-value | "0" >
+}
+----
+
+[#responses]
+== Responses
+
+Successful execution returns `200 OK`, and a task-id for the restore.
+
+If the specified repository cannot be located, `404 Object Not Found` is returned, with an object such as the following: `{"status":404,"msg":"repository res4tRepo does not exist"}`.
+
+If the call is improperly formatted, `400 Bad Request` is returned; with an object such as the following: `{"status":400,"msg":"invalid request body","extras":"invalid character '{' looking for beginning of object key string"}`.
+
+If an internal error prevents successful execution, `500 Internal Server Error` is returned; with a message containing additional information on the error.
+
+Failure to authenticate returns `401 Unauthorized`.
+An incorrectly specified URI returns `404 Object Not Found`.
+
+[#example]
+== Example
+
+The following example restores to the host cluster data from the Data Service currently contained in the active repository `restRepo`.
+The expression specifies start and end backups, and imposes filters on document keys and values.
+It also restores the data to a new bucket (`ts7`), to be automatically created by the Backup Service as part of the restore procedure.
+
+----
+curl -v -X POST http://127.0.0.1:8097/api/v1/api/v1/cluster/self/\
+repository/active/restRepo/restore \
+-u Administrator:password \
+-d '{"target":"http://127.0.0.1:8091","user":"Administrator","password":"password",
+"auto_create_buckets":true,"auto_remove_collections":true,"disable_analytics":true,"disable_data":false,"disable_eventing":true,"disable_ft":true,"disable_gsi_indexes":true,"disable_views":true,"end":"2020-09-29T11_28_16.197951+01_00","filter_keys":"^airline","filter_values":"MIL*","force_updates":true,"map_data":"travel-sample=ts7","start":"2020-09-29T11_08_15.666658+01_00"}'
+----
+
+If successful, the call returns a task-id, such as the following:
+
+----
+{"task_name":"restore-f97ce4b9-ac43-4726-bc1f-b5c92b19ce00"}
+----
+
+[#see-also]
+== See Also
+
+An overview of the Backup Service is provided in xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
+A step-by-step guide to using Couchbase Web Console to configure and use the Backup Service is provided in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Manage Backup and Restore].
