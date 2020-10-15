@@ -1,47 +1,10 @@
 = DROP INDEX
 :page-topic-type: concept
+:imagesdir: ../../assets/images
 
-The DROP INDEX statement allows you to drop a named primary or secondary index, dropping an index that has replicas will also drop all of the replica indexes too.
+The DROP INDEX statement allows you to drop a named primary index or a secondary index.
+Dropping an index that has replicas will also drop all of the replica indexes too.
 You can drop unnamed primary indexes using the xref:n1ql-language-reference/dropprimaryindex.adoc[DROP PRIMARY INDEX] statement.
-
-_drop-index:_
-
-----
- DROP INDEX named_keyspace_ref.index_name
- [USING GSI];
-----
-
-_index_name:_
-
-index name is a unique name that is provided to identify the index.
-
-_named-keyspace-ref(expression[,expression]*)_
-
-----
-[ namespace-name :] keyspace-name
-----
-
-_keyspace-name:_
-
-identifier that refers to the bucket name.
-Specifies the bucket as source for which the index needs to be created.
-You can add an optional namespace name to the keyspace name in this way:
-
-_namespace-name : keyspace-name_
-
-Currently, only the `default` namespace is available.
-For example, `default:{backtick}travel-sample{backtick}` indicates the `travel-sample` keyspace in the `default` namespace.
-If the namespace name is omitted, the default namespace in the current session is used.
-
-_USING GSI_
-
-In Couchbase Server 6.5 and later, the index type for a secondary index must be Global Secondary Index (GSI).
-The `USING GSI` keywords are optional and may be omitted.
-
-When using memory-optimized indexes, DROP INDEX is an expensive operation and may take a few minutes to complete.
-
-[caption=Attention]
-IMPORTANT: We recommend that you do not drop (or create) secondary indexes when any node with a secondary index role is down as this may result in duplicate index names.
 
 *RBAC Privileges*
 
@@ -49,21 +12,197 @@ User executing the DROP INDEX statement must have the _Query Manage Index_ privi
 For more details about user roles, see
 xref:learn:security/authorization-overview.adoc[Authorization].
 
-== Example
+== Syntax
 
-Example below creates a secondary index on the beer-sample bucket.
-Once the index creation statement comes back, system:indexes is queried for status of the index.
+[subs="normal"]
+----
+drop-index ::= DROP INDEX ( <<index-identifier>> | __index-name__ ON <<keyspace-ref>> ) [ <<index-using>> ]
+----
 
+image::n1ql-language-reference/drop-index.png["'DROP' 'INDEX' ( index-identifier | index-name 'ON' keyspace-ref ) index-using?"]
+
+[[index-identifier,index-identifier]]
+=== Index Identifier
+
+[subs="normal"]
+----
+index-identifier ::= ( __collection__ | [ __namespace__ ':' ] __bucket__ ) '.' __index-name__
+----
+
+image::n1ql-language-reference/index-identifier.png["( ( collection | ( namespace ':' )? bucket ) '.' index-name"]
+
+You can use a dotted notation to specify the index and the keyspace on which the index is built.
+This syntax provides compatibility with legacy versions of Couchbase Server, but if the keyspace is a named collection, it does not enable you to specify the full or relative path to the collection.
+
+* If the index is built on the default collection in the default scope within a bucket, the index identifier may be just an optional namespace, the bucket name, and the index name.
+For example, `default:{backtick}travel-sample{backtick}.{backtick}def-type{backtick}` indicates the `def-type` index in the `travel-sample` keyspace in the `default` namespace.
+
+* If the index is built on a named collection, the index identifier may be just the collection name with no path, and the index name.
+When you specify the collection name, you must set the xref:settings:query-settings.adoc#query_context[query_context] request-level parameter to indicate the required namespace, bucket, and scope.
+For example, `cities.{backtick}idx-name{backtick}` indicates the `idx-name` index in the `cities` collection, assuming that the query context is set.
+
+//
+
+namespace::
+(Optional if *_bucket_* is supplied) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-heirarchy[namespace] of the indexed bucket.
+Currently, only the `default` namespace is available.
+If the namespace name is omitted, the default namespace in the current session is used.
+
+bucket::
+(Required if *_collection_* is not supplied) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[bucket name].
+It specifies the bucket as the source for the index to be deleted.
+
+collection::
+(Required if *_bucket_* is not supplied) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[collection name].
+It specifies the collection as the source for the index to be deleted.
+
+index-name:: (Required) A unique name that identifies the index.
+
+NOTE: If there is a hyphen (-) inside the bucket, collection, or index name, you must wrap it in backticks ({backtick} {backtick}).
+
+[[keyspace-ref,keyspace-ref]]
+=== Index Name ON Keyspace Reference
+
+_(Introduced in Couchbase Server 7.0)_
+
+[subs="normal"]
+----
+keyspace-ref ::= __collection__ | ( [ __namespace__ ':' ] __bucket__ [ '.' __scope__ '.' __collection__ ] )
+----
+
+image::n1ql-language-reference/keyspace-ref.png["collection | ( ( namespace ':' )? bucket ( '.' scope '.' )? )"]
+
+In Couchbase Server 7.0 and later, you can specify the index name with the `ON` keyword and a keyspace reference to specify the keyspace on which the index is built.
+You can use this syntax when the keyspace is a named collection, and you want to specify the full or relative path to the collection.
+
+* If the index is built on the default collection in the default scope within a bucket, the keyspace reference may be just an optional namespace and the bucket name.
+For example, `{backtick}def-type{backtick} ON default:{backtick}travel-sample{backtick}` indicates the `def-type` index in the `travel-sample` keyspace in the `default` namespace.
+
+* If the index is built on a named collection, the keyspace reference may be just the collection name with no path.
+When you specify a collection name without a path, you must set the xref:settings:query-settings.adoc#query_context[query_context] request-level parameter to indicate the required namespace, bucket, and scope.
+For example, `{backtick}idx-name{backtick} ON cities` indicates the `idx-name` index in the `cities` collection, assuming the query context is set.
+
+* If the namespace is built on a named collection and the query context is not set, the keyspace reference must consist of an optional namespace, the bucket name, the scope name, and finally the collection name.
+For example, `{backtick}idx-name{backtick} ON default:{backtick}travel-sample{backtick}.places.cities` indicates the `idx-name` index in the collection whose full path is `default:{backtick}travel-sample{backtick}.places.cities`.
+
+//
+
+namespace::
+(Optional if *_bucket_* is supplied) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-heirarchy[namespace] of the indexed bucket.
+Currently, only the `default` namespace is available.
+If the namespace name is omitted, the default namespace in the current session is used.
+
+bucket::
+(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[bucket name].
+It specifies the bucket as the source for the index to be deleted.
+
+scope::
+(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[scope name].
+It specifies the scope which contains the indexed collection.
+
+collection::
+(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[collection name].
+It specifies the collection as the source for the index to be deleted.
+
+NOTE: If there is a hyphen (-) inside the bucket name, the scope name, or the collection name, you must wrap that part of the path in backticks ({backtick} {backtick}).
+
+[[index-using,index-using]]
+=== USING Clause
+
+[subs="normal"]
+----
+index-using ::= USING GSI
+----
+
+image::n1ql-language-reference/index-using.png["'USING' 'GSI'"]
+
+In Couchbase Server 6.5 and later, the index type for a secondary index must be Global Secondary Index (GSI).
+The `USING GSI` keywords are optional and may be omitted.
+
+== Usage
+
+When using memory-optimized indexes, DROP INDEX is an expensive operation and may take a few minutes to complete.
+
+If you drop an index with replicas while one of the index nodes is failed over, then only the replicas in the active index nodes are dropped.
+If the failed-over index node is recovered, then the orphan replica will be dropped when this failed-over indexer is added back to cluster.
+
+If you drop an index with replicas when one of the index nodes is unavailable but not failed over, the drop index operation may fail.
+
+[caption=Attention]
+IMPORTANT: We recommend that you do not drop (or create) secondary indexes when any node with a secondary index role is down as this may result in duplicate index names.
+
+== Examples
+
+[[ex-1]]
+.Drop index from the default collection in the default scope
+====
+This example creates a secondary index on the default collection in the default scope in the travel-sample bucket.
+Once the index creation statement comes back, `system:indexes` is queried for the status of the index.
+
+.Create the index
 [source,n1ql]
 ----
-CREATE INDEX `beer-sample-type-index` ON `beer-sample`(type) USING GSI;
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
+CREATE INDEX `idx-callsign` ON `travel-sample`(callsign) USING GSI;
+SELECT * FROM system:indexes WHERE name="idx-callsign";
 ----
 
-Subsequently, the index is dropped with the following statement and it no longer is reported in the system:indexes output.
+Subsequently, the index is dropped with the following statement and it no longer is reported in the `system:indexes` output.
 
+.Drop the index
 [source,n1ql]
 ----
-DROP INDEX `beer-sample`.`beer-sample-type-index` USING GSI;
-SELECT * FROM system:indexes WHERE name="beer-sample-type-index";
+DROP INDEX `travel-sample`.`idx-callsign` USING GSI;
+SELECT * FROM system:indexes WHERE name="idx-callsign";
 ----
+
+The following command would drop the index in exactly the same way, but uses alternative syntax.
+
+.Drop the index -- alternative syntax
+[source,n1ql]
+----
+DROP INDEX `idx-callsign` ON `travel-sample` USING GSI;
+----
+====
+
+[[ex-2]]
+.Drop index from a named collection with query context
+====
+This statement drops an index called `idx-name` from the `countries` collection within the `places` scope in the `travel-sample` bucket.
+It is assumed that the scope, collection, and index have already been created.
+
+.Set the query context
+[source,shell]
+----
+cbq> \SET -query_context "travel-sample.places";
+----
+
+.Drop the index
+[source,shell]
+----
+cbq> DROP INDEX countries.`idx-name`;
+----
+
+The following command would drop the index in exactly the same way, but uses alternative syntax.
+
+.Drop the index -- alternative syntax
+[source,shell]
+----
+cbq> DROP INDEX `idx-name` ON countries;
+----
+====
+
+
+[[ex-3]]
+.Drop index from a named collection with path
+====
+This statement drops an index called `idx-name` from the `countries` collection within the `places` scope in the `travel-sample` bucket.
+It is assumed that the scope, collection, and index have already been created.
+
+.Drop the index
+[source,n1ql]
+----
+DROP INDEX `idx-name` ON `travel-sample`.places.countries;
+----
+
+You must use this syntax if the index was created on a named collection, and you need to specify the full or relative path to the collection.
+====
