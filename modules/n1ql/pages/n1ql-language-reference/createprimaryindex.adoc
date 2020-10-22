@@ -1,26 +1,31 @@
 = CREATE PRIMARY INDEX
+:page-topic-type: concept
+:imagesdir: ../../assets/images
+:keywords: primary, index, placement
+
+:authorization-overview: xref:learn:security/authorization-overview.adoc
+:build-index: xref:n1ql-language-reference/build-index.adoc
+:query_context: xref:settings:query-settings.adoc#query_context
+:identifiers: xref:n1ql-language-reference/identifiers.adoc
+:logical-hierarchy: xref:n1ql-intro/sysinfo.adoc#logical-hierarchy
+:index-replication: xref:learn:services-and-indexes/indexes/index-replication.adoc#index-replication
+:query-settings: xref:manage:manage-settings/query-settings.adoc
 
 The `CREATE PRIMARY INDEX` statement allows you to create a primary index.
 Primary indexes contain a full set of keys in a given keyspace.
 Primary indexes are optional and are only required for running ad hoc queries on a keyspace that is not supported by a secondary index.
 
-`CREATE PRIMARY INDEX` is by default a synchronous operation.
-The `CREATE PRIMARY INDEX` statement blocks until the operation finishes.
+`CREATE PRIMARY INDEX` is by default a synchronous operation,
+which means that every `CREATE PRIMARY INDEX` statement blocks until the operation finishes.
 Index building starts by creating a task that is queued for index build.
 After this phase, if you lose connectivity, the index build operation continues in the background.
 You can also run index creation asynchronously by using the `defer_build` clause.
-In the asynchronous mode, `CREATE PRIMARY INDEX` starts a task to create the primary index and returns as soon as the task is queued for execution.
-The full index creation operation happens in the background.
+In the asynchronous mode, `CREATE PRIMARY INDEX` starts a task to create the primary index definition, and returns as soon as the task finishes.
+You can then build the index using the {build-index}[BUILD INDEX] command.
 
 GSI indexers provide a status field and mark index status pending.
 With the GSI indexer, index status continues to report `pending`.
-This status field and other index metadata can be queried by using `system:indexes`.
-
-*RBAC Privileges*
-
-Users executing the `CREATE PRIMARY INDEX` statement must have the _Query Manage Index_ privilege granted on the keyspace.
-For more details about user roles, see
-xref:learn:security/authorization-overview.adoc[Authorization].
+This status field and other index metadata can be queried using `system:indexes`.
 
 [IMPORTANT]
 ====
@@ -28,115 +33,194 @@ Indexes cannot be built concurrently on a given keyspace unless the `defer_build
 The following error is reported if a second index creation operation is kicked off before the completion of the ongoing index creation.
 
 ----
-"errors": {"code": 12014,
-   "msg": "error: Build Already In Progress. Bucket BUCKET_NAME. Index INDEX_NAME. Index state: pending"}
+include::example$n1ql-language-reference/build-idx-error.jsonc[]
 ----
-
-You can create multiple primary indexes on a bucket for better index availability and place them on separate nodes by using the `nodes` clause.
 ====
+
+You can create multiple identical secondary indexes on a bucket and place them on separate nodes for better index availability.
+In Couchbase Server Enterprise Edition, the recommended way to do this is using the `num_replicas` option.
+In Couchbase Server Community Edition, you need to create multiple identical indexes and place them using the `nodes` option.
+Refer to <<index-with,WITH Clause>> below for more details.
+
+[discrete]
+===== RBAC Privileges
+
+Users executing the `CREATE PRIMARY INDEX` statement must have the _Query Manage Index_ privilege granted on the keyspace.
+For more details about user roles, see
+{authorization-overview}[Authorization].
 
 == Syntax
 
+[subs="normal"]
 ----
-CREATE PRIMARY INDEX [index_name]
-    ON named_keyspace_ref
-    [ USING GSI ]
-    [ WITH {"nodes": ["node_name"], "defer_build":true|false}, "num_replica": num_replica_num } ];
+create-primary-index ::= CREATE PRIMARY INDEX [ __index-name__ ] ON <<keyspace-ref>> [ <<index-using>> ] [ <<index-with>> ]
 ----
 
-Arguments::
-index_name;;
-[Optional]  The unique name that identifies the index.
+image::n1ql-language-reference/create-primary-index.png["'CREATE' 'PRIMARY' 'INDEX' index-name? 'ON' keyspace-ref index-using? index-with?"]
+
+index-name::
+[Optional] A unique name that identifies the index.
 If a name is not specified, the default name of `#primary` is applied.
 +
-Valid GSI index names can contain any of the following characters: A-Z a-z 0-9 # _, and must start with a letter [A-Z a-z].
-+
+Valid GSI index names can contain any of the following characters: `A-Z` `a-z` `0-9` `&num;` `&lowbar;`, and must start with a letter, [`A-Z` `a-z`].
 The minimum length of an index name is 1 character and there is no maximum length set for an index name.
-+
-When querying, if the index name contains a '&#35;' or '_' character, you must enclose the index name within backticks.
+When querying, if the index name contains a `&num;` or `&lowbar;` character, you must enclose the index name within backticks.
 +
 IMPORTANT: Unnamed primary indexes are dropped by using the `DROP PRIMARY INDEX` statement, and named primary indexes are dropped by using the `DROP INDEX` statement.
 
-named_keyspace_ref;;
-Identifier that refers to the keyspace name.
-Specifies the keyspace as source for which the index needs to be created.
-You can add an optional namespace name to the keyspace name in this way:
-+
+[[keyspace-ref,keyspace-ref]]
+=== Keyspace Reference
+
+[subs="normal"]
 ----
-namespace-name : keyspace-name
+keyspace-ref ::= <<keyspace-path>> | <<keyspace-partial>>
 ----
-+
+
+image::n1ql-language-reference/keyspace-ref.png["keyspace-path | keyspace-partial"]
+
+Specifies the keyspace for which the index needs to be created.
+
+[[keyspace-path,keyspace=path]]
+==== Keyspace Path
+
+[subs="normal"]
+----
+keyspace-path ::= [ __namespace__ ':' ] __bucket__ [ '.' __scope__ '.' __collection__ ]
+----
+
+image::n1ql-language-reference/keyspace-path.png["( namespace ':' )? bucket ( '.' scope '.' collection )?"]
+
+If the keyspace is a named collection, or the default collection in the default scope within a bucket, the keyspace reference may be a keyspace path.
+
+In this case, the {query_context}[query_context] request-level parameter should not be set.
+
+namespace::
+(Optional) An {identifiers}[identifier] that refers to the {logical-hierarchy}[namespace] of the keyspace.
 Currently, only the `default` namespace is available.
-For example, `default:{backtick}travel-sample{backtick}` indicates the `travel-sample` keyspace in the `default` namespace.
 If the namespace name is omitted, the default namespace in the current session is used.
 
-USING GSI;;
+bucket::
+(Required) An {identifiers}[identifier] that refers to the {logical-hierarchy}[bucket name] of the keyspace.
+
+scope::
+(Optional) An {identifiers}[identifier] that refers to the {logical-hierarchy}[scope name] of the keyspace.
+If omitted, the bucket's default scope is used.
+
+collection::
+(Optional) An {identifiers}[identifier] that refers to the {logical-hierarchy}[collection name] of the keyspace.
+If omitted, the default collection in the bucket's default scope is used.
+
+NOTE: If there is a hyphen (-) inside the bucket name, the scope name, or the collection name, you must wrap that part of the path in backticks ({backtick}{nbsp}{backtick}).
+
+For example, `default:{backtick}travel-sample{backtick}` indicates the default collection in the default scope in the `travel-sample` bucket in the `default` namespace.
+
+[[keyspace-partial,keyspace-partial]]
+==== Keyspace Partial
+
+[subs="normal"]
+----
+keyspace-partial ::= __collection__
+----
+
+image::n1ql-language-reference/keyspace-partial.png["collection"]
+
+Alternatively, if the keyspace is a named collection, the keyspace reference may be just an {identifiers}[identifier] that refers to the {logical-hierarchy}[collection name] of the keyspace.
+
+In this case, you must set the {query_context}[query_context] request-level parameter to indicate the required namespace, bucket, and scope.
+
+If there is a hyphen inside the collection name, you must wrap the collection name in backticks ({backtick}{nbsp}{backtick}).
+
+[[index-using,index-using]]
+=== USING Clause
+
+[subs="normal"]
+----
+index-using ::= USING GSI
+----
+
+image::n1ql-language-reference/index-using.png["'USING' 'GSI'"]
+
 In Couchbase Server 6.5 and later, the index type for a primary index must be Global Secondary Index (GSI).
 The `USING GSI` keywords are optional and may be omitted.
 
-WITH options;; The `WITH` clause specifies additional options for the `GSI` type primary indexes.
-"nodes":["node name"]:::
-A single primary index of type `GSI` can only be placed on a single node that runs the indexing service.
-The `nodes` option allows you to specify the node that the index is placed on.
-If `nodes` is not specified, one of the nodes running the index service is randomly selected to host the index.
+[[index-with,index-with]]
+=== WITH Clause
+
+[subs="normal"]
+----
+index-with ::= WITH <<index-with-args,expr>>
+----
+
+image::n1ql-language-reference/index-with.png["'WITH' expr"]
+
+Use the WITH clause to specify additional options.
+
+[[index-with-args]]
+expr::
+An object with the following properties:
+
+nodes;;
+[Optional] An array of strings, each of which represents a node name.
 +
-Multiple nodes can be specified to distribute replicas of an index amongst multiple nodes.
+****
+[.edition]#{community}#
+
+In Couchbase Server Community Edition, a single primary index of type `GSI` can be placed on a single node that runs the indexing service.
+The `nodes` property allows you to specify the node that the index is placed on.
+(((default index placement)))If `nodes` is not specified, one of the nodes running the indexing service is randomly picked for the index.
+****
 +
+****
+[.edition]#{enterprise}#
+
+In Couchbase Server Enterprise Edition, you can specify multiple nodes to distribute replicas of an index across nodes running the indexing service, for example:
+
+[source,n1ql]
+----
+CREATE PRIMARY INDEX ON keyspace_name USING GSI
+WITH {"nodes":["node1:8091", "node2:8091", "node3:8091"]};
+----
+
 If specifying both [.var]`nodes` and [.var]`num_replica`, the number of nodes in the array must be one greater than the specified number of replicas otherwise the index creation will fail.
+
+(((default index placement)))If [.var]`nodes` is not specified, then the system chooses nodes on which to place the new index and any replicas, in order to achieve the best resource utilization across nodes running the indexing service.
+This is done by taking into account the current resource usage statistics of index nodes.
+****
 +
-IMPORTANT: The node names passed to the `nodes` parameter must include the cluster administration port (by default 8091).
+IMPORTANT: A node name passed to the `nodes` property must include the cluster administration port, by default 8091.
 For example `WITH {"nodes": ["192.0.2.0:8091"]}` instead of `WITH {"nodes": ["192.0.2.0"]}`.
 
-"defer_build":true|false:::
-When `defer_build` is set to true, the `CREATE PRIMARY INDEX` operation queues the task for building the index but immediately pauses the building of the index of type `GSI`.
+defer_build;;
+[Optional] Boolean.
+
+true:::
+When set to `true`, the `CREATE PRIMARY INDEX` operation queues the task for building the index but immediately pauses the building of the index of type `GSI`.
 Index building requires an expensive scan operation.
 Deferring building of the index with multiple indexes can optimize the expensive scan operation.
-You can defer building multiple indexes and, using `BUILD INDEX` statement, multiple indexes to be built efficiently with one efficient scan of keyspace data.
+Admins can defer building multiple indexes and, using the `BUILD INDEX` statement, multiple indexes to be built efficiently with one efficient scan of keyspace data.
+
+false:::
+When set to `false`, the `CREATE PRIMARY INDEX` operation queues the task for building the index and immediately kicks off the building of the index of type `GSI`.
+
+num_replica;;
 +
-When `defer_build` is set to `false`, the `CREATE PRIMARY INDEX` operation queues the task for building the index and immediately kicks off the building of the index of type `GSI`.
+****
+[.edition]#{enterprise}#
 
-"num_replica": num_replica_num:::
-[.var]`num_replica` specifies the number of replicas of the index to create.
-+
-The indexer will automatically distribute these indexes amongst index nodes in the cluster for load-balancing and high availability purposes.
-When creating an index with replicas in this manner, the indexer will attempt to distribute the replicas based on the server groups in use in the cluster where possible.
-+
-If [.var]`num_replica_num` is not less than the number of index nodes in the cluster, then the index creation will fail.
-+
-[caption=Attention]
-IMPORTANT: We recommend that you do not create (or drop) secondary indexes when any node with a secondary index role is down as this may result in duplicate index names.
+This property is only available in Couchbase Server Enterprise Edition.
 
-*Example 1*: Create a primary index on the travel-sample keyspace.
+[Optional] Integer that specifies the number of {index-replication}[replicas] of the index to create.
 
-----
-CREATE PRIMARY INDEX `travel-sample-primary-index` ON `travel-sample` USING GSI;
-----
+The indexer will automatically distribute these replicas amongst index nodes in the cluster for load-balancing and high availability purposes.
+The indexer will attempt to distribute the replicas based on the server groups in use in the cluster where possible.
 
-After the index creation statement comes back, `system:indexes` is queried for the status of the index.
+If the value of this property is not less than the number of index nodes in the cluster, then the index creation will fail.
+****
 
-----
-SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
-----
+== Usage
 
-*Example 2*: Create the same primary index using the `defer_build` option coupled with the `BUILD INDEX` statement.
-
-----
-CREATE PRIMARY INDEX `travel-sample-primary-index` ON `travel-sample` USING GSI
-    WITH {"defer_build":true};
-
-SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
-----
-
-With the `defer_build` option enabled, the output from `system:indexes` shows the `travel-sample-primary-index` in the pending state (`"state": "pending"`).
-`BUILD INDEX` can be used to kick off the deferred build on the primary index:
-
-----
-BUILD INDEX ON `travel-sample`(`travel-sample-primary-index`) USING GSI;
-
-SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
-----
-
-== Primary scan timeout
+[discrete]
+===== Primary Scan Timeout
 
 For a primary index scan on any keyspace size, the query engine guarantees that the client is not exposed to scan timeout if the indexer throws a scan timeout after it has returned a greater than zero sized subset of primary keys.
 To complete the scan, the query engine performs successive scans of the primary index until all the primary keys have been returned.
@@ -146,4 +230,62 @@ For example, if the indexer cannot find a snapshot that satisfies the consistenc
 
 For secondary index scans, the query engine does not handle scan timeout, and returns index scan timeout error to the client.
 You can handle scan timeout on a secondary index by increasing the indexer timeout setting (See
-xref:manage:manage-settings/query-settings.adoc[Query Settings]) or preferably by defining and using a more selective index.
+{query-settings}[Query Settings]) or preferably by defining and using a more selective index.
+
+== Examples
+
+.Create a primary index
+====
+Create a named primary index on the `travel-sample` keyspace.
+
+[source,n1ql]
+----
+CREATE PRIMARY INDEX `travel-sample-primary-index` ON `travel-sample` USING GSI;
+----
+
+After the index creation statement comes back, query `system:indexes` for the status of the index.
+
+[source,n1ql]
+----
+SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
+----
+====
+
+.Create a deferred primary index
+====
+Create the same primary index using the `defer_build` option.
+
+[source,n1ql]
+----
+CREATE PRIMARY INDEX `travel-sample-primary-index` ON `travel-sample` USING GSI
+    WITH {"defer_build":true};
+----
+
+Query `system:indexes` for the status of the index.
+
+[source,n1ql]
+----
+SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
+----
+
+The output from `system:indexes` shows the `travel-sample-primary-index` in the pending state (`"state": "pending"`).
+====
+
+.Build a deferred primary index
+====
+Kick off the deferred build on the named primary index.
+
+[source,n1ql]
+----
+BUILD INDEX ON `travel-sample`(`travel-sample-primary-index`) USING GSI;
+----
+
+Query `system:indexes` for the status of the index.
+
+[source,n1ql]
+----
+SELECT * FROM system:indexes WHERE name="travel-sample-primary-index";
+----
+
+The output from `system:indexes` shows that the index has now been created.
+====
