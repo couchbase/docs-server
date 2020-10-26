@@ -2,8 +2,22 @@
 :page-topic-type: concept
 :imagesdir: ../../assets/images
 :keywords: secondary, index, placement
-:enterprise: https://www.couchbase.com/products/editions[ENTERPRISE EDITION]
-:community: https://www.couchbase.com/products/editions[COMMUNITY EDITION]
+
+:authorization-overview: xref:learn:security/authorization-overview.adoc
+:index-replication: xref:learn:services-and-indexes/indexes/index-replication.adoc#index-replication
+:console-indexes: xref:manage:manage-ui/manage-ui.adoc#console-indexes
+:query_context: xref:settings:query-settings.adoc#query_context
+:build-index: xref:n1ql-language-reference/build-index.adoc
+:identifiers: xref:n1ql-language-reference/identifiers.adoc
+:expression: xref:n1ql-language-reference/index.adoc
+:indexing-arrays: xref:n1ql-language-reference/indexing-arrays.adoc
+:index-partitioning: xref:n1ql-language-reference/index-partitioning.adoc
+:indexing-meta-info: xref:n1ql-language-reference/indexing-meta-info.adoc
+:operator-pushdowns: xref:learn:services-and-indexes/indexes/index_pushdowns.adoc#operator-pushdowns
+
+:sysinfo: xref:n1ql-intro/sysinfo.adoc
+:logical-hierarchy: {sysinfo}#logical-hierarchy
+:querying-indexes: {sysinfo}#querying-indexes
 
 The `CREATE INDEX` statement allows you to create a secondary index.
 Secondary indexes contain a filtered or a full set of keys in a given bucket.
@@ -15,7 +29,7 @@ Index building starts by creating a task that is queued for index build.
 After this phase, if you lose connectivity, the index build operation continues in the background.
 You can also run index creation asynchronously using the `defer_build` clause.
 In the asynchronous mode, `CREATE INDEX` starts a task to create the index definition, and returns as soon as the task finishes.
-You can then build the index using the xref:n1ql-language-reference/build-index.adoc[BUILD INDEX] command.
+You can then build the index using the {build-index}[BUILD INDEX] command.
 
 GSI indexes provide a status field and mark index status pending.
 With GSI indexer, index status continues to report "pending".
@@ -48,7 +62,7 @@ This is to avoid the possibility of duplicate index names.
 
 User executing the CREATE INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
 For more details about user roles, see
-xref:learn:security/authorization-overview.adoc[Authorization].
+{authorization-overview}[Authorization].
 
 == Syntax
 
@@ -73,23 +87,72 @@ IMPORTANT: We recommend that you do not create (or drop) secondary indexes when 
 
 [subs="normal"]
 ----
-keyspace-ref ::= [ namespace ':' ] keyspace
+keyspace-ref ::= <<keyspace-path>> | <<keyspace-partial>>
 ----
 
-image::n1ql-language-reference/from-keyspace-ref.png["(namespace ':')? keyspace"]
+image::n1ql-language-reference/keyspace-ref.png["keyspace-path | keyspace-partial"]
+
+Specifies the keyspace for which the index needs to be created.
+
+NOTE: If there is a hyphen (-) inside any part of the keyspace reference, you must wrap that part of the keyspace reference in backticks ({backtick}{nbsp}{backtick}).
+Refer to the examples below.
+
+[[keyspace-path,keyspace-path]]
+==== Keyspace Path
+
+[subs="normal"]
+----
+keyspace-path ::= [ __namespace__ ':' ] __bucket__ [ '.' __scope__ '.' __collection__ ]
+----
+
+image::n1ql-language-reference/keyspace-path.png["( namespace ':' )? bucket ( '.' scope '.' collection )?"]
+
+If the keyspace is a named collection, or the default collection in the default scope within a bucket, the keyspace reference may be a keyspace path.
+In this case, the {query_context}[query_context] request-level parameter should not be set.
 
 namespace::
-(Optional) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the xref:n1ql-intro/sysinfo.adoc#logical-heirarchy[namespace] of the bucket to be indexed.
+(Optional) An {identifiers}[identifier] that refers to the {logical-hierarchy}[namespace] of the keyspace.
 Currently, only the `default` namespace is available.
 If the namespace name is omitted, the default namespace in the current session is used.
 
-keyspace::
-(Required) An xref:n1ql-language-reference/identifiers.adoc[identifier] that refers to the bucket name or xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[keyspace].
-It specifies the bucket as the source for which the index needs to be created.
+bucket::
+(Required) An {identifiers}[identifier] that refers to the {logical-hierarchy}[bucket name] of the keyspace.
 
-For example, `default:{backtick}travel-sample{backtick}` indicates the `travel-sample` keyspace in the `default` namespace.
+scope::
+(Optional) An {identifiers}[identifier] that refers to the {logical-hierarchy}[scope name] of the keyspace.
+If omitted, the bucket's default scope is used.
 
-NOTE: If there is a hyphen (-) inside the keyspace or bucket name, you must wrap it in backticks (` `).
+collection::
+(Optional) An {identifiers}[identifier] that refers to the {logical-hierarchy}[collection name] of the keyspace.
+If omitted, the default collection in the bucket's default scope is used.
+
+====
+For example, `default:{backtick}travel-sample{backtick}` indicates the default collection in the default scope in the `travel-sample` bucket in the `default` namespace.
+====
+
+====
+Similarly, `default:{backtick}travel-sample{backtick}.places.cities` indicates the `cities` collection in the `places` scope in the `travel-sample` bucket in the `default` namespace.
+====
+
+[[keyspace-partial,keyspace-partial]]
+==== Keyspace Partial
+
+[subs="normal"]
+----
+keyspace-partial ::= __collection__
+----
+
+image::n1ql-language-reference/keyspace-partial.png["collection"]
+
+Alternatively, if the keyspace is a named collection, the keyspace reference may be just the collection name with no path.
+In this case, you must set the {query_context}[query_context] request-level parameter to indicate the required namespace, bucket, and scope.
+
+collection::
+(Required) An {identifiers}[identifier] that refers to the {logical-hierarchy}[collection name] of the keyspace.
+
+====
+For example, `cities` indicates the `cities` collection, assuming the query context is set.
+====
 
 [[index-key,index-key]]
 === Index Key
@@ -106,12 +169,12 @@ This constitutes an index-key for the index.
 
 [[index-key-args]]
 expr::
-A xref:n1ql-language-reference/index.adoc[N1QL expression] over any fields in the document.
+A {expression}[N1QL expression] over any fields in the document.
 This cannot use constant expressions, aggregate functions, or sub-queries.
 
 array-expr::
 An array expression.
-For details about array expressions, see xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing].
+For details about array expressions, see {indexing-arrays}[Array Indexing].
 
 [[index-order,index-order]]
 === Index Order
@@ -227,7 +290,7 @@ num_replica;;
 
 This property is only available in Couchbase Server Enterprise Edition.
 
-[Optional] Integer that specifies the number of xref:learn:services-and-indexes/indexes/index-replication.adoc#index-replication[replicas] of the index to create.
+[Optional] Integer that specifies the number of {index-replication}[replicas] of the index to create.
 
 The indexer will automatically distribute these replicas amongst index nodes in the cluster for load-balancing and high availability purposes.
 The indexer will attempt to distribute the replicas based on the server groups in use in the cluster where possible.
@@ -240,16 +303,16 @@ If the value of this property is not less than the number of index nodes in the 
 === Array Indexing
 
 Array indexing enables you to create global indexes on array elements and optimize the execution of queries involving array elements.
-For details, refer to xref:n1ql-language-reference/indexing-arrays.adoc[Array Indexing].
+For details, refer to {indexing-arrays}[Array Indexing].
 
 === Index Partitioning
 
 Index partitioning helps increase the query performance by dividing and spreading a large index of documents across multiple nodes, horizontally scaling out an index as needed.
-For details, refer to xref:n1ql-language-reference/index-partitioning.adoc[Index Partitioning].
+For details, refer to {index-partitioning}[Index Partitioning].
 
 === Using the `meta().id` Function
 
-For details, refer to xref:n1ql-language-reference/indexing-meta-info.adoc[Indexing Meta Info].
+For details, refer to {indexing-meta-info}[Indexing Meta Info].
 
 === Using Indexes for Aggregates
 
@@ -268,17 +331,17 @@ The query engine will use the index `alt_idx` for the following query:
 SELECT MIN(geo.alt), MAX(geo.alt) FROM `travel-sample`;
 ----
 
-For details, refer to xref:learn:services-and-indexes/indexes/index_pushdowns.adoc#operator-pushdowns[Operator Pushdowns].
+For details, refer to {operator-pushdowns}[Operator Pushdowns].
 
 === Index Replicas
 
-In the xref:manage:manage-ui/manage-ui.adoc#console-indexes[Indexes screen in the Couchbase Web Console], index replicas are marked with their replica ID.
+In the {console-indexes}[Indexes screen in the Couchbase Web Console], index replicas are marked with their replica ID.
 
 image::n1ql-language-reference/create-index-replica-id.png["The Indexes screen showing an index and index replica with replica ID"]
 
 If you select `view by server node` from the drop-down menu, you can see the server node where each index and index replica is placed.
 
-You can also query the xref:n1ql:n1ql-intro/sysinfo.adoc#querying-indexes[system:indexes] catalog to find the ID of an index replica and see which node it is placed on.
+You can also query the {querying-indexes}[system:indexes] catalog to find the ID of an index replica and see which node it is placed on.
 
 [NOTE]
 ====
