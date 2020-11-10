@@ -2,47 +2,57 @@
 :page-aliases: understanding-couchbase:buckets-memory-and-storage/expiration
 
 [abstract]
-_Bucket Time To Live_ (TTL) imposes a maximum lifespan on items within a bucket, and thus ensures the expiration of such items, once the specified period is complete.
+_Time To Live_ (TTL) imposes a maximum lifespan on items within a bucket or a collection, and thus ensures the expiration of such items, once the specified period is complete.
 
 [#bucket-data-expiration-overview]
 == Overview
 
-Bucket TTL is a non-negative integer-value, specified per bucket, that determines the maximum expiration times of individual items: if Bucket TTL is enabled, each newly created item lives for the number of seconds specified by Bucket TTL, following the item's creation.
+TTL is a non-negative integer-value, specified per bucket or per collection, that determines the maximum expiration times of individual items within the bucket or collection: if TTL is enabled, each newly created item lives for the number of seconds specified by TTL, following the item's creation.
 After its expiration time is reached, the item will be deleted by Couchbase Server.
 Deleted items and their contents are no longer available: access-attempts are treated as if the items never existed.
 
-The maximum value for Bucket TTL is MAX32INT seconds (2147483648, or 68.096 years).
-The default value is 0, which indicates that Bucket TTL is disabled.
-If Bucket TTL is changed from the default, it is thereby enabled.
+The maximum value for TTL is MAX32INT seconds (2147483648, or 68.096 years).
+The default value is 0, which indicates that TTL is disabled.
+If TTL is changed from the default, it is thereby enabled.
 
-Whenever Bucket TTL is modified, items that existed _prior_ to the modification:
+Whenever TTL is modified, items that existed _prior_ to the modification:
 
-* Remain subject to the previous Bucket TTL, if Bucket TTL was previously enabled.
-* Remain subject to no Bucket TTL, if Bucket TTL was not previously enabled.
+* Remain subject to the previous TTL, if TTL was previously enabled.
+* Remain subject to no TTL, if TTL was not previously enabled.
 
-Items created or modified _following_ the modification of Bucket TTL are subject to the modified Bucket TTL.
+Items created or modified _following_ the modification of TTL are subject to the modified TTL.
 
-Bucket TTL can be established on Couchbase and Ephemeral buckets.
-It cannot be established on Memcached buckets.
-Note that Bucket TTL is only available in the Enterprise Edition of Couchbase Server.
+TTL can be established on Couchbase and Ephemeral buckets: it cannot be established on Memcached buckets.
+TTL can be established on collections: it cannot be established on scopes.
+Note that TTL is only available in the Enterprise Edition of Couchbase Server.
 
 [#expiration-bucket-versus-item]
-== Expiration: Bucket versus Item
+== Expiration: Bucket, Collection, and Item
 
 As described in xref:java-sdk:howtos:kv-operations.adoc#document-expiration[Document Expiration], an expiration time can be specified per document, by means of Couchbase SDK APIs: this is referred to as the item’s TTL.
-If a new item’s TTL is specified to be:
 
-* Above that of Bucket TTL, the item's TTL is reduced to the value of Bucket TTL.
-* Below that of Bucket TTL, the item's TTL is left unchanged.
-* 0, the item's TTL is reset to the value of Bucket TTL.
+In cases where an item has a TTL, the item's TTL may need to be modified, depending on the TTL of either its bucket or its collection:
+
+* If an item resides within a collection that has no TTL, and the collection resides within a bucket that _does_ have a TTL, the bucket's TTL is used to determine whether and how the item's TTL is modified.
+
+* If an item resides within a collection that has its own TTL, and the collection resides within a bucket that has no TTL, the collection's TTL is used to determine whether and how the item's TTL is modified.
+
+* If an item resides within a collection that has its own TTL, and the collection resides within a bucket that also has its own TTL, the bucket's TTL is ignored, and only the collection's TTL is used, to determine whether and how the item's TTL is modified.
+
+Determination of whether and how to modify the item's TTL is as follows.
+If a new item’s TTL is:
+
+* Above that of bucket or the collection's TTL, the item's TTL is reduced to the value of the bucket's or the collection's TTL.
+* Below that of the bucket's or the collection's TTL, the item's TTL is left unchanged.
+* 0, the item's TTL is reset to the value of bucket's or the collection's TTL.
 
 [#bucket_ttl_use_cases]
-== Bucket TTL Use Cases
+== TTL Use Cases
 
-Bucket TTL is intended for use with buckets containing data that either must or can be permitted to expire after a certain period of time.
+TTL is intended for use with buckets and collections containing data that either must or can be permitted to expire after a certain period of time.
 
-Bucket TTL _must not_ be used with buckets whose data is required not to expire: for example, the buckets that support Couchbase Eventing and Couchbase Mobile.
-If Bucket TTL is used with such buckets, system failures may result.
+TTL _must not_ be used with buckets whose data is required not to expire: for example, the buckets that support Couchbase Eventing and Couchbase Mobile.
+If TTL is used with such buckets, system failures may result.
 
 [#post-expiration-purging]
 == Post-Expiration Purging
@@ -56,26 +66,26 @@ For information on the expiry pager, see xref:buckets-memory-and-storage/memory.
 For information on performing compaction with the Couchbase CLI, see xref:cli:cbcli/couchbase-cli-bucket-compact.adoc[bucket-compact]; with Couchbase REST APIs, see xref:rest-api:compaction-rest-api.adoc[Compaction API]; with the Couchbase Web Console (as _auto-compaction_), see
 xref:manage:manage-settings/configure-compact-settings.adoc[Auto-Compaction].
 
-As described in xref:buckets-memory-and-storage/storage.adoc[Storage], for each item that is deleted, a tombstone, which includes key and metadata, continues to be maintained by Couchbase Server for some period of time, as a record: this applies to all instances of item-deletion, including those achieved by specifying Bucket TTL.
+As described in xref:buckets-memory-and-storage/storage.adoc[Storage], for each collection or item that is deleted, a _tombstone_ continues to be maintained by Couchbase Server for some period of time, as a record: this applies to all instances of item-deletion, including those achieved by specifying TTL.
 To ensure that no trace of deleted items remains, tombstones are removed through a _Metadata Purge_.
 This is an automatic, non-disruptive background-process, which can be scheduled if necessary by means of Couchbase Web Console; as described in
 xref:manage:manage-settings/configure-compact-settings.adoc[Auto-Compaction].
 Note that the console allows the intervals between purges to be established as appropriately low, so that tombstones are removed promptly.
 
 [#bucket-expiration-and-xdcr]
-== Bucket-Expiration and XDCR
+== Expiration and XDCR
 
-When Cross Data-Center Replication occurs, the Bucket TTL setting does not get propagated from the source bucket to the target.
-However, items within the source bucket that have individual expiration times, including ones derived from the source Bucket TTL setting, are replicated to the target along with their individual expiration times.
+When Cross Data-Center Replication occurs, the TTL setting does not get propagated from the source to the target.
+However, items within the source that have individual expiration times, including ones derived from the source Bucket TTL setting, are replicated to the target along with their individual expiration times.
 
-Buckets in the target cluster can have their own Bucket TTL settings, which may differ from those of the buckets in the source.
+Buckets and collections in the target cluster can have their own TTL settings, which may differ from those of the buckets in the source.
 If, on the target cluster, the TTL of a replicated item is:
 
-* Above that of Bucket TTL, the item's TTL is reduced to the value of Bucket TTL.
-* Below that of Bucket TTL, the item's TTL is left unchanged.
-* 0, the item's TTL is reset to the value of Bucket TTL.
+* Above that of TTL, the item's TTL is reduced to the value of TTL.
+* Below that of TTL, the item's TTL is left unchanged.
+* 0, the item's TTL is reset to the value of TTL.
 
-Note that in cases where the TTL of the replicated item is above that of Bucket TTL or is 0, if bi-directional XDCR has been set up, the TTL of the item at the source is eventually also either reduced or reset to the value of the target's Bucket TTL.
+Note that in cases where the TTL of the replicated item is above that of the bucket's or the collection's TTL or is 0, if bi-directional XDCR has been set up, the TTL of the item at the source is eventually also either reduced or reset to the value of the target's bucket or collection TTL.
 
 Note also that when an item is replicated by XDCR, its expiration time is communicated to the target as absolute.
 This requires that the system clocks of the respective clusters be fully synchronized; otherwise, inconsistent behavior may result (as, for example, in the case where an item arrives at the target-cluster with an absolute expiration time that is earlier than the current time acknowledged by the target-cluster).
@@ -85,7 +95,7 @@ Note that optionally, TTL can be _omitted_ from a document replicated by means o
 For details, see xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[Deletion Filters].
 
 [#setting-bucket-data-expiration]
-== Setting Bucket-Expiration
+== Setting Expiration on Buckets and Collections
 
 An expiration time can be set for a bucket by means of any of the following:
 
@@ -96,7 +106,7 @@ See xref:cli:cbcli/couchbase-cli-bucket-create.adoc[bucket-create].
 * The Couchbase REST API.
 See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
 
-For information on roles that allow modification of bucket-settings, see
+For information on roles that allow modification of bucket and collection settings, see
 xref:learn:security/roles.adoc[Roles].
 
 [#auditing]
