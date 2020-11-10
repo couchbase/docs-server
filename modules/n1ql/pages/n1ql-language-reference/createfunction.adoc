@@ -1,13 +1,11 @@
 = CREATE FUNCTION
 :page-topic-type: concept
-:page-status: Developer Preview
+:page-status: Couchbase Server 7.0
 :imagesdir: ../../assets/images
 :page-partial:
 
 [abstract]
 The `CREATE FUNCTION` statement enables you to create a user-defined function.
-
-include::ROOT:partial$developer-preview.adoc[tag=admonition]
 
 // == RBAC Privileges
 // 
@@ -15,7 +13,7 @@ include::ROOT:partial$developer-preview.adoc[tag=admonition]
 // For more details about user roles, see
 // xref:learn:security/authorization-overview.adoc[Authorization].
 
-== Syntax
+== Purpose
 
 There are two types of user-defined function:
 
@@ -25,6 +23,31 @@ They enable you to name and reuse complex or repetitive expressions, including s
 * <<create-function-external,External functions>> are defined using an external language.
 They enable you to create functions that may be difficult or impossible to define using built-in N1QL expressions.
 The only supported language is JavaScript.
+
+[[context]]
+=== Global Functions and Scope Functions
+
+You can create user-defined functions at two different levels of the N1QL xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[logical hierarchy].
+
+* A [def]_global function_ is created within a namespace, at the same level as the buckets within the namespace.
+When you call a global function, any partial keyspace references within the function definition are resolved against the function's namespace, regardless of the current xref:settings:query-settings.adoc#query_context[query context].
++
+For example, when you call a global function `default:global()` which contains the keyspace reference `travel-sample`, the keyspace reference is always resolved within the context of the function to the `default:{backtick}travel-sample{backtick}` bucket.
+
+* A [def]_scope function_ is created within a scope, at the same level as the collections within the scope.
+When you call a scope function, any partial keyspace references within the function definition are resolved against the function's scope, regardless of the current xref:settings:query-settings.adoc#query_context[query context].
++
+For example, when you call a scope function `default:{backtick}travel-sample{backtick}.modes.scope()` which contains the keyspace reference `train`, the keyspace reference is always resolved within the context of the function to `default:{backtick}travel-sample{backtick}.modes.train`.
+
+When you create a user-defined function, the current query context determines whether it is created as a global function or a scope function.
+If you want to create a user-defined function outside of the current query context, you must include the full path to the function when you specify the function name.
+
+Similarly, when you call a user-defined function, the current query context determines the path to the function.
+If you want to call a user-defined function outside of the current query context, you must include the full path to the function when you specify the function name.
+
+Finally, it is important to note that a global function is _not_ the same as a scope function stored in the default scope in a bucket.
+
+== Syntax
 
 The `CREATE FUNCTION` statement takes a different syntax depending on the type of function you are creating.
 
@@ -44,31 +67,30 @@ The two syntaxes are synonymous.
 
 [subs="normal"]
 ----
-create-function-inline ::= CREATE FUNCTION <<{section}-name,name>> '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')' ( '{' <<inline-expression,expression>> '}' | LANGUAGE INLINE AS <<inline-expression,expression>> )
+create-function-inline ::= CREATE [ OR REPLACE ] FUNCTION <<{section}-name,name>> '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')' ( '{' <<inline-expression,expression>> '}' | LANGUAGE INLINE AS <<inline-expression,expression>> )
 ----
 
-image::n1ql-language-reference/create-function-inline.png["'CREATE' 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' ( '{' expression '}' | 'LANGUAGE' 'INLINE' 'AS' expression )"]
+image::n1ql-language-reference/create-function-inline.png["'CREATE' ( 'OR' 'REPLACE' )? 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' ( '{' expression '}' | 'LANGUAGE' 'INLINE' 'AS' expression )"]
 
 // tag::arguments[]
 [id='{section}-name']
 name::
 The name of the function.
-This may be an unqualified identifier, such as `func1` or `{backtick}func-1{backtick}`, or a qualified identifier with a namespace, such as `default:func1`.
-It is recommended to use an unqualified identifier for the function name.
-This may not be the same as a reserved keyword.
-A function name with a namespace may have the same name as a reserved keyword.
+It is recommended to use an unqualified identifier for the function name, such as `func1` or `{backtick}func-1{backtick}`.
+In this case, the function is created as a global function or a scope function, depending on the current query context.
 +
-[NOTE]
---
-You cannot create a function with the same name as an existing user-defined function.
-If you want to redefine a function, you must drop the function first, then create it again.
---
+To create a global function in a particular namespace, the function name must be a qualified identifier with a namespace, such as `default:func1`.
+Similarly, to create a scope function in a particular scope, the function name must be a qualified identifier with the full path to a scope, such as `default:{backtick}travel-sample{backtick}.modes.func1`.
++
+If the function name is an unqualified identifier, it may not be the same as a reserved keyword.
+A function name with a specified namespace or scope may have the same name as a reserved keyword.
 
 [id='{section}-parameter']
 parameter::
 [Optional] The name of a function argument.
-If you specify named parameters for the function, then you must call the function with exactly the same number of parameters at execution time.
-If you specify no parameters for the function, then you may call the function with any number of parameters at execution time, or with none.
+If you specify named parameters for the function, then you must call the function with exactly the same number of arguments at execution time.
+If you specify no parameters, then you must call the function with no arguments.
+To create a variadic function, that is, a function which you can call with any number of arguments or none, specify `...` as the only parameter.
 // end::arguments[]
 
 [[inline-expression]]
@@ -76,7 +98,7 @@ expression::
 The N1QL expression that defines the function.
 You can use any valid expression.
 If you specified named parameters for the function, you can use these in the expression to represent arguments passed to the function at execution time.
-If you did not specify any named parameters for the function, any arguments passed to the function at execution time are held in an array named `args`.
+If you specified that the function is variadic, any arguments passed to the function at execution time are held in an array named `args`.
 +
 [NOTE]
 --
@@ -89,30 +111,44 @@ For inline functions, the result and type of the function are the result and typ
 If you need to return multiple values, construct an array.
 --
 
+// tag::replace[]
+[id='{section}-replace']
+==== Replacing a Function
+
+The optional `OR REPLACE` keywords enable you to redefine a function.
+If these keywords are present, and a function with the same name already exists, the existing function is replaced.
+
+If these keywords are not present, and a function with the same name already exists, an error is generated.
+// end::replace[]
+
 [[create-function-external]]
 :section: external
 === External Functions
 
 [subs="normal"]
 ----
-create-function-external ::=  CREATE FUNCTION <<{section}-name,name>> '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')' LANGUAGE JAVASCRIPT AS '{' <<external-library,library>> ',' <<external-object,object>> '}'
+create-function-external ::= CREATE [ OR REPLACE ] FUNCTION <<{section}-name,name>> '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')' LANGUAGE JAVASCRIPT AS <<external-object,object>> AT <<external-library,library>>
 ----
 
-image::n1ql-language-reference/create-function-external.png["'CREATE' 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' 'LANGUAGE' 'JAVASCRIPT' 'AS' '{' library ',' object '}'"]
+image::n1ql-language-reference/create-function-external.png["'CREATE' ( 'OR' 'REPLACE' )? 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' 'LANGUAGE' 'JAVASCRIPT' 'AS' object 'AT' library"]
 
 include::createfunction.adoc[tag=arguments]
-
-[[external-library]]
-library::
-The name of the JavaScript library that contains the function you want to use.
-You must create the JavaScript library and the JavaScript function using the N1QL Functions REST API.
-For details, refer to xref:n1ql-rest-api/functions.adoc[Functions REST API].
 
 [[external-object]]
 object::
 The name of the JavaScript function that you want to use for the user-defined function.
+This parameter is a string and must be wrapped in quotes.
 The supported JavaScript syntax is the same as for the Eventing service.
 For details, refer to xref:eventing:eventing-language-constructs.adoc[Language Constructs].
+
+[[external-library]]
+library::
+The name of the JavaScript library that contains the function you want to use.
+This parameter is a string and must be wrapped in quotes.
+You must create the JavaScript library and the JavaScript function using the N1QL Functions REST API.
+For details, refer to xref:n1ql-rest-api/functions.adoc[Functions REST API].
+
+include::createfunction.adoc[tag=replace]
 
 == Examples
 
@@ -121,12 +157,12 @@ For simplicity, none of these examples implement any data validation or error ch
 .Inline function with the LANGUAGE syntax
 ====
 This statement creates a function called `celsius`, which converts Fahrenheit to Celsius.
-The function does not define any arguments.
+The function is variadic.
 The expression converts the first argument supplied at execution time, which is stored in the first member in the `args` array.
 
 [source,n1ql]
 ----
-CREATE FUNCTION celsius() LANGUAGE INLINE AS (args[0] - 32) * 5/9;
+CREATE FUNCTION celsius(...) LANGUAGE INLINE AS (args[0] - 32) * 5/9;
 ----
 
 .Test
@@ -147,12 +183,12 @@ EXECUTE FUNCTION celsius(100);
 .Inline function with the braces syntax
 ====
 This statement creates a function called `fahrenheit`, which converts Celsius to Fahrenheit.
-The function does not define any arguments.
+The function is variadic.
 The expression converts the first argument supplied at execution time, which is stored in the first member in the `args` array.
 
 [source,n1ql]
 ----
-CREATE FUNCTION fahrenheit() { (args[0] * 9/5) + 32 };
+CREATE FUNCTION fahrenheit(...) { (args[0] * 9/5) + 32 };
 ----
 
 .Test
@@ -169,7 +205,7 @@ EXECUTE FUNCTION fahrenheit(100, "ignore this");
 ]
 ----
 
-As no arguments were specified by the function definition, you can use any number of arguments when you call the function.
+As the function is variadic, you can use any number of arguments when you call the function.
 Arguments which are not used by the function expression are ignored.
 ====
 
@@ -283,7 +319,7 @@ The following statement creates a function called `javaScriptAdd`, which calls t
 
 [source,n1ql]
 ----
-CREATE FUNCTION javaScriptAdd() LANGUAGE JAVASCRIPT AS { "math", "add" };
+CREATE FUNCTION javaScriptAdd(...) LANGUAGE JAVASCRIPT AS "add" AT "math";
 ----
 
 .Test
@@ -297,6 +333,53 @@ EXECUTE FUNCTION javaScriptAdd(2, 3);
 ----
 [
   5
+]
+----
+====
+
+.Replace a function
+====
+This statement creates a function which returns an approximation of &pi;.
+The function takes no arguments.
+
+[source,n1ql]
+----
+CREATE FUNCTION pi() { 22 / 7 };
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION pi();
+----
+
+.Result
+[source,json]
+----
+[
+  3.142857142857143
+]
+----
+
+The following statement redefines the function so that it returns a slightly better approximation of &pi;.
+
+.Replace
+[source,n1ql]
+----
+CREATE OR REPLACE FUNCTION pi() { 355 / 113 };
+----
+
+.Test
+[source,n1ql]
+----
+EXECUTE FUNCTION pi();
+----
+
+.Result
+[source,json]
+----
+[
+  3.1415929203539825
 ]
 ----
 ====
