@@ -7,16 +7,16 @@ XDCR can be performed with reference to scopes and collections within source and
 == Understanding Scopes, Collections, and Replication
 
 As described in xref:learn:data/scopes-and-collections.adoc[Scopes and Collections], scopes and collections are containers for data within a bucket.
-A bucket can contain up to 100 scopes; and a scope can contain up to 1000 buckets.
+A cluster can contain up to 1000 scopes; and it can contain 1000 collections.
 
 As well as specifying a source bucket and a target bucket, XDCR can specify scopes and collections within those buckets.
-This allows data to be reassigned from one collection to another.
-It also provides a convenient way of _migrating_ data that currently resides in legacy buckets that do not support (or have not yet been established with) administrator-defined scopes and collections, into buckets, on a Version 7.0+ Couchbase-Server cluster, that _do_ contain administrator-defined scopes and collections.
+This allows data to be replicated from one collection to another.
 For more information, see xref:learn:clusters-and-availability/xdcr-overview.adoc#xdcr-with-scopes-and-collections[XDCR with Scopes and Collections].
 
 [#examples-on-this-page]
 == Examples on this Page
-The examples provided on this page &#8212; xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#migrate-data-to-a-collection[Migrate Data to a Collection] and xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicate-data-between-collections[Replicate Data Between Collections] &#8212; demonstrate how XDCR can be performed with reference to scopes and collections within source and target buckets, using Couchbase Web Console.
+
+The examples provided on this page &#8212; xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#migrate-data-to-a-collection[Migrate Data to a Collection], xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicate-data-between-collections-implicitly[Replicate Data Between Collections Implicitly], and xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicate-data-between-collections-explicitly[Replicate Data Between Collections Explicitly] &#8212; demonstrate how XDCR can be performed with reference to scopes and collections within source and target buckets, using Couchbase Web Console.
 The examples assume the following:
 
 * A single-node cluster named `10.144.210.101` has been created, and features the `travel-sample` bucket.
@@ -28,21 +28,34 @@ This bucket contains a scope named `airlineScope`; which itself contains a colle
 For information on creating scopes and collections, see xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc[Manage Scopes and Collections].
 
 * A single-node cluster named `10.144.210.103` has been created, and features a single, empty bucket, named `tsBackup`.
+This bucket contains a scope named `airlineScope`; which itself contains a collection named `airlineCollection`.
+Note that the scope and collection names on `10.144.210.103` are thus identical to those on `10.144.210.104`.
+
+* A single-node cluster named `10.144.210.104` has been created, and features a single, empty bucket named `tsBackup2`.
 This bucket contains a scope named `usAirlineBackupScope`; which itself contains a collection named `usAirlineBackupCollection`.
 
-* The cluster `10.144.210.101` has defined `10.144.210.102` as a remote cluster for XDCR.
-In turn, the cluster `10.144.210.102` has defined `10.144.210.103` as a remote cluster for XDCR.
+* The cluster `10.144.210.101` has defined `10.144.210.102`, the cluster `10.144.210.102` has defined `10.144.210.103`, and the cluster `10.144.210.103` has defined `10.144.210.104` as a remote cluster for XDCR: this will permit a chain of replications to be established, from the first cluster to the last.
 
 Before following the examples, familiarity should be gained with XDCR management-basics, explained on other pages. In particular, see xref:manage:manage-xdcr/prepare-for-xdcr.adoc[Prepare for XDCR], xref:manage:manage-xdcr/create-xdcr-reference.adoc[Create a Reference], xref:manage:manage-xdcr/create-xdcr-replication.adoc[Create a Replications], and xref:manage:manage-xdcr/filter-xdcr-replication.adoc[Filter a Replication].
 
 [#migrate-data-to-a-collection]
 == Migrate Data to a Collection
 
-By specifying a scope and collection within a target bucket, XDCR can be used to replicate data selectively from the `_default` collection within one bucket to the purpose-created collection within another.
-This is demonstrated in the following example.
-(Note that the procedure works in the same way when the source bucket is on a pre-7.0 version of Couchbase Server, and consequently has no `_default` scope or collection.)
+By specifying a scope and collection within a target bucket, XDCR can be used to replicate data selectively from the `&#95;default` collection within one bucket to the purpose-created collection within another.
+Once such migration is complete, all future replications between collections should be performed with _implicit_ or _explicit_ mapping, as described in the corresponding examples, below.
 
-Proceed as follows:
+Before migrating data in a production context, note the following:
+
+* Each established migration rule is CPU-intensive, and may lower XDCR replication performance.
+The more migration rules are added, the slower each migration replication will be.
+Therefore, the total number of simultaneous migration-rule-based replications per source cluster should be no greater than 2.
+
+* Correspondingly, if migration is to be performed with many rules; the replications should be performed 2 at a time.
+On conclusion of those replications, applications intended to use the migrated data should be appropriately switched over.
+Then, the next two migration rules should be configured, and the process repeated.
+Continue in this way until the overall migration is complete.
+
+Migration can now be exemplified as follows:
 
 . Access the *XDCR Replications* screen of cluster `101.144.210.101`.
 Currently, a remote reference to `10.144.210.102` is defined; but no replications have yet been defined.
@@ -104,10 +117,16 @@ image::manage-xdcr/xdcr-target-collection-filled.png[,680,align=left]
 +
 This indicates that the `airline` documents from `travel-sample` have been successfully filtered and replicated to the `airlineCollection` collection, within the remote bucket `ts`.
 
-[#replicate-data-between-collections]
-== Replicate Data Between Collections
+[#replicate-data-between-collections-implicitly]
+== Replicate Data Between Collections Implicitly
 
-XDCR allows data to be replicated between collections.
+XDCR allows data to be replicated between collections _implicitly_.
+
+An _implicit_ mapping is one supported by XDCR whenever the same _namespace_ exists within both the source and the target buckets.
+The _namespace_ is formed with a _scope-name_ and the _collection-name_.
+Therefore, if a source bucket contains the namespace `scope1.collection1`, and the target bucket also contains the namespace `scope1.collection1`, once a replication has been established from the source bucket to the target cluster and bucket, data will be automatically replicated from the source collection to the target collection.
+This is demonstrated in the following example.
+
 Proceed as follows.
 (Note that this example assumes that the previous example, xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#migrate-data-to-a-collection[Migrate Data to a Collection], has already been followed, and that cluster `101.144.210.102` contains the data that was thereby replicated.)
 
@@ -120,6 +139,45 @@ Currently, this has a remote reference to cluster `101.144.210.103` defined; but
 The fields now appear as follows;
 +
 image::manage-xdcr/xdcr-replicate-to-103.png[,680,align=left]
+
+. Save the replication, by left-clicking on the *Save Replication* button.
++
+image::manage-xdcr/saveReplicationButton.png[,140,align=Left]
++
+The replication is now started.
+
+. Examine the replication.
+First, examine the *XDCR Replications* screen.
++
+image::manage-xdcr/outgoingReplicationImplicit.png[,680,align=Left]
++
+This confirms that replication is underway.
+Next, access cluster `10.144.210.103`, access its *Buckets* screen, and access the *Scopes and Collections* screen for the bucket *tsBackup*.
+Then, left-click on the *Documents* tab for the collection *airlineCollection*.
+The *Documents* screen for the collection is now displayed, and appears as follows:
++
+image::manage-xdcr/documentsImplicitlyReplicated.png[,680,align=Left]
+
+This confirms that all documents within _airlineScope_._airlineCollection_ on `10.144.210.102` have been implicitly replicated to _airlineScope_._airlineCollection_ on `10.144.210.103`.
+
+[#replicate-data-between-collections-explicitly]
+== Replicate Data Between Collections Explicitly
+
+An _explicit_ mapping between collections is one established by an administrator, so as to allow replication to occur between differently named collections, and to apply filtering.
+This is demonstrated in the following example.
+Proceed as follows:
+
+. Access the *XDCR Replications* screen of cluster `101.144.210.103`.
+Currently, a remote reference to `10.144.210.104` is defined; but no replications have yet been defined.
+
+. Create a replication from `101.144.210.103` to `101.144.210.104`.
+Left-click on the *ADD REPLICATION* button, at the upper right of the screen.
+The *XDCR Add Replication* screen is now displayed.
+
+. Using the three upper fields &#8212; *Replicate From Bucket*, *Remote Cluster*, and *Remote Bucket* &#8212; define a replication from `tsBackup` on `103` to the bucket `tsBackup2` on `104`:
++
+image::manage-xdcr/xdcr-basic-replication-definition-to-104.png[,560,align=left]
+
 
 . To begin the process of specifying how data should be replicated between collections, switch on the *Specify scopes, collections, and mapping* toggle, in the middle of the screen:
 +
@@ -171,8 +229,10 @@ image::manage-xdcr/xdcr-mapping-rules-for collections.png[,300,align=left]
 Switch on the *Filter replication* toggle, and enter the regular expression `country = "United States"`, into the interactive *Filter Expression* panel:
 +
 image::manage-xdcr/xdcr-filter-collections-replication.png[,225,align=left]
++
+(Note that filtering, once enabled and defined, takes place across _all_ collections-mappings: there is currently no option right now to place individual filters on different collection-to-collection mappings.)
 
 . Save the replication, by left-clicking on the *Save Replication* button, in the lower part of the screen.
 
-The *XDCR Replications* screen is now displayed, with the *Outgoing Replications* panel indicating that replication is occurring as required between `10.144.210.102` and `10.144.210.103`.
-Inspection, on `10.144.210.103`, of the collection `usAirlineBackupCollection` will indicate that the subset of documents whose `country` value is `United States` is being replicated into the collection.
+The *XDCR Replications* screen is now displayed, with the *Outgoing Replications* panel indicating that replication is occurring as required between `10.144.210.103` and `10.144.210.104`.
+Inspection, on `10.144.210.104`, of the collection `usAirlineBackupCollection` will indicate that the subset of documents whose `country` value is `United States` is being replicated into the collection.
