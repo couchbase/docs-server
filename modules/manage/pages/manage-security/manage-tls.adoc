@@ -1,7 +1,7 @@
 = Manage TLS
 
 [abstract]
-To support secure communications between nodes, clusters, and clients, Couchbase Server provides interfaces for the _per service_ configuration of _TLS_ and supportive _cipher-suites_.
+To support secure communications between nodes, clusters, and clients, Couchbase Server provides interfaces for the configuration of on-the-wire security settings.
 
 [#tls-and-cipher-suites]
 == TLS and Cipher-Suites
@@ -11,8 +11,7 @@ Couchbase Server supports the configuration of TLS, to secure communications bet
 
 TLS supports multiple methods for exchanging keys, encrypting data, and authenticating message-integrity.
 Appropriate methods, supported by both participants in an intended networked communication, can be specified through selection of an appropriate _cipher-suite_, from defined lists of ones acceptable.
-By default, Couchbase Server uses a list of `HIGH` security cipher-suites.
-However, Couchbase Server also allows a _customized_ list to be defined and used &#8212; either globally or _per service_.
+Couchbase Server also allows a _customized_ list to be defined and used &#8212; either globally or _per service_.
 
 When a TLS connection is established between a client application and Couchbase Server &#8212; for example, using the secure port `18091` &#8212; a _handshake_ occurs, as defined by the https://en.wikipedia.org/wiki/Transport_Layer_Security#TLS_handshake[TLS Handshake Protocol].
 As part of this exchange, the client sends to the server the client's own cipher-suite list; which specifies the cipher-suites that the client itself supports.
@@ -20,16 +19,173 @@ Server-settings are provided to specify whether the server then conforms &#8212;
 
 Once the selection has been made by Couchbase Server, Couchbase Server notifies the client of the selection, and the handshake process continues.
 
-The TLS version and the cipher-suites to be used by Couchbase Server _globally_ can be managed with either the CLI or the REST API.
-The TLS version and the cipher-suites to be used _per service_ can be managed with the REST API.
+=== On-the-Wire Security Settings: Global and Per Service
+
+Security parameters are provided that allow on-the-wire security to be configured for all Couchbase Services.
+The services are `data` (Data Service), `fullTextSearch` (Search Service), `index` (Index Service), `eventing` (Eventing Service), `query` (Query Service), `analytics` (Analytics Service), and `backup` (Backup Service).
+
+Also treated as a service, in the context of on-the-wire security settings, is the Couchbase-Server _Cluster Manager_ (referred to as `clusterManager`).
+
+When a cluster is first created, since no custom settings exist either globally or per service, cluster-wide defaults are used for all settings: these are described in xref:manage:manage-security/manage-tls.adoc#security-settings[Security Settings], below.
+Subsequently, if any custom setting is created globally, and an equivalent custom setting has _not_ been made for one or more services, those services use the global setting.
+When a custom setting is made for a service, that setting is duly used by the service; and any equivalent global setting is ignored by the service.
+
+[#security-settings]
+==== On-the-Wire Security Settings
+
+Three configurable, on-the-wire security settings are provided both globally and per service.
+They are as follows:
+
+* *tlsMinVersion*.
+Specifies the minimum accepted TLS version.
+The value can be `tlsv1` (the default), `tlsv1.1`, `tlsv1.2`, or `tlsv1.3`.
++
+This parameter can be established both globally and per service.
+However, a value of `tlsv1.3` can only be established for the following services: `data`, `fullTextSearch`, `index`, `eventing`, `query`, `analytics`, and `backup`.
+
+* *honorCipherOrder*.
+Specifies whether the service uses its own cipher-suite preference, rather than the client's.
+The default value of `honorCipherOrder` is `true`: a setting of `false` is _not_ recommended, since insecure.
+
+* *cipherSuites*.
+Specifies a list of the cipher suites to be used by the service, in order of preference.
+The argument must be a list of cipher suites, each of which is listed as a read-only value for the service, as the value of the non-configurable *supportedCipherSuites* setting.
++
+If, for any service, no value is provided for the *cipherSuites* parameter, the service defaults to using the custom list that has been configured globally.
+If no global list has been configured, the service defaults to using the cipher-suite list provided as a general default by the operating system (which can, on Linux, be retrieved with the `openssl ciphers -v` command).
+
+In addition to those listed above, several additional on-the-wire parameters are provided, these being _global-only_.
+For details, see the CLI reference page for xref:cli:cbcli/couchbase-cli-setting-security.adoc[setting-security]; and the REST reference page xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
+
+[#manage-on-the-wire-security-with-the-cli]
+== Manage On-the-Wire Security with the CLI
+
+The Couchbase CLI allows cluster-wide on-the-wire security-setting to be retrieved; and allows the _global_ settings to be modified.
+
+[#getting-the-global-security-configuration-with-the-cli]
+=== Getting the Cluster-Wide Security Configuration with the CLI
+
+The _cluster-wide_ security configuration includes both _global_ and _per service_ settings.
+The current configuration can be retrieved with the xref:cli:cbcli/couchbase-cli-setting-security.adoc[setting-security] command.
+This is shown by the following example.
+Note that the output is piped to the https://stedolan.github.io/jq[jq] command, to optimise the output's readability:
+
+----
+/opt/couchbase/bin/couchbase-cli setting-security \
+-c 10.144.210.101:8091 \
+-u Administrator \
+-p password \
+--get | jq '.'
+----
+
+If successful, the command returns output such as the following:
+
+----
+{
+  "disableUIOverHttp": false,
+  "disableUIOverHttps": false,
+  "disableWWWAuthenticate": false,
+  "tlsMinVersion": "tlsv1",
+  "cipherSuites": [],
+  "honorCipherOrder": true,
+  "data": {
+    "supportedCipherSuites": [
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+            .
+            .
+      "TLS_PSK_WITH_CAMELLIA_128_CBC_SHA256"
+    ]
+  },
+  "fullTextSearch": {
+    "supportedCipherSuites": [
+      "TLS_RSA_WITH_RC4_128_SHA",
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+            .
+            .
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ]
+  },
+  "index": {
+    "supportedCipherSuites": [
+      "TLS_RSA_WITH_RC4_128_SHA",
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+            .
+            .
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ]
+  },
+  "eventing": {
+    "supportedCipherSuites": [
+      "TLS_RSA_WITH_RC4_128_SHA",
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+            .
+            .
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ]
+  },
+  "query": {
+    "supportedCipherSuites": [
+      "TLS_RSA_WITH_RC4_128_SHA",
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+            .
+            .
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ]
+  },
+  "analytics": {
+    "supportedCipherSuites": [
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_AES_256_GCM_SHA384",
+            .
+            .
+      "TLS_EMPTY_RENEGOTIATION_INFO_SCSV"
+    ]
+  },
+  "backup": {
+    "supportedCipherSuites": [
+      "TLS_RSA_WITH_RC4_128_SHA",
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA",
+      "TLS_RSA_WITH_AES_128_CBC_SHA",
+              .
+              .
+      "TLS_CHACHA20_POLY1305_SHA256"
+    ]
+  },
+  "clusterManager": {
+    "supportedCipherSuites": [
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+              .
+              .
+      "TLS_RSA_WITH_3DES_EDE_CBC_SHA"
+    ]
+  }
+}
+----
+
+The returned object contains attribute-value pairs that represent the current cluster-wide on-the-wire security configuration.
+
+For information on the first three attributes shown in this example &#8212;   `disableUIOverHttp`, `disableUIOverHttps`, and `disableWWWAuthenticate` &#8212; see the CLI reference page for xref:cli:cbcli/couchbase-cli-setting-security.adoc[setting-security]; and the REST reference page xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
+
+The `tlsMinVersion` is shown as set to the default value, which is `tlsv1`.
+Likewise, the value of `honorCipherOrder` is the default, whih is `true`.
+
+No custom cipher-suite list has been provided as the value of `cipherSuites`: accordingly, the array is empty.
+
+The remaining attributes in the object correspond to the services for which on-the-wire security can be configured: `data`, `fullTextSearch`, `index`, `eventing`, `query`, `analytics`, and `backup`.
+Currently, each contains a single attribute-value pair, specifying `supportedCipherSuites`.
+The value of the list, in each case, is a _read-only_ list of cipher-suites (truncated, in the output-display provided above), which is informational purposes: if a cipher-suite list is to be custom-configured for the service, it must only feature cipher-suites included in the list that is value of `supportedCipherSuites`.
+
+Note that, as will be shown in subsequent examples, when custom-settings are made either globally or per service, further attribute-value pairs are added to the corresponding subdocuments, and are duly displayed when settings are retrieved.
+
+
 
 [#per-service-tls-configuration]
 === Per Service TLS Configuration
 
 The minimum TLS version, and the list of supported cipher suites, can be configured either _globally_ or _per service_.
-All Couchbase Services are supported.
-These are referred to in command-line syntax as `data` (Data Service), `fullTextSearch` (Search Service), `index` (Index Service), `eventing` (Eventing Service), `query` (Query Service), `analytics` (Analytics Service), and `backup` (Backup Service).
-Also considered a service, in this context, is the Couchbase-Server _Cluster Manager_ (referred to as `clusterManager`).
+
 
 
 
@@ -78,7 +234,7 @@ http://10.143.192.101:8091/settings/security \
 The `tlsMinVersion` flag specifies the minimum TLS version to be used; which can be `tlsv1`, `tlsv1.1`, or `tlsv1.2`; and is in this case specified as `tlsv1.2`
 If successful, the command gives a `200 OK` message, and returns an empty array.
 
-For more information, see xref:rest-api:rest-setting-security.adoc[Manage Encryption Settings].
+For more information, see xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
 
 [#manage-cipher-suite-lists]
 == Manage Cipher-Suite Lists Globally
