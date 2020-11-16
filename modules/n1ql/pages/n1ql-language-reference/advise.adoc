@@ -5,6 +5,7 @@
 
 // N1QL cross-references
 :n1ql: xref:n1ql-language-reference
+:cbo: {n1ql}/cost-based-optimizer.adoc
 :select: {n1ql}/selectintro.adoc
 :update: {n1ql}/update.adoc
 :delete: {n1ql}/delete.adoc
@@ -204,12 +205,25 @@ __optional__
 
 This field is only returned for recommended indexes, or for current indexes if they are identical to the recommended index.
 |string
+
+|**update_statistics** +
+__optional__
+|The N1QL command recommended for updating statistics on the index, for use by the cost-based optimizer.
+
+This field is only returned for indexes which are recommended by the cost-based optimizer, and only if optimizer statistics are missing for the index.
+|string
 |===
 
 [[recommendation-rules]]
 === Recommendation Rules
 
-The index advisor recommends secondary indexes based on the query predicate, according to the following rules.
+The index advisor recommends secondary indexes based on the query predicate.
+
+In Couchbase Server 7.0 and later, the index advisor initially makes use of the {cbo}[cost-based optimizer].
+To do this, the cost-based optimizer must be enabled, and statistics for the keyspace must already exist.
+If these prerequisites are met, the cost-based optimizer analyzes the query predicate and attempts to recommend an index.
+
+If the cost-based optimizer cannot recommend an index, the index advisor falls back on a rules-based approach.
 The rules are listed below in priority order.
 Within each recommended index, if there is more than one index key, they are sorted according to the priority order of these rules.
 
@@ -377,6 +391,8 @@ You should check the suggested index names and change any that are duplicates.
 
 .Recommended index only
 ====
+Assume that the cost-based optimizer is enabled, and that statistics exist for the keyspace.
+
 [source,n1ql]
 ----
 ADVISE SELECT * FROM `travel-sample` a WHERE a.type = 'hotel' AND a.country = 'France';
@@ -393,7 +409,7 @@ ADVISE SELECT * FROM `travel-sample` a WHERE a.type = 'hotel' AND a.country = 'F
       "adviseinfo": {
         "current_indexes": [
           {
-            "index_statement": "CREATE INDEX def_type ON `travel-sample`(`type`)",
+            "index_statement": "CREATE INDEX def_idx_type ON `travel-sample`(`type`)",
             "keyspace_alias": "travel-sample_a"
           }
         ],
@@ -402,7 +418,8 @@ ADVISE SELECT * FROM `travel-sample` a WHERE a.type = 'hotel' AND a.country = 'F
             {
               "index_statement": "CREATE INDEX adv_country_type ON `travel-sample`(`country`) WHERE `type` = 'hotel'",
               "keyspace_alias": "travel-sample_a",
-              "recommending_rule": "Index keys follow order of predicate types: 2. equality/null/missing, 10. flavor for partial index."
+              "recommending_rule": "Index keys follow cost-based order.", // <.>
+              "update_statistics": "UPDATE STATISTICS FOR `travel-sample`(`country`, `type`)" // <.>
             }
           ]
         }
@@ -412,6 +429,9 @@ ADVISE SELECT * FROM `travel-sample` a WHERE a.type = 'hotel' AND a.country = 'F
   }
 ]
 ----
+
+<.> Index is recommended by the cost-based optimizer
+<.> Recommended command for updating statistics
 ====
 
 .Recommended index and covering index
