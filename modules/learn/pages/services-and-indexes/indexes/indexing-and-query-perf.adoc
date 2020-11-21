@@ -28,12 +28,16 @@ Couchbase Server is a distributed database that supports flexible data model usi
 Each document in a bucket has a user-generated unique document key and this uniqueness is enforced when inserting data into the bucket.
 Consider the following sample document:
 
+[source,n1ql]
 ----
 SELECT meta().id, travel
 FROM `travel-sample` travel
 WHERE type = 'airline'
 LIMIT 1;
+----
 
+[source,json]
+----
 [
     {
         "id": "airline_10",
@@ -55,6 +59,7 @@ LIMIT 1;
 
 The primary index is simply an index on the document key on the entire bucket.
 
+[source,n1ql]
 ----
 CREATE PRIMARY INDEX ON `travel-sample`;
 ----
@@ -64,10 +69,15 @@ The primary index, like every other index, is maintained asynchronously.
 Use the primary index for full bucket scans (primary scans) when the query does not have any filters (predicates) or when no other index or access path can be used.
 
 .Metadata for Primary Index
+====
+[source,n1ql]
 ----
 SELECT * FROM system:indexes WHERE name = '#primary';
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
     "indexes": {
@@ -84,6 +94,7 @@ Results:
   }
 ]
 ----
+====
 
 The metadata provides additional information about the index, such as where the index resides ([.out]`datastore_id`), its state ([.out]`state`), and the indexing method used ([.out]`using`).
 
@@ -92,6 +103,7 @@ The metadata provides additional information about the index, such as where the 
 
 You can name the primary index, as seen in the following example.
 
+[source,n1ql]
 ----
 CREATE PRIMARY INDEX def_primary ON `travel-sample`;
 ----
@@ -101,13 +113,18 @@ The advantage of naming a primary index is that you can have multiple primary in
 Duplicate indexes help with high availability and query load distribution between the indexes.
 This is true for both primary indexes and secondary indexes.
 
+====
+[source,n1ql]
 ----
 SELECT meta().id AS documentkey, `travel-sample` airline
 FROM `travel-sample`
 WHERE type = 'airline'
 LIMIT 1;
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
     "airline": {
@@ -123,6 +140,7 @@ Results:
   }
 ]
 ----
+====
 
 [#secondary-index]
 == Secondary Index
@@ -131,41 +149,58 @@ The secondary index is an index on any key-value or document-key.
 This index can use any key within the document and the key can be of any type: scalar, object, or array.
 The query has to use the same type of object for the query engine to use the index.
 
-.Example: Key is a Simple Scalar Value
+.Key is a Simple Scalar Value
+====
+[source,n1ql]
 ----
 CREATE INDEX travel_name ON `travel-sample`(name);
-
-# Name is a simple scalar value such as:
-# { "name": "Air France" }
 ----
 
-.Example: Key is an Object Embedded Within the Document
+In this keyspace, `name` is a simple scalar value such as `{ "name": "Air France" }`.
+====
+
+.Key is an Object Embedded Within the Document
+====
+[source,n1ql]
 ----
 CREATE INDEX travel_geo on `travel-sample`(geo);
-
-# geo is an object embedded within the document such as:
-# "geo": {
-#    "alt": 12,
-#    "lat": 50.962097,
-#    "lon": 1.954764
-#    }
 ----
 
-.Example: Keys from Nested Objects
+In this keyspace, `geo` is an object embedded within the document, such as:
+
+[source,json]
+----
+"geo": {
+   "alt": 12,
+   "lat": 50.962097,
+   "lon": 1.954764
+   }
+----
+====
+
+.Keys from Nested Objects
+====
+[source,n1ql]
 ----
 CREATE INDEX travel_geo on `travel-sample`(geo.alt);
 
 CREATE INDEX travel_geo on `travel-sample`(geo.lat);
 ----
+====
 
 .Example: Keys is an Array of Objects
+====
+In this keyspace, `schedule` is an array of objects with flight details.
+This command indexes the complete array and is useful only if you're looking for the entire array.
+
+[source,n1ql]
 ----
-# Schedule is an array of objects with flight details. This command indexes the
-# complete array and is useful only if you're looking for the entire array.
-
 CREATE INDEX travel_schedule ON `travel-sample`(schedule);
+----
 
-Example Results:
+.Results
+[source,json]
+----
 "schedule": [
         {
             "day": 0,
@@ -199,6 +234,7 @@ Example Results:
             }
     ]
 ----
+====
 
 [#composite-secondary-index]
 == Composite Secondary Index
@@ -208,8 +244,9 @@ In such cases, you want to use indexes with multiple keys so the indexes can ret
 Additionally, if a query is referencing only the keys in the index, the query engine can simply answer the query from the index scan result without having to fetch from the data nodes.
 This is commonly used for performance optimization.
 
+[source,n1ql]
 ----
-CREATE INDEX travel_info ON `travel-sample`(name,type,id,icoo,iata);
+CREATE INDEX travel_info ON `travel-sample`(name,type,id,icao,iata);
 ----
 
 Each of the keys can be a simple scalar field, object, or an array.
@@ -225,16 +262,21 @@ When you need to search, say for the city "Villeneuve-sur-lot," you want to sear
 In order to do so, first create an index using an expression or a function as the key.
 For example:
 
+[source,n1ql]
 ----
 CREATE INDEX travel_cxname ON `travel-sample`(LOWER(name));
 ----
 
 If you provide the search string in lowercase, the index helps the query engine more efficiently search for already lowercase values in the index.
 
+[source,n1ql]
 ----
 EXPLAIN SELECT * FROM `travel-sample` WHERE LOWER(name) = "john";
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
     "plan": {
@@ -302,6 +344,7 @@ Results:
 You can also use complex expressions in the functional index.
 For example:
 
+[source,n1ql]
 ----
 CREATE INDEX travel_cx1 ON `travel-sample`(LOWER(name), length*width, round(salary));
 ----
@@ -314,8 +357,9 @@ At the top level, it can have scalar fields, objects, or arrays.
 Each object can nest other objects and arrays; each array can have other objects and arrays, and the nesting can continue.
 Consider the following example array.
 
+[source,json]
 ----
-schedule:
+"schedule":
 [
     {
         "day" : 0,
@@ -339,6 +383,7 @@ schedule:
 
 With a rich structure as seen in the array schedule, here's how you index a particular array or a field within the sub-object.
 
+[source,n1ql]
 ----
 CREATE INDEX travel_sched ON `travel-sample`
  (ALL DISTINCT ARRAY v.day FOR v IN schedule END);
@@ -346,17 +391,21 @@ CREATE INDEX travel_sched ON `travel-sample`
 
 This index key is an expression on the array to clearly reference only the elements that need to be indexed.
 
-* `schedule` - the array we’re dereferencing into.
-* `v` - the variable implicitly declared to reference each element/object within the array `schedule`.
-* `v.day` - the element within each object of the array `schedule`.
+* `schedule` -- the array we’re dereferencing into.
+* `v` -- the variable implicitly declared to reference each element/object within the array `schedule`.
+* `v.day` -- the element within each object of the array `schedule`.
 
 The following query uses the array index created above.
 
+[source,n1ql]
 ----
 EXPLAIN SELECT * FROM `travel-sample`
 WHERE ANY v IN schedule SATISFIES v.day = 2 END;
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
     "plan": {
@@ -366,7 +415,7 @@ Results:
           "#operator": "DistinctScan",
           "scan": {
             "#operator": "IndexScan2",
-            "index": "travel_sched",             / Index created above
+            "index": "travel_sched",             // Index created above
             "index_id": "f026dca7f2419e39",
             "index_projection": {
               "primary_key": true
@@ -431,6 +480,7 @@ As you're referencing individual fields of the object or element within the arra
 The index `travel_sched` stores only the distinct values within an array.
 To store all elements of an array in an index, do not use the DISTINCT modifier to the expression.
 
+[source,n1ql]
 ----
 CREATE INDEX travel_sched ON `travel-sample`
     (ALL ARRAY v.day FOR v IN schedule END);
@@ -442,6 +492,7 @@ CREATE INDEX travel_sched ON `travel-sample`
 Unlike relational systems where each type of row is in a distinct table, Couchbase buckets can have documents of various types.
 You can include a type field in your document to differentiate distinct types.
 
+[source,json]
 ----
 {
     "airline": {
@@ -461,8 +512,9 @@ Also, since Couchbase data model is JSON and the JSON schema is flexible, an ind
 
 When you want to create an index of airline documents, you can simply add the type field for the WHERE clause of the index.
 
+[source,n1ql]
 ----
-CREATE INDEX travel_info ON `travel-sample`(name, id, icoo, iata)
+CREATE INDEX travel_info ON `travel-sample`(name, id, icao, iata)
 WHERE type='airline';
 ----
 
@@ -486,14 +538,15 @@ Use UNION ALL to have a query exploit multiple partitioned indexes in a single q
 Duplicate index isn't really a special type of index, but a feature of Couchbase indexing.
 You can create duplicate indexes with distinct names.
 
+[source,n1ql]
 ----
-CREATE INDEX i1 ON `travel-sample`(LOWER(name),id, icoo)
+CREATE INDEX i1 ON `travel-sample`(LOWER(name),id, icao)
 WHERE type = 'airline';
 
-CREATE INDEX i2 ON `travel-sample`(LOWER(name),id, icoo)
+CREATE INDEX i2 ON `travel-sample`(LOWER(name),id, icao)
 WHERE type = 'airline';
 
-CREATE INDEX i3 ON `travel-sample`(LOWER(name),id, icoo)
+CREATE INDEX i3 ON `travel-sample`(LOWER(name),id, icao)
 WHERE type = 'airline';
 ----
 
