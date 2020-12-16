@@ -88,15 +88,15 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* The GET operation _(operator [] applied on a bucket binding and used as a value expression)_
+* *The GET operation* _(operator [] applied on a bucket binding and used as a value expression)_
 +
 This fetches the corresponding object from the KV bucket the variable is bound to, and returns the parsed JSON value as a JavaScript object. Fetching a non-existent object from a bucket will return JavaScript undefined value. This operation throws an exception if the underlying bucket GET operation fails with an unexpected error.
 
-* The SET operation _(operator [] appearing on left of = assignment statement)_
+* *The SET operation* _(operator [] appearing on left of = assignment statement)_
 +
 This sets the provided JavaScript value into the KV bucket the variable is bound to, replacing any existing value with the specified key. This operation throws an exception if the underlying bucket SET operation fails with an unexpected error.
 
-* The DELETE operation _(operator [] appearing after JavaScript delete keyword)_
+* *The DELETE operation* _(operator [] appearing after JavaScript delete keyword)_
 +
 This deletes the provided key from the KV bucket the variable is bound to. If the object does not exist, this call is treated as a no-op. This operation throws an exception if the underlying bucket DELETE operation fails with an unexpected error.
 
@@ -109,8 +109,13 @@ This deletes the provided key from the KV bucket the variable is bound to. If th
 
 It is possible to access other advanced KV functionality using the following built-in operators. These utilize the same bucket bindings defined in the handler, but exposer richer set of options and operators.
 
-* Advanced GET function: 
-_result = couchbase.get(binding, meta)_
+The following Advanced Bucket Accessor have been added:
+
+* <<advanced_get_op,The Advanced GET operation>>
+* <<advanced_insert_op,The Advanced INSERT operation>>
+
+[#advanced_get_op]
+* *The Advanced GET operation*: _result = couchbase.get(binding, meta)_
 +
 This operation allows reading a document from the bucket with ability to specify the CAS value to be matched during the read.
 +
@@ -123,10 +128,10 @@ function OnUpdate(doc, meta) {
     var new_meta = {"id":"key::1"}; 
     var result = couchbase.get(src_bkt,new_meta);
     if (result.success) {
-        log('success read meta',result.meta);
-        log('success read doc ',result.doc);
+        log('success adv. get meta',result.meta);
+        log('success adv. get doc ',result.doc);
     } else {
-        log('id',new_meta.id,'failed',result.error)
+        log('id',new_meta.id,'adv. get failed',result.error)
     }
 }
 ----
@@ -137,13 +142,13 @@ The name of the binding that references the target bucket. The binding can have 
 
 ** _meta (type: Object)_
 +
-The positional parameter (denoted by “meta” in the prototype above) represents the metadata of the operation. At minimum, the document key must be specified in this object.
+The positional parameter (denoted by _meta_ in the prototype above) represents the metadata of the operation. At minimum, the document key must be specified in this object.
 
 *** _meta.id (type: string)_
 +
 The key of the document to be used for the operation. This is a mandatory parameter and must be of JavaScript _string_ type.
 
-** result – _the return value (type: Object)_
+** _result – the return value (type: Object)_
 +
 The return object indicates success/failure of the operation, and the data fetched if successful, or the error details if failure.
 
@@ -194,6 +199,119 @@ If present, a human readable description of the error that occurred. The descrip
 ** _exceptions_
 +
 This API indicates errors via the error object in the return value. Exceptions are thrown only during system failure conditions.
+
+
+
+
+
+[#advanced_insert_op]
+
+* *The Advanced INSERT operation*: _result = couchbase.insert(binding, meta, doc)_
++
+This operation allows creating a fresh document in the bucket. This operation will fail if the document with the specified key already exists. An expiration may be optionally specified. 
++
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+    log('input meta', meta);
+    log('input doc ', doc);
+    // could be the same or different
+    var new_meta = {"id":"key::10"};
+    var new_doc = doc;
+    new_doc.randome = Math.random();
+    var result = couchbase.insert(src_bkt,new_meta,new_doc);
+    if (result.success) {
+        log('success adv. insert meta',result.meta);
+        log('success adv. insert doc ',result.doc);
+    } else {
+        log('id',new_meta.id,'adv. insert failed',result.error)
+    }
+}
+----
+
+** _binding_
++
+The name of the binding that references the target bucket. The binding must have access level of _"read/write"_.
+
+** _meta (type: Object)_
++
+The positional parameter (denoted by _meta_ in the prototype above) represents the metadata of the operation. The document key must be specified in this meta object
+
+*** _meta.id (type: string)_
++
+The key of the document to be used for the operation. This is a mandatory parameter and must be of JavaScript _string_ type. If a document already exists with the specified key, the operation fails and _key_already_exists_ will be set in the error object.
+
+*** _meta.expiry_date (type: Date)_
++
+This is an optional parameter, and if specified must be of JavaScript Date object type. The document will be marked to expire at the specified time. If no _expiry_date_ is passed, no expiration will be set on the document.
+
+** _doc (type: any JSON serializable))_
++
+This is the document content for the operation. This can be any JavaScript object that can be serialized to JSON (i.e., number, string, boolean, null, object and array).
+
+** _result – the return value (type: Object)_
++
+The return object indicates success/failure of the operation, and the data fetched if successful, or the error details if failure.
+
+*** _result.success (type: boolean)_
++
+This field indicates if the operation was successful or not. It is always present in the return object.
+
+*** _result.meta (type: Object)_
++
+This field is present only if the operation succeeded. It contains metadata about the object that was inserted.
+
+**** _result.meta.id (type: string)_
++
+The key of the document that was inserted by this operation.
+
+**** _result.meta.cas (type: string)_
++
+The CAS value of the document that was created by this operation.
+
+**** _result.meta.expiry_date (type: Date)_
++
+The expiration field of the document, if one was set. If no expiration is set on the document, this field will be absent.
+
+*** _result.doc (type: string, number, boolean, null, Object or Array)_
++
+If the operation is successful, this field contains the content of the requested document.
+
+*** _result.error (type: Object)_
++
+This field is populated only if the operation failed. The contents of the error varies based on the type of error encountered, and commonly occurring fields are documented below.
+
+**** _result.error.key_not_found (type: boolean)_
++
+If present and set to true, this indicates that the operation failed because the specified key already existed, and so the insertion operation failed
+
+**** _result.error.code (type: number)_
++
+If present, the code of the SDK error that triggered this operation to fail. This is typically an internal numeric code.
+
+**** _result.error.name (type: string)_
++
+If present, the key is a token indicating the error that SDK encountered that caused this operation to fail. 
+
+**** _result.error.desc (type: string)_
++
+If present, a human readable description of the error that occurred. The description is for diagnostics and logging purposes only and may change over time. No programmatic logic should be tied to specific contents from this field.
+
+** _exceptions_
++
+This API indicates errors via the error object in the return value. Exceptions are thrown only during system failure conditions.
+
+
+
+
+
+
+
+
+
+
+
+
 ****
 
 [#logging]
