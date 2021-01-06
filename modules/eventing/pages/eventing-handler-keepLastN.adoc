@@ -18,10 +18,10 @@ We assume that nid always increases across time as such we ignore duplicates.
 keepLastN::
 +
 --
-Two variants of this function are given a 6.6 version and a 6.6.1 version which uses CAS
+Two variants of this function are available a 6.6 version  (*this Function*) that implements userspace CAS and a 6.6.1 version which uses true CAS
 
 * <<keepLastN,keepLastN (userspace CAS)>> 
-* <<keepLastN_661,keepLastN_661 (true CAS)>> [.status]#Couchbase Server 6.6.1# 
+* xref:eventing-handler-keepLastN_661.adoc[keepLastN_661 (true CAS)]
 
 [#keepLastN]
 keepLastN (userspace CAS)
@@ -121,124 +121,6 @@ function updateNotifyArrayInKV(doc, meta, MAX_RETRY, MAX_ARRAY, DEBUG) {
     log ("FAILED to insert id: " + meta.id, doc)
 }
 ----
-
-[#keepLastN_661]
-keepLastN_661 (true CAS) [.status]#Couchbase Server 6.6.1# 
-[source,javascript]
-----
-/*
- * Process all mutations, however updateNotifyArrayInKV(...) will only
- * data with KEYS like nu:#:#
- */
-function OnUpdate(doc, meta) {
-    const MAX_ARRAY = 3; // alter to keep 'N' items
-    const DEBUG = false; // if true very verbose
-
-    updateNotifyArrayInKV(doc, meta, MAX_ARRAY, DEBUG);
-}
-
-/*
- * manipulates the in memory document to only keep 'MAX_ARRAY' items
- */
-function addToNtfyArray(user_doc, user_id, insert_json, MAX_ARRAY, DEBUG) {
-    var ntfy_id = insert_json.nid;
-    if (user_doc.notifications && user_doc.notifications[0] &&
-        user_doc.notifications[0].nid >= ntfy_id &&
-        user_doc.notifications.length === MAX_ARRAY) {
-        // do nothing this is older data, we assume that nid always increases
-        return null;
-    } else {
-        // find insert position
-        for (var i = 0; i <= user_doc.notifications.length + 1; i++) {
-            if (i < user_doc.notifications.length && user_doc.notifications[i].nid === ntfy_id) {
-                // do nothing this is duplicate data we already have it, assume no updates to notifys
-                if (DEBUG) log('Ignore DUP ntfy_id', ntfy_id, 'user_id', user_id, 'insert_json', insert_json);
-                return null;
-            }
-            if (i == user_doc.notifications.length || user_doc.notifications[i].nid > ntfy_id) {
-                // add to array middle or end
-                user_doc.notifications.splice(i, 0, insert_json);
-                break;
-            }
-        }
-    }
-    while (user_doc.notifications.length > MAX_ARRAY) {
-        // ensure proper size
-        user_doc.notifications.shift();
-    }
-    return user_doc;
-}
-
-/*
- * creates, gets, and updates (via replace) the KV tracking array document
- */
-function updateNotifyArrayInKV(doc, meta, MAX_ARRAY, DEBUG) {
-    // will process ALL data like nu:#:#
-    var parts = meta.id.split(':');
-    if (!parts || parts.length != 3 || parts[0] != "nu") return;
-    var ntfy_id = parseInt(parts[1]);
-    var user_id = parseInt(parts[2]);
-    //log("Doc created/updated " +  meta.id + " ntfy_id " + ntfy_id  + " user_id " + user_id);
-
-    var insert_json = {
-        "nid": ntfy_id,
-        doc
-    };
-    // In version 6.6.1 we can use CAS in Eventing to avoid race conditions
-    var res = null;
-    var req_id = "user_plus_ntfys:" + user_id;
-    var req_meta = {
-        id: req_id
-    };
-    var user_doc = null;
-    var user_meta = null;
-    while (res === null) {
-        res = couchbase.get(src_bkt, req_meta);
-        if (DEBUG) log('couchbase.get(src_bkt,', req_meta, ') success==' + res.success, res);
-        if (res.success) {
-            user_doc = res.doc;
-            // EXAMPLE user_meta 
-            // {"id":"user_plus_ntfys:2","cas":"1609965779014844416","data_type":"json"}
-            user_meta = res.meta;
-        } else {
-            if (!res.error.key_not_found) {
-                // do nothing this is a big error
-                log("FAILED to insert id: " + meta.id, doc, 'res', res)
-                return;
-            }
-            // here we just need to create our document or initialize it.
-            user_doc = {
-                "type": "user_plus_ntfys",
-                "id": user_id,
-                "notifications": []
-            };
-            res = couchbase.insert(src_bkt, req_meta, user_doc);
-            if (DEBUG) log('couchbase.insert(src_bkt,', req_meta, user_doc, ') success==' + res.success, res);
-            // redo loop just force a couchbase.get (try again or read our insert)
-            res = null;
-        }
-        if (res !== null) {
-            // here we had a successful couchbase.get(...) so both 'user_doc' and 'user_meta' 
-            // must be valid so we manipulate our copy of the user_doc to keep only MAX_ARRAY
-            var new_doc = addToNtfyArray(user_doc, user_id, insert_json, MAX_ARRAY, DEBUG);
-            if (new_doc == null) {
-                // duplicate data we already have it, just ignore/skip
-                break;
-            }
-            // now try to replace the user_doc with new_doc but pass CAS to test for race conditions 
-            res = couchbase.replace(src_bkt, user_meta, new_doc);
-            if (DEBUG) log('couchbase.replace(src_bkt,', user_meta, new_doc, ') success==' + res.success, res);
-            if (res.success) {
-                // CAS matched so we are done.
-                break;
-            } else {
-                // redo loop try again
-                res = null;
-            }
-        }
-    }
-}
-----
 --
 
 Input Data/Mutation::
@@ -290,7 +172,7 @@ Output Data/Mutation::
 ----
 NEW/OUTPUT: KEY user_plus_ntfys:1
 
-Note, only version 6.6 will add/create the property _random_ in the tracking doc (_random_ is used to emulate CAS).
+Note, we add/create the property _random_ in the tracking doc as we use _random_ is used to emulate CAS.
 
 {
   "type": "user_plus_ntfys",
