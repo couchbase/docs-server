@@ -533,40 +533,46 @@ This operation allows deleting a document in the bucket specified by key. Option
 function OnUpdate(doc, meta) {
     log('input meta', meta);
     log('input doc ', doc);
-    
-    var mode = 3; // 1-> no CAS, 2-> mismatch in CAS, 3-> good CAS
-    
+
+    var mode = 4; // 1-> no CA, 2-> mismatch in CA, 3-> good CAS, 4-> no such key
+
+    // Setup, make sure we have our doc to "delete", ignore any errors
+    couchbase.insert(src_bkt,{"id":"test_adv_delete:10"},{"a:": 1});
+
     var new_meta;
     if (mode === 1) {
-        // if we pass no CAS it will succeed
-        new_meta = {"id":"key::10"};  
+        // If we pass no CAS it will succeed
+        new_meta = {"id":"test_adv_delete:10"};
+        // optional set an expiry 60 seconds in the future
+        // new_meta.expiry_date = new Date(Date.now() + 60 * 1000);
     }
     if (mode === 2) {
-        // if we pass a non-matching CAS it will fail
-        new_meta = {"id":"key::10", "cas":"1111111111111111111"}; 
+        // If we pass a non-matching CAS it will fail, so test this
+        new_meta = {"id":"test_adv_delete:10", "cas":"1111111111111111111"};
     }
     if (mode === 3) {
-        // if we pass the matching or current CAS it will succeed
-        var tmp_r = couchbase.get(src_bkt,{"id":"key::10"});
+        // If we pass the matching or current CAS it will succeed
+        var tmp_r = couchbase.get(src_bkt,{"id":"test_adv_delete:10"});
         if (tmp_r.success) {
-            // use the current CAS
-            new_meta = {"id":"key::10", "cas": tmp_r.meta.cas};
+            // Here we use the current CAS just read via couchbase.get(...)
+            new_meta = {"id":"test_adv_delete:10", "cas": tmp_r.meta.cas};
         } else {
-            log('key is missing create it and rerun',"key::10");
+            log('Cannot delete non-existing key that create it and rerun',"test_adv_delete:10");
             return;
         }
     }
     if (mode === 4) {
-        // no such key
-        new_meta = {"id":"key::none"};  
-    }    
+        // Remove so that we have: no such key
+        delete src_bkt["test_adv_delete:10"]
+        new_meta = {"id":"test_adv_delete:10"};
+    }
     var new_doc = doc;
     new_doc.random = Math.random();
-    var result = couchbase.delete(src_bkt,new_meta);
+    var result = couchbase.delete(src_bkt,new_meta,new_doc);
     if (result.success) {
-        log('mode',mode,'success adv. delete meta',result);
+        log('success adv. delete: result',result);
     } else {
-        log('mode',mode,'id',new_meta.id,'adv. delete failed',result)
+        log('failure adv. delete: id',new_meta.id,'result',result);
     }
 }
 ----
