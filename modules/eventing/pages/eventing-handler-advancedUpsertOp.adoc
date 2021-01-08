@@ -1,0 +1,128 @@
+= Function: Advanced UPSERT operation
+:page-edition: Enterprise Edition
+:tabs:
+
+*Goal*: Perform the Advanced UPSERT operation where Eventing interacts with the Data service.
+
+* This function *advancedUpsertOp* merely demonstrates the Advanced UPSERT operation.
+* Requires a metadata bucket, a source bucket.
+* Needs a Binding of type Bucket Alias (as documented in the Scriptlet).
+* Will operate on any mutation where doc.type === "control_adv_insert".
+* For more detail refer to xref:eventing-advanced-bucket-accessors.adoc#advanced-get-upsert[Advanced UPSERT operation] in the detailed documentation.
+
+[{tabs}] 
+====
+advancedUpsertOp::
++
+--
+[source,javascript]
+----
+// To run need a Binding in this Function's Settings as follows:
+// 1. Bucket Alias
+// 2. src_bkt
+// 3. source
+// 4. read+write
+function OnUpdate(doc, meta) {
+    if (!meta.id.startsWith("control_adv_upsert")) return;
+    log('input meta', meta);
+    log('input doc ', doc);
+    // two modes typical upsert or setting a expiration/TTL
+    var new_meta = {"id":"test_adv_upsert:"+doc.ins_id};
+    if (doc.set_expiry && doc.set_expiry === true) {
+        new_meta = {"id":"test_adv_upsert:"+doc.ins_id, expiry_date: new Date(Date.now() + 60 * 1000)};
+    }
+    var new_doc = { type: "test_adv_upsert", id:+doc.ins_id, random: Math.random()}
+    var result = couchbase.upsert(src_bkt,new_meta,new_doc);
+    if (result.success) {
+        log('success adv. upsert: result',result);
+    } else {
+        log('failure adv. upsert: id',new_meta.id,'result',result);
+    }
+}
+----
+--
+Input Data/Mutation::
++
+--
+[source,json]
+----
+INPUT: KEY control_adv_upsert::1
+
+{
+    "id": 1,
+    "type": "control_adv_upsert",
+    "ins_id": 1,
+    "set_expiry": false
+}
+
+INPUT: KEY control_adv_upsert::2
+
+{
+    "id": 2,
+    "type": "control_adv_upsert",
+    "ins_id": 2,
+    "set_expiry": true
+}
+
+INPUT: KEY control_adv_upsert::3
+
+{
+    "id": 3,
+    "type": "control_adv_upsert",
+    "ins_id": 1,
+    "set_expiry": false
+}
+----
+--
++
+Output Data::
++
+We try to upsert three (3) documents all three (2) upserts succeed but the second, test_adv_upsert:2, will expire in 60 seconds because we set an expiration.  
+Note, third upsert attempt will overwrite test_adv_upsert:1 thus we are left with two documents.
++
+--
+[source,json]
+----
+KEY: test_adv_upsert:1
+
+{
+  "type": "test_adv_upsert",
+  "id": 1,
+  "random": 0.24687491488383362
+}
+
+KEY: test_adv_upsert:2
+
+{
+  "type": "test_adv_upsert",
+  "id": 2,
+  "random": 0.08984103133112087
+}
+----
+--
++
+Output Log::
++ 
+-- 
+[source,json]
+----
+Mutaton #1
+
+2021-01-07T17:43:52.527-08:00 [INFO] "input meta" {"cas":"1610070232443518976","id":"control_adv_upsert::1","expiration":0,"flags":33554438,"vb":334,"seq":1}
+2021-01-07T17:43:52.527-08:00 [INFO] "input doc " {"id":1,"type":"control_adv_upsert","ins_id":1,"set_expiry":false}
+2021-01-07T17:43:52.529-08:00 [INFO] "success adv. upsert: result" {"meta":{"id":"test_adv_upsert:1","cas":"1610070232527667200"},"success":true}
+
+Mutaton #2
+
+2021-01-07T17:44:21.926-08:00 [INFO] "input meta" {"cas":"1610070261867741184","id":"control_adv_upsert::2","expiration":0,"flags":33554438,"vb":71,"seq":1}
+2021-01-07T17:44:21.926-08:00 [INFO] "input doc " {"id":2,"type":"control_adv_upsert","ins_id":2,"set_expiry":true}
+2021-01-07T17:44:21.929-08:00 [INFO] "success adv. upsert: result" {"meta":{"id":"test_adv_upsert:2","cas":"1610070261927641088","expiry_date":"2021-01-08T01:45:21.000Z"},"success":true}
+
+Mutaton #3
+
+2021-01-07T17:44:58.063-08:00 [INFO] "input meta" {"cas":"1610070298010845184","id":"control_adv_upsert::3","expiration":0,"flags":33554438,"vb":832,"seq":1}
+2021-01-07T17:44:58.063-08:00 [INFO] "input doc " {"id":3,"type":"control_adv_upsert","ins_id":1,"set_expiry":false}
+2021-01-07T17:44:58.065-08:00 [INFO] "success adv. upsert: result" {"meta":{"id":"test_adv_upsert:1","cas":"1610070298064257024"},"success":true}
+----
+--
+====
