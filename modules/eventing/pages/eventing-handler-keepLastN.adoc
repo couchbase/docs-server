@@ -6,9 +6,11 @@
 
 * This function *keepLastN* demonstrates how to keep a user record with the last N activities.
 * Requires a metadata bucket and a source bucket.
+* Requires an alias of src_bkt to the source bucket in read+write mode.
 * Will operate on any mutation with a key starting with "nu:" of the form "nu:#:#".
 * The key "nu:#:#" contains two numbers. The first # is an increasing notification number, the second # is the user ID.
 * Anytime we insert a new record we want to remove the earliest notification record for the user so we only have at most N records for each user.
+We assume that nid always increases across time as such we ignore duplicates.
 * For our test we will keep just the three (3) most recent notifications per user ID.
 
 [{tabs}] 
@@ -16,43 +18,31 @@
 keepLastN::
 +
 --
+Two variants of this function are available a 6.6 version  (*this Function*) that implements userspace CAS and a 6.6.1 version which uses true CAS
+
+* <<keepLastN,keepLastN (userspace CAS)>> 
+* xref:eventing-handler-advanced-keepLastN.adoc[advancedKeepLastN (true CAS)]
+
+[#keepLastN]
+keepLastN (userspace CAS)
 [source,javascript]
 ----
-function OnUpdate(doc, meta) {
+/*
+ * Process all mutations, however updateNotifyArrayInKV(...) will only
+ * data with KEYS like nu:#:#
+ */
+ function OnUpdate(doc, meta) {
     const MAX_RETRY = 16;
     const MAX_ARRAY = 3;
+    const DEBUG = false;
     
-    // will process ALL data like nu:#:#
-    var parts = meta.id.split(':');
-    if (!parts || parts.length != 3 || parts[0] != "nu") return;
-    var ntfy_id = parseInt(parts[1]);
-    var user_id = parseInt(parts[2]);
-    //log("Doc created/updated " +  meta.id + " ntfy_id " + ntfy_id  + " user_id " + user_id);
-
-    var insert_json = {"nid": ntfy_id, doc};
-    // this can be simplified in version 6.6.1 when CAS is added to Eventing
-    for (var tries=0; tries < 16; tries++) {
-        var user_doc = addToNtfyArray(src_bkt, user_id, insert_json, MAX_ARRAY);
-        if (user_doc == null) {
-            // do nothing
-            return;
-        }
-        var random_csum = user_doc.random;
-        // this is a read write alias to the functions source bucket
-        src_bkt["user_plus_ntfys:" + user_id] = user_doc;
-        user_doc = src_bkt["user_plus_ntfys:" + user_id];
-        if (random_csum !== user_doc.random) {
-            // failure need to retry
-            tries++;
-        } else {
-            // success could even delete the input notification doc here
-            return;
-        }
-    }
-    log ("FAILED to insert id: " + meta.id, doc)
+    updateNotifyArrayInKV(doc, meta, MAX_RETRY, MAX_ARRAY, DEBUG);
 }
 
-function addToNtfyArray(src_bkt, user_id, insert_json, max_ary) {
+/*
+ * reads form KV and manipulates the result to only keep 'MAX_ARRAY' items
+ */
+function addToNtfyArray(src_bkt, user_id, insert_json, MAX_ARRAY, DEBUG) {
     var ntfy_id = insert_json.nid;
     var random_csum;
     var user_doc = src_bkt["user_plus_ntfys:" + user_id];
@@ -62,7 +52,7 @@ function addToNtfyArray(src_bkt, user_id, insert_json, max_ary) {
         user_doc = { "type": "user_plus_ntfys", "id": user_id, "notifications" : [], "random": random_csum };
         user_doc.notifications.push(insert_json);
     } else {
-        if (user_doc.notifications[0].nid >= ntfy_id && user_doc.notifications.length === max_ary) {
+        if (user_doc.notifications[0].nid >= ntfy_id && user_doc.notifications.length === MAX_ARRAY) {
             // do nothing this is older data, we assume that nid always increases
             return null;
         } else {
@@ -82,12 +72,53 @@ function addToNtfyArray(src_bkt, user_id, insert_json, max_ary) {
                 }
             }
         }
-        while (user_doc.notifications.length > max_ary) {
+        while (user_doc.notifications.length > MAX_ARRAY) {
             // ensure proper size
             user_doc.notifications.shift();
         }
     }
+    if (DEBUG) log("user_plus_ntfys:" + user_id,user_doc);
     return user_doc;
+}
+
+/*
+ * creates, gets, and updates (via replace) the KV tracking array document
+ */
+function updateNotifyArrayInKV(doc, meta, MAX_RETRY, MAX_ARRAY, DEBUG) {
+    // will process ALL data like nu:#:#
+    var parts = meta.id.split(':');
+    if (!parts || parts.length != 3 || parts[0] != "nu") return;
+    var ntfy_id = parseInt(parts[1]);
+    var user_id = parseInt(parts[2]);
+    //log("Doc created/updated " +  meta.id + " ntfy_id " + ntfy_id  + " user_id " + user_id);
+
+    var insert_json = {"nid": ntfy_id, doc};
+    // this is a can be improved in version 6.6.1 as CAS operations are supported.
+    // we utilize a 'random' tag in the document itself to emulate a CAS operation.
+    for (var tries=0; tries < 16; tries++) {
+        var user_doc = addToNtfyArray(src_bkt, user_id, insert_json, MAX_ARRAY, DEBUG);
+        if (user_doc == null) {
+            // do nothing
+            return;
+        }
+        var random_csum = user_doc.random;
+        // this is a read write alias to the functions source bucket, write then reread
+        src_bkt["user_plus_ntfys:" + user_id] = user_doc;
+        user_doc = src_bkt["user_plus_ntfys:" + user_id];
+        // we use the random values to perform a CAS, we give up after 16 attempts
+        if (random_csum !== user_doc.random) {
+            // failure need to retry
+            tries++;
+            if (DEBUG) log("CAS like operation failed: tries "+tries+
+                " random_csum:",random_csum,"!==", "user_doc.random",user_doc.random);
+        } else {
+            // success could even delete the input notification doc here
+            if (DEBUG) log("CAS like operation success: tries "+tries+
+                " random_csum:",random_csum,"!==", "user_doc.random",user_doc.random);
+            return;
+        }
+    }
+    log ("FAILED to insert id: " + meta.id, doc)
 }
 ----
 --
@@ -120,7 +151,7 @@ Use the Query Editor to insert the above data items (you do not need an Index)
 
 [source,n1ql]
 ----
-  INSERT INTO `source` (KEY,VALUE)
+  UPSERT INTO `source` (KEY,VALUE)
   VALUES ( "nu:1:1",  {"somekey":"someValue"} ),
   VALUES ( "nu:2:2",  {"somekey":"someValue"} ),
   VALUES ( "nu:3:1",  {"somekey":"someValue"} ),
@@ -140,6 +171,8 @@ Output Data/Mutation::
 [source,json]
 ----
 NEW/OUTPUT: KEY user_plus_ntfys:1
+
+Note, we add/create the property _random_ in the tracking doc as we use _random_ is used to emulate CAS.
 
 {
   "type": "user_plus_ntfys",
