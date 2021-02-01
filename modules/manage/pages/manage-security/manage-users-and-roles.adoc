@@ -199,7 +199,7 @@ Alternatively, continue the user-definition process, by assigning the user to a 
 [#assigning-groups]
 ==== Assign a User to a Group
 
-To assign a user to a group, left-click on the *Groups* tab:
+To assign a user to a group, left-click on the *Groups* tab at the upper right of the dialog:
 
 image::manage-security/rolesAndGroupsToggle.png[,140,align=middle]
 
@@ -304,7 +304,7 @@ To list the cluster's current users, enter the following.
 Note that the command is piped to the https://stedolan.github.io/jq/[jq] program, to optimize output-readability.
 
 ----
-/opt/couchbase/bin/couchbase-cli user-manage --cluster http://10.143.192.101 \
+/opt/couchbase/bin/couchbase-cli user-manage --cluster http://10.144.210.101 \
 --username Administrator \
 --password password \
 --list | jq
@@ -315,29 +315,13 @@ A document is returned, containing an entry for each of the current users:
 ----
 [
   {
-    "id": "externalUserIndividual",
-    "domain": "external",
-    "roles": [
-      {
-        "role": "cluster_admin",
-        "origins": [
-          {
-            "type": "user"
-          }
-        ]
-      }
-    ],
-    "groups": [],
-    "external_groups": [],
-    "name": "John Smith"
-  },
-  {
-    "id": "localUser",
+    "id": "externalUser",
     "domain": "local",
     "roles": [
       {
-        "role": "data_writer",
-        "bucket_name": "travel-sample",
+        "role": "scope_admin",
+        "bucket_name": "demoBucket",
+        "scope_name": "demoScope",
         "origins": [
           {
             "type": "user"
@@ -345,8 +329,7 @@ A document is returned, containing an entry for each of the current users:
         ]
       },
       {
-        "role": "data_reader",
-        "bucket_name": "travel-sample",
+        "role": "ro_admin",
         "origins": [
           {
             "type": "user"
@@ -357,35 +340,34 @@ A document is returned, containing an entry for each of the current users:
     "groups": [],
     "external_groups": [],
     "name": "",
-    "password_change_date": "2019-05-31T03:59:49.000Z"
+    "password_change_date": "2021-02-01T09:46:04.000Z"
   },
   {
-    "id": "externalUserGroup",
-    "domain": "external",
+    "id": "testUser",
+    "domain": "local",
     "roles": [
       {
-        "role": "admin",
+        "role": "data_reader",
+        "bucket_name": "testBucket",
+        "scope_name": "MyScope",
+        "collection_name": "MyCollection",
         "origins": [
-          {
-            "type": "group",
-            "name": "Admins"
-          },
           {
             "type": "user"
           }
         ]
       }
     ],
-    "groups": [
-      "Admins"
-    ],
+    "groups": [],
     "external_groups": [],
-    "name": "David Brown"
+    "name": "",
+    "password_change_date": "2021-02-01T09:40:23.000Z"
   }
 ]
 ----
 
 The entries include information on the `id` and `roles` of the user, their authentication `domain`, their `name` if one was specified, and on the local and external `groups` to which the user belongs.
+For each non-global role, the bucket, scope, and collection to which the permissions are restricted are specified, as appropriate.
 
 [#get-group-information-with-the-cli]
 === Get Group Information with the CLI
@@ -402,20 +384,31 @@ Information on currently defined _groups_ can similarly be returned:
 An example of the output is as follows:
 
 ----
-{
-  "id": "Admins",
-  "roles": [
-    {
-      "role": "admin"
-    }
-  ],
-  "ldap_group_ref": "uid=cbadmins,ou=groups,dc=example,dc=com",
-  "description": "Couchbase Server Administrators"
-}
+[
+  {
+    "id": "DataReaderGroup",
+    "roles": [
+      {
+        "role": "data_reader",
+        "bucket_name": "testBucket",
+        "scope_name": "MyScope",
+        "collection_name": "MyCollection"
+      },
+      {
+        "role": "data_reader",
+        "bucket_name": "demoBucket",
+        "scope_name": "demoScope",
+        "collection_name": "demoCollection"
+      }
+    ],
+    "ldap_group_ref": "",
+    "description": "Administrators with limited Data Reader permission."
+  }
+]
+
 ----
 
-This shows that a single group, named `Admins`, has been defined on the cluster; and that the `admin` role has been assigned to it.
-The group's LDAP reference and description are also provided.
+This shows that a single group, named `DataReaderGroup`, has been defined on the cluster; and that the `data_reader` role has been assigned to it for the specified collections.
 
 [#create-local-users-with-the-cli]
 === Manage Local Users with the CLI
@@ -429,26 +422,30 @@ To create a user who is to be _locally authenticated_, directly assigning a role
 
 ----
 /opt/couchbase/bin/couchbase-cli user-manage \
---cluster http://10.143.192.101 \
+--cluster http://10.144.210.101 \
 --username Administrator \
 --password password \
 --set \
 --rbac-username dgreen \
 --rbac-password dGr3En239 \
---roles query_external_access,analytics_reader \
+--roles query_external_access,analytics_reader,data_reader[testBucket:MyScope:MyCollection] \
 --auth-domain local
 ----
 
 This uses the `--set` flag, to indicate that the RBAC profile for the cluster is being updated.
 The username and password for the user are defined.
 The value of the `--auth-domain` flag indicates that this is indeed to be a `local` user.
-The `query_external_access` and `analytics_reader` roles are assigned by means of the `--roles` flag: to change direct role assignments, the user must be recreated, with all the new roles specified as the arguments to the `--roles` flag.
+The `query_external_access`, analytics_reader`, and `data_reader` roles are assigned by means of the `--roles` flag: to change direct role assignments, the user must be recreated, with all the new roles specified as the arguments to the `--roles` flag.
+Note that the `data_reader` role is specified as applying only to the collection `MyCollection`, within the scope `MyScope`, within `testBucket`.
 
 If the call is successful, the following is displayed:
 
 ----
-SUCCESS: User dgreen was created
+WARNING: Granting the query_external_access role permits execution of the N1QL function CURL() and may allow access to other network endpoints in the local network and the Internet.
+SUCCESS: User dgreen set
 ----
+
+The output thus includes the standard command-line warning on the significance of the `query_external_access` role.
 
 ==== Create a Local User with the CLI, Directly Assigning a Per-Collection Role
 
