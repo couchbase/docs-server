@@ -87,20 +87,20 @@ a|
 [source,N1QL]
 ----
 SELECT *
-FROM `travel-sample` r
-JOIN `travel-sample` a
-ON r.airlineid = META(a).id
-WHERE a.country = "France"
+FROM `travel-sample`.inventory.route
+JOIN `travel-sample`.inventory.airline
+ON route.airlineid = META(airline).id
+WHERE airline.country = "France";
 ----
 | *LEFT [OUTER] JOIN \... ON*
 a|
 [source,N1QL]
 ----
 SELECT *
-FROM `travel-sample` r
-LEFT JOIN `travel-sample` a
-ON r.airlineid = META(a).id
-WHERE r.sourceairport = "SFO"
+FROM `travel-sample`.inventory.route
+LEFT JOIN `travel-sample`.inventory.airline
+ON route.airlineid = META(airline).id
+WHERE route.sourceairport = "SFO";
 ----
 | *RIGHT [OUTER] JOIN \... ON*
 | RIGHT OUTER JOIN can only be the first join specified in a FROM clause.
@@ -108,10 +108,10 @@ a|
 [source,N1QL]
 ----
 SELECT *
-FROM `travel-sample` r
-RIGHT JOIN `travel-sample` a
-ON r.airlineid = META(a).id
-WHERE r.sourceairport = "SFO"
+FROM `travel-sample`.inventory.route
+RIGHT JOIN `travel-sample`.inventory.airline
+ON route.airlineid = META(airline).id
+WHERE route.sourceairport = "SFO";
 ----
 |===
 
@@ -155,11 +155,10 @@ List the source airports and airlines that fly into SFO, where only the non-null
 [source,N1QL]
 ----
 SELECT route.airlineid, airline.name, route.sourceairport, route.destinationairport
-FROM `travel-sample` route
-INNER JOIN `travel-sample` airline
+FROM `travel-sample`.inventory.route
+INNER JOIN `travel-sample`.inventory.airline
 ON route.airlineid = META(airline).id
-WHERE route.type = "route"
-AND route.destinationairport = "SFO"
+WHERE route.destinationairport = "SFO"
 ORDER BY route.sourceairport;
 ----
 
@@ -200,14 +199,13 @@ List the airports and landmarks in the same city, ordered by the airports.
 SELECT DISTINCT  MIN(aport.airportname) AS Airport__Name,
                  MIN(lmark.name) AS Landmark_Name,
                  MIN(aport.tz) AS Landmark_Time
-FROM `travel-sample` aport
-LEFT JOIN `travel-sample` lmark
+FROM `travel-sample`.inventory.airport aport
+LEFT JOIN `travel-sample`.inventory.landmark lmark
   ON aport.city = lmark.city
   AND lmark.country = "United States"
-  AND lmark.type = "landmark"
-WHERE aport.type = "airport"
-GROUP BY lmark.name
-ORDER BY lmark.name;
+GROUP BY aport.airportname
+ORDER BY aport.airportname
+LIMIT 4;
 ----
 
 .Results
@@ -248,17 +246,16 @@ NOTE: The LEFT OUTER JOIN will list all left-side results regardless of matching
 
 [source,N1QL]
 ----
-SELECT DISTINCT  MIN(aport.airportname) AS Airport_Name,
-                 MIN(lmark.name) AS Landmark_Name,
-                 MIN(aport.tz) AS Landmark_Time
-FROM `travel-sample` aport
-RIGHT JOIN `travel-sample` lmark
+SELECT DISTINCT MIN(aport.airportname) AS Airport__Name,
+                MIN(lmark.name) AS Landmark_Name,
+                MIN(aport.tz) AS Landmark_Time
+FROM `travel-sample`.inventory.airport aport
+RIGHT JOIN `travel-sample`.inventory.landmark lmark
   ON aport.city = lmark.city
-  AND aport.type = "airport"
   AND aport.country = "United States"
-WHERE lmark.type = "landmark"
 GROUP BY lmark.name
-ORDER BY lmark.name;
+ORDER BY lmark.name
+LIMIT 4;
 ----
 
 .Results
@@ -266,22 +263,22 @@ ORDER BY lmark.name;
 ----
 [
   {
-    "Airport_Name": "San Francisco Intl",
+    "Airport__Name": "San Francisco Intl",
     "Landmark_Name": "&quot;Hippie Temptation&quot; house",
     "Landmark_Time": "America/Los_Angeles"
   },
   {
-    "Airport_Name": "London-Corbin Airport-MaGee Field",
+    "Airport__Name": "London-Corbin Airport-MaGee Field",
     "Landmark_Name": "02 Shepherd's Bush Empire",
     "Landmark_Time": "America/New_York"
   },
   {
-    "Airport_Name": "Los Angeles Intl",
+    "Airport__Name": "Los Angeles Intl",
     "Landmark_Name": "101 Coffee Shop",
     "Landmark_Time": "America/Los_Angeles"
   },
   {
-    "Airport_Name": "San Francisco Intl",
+    "Airport__Name": "San Francisco Intl",
     "Landmark_Name": "1015",
     "Landmark_Time": "America/Los_Angeles"
   },
@@ -293,25 +290,27 @@ ORDER BY lmark.name;
 [#ANSI-Join-Example-4]
 .Inner Join with Covering Index
 ====
-In the `{backtick}beer-sample{backtick}` keyspace, use an ANSI JOIN to list the beer names and breweries that are in the state Wisconsin (`WI`).
-First, create an index with `beer.brewery_id` as the leading key.
+Use an ANSI JOIN to list the routes and destination airports that are available from London Heathrow (ICAO code `EGLL`).
 
+By default, the ANSI JOIN uses the `def_inventory_route_sourceairport` index, which is installed with the `travel-sample` bucket.
+This index has `sourceairport` as its leading key.
+
+.Index
 [source,N1QL]
 ----
-CREATE INDEX beer_brewery ON `beer-sample` (brewery_id)
-WHERE type = "beer"
+CREATE INDEX def_inventory_route_sourceairport
+ON `travel-sample`.inventory.route (sourceairport);
 ----
 
+.Query
 [source,N1QL]
 ----
-SELECT META(brewery).id bid, META(beer).id, brewery.name brewery_name,
-       beer.name beer_name
-FROM `beer-sample` brewery
-JOIN `beer-sample` beer
-  ON beer.brewery_id = LOWER(REPLACE(brewery.name, " ", "_"))
-WHERE beer.type = "beer"
-  AND brewery.type = "brewery"
-  AND brewery.state = "WI";
+SELECT META(route).id route_id, route.airline, route.destinationairport
+FROM `travel-sample`.inventory.airport
+JOIN `travel-sample`.inventory.route
+  ON route.sourceairport = airport.faa
+WHERE airport.icao = "EGLL"
+ORDER BY route_id;
 ----
 
 .Results
@@ -319,29 +318,35 @@ WHERE beer.type = "beer"
 ----
 [
   {
-    "beer_name": "Dank",
-    "bid": "oso",
-    "brewery_name": "Oso",
-    "id": "oso-dank"
-  }
+    "airline": "AH",
+    "destinationairport": "ALG",
+    "route_id": "route_10186"
+  },
+  {
+    "airline": "AI",
+    "destinationairport": "BOM",
+    "route_id": "route_10570"
+  },
+...
 ]
 ----
 
-Visual Explain Plan:
+If no covering index is available, the Query Service has to fetch each matching record from the `route` keyspace to get the airline and destination airport information, as shown in the query plan:
 
-image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual1.png[]
+image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual1.png["Query plan with Fetch 'route' step before Nested Loop Join"]
 
-If you add `name` as the second index key to the `beer_brewery` index:
+If you create a covering index, with `sourceairport` as the leading key, and `airline` and `destinationairport` as additional index keys:
 
+.Covering Index
 [source,N1QL]
 ----
-CREATE INDEX beer_brewery_name ON `beer-sample` (brewery_id, name)
-WHERE type = "beer"
+CREATE INDEX idx_route_src_dst_airline
+ON `travel-sample`.inventory.route (sourceairport, destinationairport, airline);
 ----
 
-\... then you will get covering index scan, as shown in the Visual Explain Plan:
+\... then the Query Service does not need to fetch any records from the `route` keyspace, as shown in the query plan:
 
-image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual2.png[]
+image::n1ql-language-reference/FROM_AnsiJoin-Ex4-BeerVisual2.png["Query plan with no Fetch 'route' step before Nested Loop Join"]
 ====
 
 [#ansi-join-rhs]
@@ -442,19 +447,18 @@ However, when you assign an alias to the generic expression, the `AS` keyword ma
 [#ANSI-Join-Example-sub]
 .Inner Join with Subquery on Right-Hand Side
 ====
-Find the destination airport of all routes in the `travel-sample` keyspace whose source airport is in San Francisco.
+Find the destination airport of all routes whose source airport is in San Francisco.
 
 [source,N1QL]
 ----
-SELECT DISTINCT route.destinationairport
-FROM `travel-sample` airport JOIN (
+SELECT DISTINCT subquery.destinationairport
+FROM `travel-sample`.inventory.airport
+JOIN (
   SELECT destinationairport, sourceairport
-  FROM `travel-sample`
-  WHERE type="route"
-) AS route
-ON airport.faa = route.sourceairport
-WHERE airport.type = "airport"
-AND airport.city = "San Francisco";
+  FROM `travel-sample`.inventory.route
+) AS subquery
+ON airport.faa = subquery.sourceairport
+WHERE airport.city = "San Francisco";
 ----
 
 .Results
@@ -488,14 +492,13 @@ Find the destination airport of all routes in the given array whose source airpo
 
 [source,N1QL]
 ----
-SELECT DISTINCT route.destinationairport
-FROM `travel-sample` airport JOIN [
+SELECT DISTINCT expression.destinationairport
+FROM `travel-sample`.inventory.airport JOIN [
   {"destinationairport": "KEF", "sourceairport": "SFO", "type": "route"},
   {"destinationairport": "KEF", "sourceairport": "LHR", "type": "route"}
-] AS route
-ON airport.faa = route.sourceairport AND route.type = "route"
-WHERE airport.type = "airport"
-AND airport.city = "San Francisco";
+] AS expression
+ON airport.faa = expression.sourceairport
+WHERE airport.city = "San Francisco";
 ----
 
 .Results
@@ -594,11 +597,10 @@ The keyspace `aline` is to be joined (with `rte`) using hash join, and `aline` i
 [source,N1QL]
 ----
 SELECT COUNT(1) AS Total_Count
-FROM `travel-sample` rte
-INNER JOIN `travel-sample` aline
+FROM `travel-sample`.inventory.route rte
+INNER JOIN `travel-sample`.inventory.airline aline
 USE HASH (PROBE)
-ON (rte.airlineid = META(aline).id)
-WHERE rte.type = "route";
+ON (rte.airlineid = META(aline).id);
 ----
 
 .Results
@@ -620,11 +622,10 @@ This is effectively the same query as the previous example, except the two keysp
 [source,N1QL]
 ----
 SELECT COUNT(1) AS Total_Count
-FROM `travel-sample` aline
-INNER JOIN `travel-sample` rte
+FROM `travel-sample`.inventory.airline aline
+INNER JOIN `travel-sample`.inventory.route rte
 USE HASH (BUILD)
-ON (rte.airlineid = META(aline).id)
-WHERE rte.type = "route";
+ON (rte.airlineid = META(aline).id);
 ----
 
 .Results
@@ -665,11 +666,10 @@ This join hint instructs the planner to use nested-loop join (NL join) for the j
 [source,N1QL]
 ----
 SELECT COUNT(1) AS Total_Count
-FROM `travel-sample` rte
-INNER JOIN `travel-sample` aline
+FROM `travel-sample`.inventory.route rte
+INNER JOIN `travel-sample`.inventory.airline aline
 USE NL
-ON (rte.airlineid = META(aline).id)
-WHERE rte.type = "route";
+ON (rte.airlineid = META(aline).id);
 ----
 ====
 
@@ -714,11 +714,10 @@ When multiple hints are being specified, use only one `USE` keyword with one fol
 [source,N1QL]
 ----
 SELECT COUNT(1) AS Total_Count
-FROM `travel-sample` rte
-INNER JOIN `travel-sample` aline
-USE INDEX idx1 HASH (PROBE)
-ON (rte.airlineid = META(aline).id)
-WHERE rte.type = "route";
+FROM `travel-sample`.inventory.route rte
+INNER JOIN `travel-sample`.inventory.airline aline
+USE INDEX (idx_destinations) HASH (PROBE)
+ON (rte.airlineid = META(aline).id);
 ----
 ====
 
@@ -728,11 +727,10 @@ WHERE rte.type = "route";
 [source,N1QL]
 ----
 SELECT COUNT(1) AS Total_Count
-FROM `travel-sample` rte
-INNER JOIN `travel-sample` aline
-USE HASH (PROBE) KEYS ["airline_key1", "airline_key2", "airline_key3"]
-ON (rte.airlineid = META(aline).id)
-WHERE rte.type = "route";
+FROM `travel-sample`.inventory.route rte
+INNER JOIN `travel-sample`.inventory.airline aline
+USE HASH (PROBE) KEYS ["airline_10", "airline_21", "airline_22"]
+ON (rte.airlineid = META(aline).id);
 ----
 ====
 
@@ -1058,17 +1056,16 @@ Lookup JOINs can be chained with other lookup joins/nests or index joins/nests, 
 [#Lookup-JOIN-Example-1]
 .Route JOIN airline ON KEYS route.airlineid
 ====
-List all airlines and non-stop routes from SFO in the `travel-sample` keyspace.
+List all airlines and non-stop routes from SFO in the `route` keyspace.
 
 [source,N1QL]
 ----
-SELECT DISTINCT airline.name, airline.callsign, route.destinationairport, route.stops, route.airline
-FROM `travel-sample` route
-  JOIN `travel-sample` airline
+SELECT DISTINCT route.destinationairport, route.stops, route.airline,
+  airline.name, airline.callsign
+FROM `travel-sample`.inventory.route
+  JOIN `travel-sample`.inventory.airline
   ON KEYS route.airlineid
-WHERE route.type = "route"
-AND airline.type = "airline"
-AND route.sourceairport = "SFO"
+WHERE route.sourceairport = "SFO"
 AND route.stops = 0
 LIMIT 4;
 ----
@@ -1078,17 +1075,24 @@ LIMIT 4;
 ----
 [
   {
-    "airline": "VX",
-    "callsign": "REDWOOD",
-    "destinationairport": "SAN",
-    "name": "Virgin America",
+    "airline": "B6",
+    "callsign": "JETBLUE",
+    "destinationairport": "AUS",
+    "name": "JetBlue Airways",
     "stops": 0
   },
   {
-    "airline": "VX",
-    "callsign": "REDWOOD",
-    "destinationairport": "PHL",
-    "name": "Virgin America",
+    "airline": "B6",
+    "callsign": "JETBLUE",
+    "destinationairport": "BOS",
+    "name": "JetBlue Airways",
+    "stops": 0
+  },
+  {
+    "airline": "B6",
+    "callsign": "JETBLUE",
+    "destinationairport": "DXB",
+    "name": "JetBlue Airways",
     "stops": 0
   },
   {
@@ -1096,13 +1100,6 @@ LIMIT 4;
     "callsign": "JETBLUE",
     "destinationairport": "FLL",
     "name": "JetBlue Airways",
-    "stops": 0
-  },
-  {
-    "airline": "UA",
-    "callsign": "UNITED",
-    "destinationairport": "IND",
-    "name": "United Airlines",
     "stops": 0
   }
 ]
@@ -1112,17 +1109,15 @@ LIMIT 4;
 [#Lookup-JOIN-Example-2]
 .Route JOIN airline ON KEYS route.airlineid
 ====
-List the schedule of flights from Boston to San Francisco on JETBLUE in the `travel-sample` keyspace.
+List the schedule of flights from Boston to San Francisco on JETBLUE in the `route` keyspace.
 
 [source,N1QL]
 ----
 SELECT DISTINCT airline.name, route.schedule
-FROM `travel-sample` route
-  JOIN `travel-sample` airline
+FROM `travel-sample`.inventory.route
+  JOIN `travel-sample`.inventory.airline
   ON KEYS route.airlineid
-WHERE route.type = "route"
-AND airline.type = "airline"
-AND route.sourceairport = "BOS"
+WHERE route.sourceairport = "BOS"
 AND route.destinationairport = "SFO"
 AND airline.callsign = "JETBLUE";
 ----
@@ -1362,20 +1357,18 @@ Consider the query below, similar to <<Lookup-JOIN-Example-1>> above with route 
 
 [source,N1QL]
 ----
-SELECT DISTINCT airline.name, airline.callsign, route.destinationairport,
- route.stops, route.airline
-FROM `travel-sample` route
-  JOIN `travel-sample` airline
+SELECT DISTINCT route.destinationairport, route.stops, route.airline,
+  airline.name, airline.callsign
+FROM `travel-sample`.inventory.route
+  JOIN `travel-sample`.inventory.airline
   ON KEYS route.airlineid
-WHERE route.type = "route"
-AND airline.type = "airline"
-AND airline.icao = "SEA"
+WHERE airline.icao = "SWA"
 LIMIT 4;
 ----
 
-This query gets a list of Seattle (`SEA`) flights, but getting `SEA` flights cannot be efficiently executed without making a Cartesian product of all route documents (left-hand side) with all airline documents (right-hand side).
+This query gets a list of Southwest Airlines (`SWA`) flights, but getting `SWA` flights cannot be efficiently executed without making a Cartesian product of all route documents (left-hand side) with all airline documents (right-hand side).
 
-This query cannot use any index on airline to directly access SEA flights because airline is on the right-hand side.
+This query cannot use any index on airline to directly access SWA flights because airline is on the right-hand side.
 
 Also, you cannot rewrite the query to put the airline document on the left-hand side (to use any index) and the route document on the right-hand side because the airline documents (on the left-hand side) have no primary keys to access the route documents (on the right-hand side).
 
@@ -1384,24 +1377,22 @@ Using index joins, the same query can be written as:
 .Required Index
 [source,N1QL]
 ----
-CREATE INDEX route_airlineid ON `travel-sample`(airlineid) WHERE type="route";
+CREATE INDEX route_airlineid ON `travel-sample`.inventory.route(airlineid);
 ----
 
 .Optional Index
 [source,N1QL]
 ----
-CREATE INDEX airline_icao ON `travel-sample`(icao) WHERE type="airline";
+CREATE INDEX airline_icao ON `travel-sample`.inventory.airline(icao);
 ----
 
 .Query
 [source,N1QL]
 ----
-SELECT * FROM `travel-sample` airline
-  JOIN `travel-sample` route
+SELECT * FROM `travel-sample`.inventory.airline
+  JOIN `travel-sample`.inventory.route
   ON KEY route.airlineid FOR airline
-WHERE route.type="route"
-AND airline.type="airline"
-AND airline.icao = "SEA";
+WHERE airline.icao = "SWA";
 ----
 
 If you generalize the same query, it looks like the following:
@@ -1434,18 +1425,16 @@ The following example counts the number of distinct "AA" airline routes for each
 
 [source,N1QL]
 ----
-CREATE INDEX route_airlineid ON `travel-sample`(airlineid) WHERE type="route";
+CREATE INDEX route_airlineid ON `travel-sample`.inventory.route(airlineid);
 ----
 
 [source,N1QL]
 ----
-SELECT Count(DISTINCT route.sourceairport) AS DistinctAirports
-FROM `travel-sample` airline
-  JOIN `travel-sample` route
+SELECT COUNT(DISTINCT route.sourceairport) AS DistinctAirports
+FROM `travel-sample`.inventory.airline
+  JOIN `travel-sample`.inventory.route
   ON KEY route.airlineid FOR airline
-WHERE route.type = "route"
-AND airline.type = "airline"
-AND airline.iata = "AA";
+WHERE airline.iata = "AA";
 ----
 
 .Results
@@ -1485,8 +1474,8 @@ a|
 [source,N1QL]
 ----
 SELECT *
-FROM `travel-sample` r
-JOIN `travel-sample` a
+FROM `travel-sample`.inventory.route r
+JOIN `travel-sample`.inventory.airline a
 ON r.airlineid = META(a).id
 ----
 |===
@@ -1507,7 +1496,7 @@ a|
 ----
 _lhs-expr_
 JOIN _rhs-keyspace_
-ON KEYS _lhs-expr.foreign_key_
+ON KEYS _lhs-expr.foreign-key_
 ----
 
 | Example
@@ -1515,8 +1504,8 @@ a|
 [source,N1QL]
 ----
 SELECT *
-FROM `travel-sample` r
-JOIN `travel-sample`
+FROM `travel-sample`.inventory.route r
+JOIN `travel-sample`.inventory.airline
 ON KEYS r.airlineid
 ----
 |===
@@ -1546,8 +1535,8 @@ a|
 [source,N1QL]
 ----
 SELECT *
-FROM `travel-sample` a
-JOIN `travel-sample` r
+FROM `travel-sample`.inventory.airline a
+JOIN `travel-sample`.inventory.route r
 ON KEY r.airlineid
 FOR a
 ----
