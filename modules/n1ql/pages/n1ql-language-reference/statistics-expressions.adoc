@@ -39,7 +39,9 @@ For a query which filters on an array or array of objects, you must collect the 
 
 [subs="normal"]
 ----
-update-statistics-expressions ::= ( UPDATE STATISTICS [ FOR ] | ANALYZE [ KEYSPACE | COLLECTION ] ) <<keyspace-ref>> '(' <<index-expr>> [ ',' <<index-expr>> ]* ')' [ <<index-with>> ]
+update-statistics-expressions ::=
+  ( UPDATE STATISTICS [ FOR ] | ANALYZE [ KEYSPACE | COLLECTION ] )
+  <<keyspace-ref>> '(' <<index-expr>> [ ',' <<index-expr>> ]* ')' [ <<index-with>> ]
 ----
 
 image::n1ql-language-reference/update-statistics-expressions.png["( 'UPDATE' 'STATISTICS' 'FOR'? | 'ANALYZE' ( 'KEYSPACE' | 'COLLECTION')? ) keyspace-ref '(' index-expr ( ',' index-expr )* ')' index-with?"]
@@ -136,14 +138,14 @@ The statement returns an empty array.
 .Create indexes
 [source,N1QL]
 ----
-CREATE INDEX idx_country_city ON `travel-sample`(country, city);
-CREATE INDEX idx_city_country ON `travel-sample`(city, country);
+CREATE INDEX idx_country_city ON `travel-sample`.inventory.hotel(country, city);
+CREATE INDEX idx_city_country ON `travel-sample`.inventory.hotel(city, country);
 ----
 
 .Update statistics
 [source,N1QL]
 ----
-UPDATE STATISTICS FOR `travel-sample`(type, city, country);
+UPDATE STATISTICS FOR `travel-sample`.inventory.hotel(city, country);
 ----
 
 .Query
@@ -157,17 +159,20 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'France';
 ----
 [
   {
+    "cardinality": 1, // <1>
+    "cost": 29.362844982943358, // <2>
     "plan": {
       "#operator": "Sequence",
       "~children": [
         {
           "#operator": "IndexScan3",
-          "cardinality": 147.4090909090909, // <1>
-          "cost": 82.99131818181819, // <2>
+          "bucket": "travel-sample",
+          "cardinality": 1, // <3>
+          "cost": 29.29658036191524,
           "covers": [
-            "cover ((`travel-sample`.`country`))",
-            "cover ((`travel-sample`.`city`))",
-            "cover ((meta(`travel-sample`).`id`))",
+            "cover ((`hotel`.`country`))",
+            "cover ((`hotel`.`city`))",
+            "cover ((meta(`hotel`).`id`))",
             "cover (count(*))"
           ],
           "index": "idx_country_city",
@@ -181,14 +186,15 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'France';
               }
             ]
           },
-          "index_id": "ebcdefa561f1e3f6",
+          "index_id": "7cba9563eb478906",
           "index_projection": {
             "entry_keys": [
               3
             ]
           },
-          "keyspace": "travel-sample",
+          "keyspace": "hotel",
           "namespace": "default",
+          "scope": "inventory",
           "spans": [
             {
               "exact": true,
@@ -210,28 +216,29 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'France';
             "~children": [
               {
                 "#operator": "InitialProject",
+                "cardinality": 1, // <4>
+                "cost": 29.362844982943358,
                 "result_terms": [
                   {
                     "expr": "cover (count(*))"
                   }
                 ]
-              },
-              {
-                "#operator": "FinalProject"
               }
             ]
           }
         }
       ]
     },
-    "text": "SELECT count(*) FROM `travel-sample` WHERE country = 'France';"
+    "text": "SELECT COUNT(*) FROM `travel-sample`.inventory.hotel WHERE country = 'France';"
   }
 ]
 ----
 ====
 
-<1> The cardinality estimate for the index scan operator.
-<2> The cost estimate for the index scan operator.
+<1> The overall cardinality estimate for the query.
+<2> The overall cost estimate for the query.
+<3> Cardinality and cost estimates for the index scan operator.
+<4> Cardinality and cost estimates for the initial project operator.
 
 [[ex2]]
 .Multiple predicates
@@ -241,7 +248,7 @@ This example uses the same indexes as <<ex1>>.
 .Update statistics
 [source,N1QL]
 ----
-UPDATE STATISTICS FOR `travel-sample`(type, city, country, free_breakfast);
+UPDATE STATISTICS FOR `travel-sample`.inventory.hotel(city, country, free_breakfast);
 ----
 
 There is no index on the `free_breakfast` field.
@@ -250,7 +257,8 @@ However, the query below refers to this field as a predicate, so we collect stat
 .Query
 [source,N1QL]
 ----
-EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND type = 'hotel' AND free_breakfast = true;
+EXPLAIN SELECT COUNT(*) FROM `travel-sample`.inventory.hotel
+WHERE country = 'United States' AND free_breakfast = true;
 ----
 
 .Result
@@ -258,20 +266,24 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
 ----
 [
   {
+    "cardinality": 1, // <1>
+    "cost": 1294.4644872408794,
     "plan": {
       "#operator": "Sequence",
       "~children": [
         {
           "#operator": "IndexScan3",
-          "cardinality": 703.8225187176041, // <1>
-          "cost": 396.2520780380112,
+          "bucket": "travel-sample",
+          "cardinality": 361.00000000000006, // <2>
+          "cost": 65.70723143606952,
           "index": "idx_country_city",
-          "index_id": "ebcdefa561f1e3f6",
+          "index_id": "7cba9563eb478906",
           "index_projection": {
             "primary_key": true
           },
-          "keyspace": "travel-sample",
+          "keyspace": "hotel",
           "namespace": "default",
+          "scope": "inventory",
           "spans": [
             {
               "exact": true,
@@ -288,10 +300,12 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
         },
         {
           "#operator": "Fetch",
-          "cardinality": 703.8225187176041, // <2>
-          "cost": 3296.0008551545407,
-          "keyspace": "travel-sample",
-          "namespace": "default"
+          "bucket": "travel-sample",
+          "cardinality": 361.00000000000006, // <3>
+          "cost": 1267.7836409935865,
+          "keyspace": "hotel",
+          "namespace": "default",
+          "scope": "inventory"
         },
         {
           "#operator": "Parallel",
@@ -300,15 +314,17 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
             "~children": [
               {
                 "#operator": "Filter",
-                "cardinality": 0.2514468840707154, // <3>
-                "condition": "((((`travel-sample`.`country`) = \"United States\") and ((`travel-sample`.`type`) = \"hotel\")) and ((`travel-sample`.`free_breakfast`) = true))",
-                "cost": 3298.1123227106937
+                "cardinality": 267.3053435114504, // <4>
+                "condition": "(((`hotel`.`country`) = \"United States\") and ((`hotel`.`free_breakfast`) = true))",
+                "cost": 1291.7051691847369
               },
               {
                 "#operator": "InitialGroup",
                 "aggregates": [
                   "count(*)"
                 ],
+                "cardinality": 1, // <5>
+                "cost": 1294.3782226198514,
                 "group_keys": []
               }
             ]
@@ -319,6 +335,8 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
           "aggregates": [
             "count(*)"
           ],
+          "cardinality": 1, // <6>
+          "cost": 1294.3882226198514,
           "group_keys": []
         },
         {
@@ -326,6 +344,8 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
           "aggregates": [
             "count(*)"
           ],
+          "cardinality": 1, // <7>
+          "cost": 1294.3982226198514,
           "group_keys": []
         },
         {
@@ -335,29 +355,33 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
             "~children": [
               {
                 "#operator": "InitialProject",
+                "cardinality": 1, // <8>
+                "cost": 1294.4644872408794,
                 "result_terms": [
                   {
                     "expr": "count(*)"
                   }
                 ]
-              },
-              {
-                "#operator": "FinalProject"
               }
             ]
           }
         }
       ]
     },
-    "text": "SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND type = 'hotel' AND free_breakfast = true;"
+    "text": "SELECT COUNT(*) FROM `travel-sample`.inventory.hotel WHERE country = 'United States' AND free_breakfast = true;"
   }
 ]
 ----
 ====
 
-<1> Cardinality and cost estimates for the index scan operator.
-<2> Cardinality and cost estimates for the fetch operator.
-<3> Cardinality and cost estimates for the filter operator.
+<1> Overall cardinality and cost estimates for the query.
+<2> Cardinality and cost estimates for the index scan operator.
+<3> Cardinality and cost estimates for the fetch operator.
+<4> Cardinality and cost estimates for the filter operator.
+<5> Cardinality and cost estimates for the initial group operator.
+<6> Cardinality and cost estimates for the intermediate group operator.
+<7> Cardinality and cost estimates for the final group operator.
+<8> Cardinality and cost estimates for the initial project operator.
 
 [[ex3]]
 .Filter on an array
@@ -365,20 +389,21 @@ EXPLAIN SELECT COUNT(*) FROM `travel-sample` WHERE country = 'United States' AND
 .Create index
 [source,N1QL]
 ----
-CREATE INDEX idx_public_likes ON `travel-sample`((DISTINCT (`public_likes`)));
+CREATE INDEX idx_public_likes
+ON `travel-sample`.inventory.hotel((DISTINCT (`public_likes`)));
 ----
 
 .Update statistics
 [source,N1Ql]
 ----
-UPDATE STATISTICS FOR `travel-sample`((DISTINCT (`public_likes`)));
+UPDATE STATISTICS FOR `travel-sample`.inventory.hotel((DISTINCT (`public_likes`)));
 ----
 
 .Query
 [source,N1Ql]
 ----
 EXPLAIN SELECT COUNT(1)
-FROM `travel-sample`
+FROM `travel-sample`.inventory.hotel
 WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
 ----
 
@@ -387,24 +412,28 @@ WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
 ----
 [
   {
+    "cardinality": 1,
+    "cost": 109.7611716607931,
     "plan": {
       "#operator": "Sequence",
       "~children": [
         {
           "#operator": "DistinctScan",
-          "cardinality": 7.088088423748743,
-          "cost": 3.0904065527544518,
+          "cardinality": 277.5315701314658,
+          "cost": 106.89959133845032,
           "scan": {
             "#operator": "IndexScan3",
-            "cardinality": 7.088088423748743,
-            "cost": 3.0691422874832055,
+            "bucket": "travel-sample",
+            "cardinality": 339.4999999999998,
+            "cost": 84.40275249940453,
             "covers": [
-              "cover ((distinct ((`travel-sample`.`public_likes`))))",
-              "cover ((meta(`travel-sample`).`id`))"
+              "cover ((distinct ((`hotel`.`public_likes`))))",
+              "cover ((meta(`hotel`).`id`))"
             ],
+            "filter": "cover (any `p` in (`hotel`.`public_likes`) satisfies ((\"A\" <= `p`) and (`p` < \"B\")) end)",
             "filter_covers": {
-              "cover (any `p` in (`travel-sample`.`public_likes`) satisfies ((\"A\" \u003c= `p`) and (`p` \u003c \"B\")) end)": true,
-              "cover (any `p` in (`travel-sample`.`public_likes`) satisfies (`p` like \"A%\") end)": true
+              "cover (any `p` in (`hotel`.`public_likes`) satisfies ((\"A\" <= `p`) and (`p` < \"B\")) end)": true,
+              "cover (any `p` in (`hotel`.`public_likes`) satisfies (`p` like \"A%\") end)": true
             },
             "index": "idx_public_likes",
             ...
@@ -416,16 +445,12 @@ WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
             "#operator": "Sequence",
             "~children": [
               {
-                "#operator": "Filter",
-                "cardinality": 0.012547701674046188,
-                "condition": "cover (any `p` in (`travel-sample`.`public_likes`) satisfies (`p` like \"A%\") end)",
-                "cost": 3.111670818025698
-              },
-              {
                 "#operator": "InitialGroup",
                 "aggregates": [
                   "count(1)"
                 ],
+                "cardinality": 1,
+                "cost": 109.67490703976497,
                 "group_keys": []
               }
             ]
@@ -434,7 +459,7 @@ WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
         ...
       ]
     },
-    "text": "SELECT COUNT(1)\nFROM `travel-sample`\nWHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END"
+    "text": "SELECT COUNT(1)\nFROM `travel-sample`.inventory.hotel\nWHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;"
   }
 ]
 ----
@@ -446,21 +471,25 @@ WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
 .Create index
 [source,N1QL]
 ----
-CREATE INDEX idx_reviews_ratings_overall ON `travel-sample`(DISTINCT ARRAY r.ratings.Overall FOR r IN reviews END);
+CREATE INDEX idx_reviews_ratings_overall
+ON `travel-sample`.inventory.hotel(DISTINCT ARRAY r.ratings.Overall
+FOR r IN reviews END);
 ----
 
 .Update statistics
 [source,N1Ql]
 ----
-UPDATE STATISTICS FOR `travel-sample`(DISTINCT ARRAY r.ratings.Overall FOR r IN reviews END);
+UPDATE STATISTICS
+FOR `travel-sample`.inventory.hotel(DISTINCT ARRAY r.ratings.Overall
+FOR r IN reviews END);
 ----
 
 .Query
 [source,N1Ql]
 ----
 EXPLAIN SELECT COUNT(1)
-FROM `travel-sample`
-WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END
+FROM `travel-sample`.inventory.hotel
+WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END;
 ----
 
 .Results
@@ -468,20 +497,23 @@ WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END
 ----
 [
   {
+    "cardinality": 1,
+    "cost": 107.30834694637392,
     "plan": {
       "#operator": "Sequence",
       "~children": [
         {
           "#operator": "IndexScan3",
-          "cardinality": 57.22814556197126,
-          "cost": 19.056972472136433,
+          "bucket": "travel-sample",
+          "cardinality": 1,
+          "cost": 107.2420823253458,
           "covers": [
-            "cover ((distinct (array ((`r`.`ratings`).`Overall`) for `r` in (`travel-sample`.`reviews`) end)))",
-            "cover ((meta(`travel-sample`).`id`))",
+            "cover ((distinct (array ((`r`.`ratings`).`Overall`) for `r` in (`hotel`.`reviews`) end)))",
+            "cover ((meta(`hotel`).`id`))",
             "cover (count(1))"
           ],
           "filter_covers": {
-            "cover (any `r` in (`travel-sample`.`reviews`) satisfies (((`r`.`ratings`).`Overall`) = 4) end)": true
+            "cover (any `r` in (`hotel`.`reviews`) satisfies (((`r`.`ratings`).`Overall`) = 4) end)": true
           },
           "index": "idx_reviews_ratings_overall",
           ...
@@ -489,7 +521,7 @@ WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END
         ...
       ]
     },
-    "text": "SELECT COUNT(1)\nFROM `travel-sample` WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END"
+    "text": "SELECT COUNT(1)\nFROM `travel-sample`.inventory.hotel\nWHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END;"
   }
 ]
 ----
