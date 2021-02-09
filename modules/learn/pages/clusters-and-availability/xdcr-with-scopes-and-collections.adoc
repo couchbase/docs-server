@@ -1,7 +1,7 @@
 = XDCR with Scopes and Collections
 
 [abstract]
-When XDCR is established between a source bucket and a target bucket, data can be either _implicitly_ or _explicitly_ replicated between _collections_.
+When XDCR is established between a source bucket and a target bucket, data can be either _implicitly_ or _explicitly_ mapped between _collections_.
 
 [#understanding-xdcr-collections-mapping]
 == Understanding XDCR Collections-Mapping
@@ -13,7 +13,7 @@ However, within the replication, documents can be _mapped_ between different sou
 A _mapping_ is a link, established by XDCR, between a _namespace_ within the source bucket and a namespace within the target bucket.
 A _namespace_ indicates the scope and collection, within the source or target bucket, within which exists data to be replicated.
 Each namespace is represented as the name of the scope, followed by the name of the collection, separated by a period.
-For example, if a bucket contains a scope named `HotelCollection`, and this scope contains collections named `USHotelCollection` and `UKHotelCollection`, then `HotelCollection.USHotelCollection` and `HotelCollection.UKHotelCollection` are both valid namespaces, specifying different collections within the same scope.
+For example, if a bucket contains a scope named `HotelScope`, and this scope contains collections named `USHotelCollection` and `UKHotelCollection`, then `HotelCollection.USHotelCollection` and `HotelCollection.UKHotelCollection` are both valid namespaces, specifying different collections within the same scope.
 
 Between a namespace on the source cluster and a namespace on the target cluster, two kinds of collections-mapping are supported, which are _implicit_ and _explicit_:
 
@@ -45,7 +45,7 @@ The target bucket also contains `CollectionA` within `ScopeA`.
 Therefore, since source and target buckets contain the identical namespace, `ScopeA.CollectionA`, implicit replication occurs automatically between `ScopeA.CollectionA` on the source, and `ScopeACollectionA` on the target.
 +
 (Note that XDCR does not automatically create scopes or collections.
-Therefore, for an implicit mapping to be achieved, identical namespaces must have been previously created by the administrator.)
+Therefore, for an implicit mapping to be achieved, identical namespaces must be created by the administrator.)
 
 . Within `ScopeA` in the source bucket, a collection named `CollectionB` exists.
 The target bucket also contains `CollectionB` within `ScopeA`.
@@ -59,7 +59,8 @@ Therefore, since source and target buckets contain the identical namespace, `Sco
 However, although the target bucket contains a scope named `ScopeB`, this does _not_ contain a collection named `CollectionB`: instead, it contains a collection named `CollectionC`.
 Therefore, since `ScopeB.CollectionB` is a namespace unique to the source, no implicit mapping is established with the target, and no replication is automatically initiated.
 +
-Note, however, if an identical namespace is _subsequently_ established within the target bucket, a _backfill pipeline_ is automatically created, to replicate all appropriate data from the source to the target collection: this is described below, in xref:learn:collections-and-availability/xdcr-overview.adoc#target-collection-removal-and-addition[Target-Collection Removal and Addition].
+Note, however, if an identical namespace is _subsequently_ established within the target bucket, this is eventually detected by XDCR, by means of a periodic check.
+At this point, a _backfill pipeline_ is automatically created, to replicate all appropriate data from the source to the target collection: this is described below, in xref:learn:collections-and-availability/xdcr-overview.adoc#target-collection-removal-and-addition[Target-Collection Removal and Addition].
 
 For the practical steps required to set up implicit mappings, see xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicate-data-between-collections-implicitly[Replicate Data Between Collections Implicitly].
 
@@ -71,6 +72,9 @@ An explicit mapping can be specified either between scopes, or between collectio
 
 * _An explicit mapping between scopes_ ensures that an _implicit_ mapping occurs between collections within the scopes that are identically named.
 For example, if on the source, `ScopeA` contains `CollectionA`, and on the target, `ScopeB` contains `CollectionA`, an explicit mapping between `ScopeA` on the source and `ScopeB` on the target automatically produces an implicit mapping between the two collections named `CollectionA`.
++
+Note that once an explicit mapping between scopes has been established, implicit mapping will occur between identically named collections that are _subsequently created_ within those scopes.
+(Note also that this only occurs when the explicit mapping is indeed between the scopes themselves: it does not occur when the explicit mapping is between individual collections within the scopes.)
 +
 An explicit mapping between scopes produces no implicit mapping between dissimilarly named collections.
 For example, if on the source, `ScopeA` contains `CollectionA`, and on the target, `ScopeB` contains `CollectionB`, an explicit mapping between `ScopeA` on the source and `ScopeB` on the target produces no implicit mapping between `CollectionA` and `CollectionB`.
@@ -110,15 +114,19 @@ These include the existence of a valid collection-to-collection mapping, which m
 
 * An _explicit_ mapping that has been previously configured by the administrator; and which correctly corresponds to an existing pair of non-identical namespaces on the source and target buckets.
 
-If no such mapping exists for a given document, the document is not replicated.
+If no such mapping exists for a given document, of if the mapping has been excluded from the replication by the explicit definition of a rule, the document is not replicated.
 
 XDCR continuously monitors the target bucket for the addition or removal of collections.
+The monitoring period is one minute, and is adjustable.
 Where collection-removal on the target bucket invalidates a mapping, documents previously eligible for replication are no longer so; and are therefore, on examination, dropped from memory by XDCR, and are not replicated.
 
 Where collection-addition occurs on the target bucket such that a new _implicit_ mapping is created, but occurs _after_ replication between the source and target bucket has been commenced, the following occur:
 
-* XDCR creates a _backfill pipeline_, which replicates to the target collection all documents from the source collection that were previously dropped by XDCR, due to the previous lack of an implicit mapping.
-The documents to be considered candidates for this replication are determined based on the _replication sequence number_ that XDCR was handling at the point the new implicit mapping was recognized: documents whose sequence number is lower than this are re-examined.
+* XDCR checks the target namespaces every minute, by default: when a check is performed, any new collections that have been added to the target are detected.
+(Note, therefore, that it may indeed take XDCR up to 60 seconds to detect a newly created collection on the target: detection is _not_ instantaneous.)
+
+* On detection of a new collection on the target, XDCR creates a _backfill pipeline_, which replicates to the target collection all documents from the source collection that were previously dropped by XDCR, due to the previous lack of an implicit mapping.
+The documents to be considered candidates for this replication are determined based on the _source sequence number_ that XDCR was handling at the point the new implicit mapping was recognized: documents whose sequence number is lower than this are re-examined.
 
 * The standard XDCR pipeline continues to operate, replicating ongoing mutations to the new target collection.
 
