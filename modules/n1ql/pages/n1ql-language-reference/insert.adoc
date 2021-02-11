@@ -69,6 +69,8 @@ If the statement has any SELECT or RETURNING data-read clauses, then the _Query 
 For more details about roles and privileges, see {authorization-overview}[Authorization].
 
 WARNING: Please note that the examples below will alter the data in your sample buckets.
+To restore your sample data, remove and reinstall the `travel-sample` bucket.
+Refer to xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for details.
 
 For example,
 
@@ -77,7 +79,7 @@ For example,
 [source,n1ql]
 ----
 INSERT INTO `travel-sample`.inventory.hotel (KEY, VALUE)
-VALUES ("key1", { "type" : "hotel2", "name" : "new hotel scopes" });
+VALUES ("key1", { "type" : "hotel", "name" : "new hotel" });
 ----
 
 * To execute the following statement, you must have the _Query Insert_ and _Query Select_ privileges on `pass:c[`travel-sample`.inventory.hotel]`.
@@ -92,16 +94,16 @@ VALUES ("key1", { "type" : "hotel", "name" : "new hotel" }) RETURNING *;
 +
 [source,n1ql]
 ----
-INSERT INTO `travel-sample`.inventory.hotel (KEY foo, VALUE bar)
-SELECT foo, bar FROM `beer-sample`;
+INSERT INTO `travel-sample`.inventory.landmark (KEY foo, VALUE bar)
+SELECT META(doc).id AS foo, doc AS bar FROM `beer-sample` AS doc WHERE type = "brewery";
 ----
 
-* To execute the following statement, user must have the _Query Insert_ privilege on `pass:c[`travel-sample`.invetory.hotel]` and _Query Select_ privilege on `pass:c[`travel-sample`]`.
+* To execute the following statement, you must have the _Query Insert_ privilege on `pass:c[`travel-sample`.inventory.hotel]` and _Query Select_ privilege on `pass:c[`travel-sample`]`.
 +
 [source,n1ql]
 ----
 INSERT INTO `travel-sample`.inventory.hotel (KEY foo, VALUE bar)
-SELECT "foo" || meta().id, bar FROM `travel-sample`.inventory.hotel;
+SELECT "copy_" || meta(doc).id AS foo, doc AS bar FROM `travel-sample`.inventory.hotel AS doc;
 ----
 
 [#insert-syntax]
@@ -1155,27 +1157,6 @@ $ curl -v http://localhost:8093/query/service -u Administrator:password -d 'prep
    }
 }
 ----
-
-[NOTE]
---
-The REST parameters should not have any spaces around `&` when passing multiple parameters.
-For example, the following REST API call throws an error because of spaces before the `$faa_code` parameter.
-
-[source,console]
-----
-$ curl -v http://localhost:8093/query/service -u Administrator:password -d 'prepared="ins_india"&$key="airport_10002" & $faa_code="BLR"'
-----
-
-[source,json]
-----
-"errors": [
-    {
-        "code": 5010,
-        "msg": "Error evaluating VALUES. - cause: No value for named parameter $faa_code."
-    }
-]
-----
---
 ====
 
 [#insert-explain-plan]
@@ -1273,8 +1254,8 @@ The query engine first scans the input values shown by the operator `ValueScan` 
 [source,n1ql]
 ----
 EXPLAIN INSERT INTO `travel-sample`.inventory.airport (key UUID(), value airport)
-    SELECT airport FROM `travel-sample`
-      WHERE type = "airport" AND airportname = "Heathrow";
+    SELECT airport FROM `travel-sample`.inventory.airport
+      WHERE airportname = "Heathrow";
 ----
 
 .Results
@@ -1289,75 +1270,51 @@ EXPLAIN INSERT INTO `travel-sample`.inventory.airport (key UUID(), value airport
           "#operator": "Sequence",
           "~children": [
             {
-              "#operator": "IntersectScan",
-              "scans": [
+              "#operator": "IndexScan3", // <1>
+              "bucket": "travel-sample",
+              "index": "def_inventory_airport_airportname",
+              "index_id": "14b05d2b21bd6eee",
+              "index_projection": {
+                "primary_key": true
+              },
+              "keyspace": "airport",
+              "namespace": "default",
+              "scope": "inventory",
+              "spans": [
                 {
-                  "#operator": "IndexScan3",
-                  "index": "def_type",
-                  "index_id": "1e928024b69cc2bf",
-                  "index_projection": {
-                    "primary_key": true
-                  },
-                  "keyspace": "travel-sample",
-                  "namespace": "default",
-                  "spans": [
+                  "exact": true,
+                  "range": [
                     {
-                      "exact": true,
-                      "range": [
-                        {
-                          "high": "\"airport\"",
-                          "inclusion": 3,
-                          "low": "\"airport\""
-                        }
-                      ]
+                      "high": "\"Heathrow\"",
+                      "inclusion": 3,
+                      "low": "\"Heathrow\""
                     }
-                  ],
-                  "using": "gsi"
-                },
-                {
-                  "#operator": "IndexScan3",
-                  "index": "def_airportname",
-                  "index_id": "669b5d8f3f3b8a46",
-                  "index_projection": {
-                    "primary_key": true
-                  },
-                  "keyspace": "travel-sample",
-                  "namespace": "default",
-                  "spans": [
-                    {
-                      "exact": true,
-                      "range": [
-                        {
-                          "high": "\"Heathrow\"",
-                          "inclusion": 3,
-                          "low": "\"Heathrow\""
-                        }
-                      ]
-                    }
-                  ],
-                  "using": "gsi"
+                  ]
                 }
-              ]
+              ],
+              "using": "gsi"
             },
             {
-              "#operator": "Fetch",
-              "keyspace": "travel-sample",
-              "namespace": "default"
+              "#operator": "Fetch", // <2>
+              "bucket": "travel-sample",
+              "keyspace": "airport",
+              "namespace": "default",
+              "scope": "inventory"
             },
             {
-              "#operator": "Parallel",
+              "#operator": "Parallel", 
               "~child": {
-                "#operator": "Sequence",
+                "#operator": "Sequence", 
                 "~children": [
                   {
-                    "#operator": "Filter",
-                    "condition": "(((`travel-sample`.`type`) = \"airport\") and ((`travel-sample`.`airportname`) = \"Heathrow\"))"
+                    "#operator": "Filter", // <3>
+                    "condition": "((`airport`.`airportname`) = \"Heathrow\")"
                   },
                   {
                     "#operator": "InitialProject",
                     "result_terms": [
                       {
-                        "expr": "(`travel-sample`.`airport`)"
+                        "expr": "`airport`"
                       }
                     ]
                   }
@@ -1372,7 +1329,7 @@ EXPLAIN INSERT INTO `travel-sample`.inventory.airport (key UUID(), value airport
             "#operator": "Sequence",
             "~children": [
               {
-                "#operator": "SendInsert",
+                "#operator": "SendInsert", // <4>
                 "alias": "airport",
                 "bucket": "travel-sample",
                 "key": "uuid()",
@@ -1389,16 +1346,15 @@ EXPLAIN INSERT INTO `travel-sample`.inventory.airport (key UUID(), value airport
         }
       ]
     },
-    "text": "INSERT INTO `travel-sample`.inventory.airport (key UUID(), value airport)\n    SELECT airport FROM `travel-sample`\n      WHERE type = \"airport\" AND airportname = \"Heathrow\";"
+    "text": "INSERT INTO `travel-sample`.inventory.airport (key UUID(), value airport)\n    SELECT airport FROM `travel-sample`.inventory.airport\n      WHERE airportname = \"Heathrow\";"
   }
 ]
 ----
 
-The Query Engine first executes the `SELECT` statement and then uses the projection to insert into the `travel-sample` keyspace, performing the operations in the order listed:
+The Query Engine first executes the `SELECT` statement and then uses the projection to insert into the `travel-sample`.inventory.airport keyspace, performing the operations in the order listed:
 
-<1> An `IndexScan` to find the documents that satisfy `type="airport"`.
-<2> A subsequent `IndexScan` for `airportname="Heathrow"`.
-<3> An `IntersectScan` to obtain the documents that satisfy both conditions of Step 1 and Step 2.
-<4> A `Fetch` for the value on the document `_airport`.
-<5> An `Insert` of the value along with the auto-generated key into the `travel-sample` keyspace.
+<1> An `IndexScan` to search for documents using the `def_inventory_airport_airportname` index.
+<2> A `Fetch` for the document in the `travel-sample`.inventory.airport keyspace.
+<3> A `Filter` for documents with `airportname="Heathrow"`.
+<4> An `Insert` of the value along with the auto-generated key into the `travel-sample`.inventory.airport keyspace.
 ====
