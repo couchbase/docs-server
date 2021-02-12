@@ -2,56 +2,89 @@
 :page-topic-type: concept
 
 [abstract]
-On Linux, [.term]_swappiness_ indicates how frequently the system uses the swap space based on its RAM usage.
+On Linux, the kernel's _swappiness_ level indicates how likely the system is to swap pages out of physical memory based on RAM usage.
+Swappiness should be set to 1 or 0 on most Linux systems to achieve optimal Couchbase Server performance.
 
-Couchbase Server efficiently uses available RAM for your working set data; ideally, sufficient RAM remains available to the operating system even with your cluster’s configured Server RAM Quota as well.
-It is always a good idea to configure a reasonable amount of virtual memory or swap space on Linux-based nodes and a Pagefile on Windows.
-Sufficient virtual memory avoids that Couchbase Server processes from being killed by the OS, such as the Linux out of memory (OOM) killer.
+Couchbase Server efficiently uses available RAM for your working set data; ideally, sufficient RAM remains available to the operating system above and beyond your cluster’s configured server RAM quota.
+It's always a good idea to configure a reasonable amount of virtual memory or swap space on Linux-based nodes. (There are no recommended virtual memory optimizations for Windows-based nodes.)
+Sufficient virtual memory helps prevent Couchbase Server processes from being killed by the OS, such as by the Linux out of memory (OOM) killer.
 
-The Linux [.term]_kernel swappiness_ setting defines how aggressively the kernel will swap memory pages versus dropping pages from the page cache.
-A higher value increases swap aggressiveness while a lower value reduces swapping.
+The Linux kernel's _swappiness_ setting defines how aggressively the kernel will swap memory pages versus dropping pages from the page cache.
+A higher value increases swap aggressiveness, while a lower value tells the kernel to swap as little as possible to disk and favor RAM.
 The swappiness range is from 0 to 100, and most Linux distributions have swappiness set to 60 by default.
 
-Set the swappiness setting to 0 (zero) or at most 1 for optimal Couchbase Server operation.
-The low range tells the kernel to swap as little as possible to disk and favor RAM.
-Couchbase Server is optimized with its managed cache to use RAM and is capable of managing what should be in RAM and what should not be.
-By allowing the OS to control what memory pages are in RAM, you lower Couchbase Server’s effectiveness.
+Couchbase Server is optimized with its managed cache to use RAM, and is capable of managing what should be in RAM and what shouldn't be.
+Allowing the OS to have too much control over what memory pages are in RAM is likely to lower Couchbase Server’s performance.
+Therefore, it's recommended that swappiness be set to the levels listed below.
 
-== Changing Swappiness
+.Recommended Swappiness Settings for Linux
+[#recommended-swappiness-settings,cols="1,1",options="header"]
+|===
+|Linux Kernel Version |Recommended Swappiness 
 
-Swappiness levels tell the virtual memory subsystem how much it should attempt to swap to disk.
-The OS will try to swap out items in memory even when there is plenty of RAM available.
-The OS default value for swappiness is usually 60, which is too high.
+|3.5-rc1 and higher
+|1*
 
-. To see at what value is your OS set, run the following command:
+|Older versions
+|0
+|===
 
- $ cat /proc/sys/vm/swappiness
+*Linux kernel 3.5-rc1 and higher introduced a change in behavior for `swappiness=0`.
+Depending on how a Linux OS implements this change, it has the potential to increase the risk of OOM killing under strong memory and I/O pressure.
+As a result, the recommended swappiness setting for these Linux platforms is 1. (Though, it may be the case that a given Linux OS has implemented or patched this change in such a way that a swappiness setting of 0 is still preferred.)
 
-. As Couchbase Server is a memory-first architecture, performance is gained (or at minimum not lost) just by changing the swappiness value to 0.
+== Changing Swappiness Setting
+
+The Linux kernel's swappiness setting tells the virtual memory subsystem how much it should attempt to swap to disk.
+Linux operating systems often default to a setting of 60, which can cause the OS to swap out items from memory even when there is plenty of RAM available.
+This behavior is undesirable given Couchbase Server's memory-first architecture.
+
+. Verify your current system's swappiness setting.
 +
-There are debates on many Linux forums about the merits of using either 0 or 1, but it is recommended to do your own research.
-+
-The swappiness value tells to the OS's virtual memory subsystem not swap items from RAM to disk unless it really has to.
-If the cluster nodes are sized correctly, swapping should not be necessary.
-+
-To change the swappiness setting, use sudo or just become root:
-+
+[source,console]
 ----
-# Set the value for the running system
-     sudo sh -c 'echo 0 > /proc/sys/vm/swappiness'
+cat /proc/sys/vm/swappiness
+----
++
+If the output doesn't match the <<recommended-swappiness-settings,recommended settings>>, proceed to the next step.
 
-     # Backup sysctl.conf
-     sudo cp -p /etc/sysctl.conf /etc/sysctl.conf.`date +%Y%m%d-%H:%M`
-
-     # Set the value in /etc/sysctl.conf so it stays after reboot.
-     sudo sh -c 'echo "" >> /etc/sysctl.conf'
-     sudo sh -c 'echo "#Set swappiness to 0 to avoid swapping" >> /etc/sysctl.conf'
-     sudo sh -c 'echo "vm.swappiness = 0" >> /etc/sysctl.conf'
+. Change the swappiness setting.
++
+.. Set the value for the running system.
++
+[source,console]
+----
+sudo sh -c 'echo 0 > /proc/sys/vm/swappiness'
+----
++
+.. Backup `sysctl.conf`.
++
+[source,console]
+----
+sudo cp -p /etc/sysctl.conf /etc/sysctl.conf.`date +%Y%m%d-%H:%M`
+----
++
+.. Set the value in `/etc/sysctl.conf` so it stays after reboot.
++
+[source,console]
+----
+sudo sh -c 'echo "" >> /etc/sysctl.conf'
+----
++
+[source,console]
+----
+sudo sh -c 'echo "#Set swappiness to 0 to avoid swapping" >> /etc/sysctl.conf'
+----
++
+[source,console]
+----
+sudo sh -c 'echo "vm.swappiness = 0" >> /etc/sysctl.conf'
 ----
 
-. Make sure to modify any continuous deployment process that build OS to do this as well.
-This is especially critical for public/private clouds where it is so easy to bring up new instances.
-This needs to be part of the build process for any new Couchbase node.
+Setting swappiness needs to be a part of the build process for any new Couchbase node.
+Make sure to modify any continuous deployment process that builds the OS.
+This also applies to golden master OS images and configuration automation systems.
+It is especially critical for public/private clouds where it is easy to bring up new instances.
 
 // <p>To change the swappiness configuration:</p>
 // <ol>
@@ -67,7 +100,3 @@ This needs to be part of the build process for any new Couchbase node.
 // <li>Reboot your system.</li>
 // </ol></li>
 // </ol>
-
-NOTE: If you are making a golden master OS image or use a configuration automation system, do not forget to make this permanent change there too.
-
-NOTE: On Windows, there are no recommended virtual memory optimizations.
