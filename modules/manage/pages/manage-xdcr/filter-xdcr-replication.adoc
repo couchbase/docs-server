@@ -76,7 +76,7 @@ The panel now expands vertically:
 +
 image::manage-xdcr/xdcr-filter-replication-open-panel.png[,660]
 +
-To replicate only those documents whose key features the string _airport_, and whose body contains _France_ as the value of _country_, enter the expression _REGEXP_CONTAINS(META().id, "^airport") AND country = "France"_, in the *Filter Expression* field:
+To replicate only those documents whose key features the string _airport_, and whose body contains _France_ as the value of _country_, enter the expression _'REGEXP_CONTAINS(country, "France")'_, in the *Filter Expression* field:
 +
 [#filter-xdcr-add-replication-dialog-lower-with-expression]
 image::manage-xdcr/filter-xdcr-add-replication-dialog-lower-with-expression.png[,660,align=left]
@@ -190,16 +190,52 @@ Left-click on the *Save Replication* button, to save edits.
 [#filter-an-xdcr-replication-with-the-cli]
 == Filter an XDCR Replication with the CLI
 
-Staring from the scenario defined above, in xref:manage:manage-xdcr/filter-xdcr-replication.adoc#examples-on-this-page-create-replication[Examples on This Page], use the CLI `xdcr-replicate` command to create a filtered XDCR replication, as follows:
+Starting from the scenario defined above, in xref:manage:manage-xdcr/filter-xdcr-replication.adoc#examples-on-this-page-create-replication[Examples on This Page], the CLI `xdcr-replicate` command can be used to create a filtered XDCR replication.
+
+The example assumes that the `travel-sample` bucket is resident on each of two, single-node clusters, which are each named after their IP address.
+The bucket on the target has an additional collection within the `inventory` scope, which is named `France_airport`.
+
+The replication is configured to replicate only to the collection `France_airport`; and to replicate from the source-collection `airport` only those documents whose `country` value is `France`.
+
+This requires use of the following filter-expression:
 
 ----
-/opt/couchbase/bin/couchbase-cli xdcr-replicate -c localhost:8091 \
--u Administrator -p password --create --xdcr-cluster-name 10.144.210.102 \
---xdcr-from-bucket travel-sample --xdcr-to-bucket US_airport \
---filter-expression 'REGEXP_CONTAINS(META().id, "^airport") AND country = "United States"'
+'REGEXP_CONTAINS(country, "France")'
 ----
 
-This expression specifies that all documents filtered by means of the specified `filter-expression` will be replicated from `travel-sample`, on the localhost `10.144.210.101`, to `US_airport` on the remote cluster `10.144.210.102`.
+This also requires an _explicit mapping_ to be specified, as follows:
+
+----
+{
+  "tenant_agent_00": null,
+  "tenant_agent_01": null,
+  "tenant_agent_02": null,
+  "tenant_agent_03": null,
+  "inventory.landmark": null,
+  "inventory.hotel": null,
+  "inventory.airline": null,
+  "inventory.route": null,
+  "inventory.airport": "inventory.France_airport"
+}
+----
+
+This explicit mapping specifies that replication from all `tenant_agent` scopes on the source is denied.
+It also specifies that replication from all source-collections within `inventory` is denied; with the exception of replication from the source-collection `inventory.airport`, which is validated as proceeding to the target-collection `inventory.France_airport`.
+
+The full expression is as follows.
+Note that the `collection-explicit-mappings` flag has been set to `1`, as required, in order to enable explicit mappings:
+
+----
+/opt/couchbase/bin/couchbase-cli xdcr-replicate \
+-c localhost:8091 \
+-u Administrator -p password \
+--create --xdcr-cluster-name 10.144.210.102 \
+--xdcr-from-bucket travel-sample \
+--xdcr-to-bucket travel-sample \
+--filter-expression 'REGEXP_CONTAINS(country, "France")' \
+--collection-explicit-mappings 1 \
+--collection-mapping-rules '{"tenant_agent_00":null,"tenant_agent_01":null,"tenant_agent_02":null,"tenant_agent_03":null,"inventory.landmark":null,"inventory.hotel":null,"inventory.airline":null,"inventory.route":null,"inventory.airport":"inventory.France_airport"}'
+----
 
 If successful, the command returns the following output:
 
@@ -212,19 +248,33 @@ For more information, see the complete reference for the xref:cli:cbcli/couchbas
 [#filter-an-xdcr-replication-with-the-rest-api]
 == Filter an XDCR Replication with the REST API
 
-Starting from the scenario defined above, in xref:manage:manage-xdcr/filter-xdcr-replication.adoc#examples-on-this-page-create-replication[Examples on This Page], using the REST API's `POST /controller/createReplication` HTTP method and URI, create a filtered XDCR reference as follows:
+Starting from the scenario defined above, in xref:manage:manage-xdcr/filter-xdcr-replication.adoc#examples-on-this-page-create-replication[Examples on This Page], the REST API's `POST /controller/createReplication` HTTP method and URI can be used to create a filtered XDCR replication.
+
+The assumptions and requirements are identical to those described above, in xref:manage:manage-xdcr/filter-xdcr-replication.adoc#filter-an-xdcr-replication-with-the-cli[Filter an XDCR Replication with the CLI].
 
 ----
 curl -v -X POST -u Administrator:password \
 http://localhost:8091/controller/createReplication \
 -d replicationType=continuous \
--d toBucket=US_airport \
--d toCluster=10.144.210.102 \
 -d fromBucket=travel-sample \
--d filterExpression=REGEXP_CONTAINS%28META%28%29.id%2C+%22%5Eairport%22%29+AND+country+%3D+%22United+States%22
+-d toCluster=10.144.210.102 \
+-d toBucket=travel-sample \
+-d priority=High \
+-d collectionsExplicitMapping=true \
+-d filterExpression=%27REGEXP_CONTAINS(country%2C%20%22France%22)%27 \
+-d colMappingRules=%7B%22tenant_agent_00%22%3Anull%2C%22tenant_agent_01%22%3Anull%2C%22tenant_agent_02%22%3Anull%2C%22tenant_agent_03%22%3Anull%2C%22inventory.landmark%22%3Anull%2C%22inventory.hotel%22%3Anull%2C%22inventory.airline%22%3Anull%2C%22inventory.route%22%3Anull%2C%22inventory.airport%22%3A%22inventory.France_airport%22%7D
 ----
 
-This expression specifies that all documents filtered by means of the specified `filter-expression` will be replicated from `travel-sample`, on the localhost `10.144.210.101`, to `US_airport` on the remote cluster `10.144.210.102`.
+Note that the flag `collectionsExplicitMapping` is set to `true`; as is required to enable explicit mapping.
+Note also that the filter and mapping-rules expressions are necessarily encoded.
+
+If the call is successful, `200 OK` is returned, with a response such as the following:
+
+----
+{"id":"8ac0de0d95d5863d7b41e246755a7ec8/travel-sample/travel-sample"}
+----
+
+The response features the `id` of the successfully created replication.
 
 For more information, see xref:rest-api:rest-xdcr-create-replication.adoc[Creating XDCR Replications].
 
