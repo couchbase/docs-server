@@ -102,6 +102,8 @@ However, as an alternative to an explicit mapping between `ScopeB` and `ScopeY`,
 
 For the practical steps required to set up explicit mappings, see xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicate-data-between-collections-explicitly[Replicate Data Between Collections Explicitly].
 
+For the _rules_ whereby explicit mappings must be expressed, see xref:learn:clusters-and-availability/xdcr-with-scopes-and-collections.adoc#rules-for-explicit-mappings[Rules for Explicit Mappings], below.
+
 [#target-collection-removal-and-addition]
 == Target-Collection Removal and Addition
 
@@ -161,6 +163,113 @@ Thus, every document whose `type` is `"airline"`, and whose `country` is `"Unite
 . Similarly, to migrate all documents that correspond to UK airports to the target collection `Airport-Collection`, within the scope `UK-Scope`, a filter such as the following is required: `type == "airport" && country == United Kingdom"`.
 
 For the practical steps, see xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#migrate-data-to-a-collection[Migrate Data to a Collection].
+
+[#rules-for-explicit-mappings]
+== Rules for Explicit Mappings
+
+Explicit mappings are established by means of _rules_.
+Each rule _affirms_ or _denies_ that replication should occur between a source scope or collection and a target scope and collection.
+When multiple rules are specified in the establishing of a single replication, the rules are applied with a fixed order of priority.
+This order is represented in the table below: a rule with a lower priority-number takes higher priority.
+
+[cols="3,6,9,6"]
+|===
+| Priority | Rule | Description | Syntax
+
+| 0
+| _scope.collection_ to _scope.collection_ affirmation
+| Maps a single source _scope.collection_ to a single target _scope.collection_, and affirms that replication should proceed between them.
+| `{"source_scope.source_collection":"target_scope.target_collection"}`
+
+| 1
+| _scope.collection_ denial
+| Specifies that a single source _scope.collection_ should not be replicated.
+| `{"source_scope.source_collection":null}`
+
+| 2
+| _scope_ to _scope_ affirmation
+| Maps a single source _scope_ to a single target _scope_, and affirms that replication should proceed between them.
+| `{"source_scope":"target_scope"}`
+
+| 3
+| _scope_ denial
+| Specifies that a single source _scope_ should not be replicated.
+| `{"source":null}`
+
+|===
+
+Additional information on each of these rules is provided below.
+
+[#priority-0]
+=== Priority 0
+
+A single, unique collection under a single unique scope on the source is mapped to a single, unique collection under a single unique scope on the target, and is affirmed for replication.
+No other collection in the source scope is replicated, unless mapped and affirmed by an additional rule.
+
+A source collection cannot be mapped (by means of multiple rules) to multiple target collections.
+However, multiple source collections can be mapped (by means of multiple rules) to a single target collection: if this results in conflicts, the procedure for xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution] that has been established for the bucket is applied.
+
+If there exists a Priority 3 rule that expressly denies replication from the source scope specified in the Priority 0 rule, the Priority 0 rule takes precedence, and replication is thereby affirmed.
+For example, the expression `{"inventory":null,"inventory.airport":"MyInventory.airport"}` denies replication of any collection within the source-scope `inventory`; with the exception of the collection `airport`, which is replicated to the identically named collection within the target-scope `MyInventory`.
+
+If a Priority 0 rule explicitly affirms that a collection be replicated to a destination other than that implicitly affirmed by a simultaneous Priority 2 rule, the Priority 0 rule takes precedence.
+For example, the expression `{"inventory":"MyInventory","inventory.airport":"MyInventory.MyAirport"}` specifies that all collections within the source-scope `inventory` can be implicitly mapped to their equivalents in the target scope `MyInventory`; with the exception of the collection `airport`, which is replicated instead to the collection `MyAiport`.
+(Thus, if the collection `airport` does exist within the target-scope `MyInventory`, it receives no replication.)
+
+Note that a Priority 0 rule cannot be expressed to conflict with a Priority 1 rule, since this would require a statement of two mappings from the same collection, which is not permitted.
+For example, the expression `{"inventory.airport":null, "inventory.airport":"MyInventory.airport"}` generates an error.
+
+Note also that a Priority 0 rule cannot be expressed simultaneously with a Priority 2 rule that entails an implicit mapping between the same collections.
+For example, given the existence of the collection `airport` in both the source-collection `inventory` and the target-collection `MyInventory`, the expression `{"inventory":"MyInventory","inventory.airport"."MyInventory:airport"}` generates an error.
+
+[#priority-1]
+=== Priority 1
+
+A single, unique collection under a single unique scope on the source is prohibited from being replicated.
+For example, the expression `{"inventory.airport":null}` prohibits replication from the collection `airport`, which resides in the source-scope `inventory`.
+
+If there exists a Priority 2 role that affirms replication from a source scope to a target scope, replication occurs between each collection in the source scope that can be implicitly mapped to an identically named collection in the target scope; unless the source collection in one or more of the implicit mappings is explicitly prohibited from being replicated, by means of a Priority 1 rule.
+For example, the expression `{"inventory":"MyInventory","inventory.airport":null}` specifies that all collections within the source-scope `inventory` can be implicitly mapped to their equivalents in the target scope `MyInventory`; with the exception of the collection `airport`, from which replication is denied.
+
+Note that a Priority 0 rule cannot be expressed to conflict with a Priority 1 rule, since this would require a statement of two mappings from the same collection, which is not permitted.
+For example, the expression `{"inventory.airport":null, "inventory.airport":"MyInventory.airport"}` generates an error.
+
+Note also that a Priority 1 rule cannot be expressed simultaneously with a Priority 3 rule that denies replication from the scope that contains the Priority 1 rule's specified collection.
+For example, the expression `{"inventory":null,"inventory.airport":null}` generates an error.
+
+[#priority-2]
+=== Priority 2
+
+A single, unique scope on the source is mapped to a single, unique scope on the target.
+Replication occurs between each collection in the source scope that can be implicitly mapped to an identically named collection in the target scope.
+For example, the expression `{"inventory":"MyInventory"}` affirms that every collection within the source-scope `inventory` should be replicated to its equivalent in the target-scope `MyInventory`.
+
+If a Priority 0 rule explicitly affirms that a collection be replicated to a destination other than that implicitly affirmed by a simultaneous Priority 2 rule, the Priority 0 rule takes precedence.
+For example, the expression `{"inventory":"MyInventory","inventory.airport":"MyInventory.MyAirport"}` specifies that all collections within the source-scope `inventory` can be implicitly mapped to their equivalents in the target scope `MyInventory`; with the exception of the collection `airport`, which is replicated instead to the collection `MyAiport`.
+(Thus, if the collection `airport` does exist within the target-scope `MyInventory`, it receives no replication.)
+
+If a Priority 1 rule explicitly denies replication from a collection within the scope specified by a simultaneous Priority 2 rule, the Priority 1 rule takes precedence for that collection: but other collections within the scope that are not denied by a Priority 1 rule are still affirmed for replication.
+For example, the expression `{"inventory":"MyInventory","inventory.airport":null}` specifies that all collections within the source-scope `inventory` can be implicitly mapped to their equivalents in the target scope `MyInventory`; with the exception of the collection `airport`, from which replication is denied.
+
+Note that a Priority 2 rule cannot be expressed to conflict with a Priority 3 rule, since this would require a statement of two scope-level mappings from the same scope, which is not permitted.
+For example, the expression `{"inventory":null, "inventory":"MyInventory"}` generates an error.
+
+Note also that a Priority 0 rule cannot be expressed simultaneously with a Priority 2 rule that entails an implicit mapping between the same collections.
+For example, given the existence of the collection `airport` in both the source-collection `inventory` and the target-collection `MyInventory`, the expression `{"inventory":"MyInventory","inventory.airport"."MyInventory:airport"}` generates an error.
+
+[#priority-3]
+=== Priority 3
+
+A single, unique scope on the source is prohibited from being replicated.
+
+If there exists a Priority 0 rule that expressly affirms replication from a source collection that resides within the same source scope that is prohibited by a Priority 3 rule, the Priority 0 rule takes precedence, and replication from that source collection is thereby affirmed.
+For example, the expression `{"inventory":null,"inventory.airport":"MyInventory.airport"}` denies replication to all collections within the source-scope `inventory`; with the exception of the collection `airport`, which is affired for replication to its equivalent in the target-scope `MyInventory`.
+
+Note that a Priority 2 rule cannot be expressed to conflict with a Priority 3 rule, since this would require a statement of two scope-level mappings from the same scope, which is not permitted.
+For example, the expression `{"inventory":null, "inventory":"MyInventory"}` generates an error.
+
+Note also that a Priority 1 rule cannot be expressed when its specified collection is already covered by a Priority 3 rule.
+For example, the expression `{"inventory":null,"inventory.airport":null}` generates an error.
 
 [#scopes-collections-and-filtering]
 == Scopes, Collections, and Filtering
