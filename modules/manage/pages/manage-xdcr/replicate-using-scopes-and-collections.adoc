@@ -453,11 +453,92 @@ Documents are now replicated as specified by the explicit mapping and filter.
 The procedures described above for the UI and CLI &#8212; covering XDCR replication between scopes and collections, based on implicit and explicit mapping; and migration &#8212; can also be effected by means of the Couchbase REST API.
 The required steps are provided below.
 
+For detailed information on all REST API options for XDCR replication, see the reference page for xref:cli:cbcli/couchbase-cli-xdcr-replicate.adoc[xdcr-replicate].
+For more information on creating buckets, scopes, and collections with the REST API, see the reference pages for xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets] and xref:rest-api/scopes-and-collections-api.adoc[Scopes and Collections REST API].
+
 [#replicate-data-implicitly-with-the-rest-api]
 === Replicate Data Implicitly, with the REST API
 
+. Establish two one-node clusters, `10.144.210.101` and `10.144.210.102`, according to the description provided above, in xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#examples-on-this-page[Examples on this Page].
+
+. To replicate data according to the implicit mapping of scopes and collections with the source bucket `travel-sample` and the target bucket `ts`, enter the following:
++
+----
+curl -v -X POST -u Administrator:password \
+http://localhost:8091/controller/createReplication \
+-d replicationType=continuous \
+-d fromBucket=travel-sample \
+-d toCluster=10.144.210.102 \
+-d toBucket=ts
+----
++
+If the command succeeds, a response similar to the following is printed to the console:
++
+----
+{"id":"ac41764b9e261725e874dbd34c7eda6b/travel-sample/ts"}
+----
+
+Inspection of the collections within the `inventory` scope on `ts` now confirms that replication has occurred, according to the implicit mapping established between identically named keyspaces.
+
 [#replicate-data-explicitly-with-the-rest-api]
 === Replicate Data Explicitly, with the REST API
+
+Proceed as follows:
+
+. On the target cluster, `10.144.210.102`, within the scope `inventory`, establish a new collection named `MyAirport`.
+
+. On the source cluster, `10.144.210.101`, delete the replication created above in xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicat-data-implicitly-with-the-cli[Replicate Data Explicitly with the CLI].
++
+To do this, first, obtain the id of the existing replication, by means of the following expression, which uses the `GET /pools/default/tasks` method and URL, as well as https://stedolan.github.io/jq/jq[jq^] and `grep`:
++
+----
+curl -v -u Administrator:password -X GET \
+http://10.144.210.101:8091/pools/default/tasks | \
+jq '.' |  \
+grep "cancelURI"
+----
++
+If the command is successful, the following output is retrieved from the returned object:
++
+----
+"cancelURI": "/controller/cancelXDCR/ac41764b9e261725e874dbd34c7eda6b%2Ftravel-sample%2Fts",
+----
++
+The returned `cancelURI` references the id of the replication.
++
+Now, delete the replication by means of the `DELETE /conroller/cancelXDCR/<replication-id>` method and URI:
++
+----
+curl -X DELETE -u Administrator:password  \
+http://10.144.210.101:8091/controller/cancelXDCR/ac41764b9e261725e874dbd34c7eda6b%2Ftravel-sample%2Fts
+----
++
+If the command is successful, no output is provided.
+
+. On the source cluster, `10.144.210.101`, create a new replication to the target cluster `10.144.210.102`, specifying the explicit mapping of the source collection `airline` to the target collection `MyAirline`:
++
+----
+/opt/couchbase/bin/couchbase-cli xdcr-replicate \
+-c localhost:8091 \
+-u Administrator \
+-p password \
+--create \
+--xdcr-cluster-name 10.144.210.102 \
+--xdcr-from-bucket travel-sample \
+--xdcr-to-bucket ts \
+--collection-explicit-mappings 1 \
+--collection-mapping-rules '{"inventory.airline":"inventory.MyAirline"}'
+----
++
+Note that the `collection-explicit-mappings` flag has been specified, with a value of `1`.
+The value of `collection-mapping-rules` is a JSON object whose key is the source collection, and whose target is the target collection.
+If the call is successful, the following output is displayed:
++
+----
+SUCCESS: XDCR replication created
+----
++
+Examination of the target collection `inventory.MyAirline` will confirm that replication is occurring, due to the presence of replicated documents from the source collection `inventory.airline`.
 
 [#migrate-data-with-the-rest-api]
 === Migrate Data, with the REST API
