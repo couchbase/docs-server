@@ -23,6 +23,7 @@ Between a keyspace on the source cluster and a keyspace on the target cluster, t
 The correct pairings of keyspaces on source and target must therefore be specified by the administrator.
 
 These forms of mapping are further described below.
+Note that whereas replication based on _implicit_ mapping is available in both Couchbase Server Enterprise and Community Edition, replication based on _explicit_ mapping is available only in Couchbase Server Enterprise Edition.
 
 [#implicit-mapping]
 == Implicit Mapping
@@ -60,18 +61,19 @@ However, although the target bucket contains a scope named `ScopeB`, this does _
 Therefore, since `ScopeB.CollectionB` is a keyspace unique to the source, no implicit mapping is established with the target, and no replication is automatically initiated.
 +
 Note, however, if an identical keyspace is _subsequently_ established within the target bucket, this is eventually detected by XDCR, by means of a periodic check.
-At this point, a _backfill pipeline_ is automatically created, to replicate all appropriate data from the source to the target collection: this is described below, in xref:learn:collections-and-availability/xdcr-overview.adoc#target-collection-removal-and-addition[Target-Collection Removal and Addition].
+At this point, a _backfill pipeline_ is automatically created, and is maintained for a temporary period; for the purpose of replicating any dropped data: this is described below, in xref:learn:collections-and-availability/xdcr-overview.adoc#target-collection-removal-and-addition[Target-Collection Removal and Addition].
 
 For the practical steps required to set up implicit mappings, see xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#replicate-data-between-collections-implicitly[Replicate Data Between Collections Implicitly].
 
 [#explicit-mapping]
 == Explicit Mappping
 
-_Explicit_ mapping is administrator-specified, and allows replication to occur between keyspaces that are not identical.
+_Explicit_ mapping is administrator-specified, and allows replication to occur between keyspaces that are not identically named.
 An explicit mapping can be specified either between scopes, or between collections:
 
-* _An explicit mapping between scopes_ ensures that an _implicit_ mapping occurs between collections within the scopes that are identically named.
+* _An explicit mapping between scopes_ ensures that an _implicit_ mapping occurs between identically named collections within those scopes.
 For example, if on the source, `ScopeA` contains `CollectionA`, and on the target, `ScopeB` contains `CollectionA`, an explicit mapping between `ScopeA` on the source and `ScopeB` on the target automatically produces an implicit mapping between the two collections named `CollectionA`.
+(Note, however, that this implicit mapping between the collections only occurs if no _explicit_ mapping of any of the collections is specified.)
 +
 Note that once an explicit mapping between scopes has been established, implicit mapping will occur between identically named collections that are _subsequently created_ within those scopes.
 (Note also that this only occurs when the explicit mapping is indeed between the scopes themselves: it does not occur when the explicit mapping is between individual collections within the scopes.)
@@ -149,10 +151,8 @@ For example, the expression `{"inventory.airport":"MyInventory.MyAirport"}` affi
 A source collection is not permitted to be mapped (by means of multiple rules) to multiple target collections.
 For example, the expression `{"inventory.airport":"MyInventory.MyAirport","inventory.airport":"MyInventory.airport"}` generates an error.
 
-However, multiple source collections can be mapped (by means of multiple rules) to a single target collection.
-For example, the expression `{"inventory.airport":"MyInventory.MyAirport", "inventory.MyAirport":"MyInventory.MyAirport"}` is valid, and affirms replication from the collections `airport` and `MyAirport`, located within the source-scope `inventory`, to the collection `MyAirport`, located within the target-scope `MyInventory`.
-
-If the replication of multiple source-collections to a single target collection results in conflicts, the procedure for xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution] that has been established for the bucket is applied.
+Multiple source collections are not permitted to be mapped (by means of multiples rules) to a single target collection.
+For example, the expression `{"inventory.airport":"MyInventory.MyAirport","inventory.MyAirport":"MyInventory.MyAirport"}` generates an error.
 
 If there exists a Priority 3 rule that expressly denies replication from the source scope specified in the Priority 0 rule, the Priority 0 rule takes precedence, and replication is thereby affirmed.
 For example, the expression `{"inventory":null,"inventory.airport":"MyInventory.airport"}` denies replication of any collection within the source-scope `inventory`; with the exception of the collection `airport`, which is replicated to the identically named collection within the target-scope `MyInventory`.
@@ -280,7 +280,7 @@ Following upgrade, data within the default collection can be _migrated_ to admin
 For each new collection, a replication to the appropriate target bucket can be defined, and a filter applied, ensuring that only the appropriate subset of documents is replicated.
 The mapping between the documents currently in the default collection on the source and the new collection on the target is therefore _explicitly_ specified by the administrator.
 
-Migration can be illustrated by the following diagram:
+Migration, which is only available in Couchbase Server Enterprise Edition, can be illustrated by the following diagram:
 
 image::clusters-and-availability/xdcr-collections-migration-diagram.png[,540,align=left]
 
@@ -296,3 +296,15 @@ Thus, every document whose `type` is `"airline"`, and whose `country` is `"Unite
 . Similarly, to migrate all documents that correspond to UK airports to the target collection `Airport-Collection`, within the scope `UK-Scope`, a filter such as the following is required: `type == "airport" && country == United Kingdom"`.
 
 For the practical steps, see xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#migrate-data-to-a-collection[Migrate Data to a Collection].
+
+[#rules-for-migration]
+=== Rules for Migration
+
+Each XDCR Migration is performed according to an administrator-specified rule.
+The rule must be expressed as a  key-value pair:
+
+* If _all_ the documents in the `&#95;default` collection of the source bucket are to be migrated to the specified target collection, the keyspace `_default._default` must be the key, and the destination keyspace must be the value.
+For example, the rule `{_default._default: California.SanFrancisco}` specifies that all documents in the `_default` collection of the source bucket should be migrated to the `SanFrancisco` collection, within the `California` scope, on the target bucket.
+
+* If only a subset of document in the `&#95;default` collection of the source bucket are to be migrated to the specified target collection, the regular expression that is to be used as the _filter_ for the migration must be expressed as the key, and the destination keyspace as the value.
+For example, the rule `{"city=\"San Francisco\"":"California.SanFrancisco"}` specifies that only documents whose value for `city` is `"San Francisco"` should be migrated; and should be migrated to the `SanFrancisco` collection, within the `California` scope, on the target bucket.
