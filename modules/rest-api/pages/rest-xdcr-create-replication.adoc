@@ -13,8 +13,8 @@ POST /controller/createReplication
 [#description]
 == Description
 
-Data replication occurs from a source cluster to a destination cluster.
-Once a replication is created, data replication between clusters automatically begins.
+Data replication occurs from a source bucket to a target bucket.
+Once a replication is defined, it automatically begins.
 
 [#curl-syntax]
 == Curl Syntax
@@ -59,17 +59,17 @@ If the default is to be used, this parameter does not need to be specified.
 The `replicationType` value is always `continuous`.
 This value must be specified.
 
-If the optional parameters `collection-explicit-mappings`, `collection-mapping-rules`, `collectionsMigrationMode`, and `colMappingRules` are all _unspecified_, replication occurs between the specified `fromBucket` and `toBucket`, according to whatever _implicit mappings_ can be determined at bucket-level: that is, if a collection in the source bucket has the same _keyspace_ as a collection in the target bucket (ie, the name of a collection and the name of the scope within which it is located form the identical _scope-name.collection-name_ pattern, on both source and target), data is replicated between those collections; with the optional application of a filter expression.
+If the optional parameters `collection-explicit-mappings`, `collection-mapping-rules`, `collectionsMigrationMode`, and `colMappingRules` are all _unspecified_, replication occurs between the specified `fromBucket` and `toBucket` according to whatever _implicit mappings_ can be determined at bucket-level: that is, if a collection in the source bucket has the same _keyspace_ as a collection in the target bucket (i.e., the name of a collection and the name of the scope within which it is located form the identical _scope-name.collection-name_ pattern, on both source and target), data is replicated between those collections; with the optional application of a filter expression.
 At a minimum, this ensures that data is replicated between the default collections.
 
 The `collection-explicit-mappings` parameter, whose default value is `0`, can be specified with a value of `1`, to switch on replication based on _explicit_ mapping: this means that _implicit_ mapping at bucket-level does not occur.
-Instead, replication occurs between collections determined by the _mapping rules_, provided in the JSON document that is the value of `collection-mapping-rules`.
+Instead, replication occurs between collections determined by the _mapping rules_ provided in the JSON document that is the value of `collection-mapping-rules`.
 
 The `collectionsMigrationMode` parameter, whose default value is `false`, can be specified with a value of `true`, to switch on _migration mode_.
 This ensures that documents from the default collection of the source bucket are replicated to the collection determined by the mapping rules provided in the JSON document that is the value of `colMappingRules`.
 Optionally, a filter expression may also be provided in this JSON document.
 
-If the `collection-explicit-mapping` parameter is specified, the `collectionsMigrationMode` parameter cannot be specified; and vice versa.
+If the `collection-explicit-mappings` parameter is specified, the `collectionsMigrationMode` parameter cannot be specified; and vice versa.
 
 The value of `compressionType`, which determines whether data is replicated in compressed form, can be either `Auto` or `None`:
 
@@ -151,36 +151,91 @@ Referencing an unknown target bucket returns `400 Bad Request`, and an object re
 }
 ----
 
-[#example]
-== Example
+[#examples]
+== Examples
 
-The following example creates a replication between the `source` and `remote` buckets.
-The `remote` bucket is located on a cluster named `10.142.171.101`.
+The following examples show how replication can be defined to use either _implicit_ or _explicit_ mappings; and how _migration mode_ can be employed.
+
+=== Implicit Mapping
+
+To replicate data according to the implicit mapping of scopes and collections withing the source bucket `travel-sample` and the target bucket `ts`, enter the following:
 
 ----
 curl -v -X POST -u Administrator:password \
-http://127.0.0.1:8091/controller/createReplication \
--d fromBucket=source \
--d toCluster=10.142.171.101 \
--d toBucket=remote \
+http://localhost:8091/controller/createReplication \
 -d replicationType=continuous \
--d compressionType="Auto"
+-d fromBucket=travel-sample \
+-d toCluster=10.144.210.102 \
+-d toBucket=ts
 ----
 
-If the call is successful, data replication immediately begins, and a response similar to the following is returned.
+If the command succeeds, a response similar to the following is printed to the console:
 
 ----
-{
-  "id": "9eee38236f3bf28406920213d93981a3/beer-sample/remote_beer"
-}
+{"id":"ac41764b9e261725e874dbd34c7eda6b/travel-sample/ts"}
 ----
 
 The `id` returned in the document can be used to delete the replication, when appropriate.
+
+=== Explicit Mapping
+
+The following example demonstrates creation of a new replication from the source cluster `10.144.210.101` to the target cluster `10.144.210.102`; specifying the explicit mapping of the source collection `airline` to the target collection `MyAirline`:
+
+----
+/opt/couchbase/bin/couchbase-cli xdcr-replicate \
+-c localhost:8091 \
+-u Administrator \
+-p password \
+--create \
+--xdcr-cluster-name 10.144.210.102 \
+--xdcr-from-bucket travel-sample \
+--xdcr-to-bucket ts \
+--collection-explicit-mappings 1 \
+--collection-mapping-rules '{"inventory.airline":"inventory.MyAirline"}'
+----
+
+Note that the `collection-explicit-mappings` flag has been specified, with a value of `1`.
+The value of `collection-mapping-rules` is a JSON object whose key is the source collection, and whose target is the target collection.
+If the call is successful, the following output is displayed:
+
+----
+SUCCESS: XDCR replication created
+----
+
+=== Migration Mode
+
+The following example migrates to the target collection `California.SanFrancisco`, within the target bucket `beerSampleByLocation`, all documents from the source bucket `beer-sample` whose `city` value is `"San Francisco"`:
+
+----
+curl -v -X POST http://10.144.210.101:8091/controller/createReplication \
+-u Administrator:password \
+-d replicationType=continuous \
+-d toBucket=beerSampleByLocation \
+-d toCluster=10.144.210.102 \
+-d fromBucket=beer-sample \
+-d collectionsMigrationMode=true \
+-d colMappingRules='{"city=\"San Francisco\"":"California.SanFrancisco"}'
+----
+
+The `collectionsMigrationMode` flag is specified, with a value of `true`.
+Note the format required for the specifying of `collection-mapping-rules`: the regular expression `"city=\"San Francisco\"` is provided as the key of a key-value pair, whose value is the destination collection, `"California.SanFrancisco"`.
+(Note also that, in cases where _all_ data from the source bucket is to be migrated, and no regular expression is therefore required, the key of the key-value pair should be specified as the keyspace of the default bucket: i.e. `"_default._default"`.)
+
+If the command is successful, output containing the id of the replication is displayed:
+
+----
+{"id":"ac41764b9e261725e874dbd34c7eda6b/beer-sample/beerSampleByLocation"}
+----
 
 [#see-also]
 == See Also
 
 The REST procedures for establishing and retrieving advanced settings are described in xref:rest-api:rest-xdcr-adv-settings.adoc[Managing Advanced XDCR Settings].
 See xref:manage:manage-xdcr/create-xdcr-replication.adoc[Create a Replication] for additional examples of creating a replication, including by means of Couchbase Web Console and the CLI.
-For a conceptual overview of XDCR, see the xref:learn:clusters-and-availability/xdcr-overview.adoc[XDCR Overview].
+For a conceptual overview of XDCR, see xref:learn:clusters-and-availability/xdcr-overview.adoc[Cross Data Center Replication (XDCR)].
+
+For an overview of scopes and collections, see xref:learn:data/scopes-and-collections.adoc[Scopes and Collections].
+For an overview of how XDCR can be used to replicate between scopes and collections &#8212; and a description of the syntactic requirements of _mapping rules_ &#8212; see xref:learn:clusters-and-availability/xdcr-with-scopes-and-collections.adoc[XDCR with Scopes and Collections].
+
+For an overview of XDCR filtering, see xref:learn:clusters-and-availability/xdcr-filtering.adoc[XDCR Advanced Filtering].
 Information on how alternate addresses may be used is provided in xref:learn:clusters-and-availability/connectivity.adoc#alternate-addresses[Alternate Addresses].
