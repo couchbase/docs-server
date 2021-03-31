@@ -1,0 +1,490 @@
+= Getting a Single Statistic
+
+[abstract]
+The REST API allows individual cluster-statistics to be retrieved.
+
+[#http-methods-and-uris]
+== HTTP Method and URI
+
+----
+GET /pools/default/stats/range/<metric_name>/<function-expression>
+----
+
+[#description]
+== Description
+
+This method and URI allows an individual cluster-statistic to be retrieved, based on the specification of a metric, and a function that determines the nature of the statistic to be derived from the metric.
+
+
+[#curl-syntax]
+== Curl Syntax
+
+----
+curl -X GET -u <username:password> \
+http://<ip-address-or-domain-name>/pools/default/stats/range/<metric-name>/
+  <function-expression>
+----
+
+The `function-expression` must take the following form:
+
+----
+[<function>...]?[<label>=<val>&...]
+----
+
+This syntax is described in the subsections immediately below.
+
+=== `function`
+
+The `function` parameter can be specified as follows:
+
+----
+<function> := rate | irate | increase | avg_over_time | min_over_time | max_over_time | deriv | delta | idelta | sum | min | max | avg | p[1-99]
+----
+
+* `rate`.
+The per-second average rate of increase of the time series in the range vector.
+Breaks in monotonicity (such as counter resets due to target restarts) are automatically adjusted for.
+Also, the calculation extrapolates to the ends of the time range, allowing for missed scrapes or imperfect alignment of scrape cycles with the range's time period.
+
+* `irate`.
+The per-second instant rate of increase of the time series in the range vector.
+This is based on the last two data points. Breaks in monotonicity (such as counter resets due to target restarts) are automatically adjusted for.
+
+* `increase`.
+The increase in the time series in the range vector.
+Breaks in monotonicity (such as counter resets due to target restarts) are automatically adjusted for.
+The increase is extrapolated to cover the full time range as specified in the range vector selector, so that it is possible to get a non-integer result even if a counter increases only by integer increments.
+
+* `avg_over_time`.
+The average value over a specified time window.
+
+* `min_over_time`.
+The minimum value over a specified time window.
+
+* `max_over_time`.
+The maxiimum value over a specified time window.
+
+* `deriv`.
+The per-second derivative of the time series in a range vector, using simple linear regression.
+
+* `delta`.
+The difference between the first and last value of each time series element in a range vector, returning an instant vector with the given deltas and equivalent labels.
+The delta is extrapolated to cover the full time range as specified in the range vector selector, so that it is possible to get a non-integer result even if the sample values are all integers.
+
+* `idelta`.
+The difference between the last two samples in the range vector v, returning an instant vector with the given deltas and equivalent labels.
+
+* `sum`.
+The sum of values retrieved over the sample period.
+
+* `min`.
+The minimum value retrieved over the sample period.
+
+* `max`.
+The maximum value retrieved over the sample period.
+
+* `avg`.
+The average of values retrieved over the sample period.
+
+* `p[1-99]`
+The number of results to be displayed per page.
+
+=== `label` and `value`
+
+The possible specifications of `label`, and their associated possible values, are as follows.
+
+* `start`.
+The starting timestamp for the sample period, in seconds.
+A negative value means _the current time_.
+The default value is `-60`.
+
+* `end`.
+The ending timestamp for the sample period, in seconds.
+A negative value means _the current time_.
+The default value is the timestamp of the current time.
+
+* `step`.
+The interval between successive value-retrievals, over the sample period, in seconds.
+The default is `10`.
+
+* `nodes`.
+A list of nodes that are to be queried.
+The default value is _all_.
+
+* `bucket`.
+A specific bucket that is to be queried.
+The default value is _all_.
+
+* `aggregationFunction`.
+Whether and how aggregation of retrieved statistics is to be performed.
+Possible values are `max`, `min`, `sum`, and `avg`.
+The default is that no aggregation is performed.
+
+* `timeWindow`.
+A time window, such as is required by the functions `rate`, `irate`, `avg_over_time`, and `max_over_time`; specified in minutes.
+The default value is `1`.
+
+* `timeout`.
+The period after which execution must time out, in milliseconds.
+The default is `300000` (five minutes).
+
+* `alignTimestamps`.
+Whether to align timestamps based on the value of `step`.
+The value can be `true` or `false` (which is the default).
+
+[#responses]
+== Responses
+
+A malformed URI returns `404 Object Not Found`.
+Failure to authenticate returns `401 Unauthorized`.
+If an internal error causes the call the fail, `500` is returned.
+
+If the URI is correct, and authentication succeeds, the operation is deemd successful.
+Success returns `200 OK`, and an object of the following kind.
+Note that incorrect specification of `metric-name` or `function-expression` does not produce execution-failure: indications of errors appear in the returned object.
+
+----
+{
+  "data": [
+    {
+      "metric": <NameAndMetricLabels>,
+      "values": [
+        [ <Timestamp>, <Value> ],
+        ...
+      ]
+    }
+  ],
+  "errors": [{"node": <NodeName>,
+              "error": <Reason>}]
+  "startTimestamp": <Value>,
+  "endTimestamp": <Value>
+}
+----
+
+The value of `data` is thus an array containing a single object.
+Within this object are represented:
+
+* `metric`.
+Values include the specified `nodes`, `bucket`, and `instance` (such as `kv`) from which the returned statistics were derived; and the specific `name` of the metric (such as `kv_disk_write_queue`).
+
+* `values`.
+An array of arrays, each of which contains a timestamp and the value collected at that time.
+
+* `errors`.
+An array of objects, each of which contains two key-value pairs: one providing the name of the `node` on which an error occurred, and the other the reason for the `error`.
+
+* `startTimestamp`.
+The timestamp at which information-gathering commenced.
+
+* `endTimestamp`.
+The timestamp at which information-gathering ended.
+
+
+Successful location of a specified repository returns `200 OK` and an object containing information on the repository.
+If the specified repository is not located, `404` is returned, with the following object: `{"status": 404, "msg": "no repositories found"}`.
+
+
+[#examples]
+== Examples
+
+The following examples demonstrate how the method and URI can be used.
+
+=== Retrieve CPU Rate
+
+The following expression retrieves the CPU rate for the specified node, using https://stedolan.github.io/jq/[jq^] to format the output for readability:
+
+----
+curl -v -X GET \
+http://10.144.210.101:8091/pools/default/stats/range/sys_cpu_sys_rate \
+-u Administrator:password | jq '.'
+----
+
+If successful, the call returns an object such as the following:
+
+----
+{
+  "data": [
+    {
+      "metric": {
+        "nodes": [
+          "10.144.210.101:8091"
+        ],
+        "category": "system",
+        "instance": "ns_server",
+        "name": "sys_cpu_sys_rate"
+      },
+      "values": [
+        [
+          1617182922,
+          "0.23228803716608595"
+        ],
+        [
+          1617182932,
+          "0.5747126436781609"
+        ],
+        [
+          1617182942,
+          "0.6872852233676976"
+        ],
+        [
+          1617182952,
+          "0.5827505827505828"
+        ],
+        [
+          1617182962,
+          "0.3488372093023256"
+        ],
+        [
+          1617182972,
+          "0.6993006993006993"
+        ],
+        [
+          1617182982,
+          "1.2672811059907834"
+        ]
+      ]
+    }
+  ],
+  "errors": [],
+  "startTimestamp": 1617182922,
+  "endTimestamp": 1617182982
+}
+----
+
+=== Retrieve CPU Rate, with a Metric-Specific Label
+
+The following expression retrieves the _sysproc_ CPU rate for the `ns_server` process, for the specified node:
+
+----
+curl -v -u Administrator:password -X GET http://10.144.210.101:8091/pools/default/stats/range/\
+sysproc_cpu_utilization?proc=ns_server&start=-5 | jq '.'
+----
+
+If successful, the call returns an object such as the following:
+
+----
+{
+  "data": [
+    {
+      "metric": {
+        "nodes": [
+          "10.144.210.101:8091"
+        ],
+        "category": "system-processes",
+        "instance": "ns_server",
+        "name": "sysproc_cpu_utilization",
+        "proc": "ns_server"
+      },
+      "values": [
+        [
+          1617184203,
+          "2"
+        ],
+        [
+          1617184213,
+          "2"
+        ],
+        [
+          1617184223,
+          "2"
+        ],
+        [
+          1617184233,
+          "2"
+        ],
+        [
+          1617184243,
+          "2"
+        ],
+        [
+          1617184253,
+          "2"
+        ],
+        [
+          1617184263,
+          "2"
+        ]
+      ]
+    }
+  ],
+  "errors": [],
+  "startTimestamp": 1617184203,
+  "endTimestamp": 1617184263
+}
+----
+
+
+=== Retrieve Average Value for a Given Metric and Bucket
+
+The following example retrieves the `avg` value of the `kv_disk_write_queue` for the bucket `travel-sample`, using https://stedolan.github.io/jq/[jq^] to format the output for readability:
+
+----
+curl -v -X GET \
+http://10.144.210.101:8091/pools/default/stats/range/kv_disk_write_queue/\
+avg?bucket=travel-sample \
+-u Administrator:password | jq '.'
+----
+
+If successful, the call returns an object such as the following:
+
+----
+{
+  "data": [
+    {
+      "metric": {
+        "nodes": [
+          "10.144.210.101:8091"
+        ]
+      },
+      "values": [
+        [
+          1617182615,
+          "0"
+        ],
+        [
+          1617182625,
+          "0"
+        ],
+        [
+          1617182635,
+          "0"
+        ],
+        [
+          1617182645,
+          "0"
+        ],
+        [
+          1617182655,
+          "0"
+        ],
+        [
+          1617182665,
+          "0"
+        ],
+        [
+          1617182675,
+          "0"
+        ]
+      ]
+    }
+  ],
+  "errors": [],
+  "startTimestamp": 1617182615,
+  "endTimestamp": 1617182675
+}
+----
+
+=== Get Metric-Rate
+
+The following example uses the `irate` function to derive the rate of the `n1ql_requests` metric:
+
+----
+
+curl -v -u Administrator:password  -X GET \
+http://10.144.210.101:8091/pools/default/stats/range/n1ql_requests/irate?start=-180&step=60 | jq '.'
+----
+
+If successful, the call returns an object such as the following:
+
+----
+{
+  "data": [
+    {
+      "metric": {
+        "nodes": [
+          "10.144.210.101:8091"
+        ],
+        "instance": "n1ql",
+        "name": "n1ql_requests"
+      },
+      "values": [
+        [
+          1617184321,
+          "0"
+        ],
+        [
+          1617184331,
+          "0"
+        ],
+        [
+          1617184341,
+          "0"
+        ],
+        [
+          1617184351,
+          "0"
+        ],
+        [
+          1617184361,
+          "0"
+        ],
+        [
+          1617184371,
+          "0"
+        ],
+        [
+          1617184381,
+          "0"
+        ],
+        [
+          1617184391,
+          "0"
+        ],
+        [
+          1617184401,
+          "0"
+        ],
+        [
+          1617184411,
+          "0"
+        ],
+        [
+          1617184421,
+          "0"
+        ],
+        [
+          1617184431,
+          "0"
+        ],
+        [
+          1617184441,
+          "0"
+        ],
+        [
+          1617184451,
+          "0"
+        ],
+        [
+          1617184461,
+          "0"
+        ],
+        [
+          1617184471,
+          "0"
+        ],
+        [
+          1617184481,
+          "0"
+        ],
+        [
+          1617184491,
+          "0"
+        ],
+        [
+          1617184501,
+          "0"
+        ]
+      ]
+    }
+  ],
+  "errors": [],
+  "startTimestamp": 1617184321,
+  "endTimestamp": 1617184501
+}
+----
+
+[#see-also]
+== See Also
+
+Multiple statistics can be returned by means of a single call.
+See xref:rest-api:rest-statistics-multiple.adoc[Getting Multiple Statistics].
