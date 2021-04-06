@@ -1,4 +1,4 @@
-= Manage Encryption Settings
+= Configure On-the-Wire Security
 :page-topic-type: reference
 
 [abstract]
@@ -7,64 +7,86 @@ Establish and retrieve cluster-wide settings for the use of encryption and ciphe
 == HTTP method and URI
 
 ----
-GET /settings/security
+GET /settings/security/[service-name]
 
-POST /settings/security
+POST /settings/security/[service-name]
 ----
 
 == Description
 
 Allows settings to be established for the use of encryption.
 This includes the encryption _level_, for node-to-node encryption within the cluster;
-UI disablement over insecure connections; TLS minimum version; and a list of server-accepted cipher suites.
+UI disablement over insecure connections; TLS minimum version; and a list of accepted cipher suites.
 
 [#curl-syntax]
 == Curl Syntax
 
 ----
 curl -X GET -u <administrator>:<password>
-  http://<host>:<port>/settings/security
+  http://<ip-address-or-domain-name>:8091/settings/security/[service-name]
 
 curl -X POST -u <administrator>:<password>
-  http://<host>:<port>/settings/security
+  http://<ip-address-or-domain-name>:8091/settings/security/[service-name]
   -d disableUIOverHttp=<true|false>
   -d disableUIOverHttps=<true|false>
+  -d disableWWWAuthenticate=<true|false>
   -d clusterEncryptionLevel=<all|control>
-  -d tlsMinVersion=<tlsv1|tlsv1.1|tslv1.2>
+  -d tlsMinVersion=<tlsv1|tlsv1.1|tlsv1.2|tlsv1.3>
   -d honorCipherOrder=<true|false>
   -d cipherSuites=<list-of-accepted-cipher-suites>
 ----
 
-The syntax for the `POST` method includes the following:
+The syntax for the `GET` and `POST` methods includes the following:
+
+* `service-name`.
+If provided, determines the service to which settings are either written with `POST`, or read with `GET`.
+The value of `service-name` can be any one of the following: `data` (Data Service), `fullTextSearch` (Search Service), `index` (Index Service), `eventing` (Eventing Service), `query` (Query Service), `analytics` (Analytics Service), `backup` (Backup Service), `clusterManager` (Cluster Manager).
+If no `service-name` is provided, _global_ settings are written or read.
 
 * `disableUIOverHttp`.
 Whether access to Couchbase Web Console should be disabled over http.
 Default is `false`, meaning that the console can be accessed over http.
+This parameter can only be set globally.
 
 * `disableUIOverHttps`.
 Whether access to Couchbase Web Console should be disabled over https.
 Default is `false`, meaning that the console can be accessed over https.
+This parameter can only be set globally.
+
+* `disableWWWAuthenticate`.
+Whether to disable Couchbase Server's responding to unauthenticated requests with _WWW-Authenticate_.
+Default is `false`, meaning that Couchbase Server responds to unauthenticated requests with _WWW-Authenticate_.
+This parameter can only be set globally.
 
 * `clusterEncryptionLevel`.
 Controls the level of encryption imposed on inter-node communications within the cluster.
 Can be either `control` (meaning that only server-management information is passed in encrypted form) or `all` (meaning that all information, including data handled by services, is passed in encrypted form).
-This can only be set after cluster encryption has been enabled: see xref:manage:manage-nodes/apply-node-to-node-encryption.adoc[Apply Node-to-Node Encryption].
+This can only be set after cluster encryption has been enabled: see xref:manage:manage-nodes/apply-node-to-node-encryption.adoc[Manage Node-to-Node Encryption].
+This parameter can only be set globally.
 
 * `tlsMinVersion`.
 Specifies the minimum TLS version accepted by the cluster.
-Can be `tlsv1`, `tlsv1.1`, or `tlsv1.1`.
-The default is `tlsv1`.
+Can be `tlsv1`, `tlsv1.1`, `tlsv1.2`, or `tlsv1.3`.
+The default is `tlsv1.2`.
++
+This parameter can be set either globally or per service.
+A value of `tlsv1.3` _cannot_ be applied either globally or to the Cluster Manager.
 
 * `honorCipherOrder`.
-Specifies whether the cluster uses its own cipher-suite preference, rather than the client's.
+Specifies whether the server uses its own cipher-suite preference, rather than the client's.
 The cluster's list of accepted cipher-suites can be defined with the `cipherSuites` flag (see below).
 The default value of `honorCipherOrder` is `true`: a setting of `false` is _not_ recommended, since insecure.
+This parameter can be set either globally, or per service.
 
 * `cipherSuites`.
-Specifies a list of the cipher suites to be used by the cluster, in order of preference.
-The argument must be a list of cipher suites, each of which is supported by the underlying operating system.
-If the value for `cipherSuites` is an empty list (`[]`), this specifies that the Couchbase Server default cipher-suite list is to be used.
-Use `openssl ciphers -v` at the Linux command-line, to display the default list of cipher-suites available from the operating system.
+Specifies a list of the cipher suites to be used, in order of preference.
+The argument must be a list of cipher-suites.
++
+This parameter can be set either globally, or per service.
+If the parameter is set for a given service, each listed cipher-suite must appear as a member of the array that is the value of the non-configurable *supportedCipherSuites* setting for the service.
+If the parameter is set globally, each listed cipher-suite can be used by a given service only if it appears as a member of *supportedCipherSuites* for that service.
+
+For an explanation of the relationships between per service and global settings, see xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
 
 [#responses]
 == Responses
@@ -83,30 +105,31 @@ For example, a call that incorrectly specifies every significant parameter-value
 {
   "errors": [
     "honorCipherOrder - Accepted values are 'true' and 'false'.",
-    "cipherSuites - Invalid cipher suite names = TLS_RSA_WITH_AES_256_CBC_SHA33",
-    "tlsMinVersion - Supported TLS versions are ['tlsv1.2','tlsv1.1',tlsv1]",
+    "cipherSuites - Invalid format. Expecting a list of ciphers.",
+    "tlsMinVersion - Supported TLS versions are tlsv1.3, tlsv1.2, tlsv1.1, tlsv1",
     "clusterEncryptionLevel - Cluster encryption level must be one of ['control', 'all'].",
     "disableUIOverHttps - Accepted values are 'true' and 'false'.",
-    "disableUIOverHttp - Accepted values are 'true' and 'false'."
+    "disableUIOverHttp - Accepted values are 'true' and 'false'.",
+    "disableWWWAuthenticate - Accepted values are 'true' and 'false'."
   ]
 }
 ----
 
 Note additionally that an attempt to establish a value for `clusterEncryptionLevel` prior to the enablement of node-to-node encryption returns the following error-message: `clusterEncryptionLevel - Can't set cluster encryption level when cluster encryption is disabled.`
-See xref:manage:manage-nodes/apply-node-to-node-encryption.adoc[Apply Node-to-Node Encryption], for details on how to enable.
+See xref:manage:manage-nodes/apply-node-to-node-encryption.adoc[Manage Node-to-Node Encryption], for details on how to enable.
 
 == Examples
 
 The methods and the URI can be used as shown below.
 
-[#establish-encryption-settings]
-=== Establish Encryption Settings
+[#establish-on-the-wire-settings-globally]
+=== Establish On-the-Wire Settings, Globally
 
-The following establishes encryption settings for the cluster:
+The following establishes a subset of on-the-wire settings globally:
 
 ----
 curl  -u Administrator:password -v -X POST \
-http://10.143.192.101:8091/settings/security \
+http://10.144.210.101:8091/settings/security \
 -d disableUIOverHttp=true \
 -d clusterEncryptionLevel=control \
 -d tlsMinVersion=tlsv1.1 \
@@ -115,7 +138,7 @@ http://10.143.192.101:8091/settings/security \
 
 The `disableUIOverHttp` flag is given a value of `true`, indicating that access to Couchbase Web Console will be disabled over http.
 The `disableUIOverHttps` flag is _not_ specified, meaning that access to Couchbase Web Console will _not_ be disabled over https, by default.
-The `clusterEncryptionLevel` is specified as `control`, indicating that only server-management information is passed in encrypted form between cluster-nodes: note that this parameter can only be set after the `node-to-node-encryption` CLI command has been used to enable internal network-security for the cluster, as described in xref:manage:manage-nodes/apply-node-to-node-encryption.adoc[Apply Node-to-Node Encryption].
+The `clusterEncryptionLevel` is specified as `control`, indicating that only server-management information is passed in encrypted form between cluster-nodes: note that this parameter can only be set after the `node-to-node-encryption` CLI command has been used to enable internal network-security for the cluster, as described in xref:manage:manage-nodes/apply-node-to-node-encryption.adoc[Manage Node-to-Node Encryption].
 The `tlsMinVersion` is specified as version 1.1.
 The `honorCipherOrder` parameter is _not_ specified, meaning that it retains its default value of `true`; which ensures that the cluster's own cipher-suites preference is used, rather than the client's.
 The `cipherSuites` parameter is assigned a value that is a list of two cipher suites.
@@ -126,44 +149,99 @@ If successful, the call returns an empty array:
 []
 ----
 
-[#retrieve-encryption-settings]
-=== Retrieve Encryption Settings
+[#retrieve-cluster-wide-settings]
+=== Retrieve Cluster-Wide Settings
 
-The `GET /settings/security` method and URI retrieve encryption settings for the cluster, as shown below.
+The `GET /settings/security` method and URI retrieve cluster-wide settings for on-the-wire security, as shown below.
 Note that the output is piped to the https://stedolan.github.io/jq/[jq] program, to enhance readability:
 
 ----
 curl  -u Administrator:password -v -GET \
-http://10.143.192.101:8091/settings/security | jq '.'
+http://10.144.210.101:8091/settings/security | jq '.'
 ----
 
-If the call is successful, and occurs prior to any explicit settings by the administrator, the output is as follows:
+If the call is successful, and some explicit settings have been made by the administrator, the output might appear as follows:
 
 ----
 {
   "disableUIOverHttp": false,
   "disableUIOverHttps": false,
+  "disableWWWAuthenticate": false,
   "tlsMinVersion": "tlsv1",
-  "cipherSuites": [],
-  "honorCipherOrder": true
-}
-----
-
-If explicit settings have been made &#8212; including the enablement of node-to-node encryption &#8212; the output might appear as follows:
-
-----
-{
-  "disableUIOverHttp": false,
-  "disableUIOverHttps": false,
-  "tlsMinVersion": "tlsv1.1",
   "cipherSuites": [
     "TLS_RSA_WITH_AES_128_CBC_SHA",
     "TLS_RSA_WITH_AES_256_CBC_SHA"
   ],
   "honorCipherOrder": true,
-  "clusterEncryptionLevel": "control"
-}
+  "data": {
+    "cipherSuites": [
+      "TLS_RSA_WITH_AES_128_CBC_SHA",
+      "TLS_RSA_WITH_AES_256_CBC_SHA",
+      "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+    ],
+    "tlsMinVersion": "tlsv1.2",
+    "honorCipherOrder": true,
+    "supportedCipherSuites": [
+      "TLS_AES_256_GCM_SHA384",
+      "TLS_CHACHA20_POLY1305_SHA256",
+      "TLS_AES_128_GCM_SHA256",
+      "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+              .
+              .
+              .
 ----
 
-The returned object thus includes each of the settings &#8212; including `clusterEncryptionLevel` &#8212; with its current value.
-An array containing the established list of server-acceptable cipher suites is provided as the value of `cipherSuites`.
+The global values of `disableUIOverHttp`, `disableUIOverHttps`, `tlsMinVersion`, and `honorCipherOrder` are thus displayed.
+Note also that a global value for `cipherSuites` has also been established.
+
+The return object contains, in addition to global settings, a subdocument for each service.
+The truncated output shown here features values from the subdocument for the Data Service; which is shown to have its own values established for `cipherSuites`, `tlsMinVersion`, and `honorCipherOrder`.
+The read-only value for `supportedCipherSuites` for the service is also displayed.
+
+[#establish-per-service-settings]
+=== Establish Per Service On-the-Wire Settings
+
+The following call establishes global settings for `tlsMinVersion` and `supportedCipherSuites`, for the Data Service only:
+
+----
+curl  -u Administrator:password -v -X POST \
+http://10.144.210.101:8091/settings/security/data \
+-d tlsMinVersion=tlsv1.1 \
+-d 'cipherSuites=["TLS_RSA_WITH_AES_128_CBC_SHA","TLS_RSA_WITH_AES_256_CBC_SHA","TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"]'
+----
+
+Note that the `data` path-parameter has been added to the URI, as the value of `service-name`, in order to specify the Data Service.
+If the call is successful, an empty array is returned.
+
+To verify the new settings for the Data Service, use the `GET` method, again adding `data` to the URI:
+
+----
+curl  -u Administrator:password -v -X GET \
+http://10.144.210.101:8091/settings/security/data | jq '.'
+----
+
+The returned output shows that the new settings have been successfully established:
+
+----
+{
+  "cipherSuites": [
+    "TLS_RSA_WITH_AES_128_CBC_SHA",
+    "TLS_RSA_WITH_AES_256_CBC_SHA",
+    "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+  ],
+  "tlsMinVersion": "tlsv1.1",
+  "honorCipherOrder": true,
+  "supportedCipherSuites": [
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256",
+              .
+              .
+              .
+----
+
+[#see-also]
+== See Also
+
+For more information on managing on-the-wire security-settings with the CLI, see the reference page for the xref:cli:cbcli/couchbase-cli-setting-security.adoc[setting-security] command.
+
+A conceptual overview of on-the-wire security is provided in xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].

@@ -1,5 +1,5 @@
 = Manage Backup and Restore
-#:page-aliases: backup-restore:backup-restore,backup-restore:incremental-backup
+:page-aliases: backup-restore:backup-restore.adoc,backup-restore:incremental-backup.adoc
 
 [abstract]
 Couchbase Server allows one or more buckets, and selected subsets of their data, to be backed up, restored, and archived.
@@ -45,6 +45,9 @@ Both use the same backup archive structure; allow the contents of backups to be 
 
 Both the Backup Service and `cbbackupmgr` support use of AWS S3 storage.
 
+Note that `cbbackupmgr` is available in both Couchbase Server 7.0 Enterprise Edition (_EE_) and 7.0 Community Edition (_CE_).
+However, whereas in EE, `cbbackupmgr` allows backup and restore to be performed with reference to buckets, scopes, and collections; in CE, `cbbackupmgr` allows backup and restore to be performed with reference to buckets only.
+
 For detailed information on how `cbbackupmgr` works (including a detailed description of incremental backup), see the xref:backup-restore:cbbackupmgr.adoc#discussion[Discussion] provided on the page for xref:backup-restore:cbbackupmgr.adoc[cbbackupmgr].
 The page for xref:backup-restore:cbbackupmgr.adoc[cbbackupmgr] also provides a synopsis of the command, and a description of its basic options.
 
@@ -56,7 +59,9 @@ The remainder of the current page describes how to configure and use the Backup 
 For backup, restore, and other related tasks to be scheduled and performed, the Backup Service must be running on an assigned node.
 The service (as is the case with all other Couchbase services) can be assigned either when a node is initially provisioned as a one-node cluster (as described in xref:manage:manage-nodes/create-cluster.adoc[Create a Cluster]), or when a node is added to an existing cluster (as described in xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance]).
 Provided that at least one node runs the Backup Service, data for the entire cluster can be backed up, restored, and archived.
-Locations to be used for saving data must be accessible to all nodes the cluster that are running the Backup Service.
+Locations to be used for saving data must be accessible to all cluster-nodes that are running the Backup Service.
+Note also that Couchbase Server must have _read_ and _write_ access to the location.
+On Linux, therefore, for a filesystem location, use the `chgrp` command to set the group ID of the folder to `couchbase`; unless a _non-root installation_ has been performed, in which case set the group ID either to the username of the current user, or to a group of which the current user is a member &#8212; see xref:install:non-root.adoc[Non-Root Install and Upgrade], for more information.
 
 [#access-the-backup-service-ui]
 == Access the Backup Service UI
@@ -67,16 +72,24 @@ To access the Backup Service UI, proceed as follows:
 +
 image::manage-backup-restore/accessBackupTab.png[,100,align=left]
 +
-This brings up the *Repositories* screen of the *Backup* facility.
+This brings up the *Backup* screen.
 The initial appearance is as follows:
 +
 image::manage-backup-restore/backupScreenInitial.png[,720,align=left]
 +
-The screen features three panels, for *Active*, *Imported*, and *Archived Repositories* respectively.
+The *Backup* screen features two tabs, located on the upper, horizontal navigation bar: these are *Repositories* and *Plans*.
+By default, the *Repositories* tab is selected: the corresponding, *Repositories* view features three panels, for *Active*, *Imported*, and *Archived* repositories respectively.
 Currently, all panels are blank.
 
 [#schedule-backups]
 == Schedule Backups
+
+The Backup Service allows backups (and merges) to be scheduled, as _tasks_.
+This section describes how task-definition and scheduling can be accomplished.
+Note that for any given repository, the Backup Service performs one task at a time; with each task maintaining a lock on the repository.
+Therefore, the administrator-defined interval between tasks should always be sufficient to allow each task to run to completion.
+If a new task is scheduled to start while a previously started task is still running, the new task cannot run.
+For information, see xref:learn:services-and-indexes/services/backup-service.adoc#avoiding-task-overlap[Avoiding Task Overlap].
 
 To schedule one or more backups, proceed as follows:
 
@@ -88,32 +101,31 @@ To add a repository, left-click on the *ADD REPOSITORY* tab, at the upper right 
 +
 image::manage-backup-restore/addRepositoryTab.png[,140,align=left]
 +
-This brings up the *Select plan* dialog, which initially appears as follows:
+This brings up the *Select Plan* dialog, which initially appears as follows:
 +
 image::manage-backup-restore/selectPlanDialog.png[,420,align=left]
 
 . Specify whether to use a default or a custom plan.
 A _plan_ determines what kind of backup is to occur, affecting what data, and on what schedule.
+Predefined plans are provided, named *_hourly_backups* and *_daily_backups*: as their names indicate, these provide backups that are respectively hourly and daily.
+The *_hourly_backups* plan appears as the default selection.
++
+(For more information, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#default-plans[Default Plans], below.)
++
 Left-click on the control that appears at the right-hand side of the *Select plan* dialog's interactive text-field.
 A pull-down menu appears, as follows:
 +
 image::manage-backup-restore/selectPlanDialogPullDownMenuInitial.png[,420,align=left]
 +
 Three options are thus provided.
-The first two are *_daily_backups* and *_hourly_backups*: these are default plans that, as their names indicate, provide backups that are respectively daily and hourly.
-(For more informaton, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#default-plans[Default Plans], below.)
+The first two are *_daily_backups* and *_hourly_backups*.
 The third option is *+ Create new plan*: select this option:
 +
 image::manage-backup-restore/selectPlanDialogPullDownMenuSelection.png[,140,align=left]
 +
-This establishes the string *+ Create new plan* within the interactive text field.
-To confirm, left-click on the *Next*, button, at the lower right of the dialog:
+This establishes the string *+ Create new plan* within the interactive text field; and modifies the *Select Plan* dialog to appear as follows:
 +
-image::manage-backup-restore/selectPlanDialogPullDownMenuNext.png[,420,align=left]
-+
-The brings up the *Create Plan* dialog, which appears as follows:
-+
-image::manage-backup-restore/createPlanDialog.png[,420,align=left]
+image::manage-backup-restore/selectPlanDialog2.png[,420,align=left]
 
 . Create a custom plan.
 In the *Name* field of the *Create Plan* dialog, enter a name for the plan that is to be created.
@@ -131,24 +143,31 @@ image::manage-backup-restore/createPlanServicesListInitial.png[,90,align=left]
 +
 To specify that only data for the Data and Index Services should be backed up, uncheck the boxes for all the other services.
 +
-Next, to specify precise details of what should occur when the backup is run, left-click on the *Add Tasks* button.
+Next, to specify precise details of what should occur when the backup is run, left-click on the *Add Task* control.
 The dialog now expands, to reveal the following fields:
 +
 image::manage-backup-restore/createPlanDialogAddTaskFields.png[,420,align=left]
 +
-The fields permit the input of data to specify the details of a particular task, referred to as *Task 1*.
-Note that the dialog permits multiple tasks to be specified, by means of the *Add Task* button, at the lower left.
+The fields permit the input of data to specify the details of a particular task.
+Note that the dialog permits multiple tasks to be specified, by additional left-clickings of the *Add Task* control; and allows tasks selectively to be removed, by left-clickings of the *Remove Task* control.
 +
 In the *Name* field, enter an appropriate name for the task: for example, *hourlyBackup*.
 +
 The *Period* field allows specification of the frequency of the task.
-If the default selection, *Simplified*, is chosen, this specifies a daily backup according to details added lower in the *Task 1* panel.
+If the default selection, *Weekly Calendar*, is chosen, this specifies a daily backup according to details added lower in the panel for the task.
 Alternatively, to choose a specific frequency, access the control at the right-hand of the *Period* field.
 A pull-down menu appears:
 +
 image::manage-backup-restore/periodPullDownMenu.png[,420,align=left]
 +
 From the pull-down menu, select *Hours*, to indicate that the frequency should be determined in units of hours.
+(Note that this duly removes from the dialog the day-specification controls associated with *Weekly Calendar*.)
++
+In the *Start Time* field, specify a time of day at which the task is to be run.
+The time of day must be specified as hours and minutes, separated by a colon.
+Note that when the frequency-unit specified is *Minutes*, this field takes no input.
+When the frequency-unit specified is *Hours* (as is the case in the current example), only the numbers signifying minutes (those after the colon) are used.
+To ensure that the hourly task is performed on the hour, leave these numbers as *00*.
 +
 In the *Type* field, specify the task to be performed, by accessing the control at the right-hand side of the field.
 This displays the following pull-down menu:
@@ -156,20 +175,13 @@ This displays the following pull-down menu:
 image::manage-backup-restore/typePullDownMenu.png[,420,align=left]
 +
 Select *Backup*, from the pull-down menu.
-(Note that this duly removes from the dialog the day-specification controls associated with *Simplified*.)
 Then, in the *Frequency* field, specify the frequency with which the task should be performed.
 The field only accepts integers: these must be between 1 and 200 inclusive.
 To specify that the task be performed hourly, enter *1*.
 +
-In the *Time* field, specify a time of day at which the task is to be run.
-The time of day must be specified as hours and minutes, separated by a colon.
-Note that when the frequency-unit specified is *Minutes*, this field takes no input.
-When the frequency-unit specified is *Hours* (as is the case in the current example), only the numbers signifying minutes (those after the colon) are used.
-To ensure that the hourly task is performed on the hour, leave these numbers as *00*.
-+
 (Note that an overview of all options for task-scheduling is provided below, in the section xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#review-scheduling-options[Review Scheduling Options].)
 +
-To complete specification of *Task 1*, determine whether the backup to be performed is *Full* or *Incremental*.
+To complete specification of the task, determine whether the backup to be performed is *Full* or *Incremental*.
 If it is to be *Full*, check the *Full Backup* checkbox.
 If it is to be *Incremental* (as should be the case in the current example), leave the checkbox unchecked.
 +
@@ -177,19 +189,19 @@ The dialog now appears as follows:
 +
 image::manage-backup-restore/taskPanelComplete.png[,420,align=left]
 +
-At this stage, if another task is to be specified, the *Add Task* button should be clicked on: this expands the dialog further, and provides another set of task-specification fields, for *Task 2*.
-If the task already added is to be removed, left-click on the *Cancel* button: this discards the data that has been added for *Task 1*, and closes the task-panel.
+At this stage, if another task is to be specified, the *Add Task* control should be clicked on: this expands the dialog further, and provides another set of task-specification fields.
+If the task already added is to be removed, left-click on the *Cancel* button: this discards the data that has been added for the task, and closes the task-panel.
 If the specification of the plan is to be abandoned, left-click on the *Cancel* tab, at the lower right.
-If the specification for *Task 1* is to be retained and used, and no other task is to be specified (as is the case in the current example), left-click on the *Next* button:
+If the specification for the task is to be retained and used, and no other task is to be specified (as is the case in the current example), left-click on the *Next* button:
 +
 image::manage-backup-restore/nextButton.png[,130,align=left]
 +
-This brings up the *Create Repository* dialog, which appears as follows:
+This brings up the *Create Plan* dialog, which appears as follows:
 +
-image::manage-backup-restore/createRepositoryDialogInitial.png[,420,align=left]
+image::manage-backup-restore/createPlanDialogInitial.png[,420,align=left]
 
 . Create a repository.
-Enter data into the *Create Repository* dialog.
+Enter data into the *Create Plan* dialog.
 +
 The *ID* should be a name for the repository.
 The name must be unique across the cluster, can only use the characters `[`, `]`, `A` to `Z`, `a` to `z`, `&#95;` and `-`; and must not start with either `&#95;`, `-`, `[`, or `]`.
@@ -203,27 +215,29 @@ Note that data from _Ephemeral_ buckets cannot be backed up.
 Use the control at the right-hand side of the field, to select a bucket.
 For the current example, the sample bucket `travel-sample` is assumed to have been installed (see xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets]); and will be specified in this field.
 +
-The *Storage Location* can be specified as *Filesystem* (the default) or *Cloud*.
+The value for *Storage Locations* can be specified as *Filesystem* (the default) or *Cloud*.
 For the current example, *Filesystem* will be used.
 Note that if *Cloud* is selected, allowing AWS S3 storage to be used, the dialog expands, and displays additional options: these are described below, in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#use-cloud-storage[Use Cloud Storage].
 +
-The *Archive* should be the location of the repository.
+The *Location* should be the location of the storage-based archive for the repository.
 If on the local filesystem, this location must be a pathname accessible to all nodes within the cluster that are running the Backup Service.
+Couchbase Server must have _read_ and _write_ access to the location.
+On Linux, therefore, for a filesystem location, use the `chgrp` command to set the group ID of the folder to `couchbase`; unless a _non-root installation_ has been performed, in which case set the group ID either to the username of the current user, or to a group of which the current user is a member.
 +
 When complete, the dialog may look as follows:
 +
-image::manage-backup-restore/createRepositoryDialogComplete.png[,420,align=left]
+image::manage-backup-restore/createPlanDialogComplete.png[,420,align=left]
 +
 To confirm, left-click on the *Add* button:
 +
 image::manage-backup-restore/addButton.png[,120,align=left]
 
 This concludes the process for creating repository and plan.
-The *Repositories* screen now appears as follows:
+The *Backup* screen now appears as follows:
 
 image::manage-backup-restore/newRepository.png[,720,align=left]
 
-The newly created repository, *hourlyBackupRepo*, is thus displayed with its associated plan, `hourlyBackupRepo`, with the affected bucket (`travel-sample`) and the next scheduled backup displayed.
+The newly created repository, *hourlyBackupRepo*, is thus displayed with its associated plan, `HourlyBackupPlan`, with the affected bucket (`travel-sample`) and the next scheduled backup displayed.
 Data Service and Index Service data for `travel-sample` will now be backed up to the specified location on the specified schedule.
 
 A repository whose plan is being executed (with data thereby backed up repeatedly, on schedule) is referred to as an _active_ repository.
@@ -232,7 +246,7 @@ A repository whose plan is being executed (with data thereby backed up repeatedl
 == Run an Immediate Backup
 
 By means of the Backup Service, an _immediate_ backup can be run: this eliminates the need to wait for a scheduled backup to run at an appointed time.
-To run an immediate backup, access the *Repositories* screen, and left-click on the row for an already-defined, active repository.
+To run an immediate backup, access the *Backup* screen, and left-click on the row for an already-defined, active repository.
 For example:
 
 image::manage-backup-restore/selectActiveRepository.png[,720,align=left]
@@ -242,9 +256,9 @@ This causes the row to expand vertically, as follows:
 image::manage-backup-restore/activeRepositoryRowExpanded.png[,720,align=left]
 
 A number of buttons now appear, arranged horizontally across the bottom of the row, permitting a variety of actions.
-To perform an immediate backup, left-click on the *Backup* button:
+To perform an immediate backup, left-click on the *Run Backup* button:
 
-image::manage-backup-restore/backupButton.png[,120,align=left]
+image::manage-backup-restore/runBackupButton.png[,120,align=left]
 
 This displays the *Trigger Backup* dialog, which appears as follows:
 
@@ -269,18 +283,18 @@ Then, left-click on the *Inspect Backups* button:
 
 image::manage-backup-restore/inspectBackupsButton.png[,240,align=left]
 
-This displays the *Backup* facility's *Data* screen, which appears as follows:
+This displays the *Backup* facility's *Repository* screen, which appears as follows:
 
 image::manage-backup-restore/inspectBackupsScreen.png[,720,align=left]
 
-The screen provides two possible views, which are *Data* and *Tasks*: these can be selected by means of the buttons at the upper right:
+The screen provides two possible views, which are *Tasks* and *Backups*: these can be selected by means of the buttons at the upper right:
 
-image::manage-backup-restore/tasksAndDataButtons.png[,130,align=left]
+image::manage-backup-restore/tasksAndBackupsButtons.png[,130,align=left]
 
-The *Data* view is selected by default.
-(Note the left-clicking the *Tasks* button displays the *Tasks* view: this is the same display as that accessed by means of the *Tasks* button, from the expanded row on the *Repositories* screen; and is described in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#inspect-tasks[Inspect Tasks], below.)
+The *Backups* view is selected by default.
+(Note the left-clicking the *Tasks* button displays the *Tasks* view: this is the same display as that accessed by means of the *Tasks* button, from the expanded row on the *Repositories* view of the *Backup* screen; and is described in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#inspect-tasks[Inspect Tasks], below.)
 
-The main, lower panel of the *Data* view provides the ID of the repository (in this case, `56f42a97-6c52-4e32-8597-b0bfed34af29`) and its size (here, `22.856 MB`); and also provides a vertically arranged list of all backups that have occurred, with the earliest at the top.
+The main, lower panel of the *Backups* view provides the ID of the repository (in this case, `83f3b752-78e6-49f8-a527-2844c30fbc75`) and its size (here, `235.551MiB`); and also provides a vertically arranged list of all backups that have occurred, with the earliest at the top.
 Each backup has its own row; with its start-time, type (_full_ or _incremental_), and size.
 To inspect a particular backup in detail, left-click on the control at the left-hand side of the row:
 
@@ -291,18 +305,33 @@ This causes the row to expand vertically:
 image::manage-backup-restore/examineBackupExpanded.png[,720,align=left]
 
 The displayed data includes the UUID for the source cluster.
-Also specified are the numbers of *Events* written for the Eventing Service, and the number of *Aliases* for the Search Service (here, the numbers are both zero).
+Also specified are the numbers of *Eventing Functions* written for the Eventing Service, and the number of *Full Text Search Aliases* for the Search Service (here, the numbers are both zero).
 
-Each bucket that has been backed up (in this case, the `travel-sample` bucket alone), appears on its assigned row in a table that specifies the number of items, mutations, and tombstones that have been included in the backup.
+Each bucket that has been backed up (in this case, the `travel-sample` bucket alone), appears on its assigned row in a table that specifies its size; along with the number of items, mutations, and tombstones that have been included in the backup.
 The row also lists the numbers of backed up indexes for the Index, Search, and Analytics Services; and the number of backed up Views.
+Additionally, in a searchable sub-panel, each _scope_ that the bucket contains is individually listed (these here being the _default_ and _inventory_ scopes, and four _tenant_agent_ scopes); with the number of mutations and tombstones listed, per scope.
+
+To inspect the individual collections within a displayed scope, left-click on the row for the scope.
+The row expands vertically, as follows:
+
+image::manage-backup-restore/examineBackupExpandedScope.png[,720,align=left]
+
+Thus, left-clicking on the row for the `inventory` scope has displayed the individual collections within the scope; and thereby shows the mutations and tombstones for each collection.
+Collections can be searched for, based on strings entered into the *filter collections* field, which is located to the upper right of the collections panel.
 
 The upper panel of the *Data* screen provides interactive fields labelled *Key* and *Search Path*.
 These can be used to search for a specific document within the repository.
+Optionally, the subset of backups within the repository can be specified, by means of the *Start* and *End* fields.
+For example, by accessing the control at the left-hand side of the *Start* field, a pull-down menu is displayed: this lists backups any one of which can be used as the starting point for the search:
+
+image::manage-backup-restore/specifyStartingBackupForSearch.png[,280,align=left]
+
 For example, type a known document key into the *Key* field &#8212; such as `airline_10`.
 Then, enter the bucket name into the *Search Path* field: note that this requires explicit specification of both _scope_ and _collection_; unless default scope and collection have been used, in which case, explicit specification of the defaults is optional &#8212; for example, `travel-sample._default._default`.
-The panels now appear as follows:
 
-image::manage-backup-restore/searchPanelsForKeyAndBucket.png[,510,align=left]
+When a search is expressed to include all backups of the bucket for the `inventory` scope and `airline` collection, the panels appear as follows:
+
+image::manage-backup-restore/searchPanelsForKeyAndBucket.png[,720,align=left]
 
 To run the search, left-click on the *Examine* button.
 The *Examine* screen is now displayed:
@@ -347,17 +376,17 @@ Note that once it has been deleted, it cannot be restored.
 
 To inspect currently defined tasks, do _either_ of the following:
 
-* Left-click on the *Tasks* button that appears on the expanded row for a repository, on the *Repositories* screen.
+* Left-click on the *Tasks* button that appears on the expanded row for a repository, on the *Repositories* view of the *Backup* screen.
 
-* Left-click on the *Tasks* button that appears at the upper-right of the *Data* screen, which has been accessed by means of the *Inspect Backups* button that appears on the expanded row for a repository, on the *Repositories* screen.
+* Left-click on the *Tasks* button that appears at the upper-right of the *Backup* screen, which has been accessed by means of the *Inspect Backups* button that appears on the expanded row for a repository, on the *Backup* screen.
 
 The *Tasks* screen appears as follows:
 
 image::manage-backup-restore/tasksScreen.png[,720,align=left]
 
-The screen provides two possible views, which are *Data* and *Tasks*: these can be selected by means of the buttons at the upper right.
+The screen provides two possible views, which are *Tasks* and *Backups*: these can be selected by means of the buttons at the upper right.
 The *Tasks* button is currently selected.
-(Left-clicking on the *Data* button displays the *Data* screen, described above in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#inspect-backups[Inspect Backups]).
+(Left-clicking on the *Backups* button displays the *Repository* screen, described above in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#inspect-backups[Inspect Backups]).
 
 The *Running* field provides information on any tasks currently running.
 The *History* button permits a refresh of data shown in the lower panel; which lists the current history of tasks performed.
@@ -366,7 +395,7 @@ The earliest date for the task can be specified in the *Since Day* field; and th
 A limit on the number of tasks displayed can be specified as an integer, between 1 and 100 inclusive, in the *Limit* field.
 
 The main task list, in the lower panel has an *Offset* figure displayed at its head: this indicates the position in the list of the first displayed task; and changes when the *prev batch* and *next batch* controls, at the right-hand side, are left-clicked on.
-The task list is presented as a table, which shows, for each task that has been executed, the *Task name*, *Task type* (such as *Backup* or *Merge*), status (such as *done* or *running*), the *Elapsed* time for the task, the size of data that was *Transferred* by the task, and the *Start* and *End* times for the task.
+The task list is presented as a table, which shows, for each task that has been executed, the *Task name*, *Task type* (such as *Backup* or *Merge*), status (such as *done* or *running*), the *Elapsed* time for the task, the number of *Items* and size of data that was *Transferred* by the task, and the *Start* and *End* times for the task.
 
 To inspect a particular task in detail, left-click on the row for the task.
 For example:
@@ -386,73 +415,74 @@ The `node_runs` subdocument provides information specific to each node in the cl
 
 A _merge_ allows multiple backups to be combined as one; with _deduplication_ occurring.
 
-Merges can be scheduled to be applied to backed up data within a defined repository.
+Merges can be scheduled as _tasks_, to be applied to backed up data within a defined repository.
+This section describes how task-definition and scheduling for merges can be accomplished.
+Note that for any given repository, the Backup Service performs one task at a time; with each task maintaining a lock on the repository.
+Therefore, the administrator-defined interval between tasks should always be sufficient to allow each task to run to completion.
+If a new task is scheduled to start while a previously started task is still running, the new task cannot run.
+For information, see xref:learn:services-and-indexes/services/backup-service.adoc#avoiding-task-overlap[Avoiding Task Overlap].
+
 Proceed as follows, noting that the initial steps (for adding a repository, creating a new plan, and adding a backup task to the plan) are the same as those described in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#schedule-backups[Schedule Backups], above.
 
-. Access the *Repositories* screen, and left-click on *ADD REPOSITORY*.
-When the *Select plan* dialog is displayed, choose *+ Create new plan*.
+. Access the *Backup* screen, and left-click on *ADD REPOSITORY*.
+When the *Select Plan* dialog is displayed, choose *+ Create new plan*.
 
-. In the *Create plan* dialog, specify a *Name* and a *Description* for the plan.
+. In the redisplayed *Select Plan* dialog, specify a *Name* and a *Description* for the plan.
 Then, specify the *Services* whose data should be backed up.
 +
 Note that a merge can only be scheduled as part of a plan that also schedules backup: the merge will be applied to backups within the defined repository.
 
-. Left-click on *Add Task*, and add a *Backup* task as *Task 1*.
+. Left-click on *Add Task*, and add a *Backup* task.
 For example:
 +
 image::manage-backup-restore/backUpTaskForMerging.png[,420,align=left]
 +
-This task calls for a backup to occur every two minutes.
-Next, left-click on *Add Task*:
-+
-image::manage-backup-restore/addTaskButton.png[,100,align=left]
-+
-When the fields for *Task 2* appear, specify the task of type *Merge*, with a frequency of *10* minutes.
+This task calls for a backup to occur every hour.
+Next, left-click on the *Add Task* control.
+When the fields for defining an additional task appear, specify the task to be of type *Merge*, with a frequency of four hours; and to start on the half-hour (to allow time for each backup task, itself run on the hour, to complete).
 For example:
 +
 image::manage-backup-restore/mergeTask.png[,420,align=left]
 +
-The *Type* of the task *MergeTask* has thus been specified as *Merge*, with a frequency of 10 minutes.
-Note the fields *Merge Offset Start* and *Merge Offset End*, which respectively specify the relatively start and end points of each merge that will be performed.
+The *Type* of the task *MergeTask* has thus been specified as *Merge*, with a frequency of four hours.
+Note the fields *Merge Offset Start* and *Merge Offset End*, which respectively specify the relative start and end points of each merge that will be performed.
 An offset start of *0* indicates that each merge will start with backups made on the current day, if such backups exist.
-An offset end of *7* indicates that each merge will end with backups that were made 7 days before the specified start-day, if such backups exist.
+An offset end of *2* indicates that each merge will end with backups that were made 2 days before the specified start-day, if such backups exist.
 If backups were not made every day during the specified period, as many as can be found will be merged.
++
+Note that a detailed, diagrammatic explanation of *Merge Offset Start* and *Merge Offset End* is provided in xref:learn:services-and-indexes/services/backup-service.adoc#specifying-merge-offsets[Specifying Merge Offsets].
 +
 Left-click on the *Next* button:
 +
 image::manage-backup-restore/nextButton.png[,140,align=left]
 
-. When the *Create repository* dialog appears, create a repository.
+. When the *Create Plan* dialog appears, enter the *ID* of the repository you are creating, the name of the *Couchbase Bucket* that is being backed up, the appropriate value of *Storage Locations* (here, *Filesystem*), and the on-disk location of the repository-archive.
+(Note that this on-disk location must be accessible to _all_ Backup Service nodes in the cluster.)
 For example:
 +
 image::manage-backup-restore/createRepositoryForMerge.png[,420,align=left]
 +
 Left-click on the *Add* button.
-The new repository now appears in the *Repositories* screen:
+The new repository now appears in the *Repositories* view of the *Backup* screen:
 +
 image::manage-backup-restore/newRepositoryConfirmed.png[,720,align=left]
 
 The defined backups and merges will now occur, on the specified schedule.
 This can eventally be seen by left-clicking on the row for the new repository, and then left-clicking on *Inspect Backups*.
 
-image::manage-backup-restore/inspectMergedBackup.png[,720,align=left]
-
-The *# Backups merged:* field indicates that *6* backups have been merged into the full backup that appears on the first line.
-The first of the next series of continuing incremental backups appears on the second line.
-
 [#perform-an-immediate-merge]
 == Perform an Immediate Merge
 
-By accessing a vertically expanded repository display on the *Repositories* screen, an _immediate merge_ can be manually triggered.
-The repository does not need to have scheduled merges in its plan; but must already contain multiple backups, so that these can be merged.
+By accessing a vertically expanded repository-display in the *Repositories* view of the *Backup* screen, an _immediate merge_ can be manually triggered.
+The repository does not need to have scheduled merges in its plan; but must already contain multiple backups, so that some or all of these can be merged.
 Proceed as follows:
 
-. On the *Repositories* screen, select a repository that contains multiple backups, by left-clicking on the row for the repository.
+. In the *Repositories* view of the *Backup* screen, select a repository that contains multiple backups, by left-clicking on the row for the repository.
 When the row has expanded vertically, left-click on the *Merge* button:
 +
 image::manage-backup-restore/mergeButton.png[,90,align=left]
 +
-The *Merge* dialog is now displayed:
+The *Merge Backups* dialog is now displayed:
 +
 image:manage-backup-restore/mergeDialog.png[,420,align=left]
 +
@@ -469,26 +499,26 @@ The dialog now appears as follows:
 +
 image:manage-backup-restore/mergeDialogComplete.png[,420,align=left]
 
-. Left-click on the *Merge* button, at the lower right of the dialog.
+. Left-click on the *Merge Backups* button, at the lower right of the dialog.
 The dialog now disappears, and the following notification appears, at the lower left of the console:
 +
 image:manage-backup-restore/mergeNotification.png[,220,align=left]
 +
 The specified merge has now been triggered.
 
-. To check the results, on the *Repositories* screen, left-click on the *Inspect Backups* button, on the expanded row for the selected repository.
-This brings up the *Data* screen, on which the history of backups and merges can be reviewed.
+. To check the results, in the *Repositories* view of the *Backup* screen, left-click on the *Inspect Backups* button, on the expanded row for the selected repository.
+This displays the history of backups and merges for the repository.
 (It may be necessary to scroll through multiple screens of information, to find the merge that has been created.)
 +
 image:manage-backup-restore/dataScreenShowingMergedBackup.png[,720,align=left]
 +
-Here, the merge of incremental builds just performed is clearly indicated; as `MERGE - INCR`.
+Here, the merge of incremental builds just performed is clearly indicated; as `merge - full backup`.
 To obtain further specifics, left-click on the row for the merge.
 The row expands vertically, as follows:
 +
 image:manage-backup-restore/backupMergeConfirmation.png[,720,align=left]
 +
-The details in the expanded row confirm that 15 backups were merged by the operation just performed.
+The details in the expanded row confirm that five backups were merged by the operation just performed.
 
 [#restore-backups]
 == Restore Backups
@@ -496,7 +526,7 @@ The details in the expanded row confirm that 15 backups were merged by the opera
 One or more backups can be _restored_ to the cluster; which means that the data in the backups is copied back into the buckets from which it was originally backed up, or into other buckets.
 Proceed as follows:
 
-. On the *Repositories* screen, select the repository from which data is to be restored, and left-click on the row for the repository, in order to expand it vertically.
+. In the *Repositories* view of the *Backup* screen, select the repository from which data is to be restored, and left-click on the row for the repository, in order to expand it vertically.
 Then, left-click on the *Restore* button:
 +
 image:manage-backup-restore/restoreButton.png[,140,align=left]
@@ -584,7 +614,7 @@ This may be useful when a cluster is undergoing maintenance, or when buckets are
 Once a pause is executed by the administrator, no scheduled task for the repository is executed.
 Then, when a _resume_ is subsequently executed by the administrator, the task-schedule is resumed at the earliest, planned opportunity: thus, if backups are hourly, and a pause is executed at 9:50 am, if a resume occurs at 9:58 am, the next backup occurs at 10:00 am; but if the resume occurs at 10:02 am, then the next backup occurs at 11:00 am.
 
-To pause a backup, access the *Repositories* screen, and left-click on the row for the repository to be paused.
+To pause a backup, access the *Repositories* view of the *Backup* screen, and left-click on the row for the repository to be paused.
 This expands the row vertically, and displays the *Pause* button.
 Left-click on this, to pause backups:
 
@@ -602,7 +632,7 @@ When a repository should no longer receive fresh backups, the repository can be 
 This means that it remains available, with all its data; but no longer receives modifications.
 To archive a repository, proceed as follows;
 
-. Access the repository that is to be archived on the *Repositories* screen, and expand the row for the repository by left-clicking on the repository's row.
+. Access the repository that is to be archived in the *Repositories* view of the *Backup* screen, and expand the row for the repository by left-clicking on the repository's row.
 When the row has expanded, left-click on the *Archive* button:
 +
 image:manage-backup-restore/archiveButton.png[,90,align=left]
@@ -623,7 +653,7 @@ image:manage-backup-restore/archiveRepositoryDialogComplete.png[,420,align=left]
 Left-click on *Archive*, to confirm.
 The dialog now disappears.
 
-. Check the archived repository, on the *Repositories* screen, in the *Archived Repositories* panel.
+. Check the archived repository, in the *Repositories* view of the *Backup* screen, in the *Archived* panel.
 This now appears as follows:
 +
 image:manage-backup-restore/archivedRepository.png[,720,align=left]
@@ -646,7 +676,7 @@ Therefore, to delete a repository, and the backups it contains, proceed as follo
 
 . Archive the repository, as described in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#archive-repositories[Archive Repositories].
 
-. Access the archived repository, in the *Archived Repositories* panel of the *Repositories* screen, and open the row for the repository, by left-clicking on it.
+. Access the archived repository, in the *Archived Repositories* panel that appears in the *Repositories* view of the *Backup* screen, and open the row for the repository, by left-clicking on it.
 
 . Left-click on the *Delete* button.
 The *Delete Repositories* dialog now appears:
@@ -658,7 +688,7 @@ If the *Delete backup data files* checkbox is checked, the deletion is irreversi
 If the checkbox is unchecked (which is the default), the deleted archive's contents continue to exist on disk, even though no longer explicitly tracked by the Backup Service, and so can be recovered subsequently; as described below, in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#import-repositories[Import Repositories].
 +
 To delete the archive while allowing the contents to continue to exist on disk, enter the name of the archive in the *Confirm Repository ID* field, leave the *Delete backup data files* checkbox unchecked, and left-click on *Delete*.
-Subsequently, the archived repository is no longer maintained by the Backup Service, and no longer appears in the *Archived Repositories* panel of the *Repositories* screen.
+Subsequently, the archived repository is no longer maintained by the Backup Service, and no longer appears in the *Archived Repositories* panel.
 
 [#import-repositories]
 == Import Repositories
@@ -668,7 +698,7 @@ For example, a repository that was archived and subsequently deleted can be impo
 
 To import a repository, proceed as follows:
 
-. Left-click on the *IMPORT* tab, at the upper right of the *Repositories* screen:
+. Left-click on the *IMPORT* tab, at the upper right of the *Repositories* view of the *Backup* screen:
 +
 image:manage-backup-restore/importTab.png[,180,align=left]
 +
@@ -676,7 +706,7 @@ This brings up the *Import Repository* dialog, which appears as follows:
 +
 image:manage-backup-restore/importRepository.png[,420,align=left]
 
-. Enter appropriate details into the *Import Repository Dialog*.
+. Enter appropriate details into the *Import Repository* dialog.
 +
 In the *ID* field, enter a name for the repository, which will be used once the repository has been imported.
 The name must be unique across the cluster, can only use the characters `[`, `]`, `A` to `Z`, `a` to `z`, `&#95;` and `-`; and must not start with either `&#95;` or `-`.
@@ -703,7 +733,7 @@ image:manage-backup-restore/importRepositoryComplete.png[,420,align=left]
 The dialog disappears, and the repository is imported.
 
 . Check the results of the import operation.
-Access the *Repositories* screen, and observe the *Imported Repositories* panel:
+Access the *Repositories* view of the *Backup* screen, and observe the *Imported Repositories* panel:
 +
 image:manage-backup-restore/importedRepositoriesPanel.png[,720,align=left]
 +
@@ -714,22 +744,22 @@ image:manage-backup-restore/importedRepositoriesPanelExpanded.png[,720,align=lef
 [#inspect-plans]
 == Inspect Plans
 
-All plans created for the Backup Service can be reviewed, by left-clicking on the *Plans* tab, on the upper, horizontal navigation bar:
+All plans created for the Backup Service can be reviewed, by left-clicking on the *Plans* tab, on the upper, horizontal navigation bar of the *Backup* screen:
 
 image:manage-backup-restore/plansTab.png[,260,align=left]
 
-This displays the *Plans* screen:
+This displays the *Backup* screen's *Plans* view:
 
 image:manage-backup-restore/plansScreen.png[,720,align=left]
 
-The plan displays, in the *name* column, the name of every current plan; under the *# Used by* column, an integer that represents the number of repositories maintained by means of the plan identified on the current row; and under *services*, the Couchbase Services whose data is handled by the plan.
+The plan displays, in the *name* column, the name of every current plan; under the *instances* column, an integer that represents the number of repositories maintained by means of the plan identified on the current row; and under *services*, the Couchbase Services whose data is handled by the plan.
 
 To inspect a plan in detail, left-click on its row, to make the row expand vertically.
 For example:
 
-image:manage-backup-restore/exportAndMergePlanExpanded.png[,720,align=left]
+image:manage-backup-restore/HourlyBackupPlanExpanded.png[,720,align=left]
 
-The displayed details indicate that the *BackupAndMerge* plan contains two tasks: the *BackupTask* performs a task of type *BACKUP* every 2 minutes; while the *MergeTask* performs a task of type *MERGE* every 10 minutes, merging all backups.
+The displayed details indicate that *HourlyBackupPlan* contains two tasks: the *HourlyBackupTask* performs a task of type *BACKUP* every hour; while the *FourthHourMergeTask* performs a task of type *MERGE* every 4 hours, merging all backups from the current day to two days ago..
 
 At the right-hand side of each row, a garbage-can icon is displayed.
 To delete a plan, left-click on the icon on the row of the plan to be deleted: the plan is deleted immediately, and no longer appears on the *Plans* screen.
@@ -752,20 +782,20 @@ The previous week's backups are merged every Sunday, and the previous 28 days' b
 [#review-scheduling-options]
 == Review Scheduling-Options
 
-Backup-Service scheduling options are provided _per task_, on the *Create plan* dialog; which is provided as part of the sequence for repository-definition, after the administrator has left-clicked on the *ADD REPOSITORY* tab, at the upper right of the *Repositories* screen.
+Backup-Service scheduling options are provided _per task_, on the *Create plan* dialog; which is provided as part of the sequence for repository-definition, after the administrator has left-clicked on the *ADD REPOSITORY* tab, at the upper right of the *Repositories* view of the *Backup* screen.
 See xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#schedule-backups[Schedule Backups], for details.
 
-The schedule-definition panel provided for each task appears by default as follows:
+The task-definition panel provided for each task appears by default as follows:
 
 image:manage-backup-restore/taskScheduleInitial.png[,420,align=left]
 
-The default, *Simplified* option refers to use of the two, interactive, days-of-the-week selectors that appear under *Full Backups* and *Normal Backups* (a _normal_ backup being an _incremental_ backup).
+The default, *Weekly Calendar* option refers to use of the two, interactive, days-of-the-week selectors that appear under *Full Backups* and *Normal Backups* (a _normal_ backup being an _incremental_ backup).
 The day-by-day frequency of each kind of backup can thus be determined by left-clicking on the appropriate days.
 For example, the following selection would indicate that a full backup should occur on Saturday, every week; and an incremental build should occur every week on each of the following days: Monday, Wednesday, and Friday.
 
 image:manage-backup-restore/simplifiedSchedule.png[,420,align=left]
 
-A *Simplified* schedule means that one backup happens daily.
+A *Weekly Calendar* schedule means that one backup happens daily.
 The time of the daily backup can be specified by means of the *Time* panel.
 No merge can be scheduled, nor can backups be scheduled more frequently.
 
@@ -774,7 +804,7 @@ Alternatively scheduled merges and backups can be configured by accessing the co
 image:manage-backup-restore/scheduleOptionsMenu.png[,420,align=left]
 
 The pull-down menu thus displayed contains three kinds of scheduling option.
-One is the default, *Simplified*.
+One is the default, *Weekly Calendar*.
 Another is by means of _time-units_: which are *Minutes*, *Hours*, *Days*, and *Weeks*.
 If a unit is specified, an appropriate integer must be entered into the *Frequency* field, to indicate the number of time-units that must elapse between repetitions of the task.
 If *Minutes* are specified, only the minutes portion of the time entered into the *Time* field is used &#8212; as the starting point, every hour, for the task sequence; with the task being repeated throughout the hour as many times as specified in the *Frequency* field.
@@ -792,7 +822,7 @@ The time at which the task is commenced is that specified in the *Time* field.
 
 During the input-sequence for repository-creation, storage for the repository can be specified.
 See xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#schedule-backups[Schedule Backups], for an example of using the local filesystem.
-Alternatively, cloud storage can be selected, from the *Storage Locations* field of the *Create Repository* dialog.
+Alternatively, cloud storage can be selected, from the *Storage Locations* field of the *Create Plan* dialog.
 When the selection is made, the dialog expands vertically, as follows:
 
 image:manage-backup-restore/cloudStorageOptions.png[,420,align=left]
@@ -814,13 +844,20 @@ The bucket in the cloud to which data will be backed up.
 The path of the archive, within the cloud bucket.
 This should take the form `/path/inside/the/bucket`.
 
+* *Cloud Auth Type*
+The type of authentication to be used when communicating with the cloud provider.
+The options are *ID and key* (which means that an ID and key will indeed be required for communication to be successful) and *Instance metadata service* (which means that credentials will be sought from the metadata service running in the node's virtual machine).
+Each option assumes that appropriate configuration procedures for the cloud environment have been followed.
+
 * *Credential ID*.
 The credential ID for the store.
 For AWS, this is the _access key id_.
+If *Instance metadata service* has been specified as the value for *Cloud Auth Type*, this field is inapplicable, and is no longer displayed.
 
 * *Credential Key*.
 The secret key for the store.
 For AWS, this is the _AWS secret access key_.
+If *Instance metadata service* has been specified as the value for *Cloud Auth Type*, this field is inapplicable, and is no longer displayed.
 
 * *Region*.
 The AWS Region for the repository.
