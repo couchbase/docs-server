@@ -12,13 +12,15 @@ A few important aspects related to timers are listed below:
 * Timers may run on a different node than the one on which it was created.
 * One execution of timers is guaranteed despite node failures and cluster rebalances.
 * During Function backlogs, timers get eventually executed.
-* The metadata bucket stores information about timers and its association with an Eventing Function's handler.
+* The Metadata bucket (or Eventing Storage bucket) stores information about timers and its association with an Eventing Function's handler.
 * Ensure that the metadata bucket is not deleted or flushed, or the keys in metadata bucket get updated.
-* Each active timer an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed. Where the context can not be larger than 1024 bytes.
-* With an increase in the usage of timers, the metadata bucket's space assignment must also be increased to accommodate all active timers and any potential backlog. If the use-case mandates large numbers of timers in the system, it is required that the space assigned to the metadata bucket be suitably high as well.
-* Due to runtime or programmatic errors in the function handler code, if triggering of a timer fails, then timer execution may get permanently blocked.
+* Each active timer an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed. Where the context by default is not larger than 1024 bytes.
+* Timers are represented by two documents in KV plus a common tiny root document for that is shared among 1-N timers scheduled to fire in the same 7 second period of time.. Thus two or three inserts and then two or three deletes must be performed in KV for each timer (regardless if the timer is ultimately fired or canceled). 
+* The timer context size can be increased globally via the REST API through version 6.6.1. Starting with 6.6.2 timer context size may on a per Function handler basis in the Function's settings. [.status]#Couchbase Server 6.6.2#
+* With an increase in the usage of timers, the Metadata bucket's space assignment must also be increased to accommodate all active timers and any potential backlog. If the use-case mandates large numbers of timers in the system, it is required that the space assigned to the metadata bucket be suitably high as well.
+* Due to runtime or programmatic errors in the Function handler code, if triggering of a timer fails, then timer execution may get permanently blocked.
 * Bindings for bucket-aliases can be reused in timers. Bucket-aliases, created during the Eventing Function definition, can be accessed by the timer constructs in the handler code.
-* Timers get deleted when the associated Function is deleted or undeployed.
+* Timers get deleted (and thus all KV documents that define them) when the associated Function is deleted or undeployed.
 
 == The Timer Construct
 
@@ -51,6 +53,8 @@ In the cancelTimer syntax:
 * reference - This is the reference that was either passed in to the createTimer() call, or generated and returned by the createTimer() call in response to a null value for the incoming reference parameter. 
 * return value - A boolean value indicating if the specified timer could be cancelled successfully. A false return value typically indicates the timer never existed or had already fired prior to the cancellation request.
 * Exceptions Thrown - The _cancelTimer()_ function throws an exception if the timer cancellation fails for an unexpected reason, such as an error writing to the metadata bucket. (Note that cancelling stale or non-existent timers will be treated as a no-op and will not throw an exception).
+* The cancelTimer operation will only deletes one of the two or three documents that define the timer in KV, the other two documents will be cleaned up when the original timer (and any peer timers) was scheduled to fire.
+* In 6.6.2 and beyond the cancelTimer operation will remove two of the possible three documents that define the timer in KV leaving only the tiny common root document that was shared among all timers scheduled to fire in a given seven second period. Again this final root document will be cleaned up when the original timer (and any peer timers) were initially scheduled to fire. [.status]#Couchbase Server 6.6.2#
 
 *Example use of createTimer and cancelTimer:*
 ----
