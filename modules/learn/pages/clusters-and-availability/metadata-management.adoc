@@ -1,6 +1,6 @@
 = Metadata Management
 
-:description: pass:q[A Couchbase Cluster's _metadata_ describes its configuration. Metadata is maintained and managed by means of the _Master Services_ of the Cluster Manager, and also by means of a _consensus-based_ algorithm for ensuring that topology information remains consistent.]
+:description: pass:q[A Couchbase Cluster's _metadata_ describes its configuration. Some categories of metadata are managed by a _consensus-based_ methodology based on the Raft algorithm; others by the _Master Services_ of the Cluster Manager. ]
 
 [abstract]
 {description}
@@ -14,21 +14,21 @@ These are maintained and managed in different ways.
 [#topology-related-metadata]
 === Topology-Related Metadata
 
-Metadata related to cluster topology is maintained with high consistency; by a consensus methodology, based on the https://raft.github.io/[Raft^] algorithm.
+Metadata related to cluster topology is maintained, with high consistency, by a consensus methodology, based on the https://raft.github.io/[Raft^] algorithm.
 This includes:
 
 * The _node-list_ for the cluster.
-* The status of each node.
+* The _status_ of each node.
 * The _service-map_ for the cluster, which indicates on which nodes particular services have been installed.
-* Bucket definitions, including scopes and collections.
+* _Bucket definitions_, including the placement of scopes and collections.
 * The _vBucket maps_ for the cluster.
 
-The process whereby this metadata is consistently maintained is described below, in xref:learn:clusters-and-availability/metadata-management.adoc#consensus-based-metadata-management[Consensus-Based Metadata-Management].
+The process whereby this metadata is maintained is described below, in xref:learn:clusters-and-availability/metadata-management.adoc#consensus-based-metadata-management[Consensus-Based Metadata-Management].
 
 [#all-other-metadata]
 === All Other Metadata
 
-All other metadata for the cluster is maintained by _ns_sever_ (as indeed it was &#8212; along with topology-related metadata &#8212; in all Couchbase-Server versions prior to 7.0).
+All other metadata for the cluster is maintained by _ns_sever_.
 This metadata includes:
 
 * Compaction settings.
@@ -42,11 +42,11 @@ This metadata includes:
 * Backup-Service metadata.
 
 Every node in the cluster stores a copy of all such metadata.
-Metadata-changes are asynchronously replicated across the nodes by the xref:learn:clusters-and-availability/cluster-manager.adoc#master-services[Master Services] of the Cluster Manager: this leadership role is occupied by one node at a time; with a replacement node being elected if the current leader has become uncommunicative.
+Metadata-changes are asynchronously replicated across the nodes by the xref:learn:clusters-and-availability/cluster-manager.adoc#master-services[Master Services] of the Cluster Manager: this leadership role is occupied by one node at a time; with a replacement node being elected if the current leader has become non-communicative.
 
 A leader can only transmit metadata-changes when it is granted a _quorum lease_; which means that a majority of nodes in the cluster are continuing to communicate with it.
-Should at least half of the cluster's nodes become uncommunicative, due to an unanticipated network partition, the leader can make no further changes to metadata until the partition is healed, or the cluster is otherwise fixed.
-(See xref:learn:clusters-and-availability/hard-failover.adoc#default-and-unsafe[Hard Failover in Default and Unsafe Modes], for information.)
+Should at least half of the cluster's nodes become non-communicative, due to an unanticipated network partition, the leader can make no further changes to metadata until the partition is healed, or the cluster is otherwise fixed.
+(See xref:learn:clusters-and-availability/hard-failover.adoc#default-and-unsafe[Hard Failover in Default and Unsafe Modes], for information on failing over a cluster in such circumstances.)
 
 The asynchronous replication of metadata-changes by the Master Services means that updates occur across the cluster with _eventual consistency_.
 
@@ -55,72 +55,73 @@ For a more detailed description of the cluster manager, see xref:learn:clusters-
 [#consensus-based-metadata-management]
 == Consensus-Based Metadata-Management
 
-Topology configuration-information for the Couchbase Cluster &#8212; covering nodes, services, buckets, scopes and collections, and vBuckets &#8212; is managed by a consensus-based procedure that is an extension of the https://raft.github.io/[Raft^] algorithm.
-The essential concepts are explained below.
+Topology data for the Couchbase Cluster &#8212; covering nodes, services, buckets, scopes and collections, and vBuckets &#8212; is managed by a consensus-based procedure that is an extension of the https://raft.github.io/[Raft^] algorithm.
+Basic concepts are introduced below.
 
 [#logs-leaders-and-followers]
 === Logs, Leaders, and Followers
 
-Each node maintains a log, into which metadata-changes are committed.
-All logs are are maintained consistently, and so contain the same committed information.
-To control log-size and ensure availability, on each node, compaction is periodically performed, and snapshots taken.
+Each node maintains a log, into which metadata change-directives are saved.
+Across the cluster, logs are maintained with consistency.
+At intervals, to control log-size and ensure availability, on each node, compaction is performed, and snapshots are taken.
 
-Each node is considered to be in the role of either _leader_ or _follower_; with only one node being the leader at any given time.
-A node can transmit metadata for commitment only when that node is the leader: therefore, to allow all nodes to commit metadata as required, the role of leader is periodically exchanged between them, by the process described below.
+Each node is considered to be in the role of either _leader_ or _follower_; with at most one node the leader at any time.
+Only the leader can transmit metadata change-directives.
+The role of leader may periodically be exchanged between nodes, by the process described below.
 
 [#leadership-election]
-=== Leadership Election
+=== Leadership and Election
 
-When a node needs to commit metadata to the log, it contacts the other nodes, advertising itself as a _candidate_ for leadership.
-The other nodes, receiving the communication, respond with _votes_.
-Every vote received by the candidate constitutes support of its candidacy by the node that dispatched the vote.
-If a majority of nodes indicate support in this way, a new _term_ is started, with the elected node as leader.
+The leader is responsible for communicating with clients: this includes providing the current topology of the cluster, and receiving requests for topology change.
+The leader distributes clients' requests to the followers, as change-directives, which are to be appended to the log-instance on each node.
 
-Nodes are given the right to vote only when they are fully functioning members of the cluster.
-Nodes not currently fully integrated into the cluster (for example, during the process of their addition) are considered _replicas_.
-Replicas participate in the exchange and commitment of data (see immediately below), but do not vote.
-Once a node is added, it is promoted to the status of _voter_, like the other fully integrated nodes.
+In the event of the leader becoming non-communicative (say, due to network failure), a follower can advertise itself as a _candidate_ for leadership.
+The other followers, receiving the communication, respond with _votes_.
+Every vote received by the candidate constitutes a follower's support for the candidacy.
+If a majority of nodes are supportive, a new _term_ is started, with the elected node as leader.
+
+Nodes are given the right to vote only when fully integrated into the cluster.
+Nodes not fully integrated (as is the case, for example, during the process of their addition) are considered _replicas_.
+Replicas participate in the exchange and commitment of information (see immediately below), but do not vote.
+Once a node's addition is complete, the node is able to vote.
 
 [#data-exchange-and-commitment]
 === Data Exchange and Commitment
 
-The leader transmits to the other nodes the information it wishes to _commit_ to the replicated log.
-Once a majority of nodes confirm that they have received the information, the leader commits the information to its own instance of the log, and informs the other nodes.
-So informed, the other nodes commit the information to their own log-instances.
+When the leader transmits change-directives to followers, each follower appends the information to its own instance of the log.
+Once a majority of nodes confirm that they have done so, the leader _commits_ the information, and informs the other nodes.
+Once informed, the other nodes also commit the information.
 
-Once the leader has no more information to exchange, it ceases communication, and its term duly lapses.
-Another node advertises itself as a candidate when necessary.
-In this way, nodes take turns at assuming leadership, and duly exchanging information.
+_Committing_ means writing to the _Replicated State Machine_; which is described below.
 
-[#network-failures-and-resulting-inconsistencies]
-=== Network Failures and Resulting Inconsistencies
+Following commitment, the leader returns the execution-result to the client.
 
-When network failures prevent exchanged information from reaching a majority of nodes, the information is retained as _uncommitted_ by those nodes that have received it.
-Whenever a node is elected leader, it attempts to exchange and acquire commitment both for its own, new information; and also for any existing uncommitted information it has previously received.
-In this way, the rest of the cluster may be progressively updated with information previously left uncommitted on subsets of nodes; and full commitment may thereby be eventually achieved across the whole cluster.
+[#network-failures-and-consequent-inconsistencies]
+=== Network Failures and Consequent Inconsistencies
+
+When network failures prevent change-directives from reaching a majority of nodes, the information is appended to the logs of those nodes that have received it; but is not committed.
+Whenever a leader commits a new log entry, it also commits all preceding entries in its log; and this commitment is applied, across the cluster, to all instances of the _Replicated State Machine_.
 
 [#replicated-state-machine]
 === Replicated State Machine
 
-The _Replicated State Machine_ is a key-value store, resident on each node, that contains the cluster's topographical information as key-value pairs.
-Clients that require topographical data are provided with information from the replicated key-value store.
-The key-value pairs are generated and updated based on committed information in the replicated log.
-Such information may be a directive to:
+The _Replicated State Machine_ is a key-value store, resident on each node, that contains the cluster's topographical data.
+Clients that require such data receive it from the leader's key-value store.
+The key-value pairs in the store are generated and updated based on change-directives appended to the replicated log.
+A change-directive may:
 
 * Add a key-value pair.
 * Update the value of a key-value pair.
 * Update the value of a key-value pair, based on logical constraints.
-* Update the value of multiple key-value pairs transactionally.
+* Update the values of key-value pairs transactionally.
 
-Each key-value pair has a revision number that corresponds to the sequence of revisions that are made to the whole store.
-For example, the first key-value pair to be added is given the revision number 1; and the second to be added, the revision number 2.
-Then, if the value of the first key-value pair is modified, the first key-value pair is given a new revision number, which is 3.
+Each key-value pair has a revision number that corresponds to the sequence of change-directives applied to the store.
 
 [#quorum-failure]
 === Quorum Failure
 
-A _quorum failure_ is said to occur when half or more of the nodes in the cluster cannot be contacted.
-When this occurs, commitment to the replicated log is prohibited; until either the communication problem is remedied, or the uncommunicative nodes are failed over.
+A _quorum failure_ occurs when half or more of the nodes in the cluster cannot be contacted.
+In this situation, commitment to the replicated log is prohibited; until either the communication problem is remedied, or the non-communicative nodes are failed over.
 In consequence, prior to remedy or failover, for the duration of the quorum failure:
 
 - Buckets, scopes, and collections can neither be created nor dropped.
