@@ -5,7 +5,7 @@
 Monitoring and profiling N1QL queries, query service engines, and corresponding system resources is very important for smoother operational performance and efficiency of the system.
 In fact, often it is vital for diagnosing and troubleshooting issues such as query performance, resource bottlenecks, and overloading of various services.
 
-Couchbase Server 4.5 introduced system keyspaces to provide various monitoring details and statistics about individual queries and query service.
+System keyspaces provide various monitoring details and statistics about individual queries and query service.
 When running on a cluster with multiple query nodes, stats about all queries on all query nodes are collected in these system keyspaces.
 
 For example, this can help identify:
@@ -33,12 +33,14 @@ The following diagnostics are provided:
 a|
 * xref:n1ql:n1ql-intro/sysinfo.adoc#querying-datastores[system:datastores]
 * xref:n1ql:n1ql-intro/sysinfo.adoc#querying-namespaces[system:namespaces]
+* xref:n1ql:n1ql-intro/sysinfo.adoc#querying-buckets[system:buckets]
+* xref:n1ql:n1ql-intro/sysinfo.adoc#querying-scopes[system:scopes]
 * xref:n1ql:n1ql-intro/sysinfo.adoc#querying-keyspaces[system:keyspaces]
+* xref:n1ql:n1ql-intro/sysinfo.adoc#querying-indexes[system:indexes]
 * xref:n1ql:n1ql-intro/sysinfo.adoc#querying-dual[system:dual]
 
 | Monitoring Catalogs
 a|
-* xref:n1ql:n1ql-intro/sysinfo.adoc#querying-indexes[system:indexes]
 * <<sys-prepared,system:prepareds>>
 * <<sys-completed-req,system:completed_requests>>
 * <<sys-active-req,system:active_requests>>
@@ -46,6 +48,7 @@ a|
 * <<sys-functions,system:functions>>
 * <<sys-functions-cache,system:functions_cache>>
 * <<sys-tasks-cache,system:tasks_cache>>
+* <<sys-transactions,system:transactions>>
 
 | Security Catalogs
 a|
@@ -100,14 +103,14 @@ You need to provide correct credentials, IP address, and port details of your se
 +
 [source,console]
 ----
-$ curl -u Administrator:pword -X GET http://localhost:8093/admin/settings > ./query_settings.json
+include::settings:example$save-node-level-settings.txt[]
 
 $ cat  ./query_settings.json
 ----
 +
 [source,json]
 ----
-{"auto-prepare":false,"completed":{"aborted":null,"threshold":1000},"completed-limit":4000,"completed-threshold":1000,"controls":false,"cpuprofile":"","debug":false,"functions-limit":16384,"keep-alive-length":16384,"loglevel":"INFO","max-index-api":4,"max-parallelism":1,"memprofile":"","mutexprofile":false,"n1ql-feat-ctrl":12,"pipeline-batch":16,"pipeline-cap":512,"prepared-limit":16384,"pretty":false,"profile":"off","request-size-cap":67108864,"scan-cap":512,"servicers":4,"timeout":0}
+include::settings:example$node-level-settings.jsonc[]
 ----
 
 . Set current query settings profile:
@@ -115,26 +118,39 @@ $ cat  ./query_settings.json
 +
 [source,console]
 ----
-$ curl -u Administrator:pword -XPOST  http://127.0.0.1:8093/admin/settings -d@./query_settings.json
+$ curl http://localhost:8093/admin/settings -u user:pword \
+  -X POST \
+  -d@./query_settings.json
 ----
 
  .. To explicitly specify the settings, enter the following query:
 +
 [source,console]
 ----
-$ curl -u Administrator:pword  http://127.0.0.1:8093/admin/settings  -H 'Content-Type: application/json' -d '{"profile": "phases"}'
+$ curl http://localhost:8093/admin/settings -u user:pword \
+  -H 'Content-Type: application/json' \
+  -d '{"profile": "phases"}'
 ----
 
- .. Verify the settings are changed as specified:
+. Verify the settings are changed as specified:
 +
 [source,console]
 ----
-$ curl -u Administrator:pword -X GET http://localhost:8093/admin/settings
+include::settings:example$node-level-settings.txt[]
 ----
 +
 [source,json]
 ----
-{"auto-prepare":false,"completed":{"aborted":null,"threshold":1000},"completed-limit":4000,"completed-threshold":1000,"controls":false,"cpuprofile":"","debug":false,"functions-limit":16384,"keep-alive-length":16384,"loglevel":"INFO","max-index-api":4,"max-parallelism":1,"memprofile":"","mutexprofile":false,"n1ql-feat-ctrl":12,"pipeline-batch":16,"pipeline-cap":512,"prepared-limit":16384,"pretty":false,"profile":"phases","request-size-cap":67108864,"scan-cap":512,"servicers":4,"timeout":0}
+{
+  // ...
+  "profile":"phases",
+  "request-size-cap": 67108864,
+  "scan-cap": 512,
+  "servicers": 4,
+  "timeout": 0,
+  "txtimeout": "0s",
+  "use-cbo": true
+}
 ----
 
 === Enabling Settings per Session or per Query
@@ -156,13 +172,14 @@ To set query settings using the REST API, specify the parameters in the request 
 
 [source,console]
 ----
-$ curl -v http://localhost:8093/query/service -d 'profile=timings&statement=SELECT * FROM default LIMIT 1;'
+$ curl http://localhost:8093/admin/settings -u user:pword \
+  -d 'profile=timings&statement=SELECT * FROM "world" AS hello;'
 ----
 
 [#monitor-profile-details]
 == Monitoring and Profiling Details
 
-Couchbase Server 5.0 introduces a collection of detailed query monitoring and profiling information.
+Couchbase Server provides detailed query monitoring and profiling information.
 The profiling and finer query execution timing details can be obtained for any query.
 
 [[profile]]
@@ -308,13 +325,13 @@ These statistics (`kernTime`, `servTime`, and `execTime`) can be very helpful in
 * A high `servTime` for a low number of items processed is an indication that the indexer or KV store is stressed.
 * A high `kernTime` means there is a downstream issue in the query plan or the query server having many requests to process (so the scheduled waiting time will be more for CPU time).
 
-.Attribute Profile
+.Phases Profile
 ====
 The cbq engine must be started with authorization, for example:
 
 [source,console]
 ----
-$ ./cbq  -engine=http://127.0.0.1:8091/ -u Administrator -p pword
+$ ./cbq  -engine=http://localhost:8091/ -u Administrator -p pword
 ----
 
 Show the statistics collected when the `profile` is set to `phases`:
@@ -322,19 +339,19 @@ Show the statistics collected when the `profile` is set to `phases`:
 [source,console]
 ----
 cbq> \set -profile "phases";
-cbq> SELECT * FROM `travel-sample` WHERE type = "airline" LIMIT 1;
+cbq> SELECT * FROM `travel-sample`.inventory.airline LIMIT 1;
 ----
 
 [source,json]
 ----
 {
-  "requestID": "4852f401-a6fb-449a-b122-c744879bada1",
+  "requestID": "06d6c1c2-1a8a-4989-a856-7314f9eddee5",
   "signature": {
     "*": "*"
   },
   "results": [
     {
-      "travel-sample": {
+      "airline": {
         "callsign": "MILE-AIR",
         "country": "United States",
         "iata": "Q5",
@@ -347,362 +364,197 @@ cbq> SELECT * FROM `travel-sample` WHERE type = "airline" LIMIT 1;
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "20.793908ms",
-    "executionTime": "20.697901ms",
+    "elapsedTime": "12.77927ms",
+    "executionTime": "12.570648ms",
     "resultCount": 1,
-    "resultSize": 260
+    "resultSize": 254,
+    "serviceLoad": 12
   },
   "profile": {
     "phaseTimes": {
-      "authorize": "34.347µs",
-      "fetch": "161.71µs",
-      "filter": "51.029µs",
-      "indexScan": "522.144µs",
-      "instantiate": "25.277µs",
-      "parse": "388.47µs",
-      "plan": "19.387894ms",
-      "run": "880.47µs"
+      "authorize": "19.629µs",
+      "fetch": "401.997µs",
+      "instantiate": "147.686µs",
+      "parse": "4.545234ms",
+      "plan": "409.364µs",
+      "primaryScan": "6.103775ms",
+      "run": "6.699056ms"
     },
     "phaseCounts": {
-      "fetch": 12,
-      "filter": 1,
-      "indexScan": 1
+      "fetch": 1,
+      "primaryScan": 1
     },
     "phaseOperators": {
       "authorize": 1,
       "fetch": 1,
-      "filter": 1,
-      "indexScan": 1
-    }
+      "primaryScan": 1
+    },
+    "requestTime": "2021-04-30T18:37:56.394Z",
+    "servicingHost": "127.0.0.1:8091"
   }
 }
 ----
 ====
 
-.Attribute Profile
+.Timings Profile
 ====
 Show the statistics collected when `profile` is set to `timings`:
 
 [source,console]
 ----
 cbq> \set -profile "timings";
-cbq> SELECT * FROM `travel-sample` WHERE type = "airline" LIMIT 1;
+cbq> SELECT * FROM `travel-sample`.inventory.airline LIMIT 1;
 ----
 
 [source,json]
 ----
 {
-  "requestID": "874a6c27-b514-42c7-b057-caf07067db65",
+  "requestID": "268a1240-6864-43a2-af13-ccb8d1e50abf",
   "signature": {
     "*": "*"
   },
   "results": [
     {
-      "travel-sample": {
-        "callsign": null,
+      "airline": {
+        "callsign": "MILE-AIR",
         "country": "United States",
-        "iata": null,
-        "icao": "XSR",
-        "id": 18257,
-        "name": "Executive AirShare",
+        "iata": "Q5",
+        "icao": "MLA",
+        "id": 10,
+        "name": "40-Mile Air",
         "type": "airline"
       }
     }
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "29.855421ms",
-    "executionTime": "29.838097ms",
+    "elapsedTime": "2.915245ms",
+    "executionTime": "2.755355ms",
     "resultCount": 1,
-    "resultSize": 304
+    "resultSize": 254,
+    "serviceLoad": 12
   },
   "profile": {
     "phaseTimes": {
-      "authorize": "823.631µs",
-      "fetch": "656.873µs",
-      "indexScan": "29.146543ms",
-      "instantiate": "236.221µs",
-      "parse": "826.382µs",
-      "plan": "11.831101ms",
-      "run": "16.892181ms"
+      "authorize": "18.096µs",
+      "fetch": "388.122µs",
+      "instantiate": "31.702µs",
+      "parse": "646.157µs",
+      "plan": "120.427µs",
+      "primaryScan": "1.402918ms",
+      "run": "1.936852ms"
     },
     "phaseCounts": {
-      "fetch": 16,
-      "indexScan": 187
+      "fetch": 1,
+      "primaryScan": 1
     },
     "phaseOperators": {
       "authorize": 1,
       "fetch": 1,
-      "indexScan": 2
+      "primaryScan": 1
     },
+    "requestTime": "2021-04-30T18:40:13.239Z",
+    "servicingHost": "127.0.0.1:8091",
     "executionTimings": {
-      "#operator": "Sequence",
+      "#operator": "Authorize",
       "#stats": {
-        "#phaseSwitches": 2,
-        "execTime": "1.079µs",
-        "kernTime": "16.889187ms"
+        "#phaseSwitches": 4,
+        "execTime": "1.084µs",
+        "servTime": "17.012µs"
       },
-      "~children": [
-        {
-          "#operator": "Authorize",
-          "#stats": {
-            "#phaseSwitches": 4,
-            "execTime": "5.423µs",
-            "kernTime": "16.043784ms",
-            "servTime": "818.208µs"
-          },
-          "privileges": {
-            "List": [
-              {
-                "Target": "default:travel-sample",
-                "Priv": 1
-              },
-              {
-                "Target": "default:travel-sample",
-                "Priv": 7
-              }
-            ]
-          },
-          "~child": {
-            "#operator": "Sequence",
-            "#stats": {
-              "#phaseSwitches": 3,
-              "execTime": "2.694µs",
-              "kernTime": "16.036719ms"
-            },
-            "~children": [
-              {
-                "#operator": "Sequence",
-                "#stats": {
-                  "#phaseSwitches": 2,
-                  "execTime": "1.418µs",
-                  "kernTime": "16.028217ms"
-                },
-                "~children": [
-                  {
-                    "#operator": "IntersectScan",
-                    "#stats": {
-                      "#itemsIn": 187,
-                      "#itemsOut": 187,
-                      "#phaseSwitches": 749,
-                      "execTime": "449.944µs",
-                      "kernTime": "14.625524ms"
-                    },
-                    "limit": "1",
-                    "scans": [
-                      {
-                        "#operator": "IndexScan",
-                        "#stats": {
-                          "#phaseSwitches": 3,
-                          "execTime": "160.085µs",
-                          "kernTime": "14.464239ms"
-                        },
-                        "index": "def_type",
-                        "index_id": "7cc0b964c9b812d2",
-                        "keyspace": "travel-sample",
-                        "namespace": "default",
-                        "spans": [
-                          {
-                            "Exact": true,
-                            "Range": {
-                              "High": [
-                                "\"airline\""
-                              ],
-                              "Inclusion": 3,
-                              "Low": [
-                                "\"airline\""
-                              ]
-                            }
-                          }
-                        ],
-                        "using": "gsi",
-                        "~children": [
-                          {
-                            "#operator": "IndexScan",
-                            "#stats": {
-                              "#itemsOut": 187,
-                              "#phaseSwitches": 753,
-                              "execTime": "164.676µs",
-                              "kernTime": "64.172µs",
-                              "servTime": "14.228826ms"
-                            },
-                            "index": "def_type",
-                            "index_id": "7cc0b964c9b812d2",
-                            "keyspace": "travel-sample",
-                            "namespace": "default",
-                            "spans": [
-                              {
-                                "Exact": true,
-                                "Range": {
-                                  "High": [
-                                    "\"airline\""
-                                  ],
-                                  "Inclusion": 3,
-                                  "Low": [
-                                    "\"airline\""
-                                  ]
-                                }
-                              }
-                            ],
-                            "using": "gsi"
-                          }
-                        ]
-                      },
-                      {
-                        "#operator": "DistinctScan",
-                        "#stats": {
-                          "#phaseSwitches": 4,
-                          "execTime": "15.725µs",
-                          "kernTime": "20.232µs",
-                          "servTime": "14.597529ms"
-                        },
-                        "scan": {
-                          "#operator": "IndexScan",
-                          "#stats": {
-                            "#phaseSwitches": 3,
-                            "execTime": "113.002µs",
-                            "kernTime": "14.486802ms"
-                          },
-                          "index": "univ_idx2",
-                          "index_id": "75533bc1a5efe19e",
-                          "keyspace": "travel-sample",
-                          "namespace": "default",
-                          "spans": [
-                            {
-                              "Exact": true,
-                              "Range": {
-                                "High": [
-                                  "[\"type\", \"airline\"]"
-                                ],
-                                "Inclusion": 3,
-                                "Low": [
-                                  "[\"type\", \"airline\"]"
-                                ]
-                              }
-                            }
-                          ],
-                          "using": "gsi",
-                          "~children": [
-                            {
-                              "#operator": "IndexScan",
-                              "#stats": {
-                                "#phaseSwitches": 4,
-                                "execTime": "18.384µs",
-                                "kernTime": "1.681µs",
-                                "servTime": "14.46157ms"
-                              },
-                              "index": "univ_idx2",
-                              "index_id": "75533bc1a5efe19e",
-                              "keyspace": "travel-sample",
-                              "namespace": "default",
-                              "spans": [
-                                {
-                                  "Exact": true,
-                                  "Range": {
-                                    "High": [
-                                      "[\"type\", \"airline\"]"
-                                    ],
-                                    "Inclusion": 3,
-                                    "Low": [
-                                      "[\"type\", \"airline\"]"
-                                    ]
-                                  }
-                                }
-                              ],
-                              "using": "gsi"
-                            }
-                          ]
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "#operator": "Fetch",
-                    "#stats": {
-                      "#itemsIn": 187,
-                      "#itemsOut": 16,
-                      "#phaseSwitches": 413,
-                      "execTime": "128.434µs",
-                      "kernTime": "15.027879ms",
-                      "servTime": "1.590934ms",
-                      "state": "services"
-                    },
-                    "keyspace": "travel-sample",
-                    "namespace": "default"
-                  },
-                  {
-                    "#operator": "Sequence",
-                    "#stats": {
-                      "#phaseSwitches": 5,
-                      "execTime": "10.29µs",
-                      "kernTime": "16.009655ms"
-                    },
-                    "~children": [
-                      {
-                        "#operator": "Filter",
-                        "#stats": {
-                          "#itemsIn": 16,
-                          "#itemsOut": 16,
-                          "#phaseSwitches": 69,
-                          "execTime": "284.572µs",
-                          "kernTime": "15.693579ms"
-                        },
-                        "condition": "((`travel-sample`.`type`) = \"airline\")"
-                      },
-                      {
-                        "#operator": "InitialProject",
-                        "#stats": {
-                          "#itemsIn": 16,
-                          "#itemsOut": 16,
-                          "#phaseSwitches": 69,
-                          "execTime": "7.202µs",
-                          "kernTime": "15.984416ms"
-                        },
-                        "result_terms": [
-                          {
-                            "expr": "self",
-                            "star": true
-                          }
-                        ]
-                      },
-                      {
-                        "#operator": "FinalProject",
-                        "#stats": {
-                          "#itemsIn": 16,
-                          "#itemsOut": 16,
-                          "#phaseSwitches": 71,
-                          "execTime": "24.641µs",
-                          "kernTime": "15.980887ms"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              {
-                "#operator": "Limit",
-                "#stats": {
-                  "#itemsIn": 2,
-                  "#itemsOut": 1,
-                  "#phaseSwitches": 11,
-                  "execTime": "5.884µs",
-                  "kernTime": "16.014442ms"
-                },
-                "expr": "1"
-              }
-            ]
+      "privileges": {
+        "List": [
+          {
+            "Target": "default:travel-sample.inventory.airline",
+            "Priv": 7,
+            "Props": 0
           }
+        ]
+      },
+      "~child": {
+        "#operator": "Sequence",
+        "#stats": {
+          "#phaseSwitches": 1,
+          "execTime": "2.474µs"
         },
-        {
-          "#operator": "Stream",
-          "#stats": {
-            "#itemsIn": 1,
-            "#itemsOut": 1,
-            "#phaseSwitches": 9,
-            "execTime": "1.788µs",
-            "kernTime": "16.883589ms"
+        "~children": [
+          {
+            "#operator": "PrimaryScan3",
+            "#stats": {
+              "#itemsOut": 1,
+              "#phaseSwitches": 7,
+              "execTime": "18.584µs",
+              "kernTime": "8.869µs",
+              "servTime": "1.384334ms"
+            },
+            "bucket": "travel-sample",
+            "index": "def_inventory_airline_primary",
+            "index_projection": {
+              "primary_key": true
+            },
+            "keyspace": "airline",
+            "limit": "1",
+            "namespace": "default",
+            "scope": "inventory",
+            "using": "gsi"
+          },
+          {
+            "#operator": "Fetch",
+            "#stats": {
+              "#itemsIn": 1,
+              "#itemsOut": 1,
+              "#phaseSwitches": 10,
+              "execTime": "25.64µs",
+              "kernTime": "1.427752ms",
+              "servTime": "362.482µs"
+            },
+            "bucket": "travel-sample",
+            "keyspace": "airline",
+            "namespace": "default",
+            "scope": "inventory"
+          },
+          {
+            "#operator": "InitialProject",
+            "#stats": {
+              "#itemsIn": 1,
+              "#itemsOut": 1,
+              "#phaseSwitches": 9,
+              "execTime": "6.006µs",
+              "kernTime": "1.825917ms"
+            },
+            "result_terms": [
+              {
+                "expr": "self",
+                "star": true
+              }
+            ]
+          },
+          {
+            "#operator": "Limit",
+            "#stats": {
+              "#itemsIn": 1,
+              "#itemsOut": 1,
+              "#phaseSwitches": 4,
+              "execTime": "2.409µs",
+              "kernTime": "2.094µs"
+            },
+            "expr": "1"
+          },
+          {
+            "#operator": "Stream",
+            "#stats": {
+              "#itemsIn": 1,
+              "#itemsOut": 1,
+              "#phaseSwitches": 6,
+              "execTime": "46.964µs",
+              "kernTime": "1.844828ms"
+            }
           }
-        }
+        ]
+      },
+      "~versions": [
+        "7.0.0-N1QL",
+        "7.0.0-4960-enterprise"
       ]
     }
   }
@@ -754,7 +606,7 @@ The small disadvantage of this is that it has to be maintained as new system key
 
 === cbq-engine-cbauth
 
-Cbq-engine-cbauth is an internal user that the query service uses to allow Query Workbench clients to query across multiple query nodes.
+`cbq-engine-cbauth` is an internal user that the query service uses to allow Query Workbench clients to query across multiple query nodes.
 
 Since Query Workbench can connect to the same node only when cbq-engine is running, Query Workbench cannot do any query-clustered operations.
 
@@ -778,30 +630,30 @@ $ curl -u Administrator:pword http://localhost:8093/admin/vitals
 [source,json]
 ----
 {
-  "uptime":"32m8.864057439s",
-  "local.time":"2019-05-06 07:44:38.23887048 -0700 PDT m=+1932.108850381",
-  "version":"2.0.0-N1QL",
-  "total.threads":114,
-  "cores":1,
-  "gc.num":37949760,
-  "gc.pause.time":"10.23207ms",
-  "gc.pause.percent":0,
-  "memory.usage":17112800,
-  "memory.total":2941446944,
-  "memory.system":73201912,
-  "cpu.user.percent":0,
-  "cpu.sys.percent":0,
-  "request.completed.count":435,
-  "request.active.count":0,
-  "request.per.sec.1min":0.0023,
-  "request.per.sec.5min":0.141,
-  "request.per.sec.15min":0.2009,
-  "request_time.mean":"58.058383ms",
-  "request_time.median":"10.141175ms",
-  "request_time.80percentile":"14.391648ms",
-  "request_time.95percentile":"38.252744ms",
-  "request_time.99percentile":"1.372802439s",
-  "request.prepared.percent":0
+  "uptime": "7h39m32.668577197s",
+  "local.time": "2021-04-30 18:42:39.517208807 +0000 UTC m=+27573.945319668",
+  "version": "7.0.0-N1QL",
+  "total.threads": 191,
+  "cores": 2,
+  "gc.num": 669810600,
+  "gc.pause.time": "57.586373ms",
+  "gc.pause.percent": 0,
+  "memory.usage": 247985184,
+  "memory.total": 11132383704,
+  "memory.system": 495554808,
+  "cpu.user.percent": 0,
+  "cpu.sys.percent": 0,
+  "request.completed.count": 140,
+  "request.active.count": 0,
+  "request.per.sec.1min": 0.0018,
+  "request.per.sec.5min": 0.0055,
+  "request.per.sec.15min": 0.0033,
+  "request_time.mean": "536.348163ms",
+  "request_time.median": "54.065567ms",
+  "request_time.80percentile": "981.869933ms",
+  "request_time.95percentile": "2.543128455s",
+  "request_time.99percentile": "4.627922799s",
+  "request.prepared.percent": 0
 }
 ----
 
@@ -893,7 +745,7 @@ SELECT *, meta().plan FROM system:active_requests;
       "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:66.0) Gecko/20100101 Firefox/66.0 (Couchbase Query Workbench (6.5.0-2859-enterprise))",
       "users": "Administrator"
     },
-    "plan": { <1>
+    "plan": { // <1>
       "#operator": "Sequence",
       "#stats": {
         "#phaseSwitches": 1,
@@ -907,7 +759,10 @@ SELECT *, meta().plan FROM system:active_requests;
             "execTime": "4.844µs",
             "servTime": "2.357018ms"
           },
-...
+          // ...
+        }
+      ]
+    },
     "plan": {
       "#operator": "Sequence",
       "#stats": {
@@ -1097,51 +952,59 @@ DELETE FROM system:prepareds;
 ====
 [source,n1ql]
 ----
-PREPARE p1 AS SELECT * FROM default WHERE foo = 42;
+PREPARE p1 AS SELECT * FROM `travel-sample`.inventory.airline WHERE iata = "U2";
 ----
 
 [source,json]
 ----
 {
-  "requestID": "87520590-8932-4be8-8d08-6bf4a0aad0d5",
+  "requestID": "06819475-e1f6-48a6-8b78-41a6fbac7810",
   "signature": "json",
   "results": [
     {
       "encoded_plan": "H4sIAAAAAAAA/wEAAP//AAAAAAAAAAA=",
-      "featureControls": 12,
+      "featureControls": 76,
       "indexApiVersion": 4,
+      "indexScanKeyspaces": {
+        "default:travel-sample.inventory.airline": false
+      },
       "name": "[127.0.0.1:8091]p1",
       "namespace": "default",
       "operator": {
-        "#operator": "Sequence",
-        "~children": [
-          {
-            "#operator": "Authorize",
-            "privileges": {
-              "List": [
-                {
-                  "Priv": 7,
-                  "Target": "default:travel-sample"
-                }
-              ]
-            },
-            "~child": {
+        "#operator": "Authorize",
+        "privileges": {
+          "List": [
+            {
+              "Priv": 7,
+              "Props": 0,
+              "Target": "default:travel-sample.inventory.airline"
+            }
+          ]
+        },
+        "~child": {
+          "#operator": "Sequence",
+          "~children": [
+            {
               "#operator": "Sequence",
               "~children": [
                 {
                   "#operator": "PrimaryScan3",
-                  "index": "def_primary",
+                  "bucket": "travel-sample",
+                  "index": "def_inventory_airline_primary",
                   "index_projection": {
                     "primary_key": true
                   },
-                  "keyspace": "travel-sample",
+                  "keyspace": "airline",
                   "namespace": "default",
+                  "scope": "inventory",
                   "using": "gsi"
                 },
                 {
                   "#operator": "Fetch",
-                  "keyspace": "travel-sample",
-                  "namespace": "default"
+                  "bucket": "travel-sample",
+                  "keyspace": "airline",
+                  "namespace": "default",
+                  "scope": "inventory"
                 },
                 {
                   "#operator": "Parallel",
@@ -1150,7 +1013,7 @@ PREPARE p1 AS SELECT * FROM default WHERE foo = 42;
                     "~children": [
                       {
                         "#operator": "Filter",
-                        "condition": "((`travel-sample`.`foo`) = 42)"
+                        "condition": "((`airline`.`iata`) = \"U2\")"
                       },
                       {
                         "#operator": "InitialProject",
@@ -1160,33 +1023,48 @@ PREPARE p1 AS SELECT * FROM default WHERE foo = 42;
                             "star": true
                           }
                         ]
-                      },
-                      {
-                        "#operator": "FinalProject"
                       }
                     ]
                   }
                 }
               ]
+            },
+            {
+              "#operator": "Stream"
             }
-          },
-          {
-            "#operator": "Stream"
-          }
-        ]
+          ]
+        }
       },
+      "queryContext": "",
+      "reqType": "SELECT",
       "signature": {
         "*": "*"
       },
-      "text": "PREPARE p1 AS SELECT * FROM `travel-sample` WHERE foo = 42;"
+      "text": "PREPARE p1 AS SELECT * FROM `travel-sample`.inventory.airline WHERE iata = \"U2\";",
+      "useCBO": true
     }
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "34.712303ms",
-    "executionTime": "34.68522ms",
+    "elapsedTime": "60.560801ms",
+    "executionTime": "60.291394ms",
     "resultCount": 1,
-    "resultSize": 3443
+    "resultSize": 3301,
+    "serviceLoad": 12
+  },
+  "profile": {
+    "phaseTimes": {
+      "authorize": "21.597µs",
+      "instantiate": "14.64µs",
+      "parse": "1.718303ms",
+      "plan": "1.658632ms",
+      "run": "56.817557ms"
+    },
+    "phaseOperators": {
+      "authorize": 1
+    },
+    "requestTime": "2021-04-30T21:46:33.972Z",
+    "servicingHost": "127.0.0.1:8091"
   }
 }
 ----
@@ -1199,7 +1077,7 @@ SELECT *, meta().plan FROM system:prepareds;
 [source,json]
 ----
 {
-  "requestID": "e37ab60b-b616-478f-8cf3-cdc16e39283d",
+  "requestID": "42adcc5e-3d7f-4228-8da1-035093a93406",
   "signature": {
     "*": "*",
     "plan": "json"
@@ -1207,35 +1085,40 @@ SELECT *, meta().plan FROM system:prepareds;
   "results": [
     {
       "plan": {
-        "#operator": "Sequence",
-        "~children": [
-          {
-            "#operator": "Authorize",
-            "privileges": {
-              "List": [
-                {
-                  "Priv": 7,
-                  "Target": "default:travel-sample"
-                }
-              ]
-            },
-            "~child": {
+        "#operator": "Authorize",
+        "privileges": {
+          "List": [
+            {
+              "Priv": 7,
+              "Props": 0,
+              "Target": "default:travel-sample.inventory.airline"
+            }
+          ]
+        },
+        "~child": {
+          "#operator": "Sequence",
+          "~children": [
+            {
               "#operator": "Sequence",
               "~children": [
                 {
                   "#operator": "PrimaryScan3",
-                  "index": "def_primary",
+                  "bucket": "travel-sample",
+                  "index": "def_inventory_airline_primary",
                   "index_projection": {
                     "primary_key": true
                   },
-                  "keyspace": "travel-sample",
+                  "keyspace": "airline",
                   "namespace": "default",
+                  "scope": "inventory",
                   "using": "gsi"
                 },
                 {
                   "#operator": "Fetch",
-                  "keyspace": "travel-sample",
-                  "namespace": "default"
+                  "bucket": "travel-sample",
+                  "keyspace": "airline",
+                  "namespace": "default",
+                  "scope": "inventory"
                 },
                 {
                   "#operator": "Parallel",
@@ -1244,7 +1127,7 @@ SELECT *, meta().plan FROM system:prepareds;
                     "~children": [
                       {
                         "#operator": "Filter",
-                        "condition": "((`travel-sample`.`foo`) = 42)"
+                        "condition": "((`airline`.`iata`) = \"U2\")"
                       },
                       {
                         "#operator": "InitialProject",
@@ -1254,38 +1137,62 @@ SELECT *, meta().plan FROM system:prepareds;
                             "star": true
                           }
                         ]
-                      },
-                      {
-                        "#operator": "FinalProject"
                       }
                     ]
                   }
                 }
               ]
+            },
+            {
+              "#operator": "Stream"
             }
-          },
-          {
-            "#operator": "Stream"
-          }
-        ]
+          ]
+        }
       },
       "prepareds": {
-        "encoded_plan": "H4sIAAAAAAAA/6SSQYvbPhTEv4qY/2U36F/IdqGg0kNYHFrYUpMs7aGERNgvjrqypD7JIWlwP3uxnRCS7aUt+GBL45l5P94B5ApfUrkMVjsoQGJNOjVMD94l9jZCje8kjCtpNwnmM3E03kHdSzhdExTCGMN7DLroDkpa68YmSPhArJNnqAP+O39gTt8bcgVB4mexMbZkclBfL0WTJm08mx+dKrDZGksVxc7q0cTUy580V5TOkSqx3pL9P+o62O6/nM0W6k27aE9Jf1UlZ1Nr3s8L7V7jCGNIXYbh6nS6DOy/UZF6Rgccb5fPtIdK3FAr8Uz7E6nrur+n2ETjKihU0aCVl82mlIoN/tj02ibXrK0li3/CNDU2EUOi8K40AwPc3KwuGq1erdber27FO3F/d/uiyQdnktE2HzBCgik2Ni0TcR37RNqFThjJriERk+Yj2sULOMadndpF2z1Xknli0jX6BYmmcv3qd8OPoDBCK5Fo121YPsvyySwTYSwmczHPHrOHJzES09mnj+JqQPHlfTbLxNr7fsa3aH8FAAD//yw1h9FnAwAA",
-        "featuresControl": 12,
+        "encoded_plan": "H4sIAAAAAAAA/6RT3W7UPBB9leh8N23lr6KAqGTExVJtBaKo0W6BC1olJpndmnptd+ysGlbh2ZGTtFW3CIR6l9gzZ86PZwOylaupLrxRFhIQWJCKDdORs5GdCZCHrwS0relm4vVn4qCdhXw5ns0rZT9QG7yqKEBuUNNCNSbKyGpN5v+gVt7QvrZrstFxu680G20JcqFMoE7AqhVBwh9g+O6hIG+BIOA8sYqOE/x/9z+YNPHSsf5BEPCs19rQciBxokOE/LrBmeIlxXu0v9ISyFmvIQ/Th/MB8ll30Qn8rC61qbcZzOm6IVultqGAyfZz/7koZ71S3CY7X0DgW1Nd9bwf8MVo+qCnuGNfjOwLP6Dc1hWe3XeqYp/YBuNtcUUtZOQmuX81ZgeJewt+H0OonE8nd2Mh0ARtl5BYBo1OPJR0TLG6/JOWJ83enpYrVsaQwZOyOtYmEkOgcrbWg3HY2SlHfuV+qVVU5W72JjvHp+fn2H1E5L3VUSuTD9ZDgCk0JhaReBX6gXTjU2Egs0jSouIxjovuokuvbYt4ZFIrpDuB64a4TbtJN3HYV6brs7Y3Zz49mR6dJUi9tP0SJw/2ILGHTmBsyWfTfDKbZv4gm8yzoSfby45npx+z8kFE5eP9yL68m86mWTLhzoLX/Tugo7eno4xfAQAA//83PgrgVgQAAA==",
+        "featuresControl": 76,
         "indexApiVersion": 4,
+        "indexScanKeyspaces": {
+          "default:travel-sample.inventory.airline": false
+        },
         "name": "p1",
+        "namespace": "default",
         "node": "127.0.0.1:8091",
-        "statement": "PREPARE p1 AS SELECT * FROM `travel-sample` WHERE foo = 42;",
+        "statement": "PREPARE p1 AS SELECT * FROM `travel-sample`.inventory.airline WHERE iata = \"U2\";",
         "uses": 0
       }
     }
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "122.056934ms",
-    "executionTime": "122.03689ms",
+    "elapsedTime": "74.38189ms",
+    "executionTime": "74.238983ms",
     "resultCount": 1,
-    "resultSize": 3499
+    "resultSize": 3936,
+    "serviceLoad": 12
+  },
+  "profile": {
+    "phaseTimes": {
+      "authorize": "18.115µs",
+      "fetch": "17.331889ms",
+      "instantiate": "18.856µs",
+      "parse": "673.255µs",
+      "plan": "99.23µs",
+      "primaryScan": "55.468539ms",
+      "run": "73.429071ms"
+    },
+    "phaseCounts": {
+      "fetch": 1,
+      "primaryScan": 1
+    },
+    "phaseOperators": {
+      "authorize": 1,
+      "fetch": 1,
+      "primaryScan": 1
+    },
+    "requestTime": "2021-04-30T21:47:56.814Z",
+    "servicingHost": "127.0.0.1:8091"
   }
 }
 ----
@@ -1484,7 +1391,7 @@ First, we set `profile = "timings"` and run a long query which takes at least 10
 [source,console]
 ----
 cbq> \set -profile "timings";
-cbq> SELECT * FROM `travel-sample` ORDER BY name;
+cbq> SELECT * FROM `travel-sample`.inventory.route ORDER BY sourceairport;
 ----
 
 Now, we change the profile setting to "phases" and rerun another long query:
@@ -1493,7 +1400,7 @@ Now, we change the profile setting to "phases" and rerun another long query:
 [source,console]
 ----
 cbq> \set -profile "phases";
-cbq> SELECT * FROM `travel-sample` ORDER BY title;
+cbq> SELECT * FROM `travel-sample`.inventory.route ORDER BY destinationairport;
 ----
 
 Run a query `system:completed_requests` keyspace with `meta().plan`.
@@ -1508,21 +1415,22 @@ cbq> SELECT meta().plan, * from system:completed_requests;
 [source,json]
 ----
 {
-  "requestID": "1c40bf56-5b58-43a4-94dc-bf78071c8b78",
+  "requestID": "4a36e1dc-cea0-4ba2-a428-258511d50582",
   "signature": {
     "*": "*",
     "plan": "json"
   },
   "results": [
-    { <1>
+    // ...
+    { // <1>
       "completed_requests": {
-        "elapsedTime": "13.13643772s",
+        "elapsedTime": "15.641879295s",
         "errorCount": 0,
         "node": "127.0.0.1:8091",
         "phaseCounts": {
-          "fetch": 31599,
-          "primaryScan": 31591,
-          "sort": 31591
+          "fetch": 24024,
+          "primaryScan": 24024,
+          "sort": 24024
         },
         "phaseOperators": {
           "authorize": 1,
@@ -1531,37 +1439,39 @@ cbq> SELECT meta().plan, * from system:completed_requests;
           "sort": 1
         },
         "phaseTimes": {
-          "authorize": "24.749µs",
-          "fetch": "2.747088103s",
-          "instantiate": "23.974µs",
-          "parse": "343.486µs",
-          "plan": "713.077µs",
-          "primaryScan": "80.802487ms",
-          "run": "13.135258873s",
-          "sort": "465.422275ms"
+          "authorize": "51.305µs",
+          "fetch": "3.27276723s",
+          "instantiate": "60.662µs",
+          "parse": "66.701943ms",
+          "plan": "15.12951ms",
+          "primaryScan": "171.439769ms",
+          "run": "15.548781894s",
+          "sort": "153.767638ms"
         },
-        "remoteAddr": "10.143.192.1:54089",
-        "requestId": "cb59ca6e-daf8-488f-9332-529283eac7e9",
-        "requestTime": "2019-05-06 10:34:39.358924449 -0700 PDT m=+12133.228904346",
-        "resultCount": 31591,
-        "resultSize": 95381286,
+        "remoteAddr": "172.17.0.1:56962",
+        "requestId": "08445bae-66ef-4ccd-8b2d-ea899b453a1b",
+        "requestTime": "2021-04-30T21:14:57.576Z",
+        "resultCount": 24024,
+        "resultSize": 81821919,
         "scanConsistency": "unbounded",
-        "serviceTime": "13.136355403s",
+        "serviceTime": "15.630714144s",
         "state": "completed",
-        "statement": "SELECT * FROM `travel-sample` ORDER BY title;",
+        "statement": "SELECT * FROM `travel-sample`.inventory.route ORDER BY destinationairport;",
+        "useCBO": true,
         "userAgent": "Go-http-client/1.1 (CBQ/2.0)",
-        "users": "Administrator,Administrator"
+        "users": "Administrator"
       }
     },
-    { <2>
+    // ...
+    { // <2>
       "completed_requests": {
-        "elapsedTime": "13.448452215s",
+        "elapsedTime": "15.321128463s",
         "errorCount": 0,
         "node": "127.0.0.1:8091",
         "phaseCounts": {
-          "fetch": 31605,
-          "primaryScan": 31591,
-          "sort": 31591
+          "fetch": 24024,
+          "primaryScan": 24024,
+          "sort": 24024
         },
         "phaseOperators": {
           "authorize": 1,
@@ -1570,183 +1480,165 @@ cbq> SELECT meta().plan, * from system:completed_requests;
           "sort": 1
         },
         "phaseTimes": {
-          "authorize": "35.258µs",
-          "fetch": "2.532068358s",
-          "instantiate": "23.408µs",
-          "parse": "820.508µs",
-          "plan": "243.658µs",
-          "primaryScan": "79.406995ms",
-          "run": "13.447226791s",
-          "sort": "253.974805ms"
+          "authorize": "23.037µs",
+          "fetch": "3.092306635s",
+          "instantiate": "7.313569ms",
+          "parse": "579.368µs",
+          "plan": "2.449143ms",
+          "primaryScan": "153.686873ms",
+          "run": "15.29433203s",
+          "sort": "147.889352ms"
         },
-        "remoteAddr": "10.143.192.1:54071",
-        "requestId": "ed11c0f5-6486-43ca-9148-16dba5e7971e",
-        "requestTime": "2019-05-06 10:34:07.004829559 -0700 PDT m=+12100.874809462",
-        "resultCount": 31591,
-        "resultSize": 95381286,
+        "remoteAddr": "172.17.0.1:56900",
+        "requestId": "5eefc9e5-bdaa-4824-bcd7-47977eb1f08a",
+        "requestTime": "2021-04-30T21:13:58.707Z",
+        "resultCount": 24024,
+        "resultSize": 81821919,
         "scanConsistency": "unbounded",
-        "serviceTime": "13.448333228s",
+        "serviceTime": "15.30510306s",
         "state": "completed",
-        "statement": "SELECT * FROM `travel-sample` ORDER BY name;",
+        "statement": "SELECT * FROM `travel-sample`.inventory.route ORDER BY sourceairport;",
+        "useCBO": true,
         "userAgent": "Go-http-client/1.1 (CBQ/2.0)",
-        "users": "Administrator,Administrator"
+        "users": "Administrator"
       },
       "plan": {
-        "#operator": "Sequence",
+        "#operator": "Authorize",
         "#stats": {
-          "#phaseSwitches": 1,
-          "execTime": "2.479µs"
+          "#phaseSwitches": 4,
+          "execTime": "1.725µs",
+          "servTime": "21.312µs"
         },
-        "~children": [
-          {
-            "#operator": "Authorize",
-            "#stats": {
-              "#phaseSwitches": 3,
-              "execTime": "2.17µs",
-              "servTime": "33.088µs"
-            },
-            "privileges": {
-              "List": [
-                {
-                  "Priv": 7,
-                  "Target": "default:travel-sample"
-                }
-              ]
-            },
-            "~child": {
-              "#operator": "Sequence",
-              "#stats": {
-                "#phaseSwitches": 1,
-                "execTime": "1.953µs"
-              },
-              "~children": [
-                {
-                  "#operator": "Sequence",
-                  "#stats": {
-                    "#phaseSwitches": 1,
-                    "execTime": "2.138µs"
-                  },
-                  "~children": [
-                    {
-                      "#operator": "PrimaryScan3",
-                      "#stats": {
-                        "#itemsOut": 31591,
-                        "#phaseSwitches": 126367,
-                        "execTime": "50.343241ms",
-                        "kernTime": "2.451256939s",
-                        "servTime": "29.063754ms"
-                      },
-                      "index": "def_primary",
-                      "index_projection": {
-                        "primary_key": true
-                      },
-                      "keyspace": "travel-sample",
-                      "namespace": "default",
-                      "using": "gsi"
-                    },
-                    {
-                      "#operator": "Fetch",
-                      "#stats": {
-                        "#itemsIn": 31591,
-                        "#itemsOut": 31591,
-                        "#phaseSwitches": 130317,
-                        "execTime": "57.835564ms",
-                        "kernTime": "35.861393ms",
-                        "servTime": "2.474232794s"
-                      },
-                      "keyspace": "travel-sample",
-                      "namespace": "default"
-                    },
-                    {
-                      "#operator": "InitialProject",
-                      "#stats": {
-                        "#itemsIn": 31591,
-                        "#itemsOut": 31591,
-                        "#phaseSwitches": 126367,
-                        "execTime": "12.688544ms",
-                        "kernTime": "2.555252091s"
-                      },
-                      "result_terms": [
-                        {
-                          "expr": "self",
-                          "star": true
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  "#operator": "Order",
-                  "#stats": {
-                    "#itemsIn": 31591,
-                    "#itemsOut": 31591,
-                    "#phaseSwitches": 94778,
-                    "execTime": "253.974805ms",
-                    "kernTime": "2.561721648s"
-                  },
-                  "sort_terms": [
-                    {
-                      "expr": "(`travel-sample`.`name`)"
-                    }
-                  ]
-                },
-                {
-                  "#operator": "FinalProject",
-                  "#stats": {
-                    "#itemsIn": 31591,
-                    "#itemsOut": 31591,
-                    "#phaseSwitches": 94774,
-                    "execTime": "72.083151ms",
-                    "kernTime": "10.510896696s"
-                  }
-                }
-              ]
+        "privileges": {
+          "List": [
+            {
+              "Priv": 7,
+              "Props": 0,
+              "Target": "default:travel-sample.inventory.route"
             }
+          ]
+        },
+        "~child": {
+          "#operator": "Sequence",
+          "#stats": {
+            "#phaseSwitches": 2,
+            "execTime": "1.499µs"
           },
-          {
-            "#operator": "Stream",
-            "#stats": {
-              "#itemsIn": 31591,
-              "#itemsOut": 31591,
-              "#phaseSwitches": 63185,
-              "execTime": "9.936962437s",
-              "kernTime": "3.510240579s"
+          "~children": [
+            {
+              "#operator": "PrimaryScan3",
+              "#stats": {
+                "#heartbeatYields": 6,
+                "#itemsOut": 24024,
+                "#phaseSwitches": 96099,
+                "execTime": "84.366121ms",
+                "kernTime": "3.021901421s",
+                "servTime": "69.320752ms"
+              },
+              "bucket": "travel-sample",
+              "index": "def_inventory_route_primary",
+              "index_projection": {
+                "primary_key": true
+              },
+              "keyspace": "route",
+              "namespace": "default",
+              "scope": "inventory",
+              "using": "gsi"
+            },
+            {
+              "#operator": "Fetch",
+              "#stats": {
+                "#heartbeatYields": 7258,
+                "#itemsIn": 24024,
+                "#itemsOut": 24024,
+                "#phaseSwitches": 99104,
+                "execTime": "70.34694ms",
+                "kernTime": "142.630196ms",
+                "servTime": "3.021959695s"
+              },
+              "bucket": "travel-sample",
+              "keyspace": "route",
+              "namespace": "default",
+              "scope": "inventory"
+            },
+            {
+              "#operator": "InitialProject",
+              "#stats": {
+                "#itemsIn": 24024,
+                "#itemsOut": 24024,
+                "#phaseSwitches": 96100,
+                "execTime": "15.331951ms",
+                "kernTime": "3.219612458s"
+              },
+              "result_terms": [
+                {
+                  "expr": "self",
+                  "star": true
+                }
+              ]
+            },
+            {
+              "#operator": "Order",
+              "#stats": {
+                "#itemsIn": 24024,
+                "#itemsOut": 24024,
+                "#phaseSwitches": 72078,
+                "execTime": "147.889352ms",
+                "kernTime": "3.229055752s"
+              },
+              "sort_terms": [
+                {
+                  "expr": "(`route`.`sourceairport`)"
+                }
+              ]
+            },
+            {
+              "#operator": "Stream",
+              "#stats": {
+                "#itemsIn": 24024,
+                "#itemsOut": 24024,
+                "#phaseSwitches": 24025,
+                "execTime": "11.851634134s"
+              }
             }
-          }
-        ],
+          ]
+        },
         "~versions": [
-          "2.0.0-N1QL",
-          "6.5.0-2859-enterprise"
+          "7.0.0-N1QL",
+          "7.0.0-4960-enterprise"
         ]
       }
     }
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "38.651064ms",
-    "executionTime": "38.56312ms",
-    "resultCount": 2,
-    "resultSize": 8740
+    "elapsedTime": "172.831251ms",
+    "executionTime": "172.586836ms",
+    "resultCount": 40,
+    "resultSize": 65181,
+    "serviceLoad": 12
   },
-  "profile": { <3>
+  "profile": { // <3>
     "phaseTimes": {
-      "authorize": "23.522µs",
-      "fetch": "11.976706ms",
-      "instantiate": "14.916µs",
-      "parse": "714.888µs",
-      "plan": "86.626µs",
-      "primaryScan": "25.407183ms",
-      "run": "37.731739ms"
+      "authorize": "19.912µs",
+      "fetch": "123.022426ms",
+      "instantiate": "29.424µs",
+      "parse": "6.414711ms",
+      "plan": "3.19076ms",
+      "primaryScan": "55.521683ms",
+      "run": "158.514001ms"
     },
     "phaseCounts": {
-      "fetch": 8,
-      "primaryScan": 2
+      "fetch": 40,
+      "primaryScan": 40
     },
     "phaseOperators": {
       "authorize": 1,
       "fetch": 1,
       "primaryScan": 1
-    }
+    },
+    "requestTime": "2021-04-30T21:15:18.104Z",
+    "servicingHost": "127.0.0.1:8091"
   }
 }
 ----
@@ -2139,7 +2031,7 @@ This will result in a list similar to:
       "name": "ca2cfe56-01fa-4563-8eb0-a753af76d865",
       "node": "10.143.192.101:8091",
       "results": [ // <9>
-        ...
+        // ...
       ],
       "startTime": "2019-09-17 05:03:31.821597725 -0700 PDT m=+7579.469191487", // <10>
       "state": "completed",
@@ -2166,6 +2058,56 @@ This query returns the following attributes:
 <11> [.out]`stopTime`: string (not scheduled tasks: the date and time when the task stopped)
 
 Refer to xref:n1ql:n1ql-language-reference/advisor.adoc[ADVISOR Function] for more information on index advisor sessions.
+
+[#sys-transactions]
+== system:transactions
+
+This catalog maintains a list of active Couchbase transactions.
+To see the list of active transactions, use:
+
+[source,n1ql]
+----
+SELECT * FROM system:transactions;
+----
+
+This will result in a list similar to:
+
+[source,json]
+----
+[
+  {
+    "transactions": {
+      "durabilityLevel": "majority", // <.>
+      "durabilityTimeout": "2.5s", // <.>
+      "expiryTime": "2021-04-21T12:53:48.598+01:00",
+      "id": "85aea637-2288-434b-b7c5-413ad8e7c175", // <.>
+      "isolationLevel": "READ COMMITED", // <.>
+      "lastUse": "2021-04-21T12:51:48.598+01:00",
+      "node": "127.0.0.1:8091", // <.>
+      "numAtrs": 1024, // <.>
+      "scanConsistency": "unbounded", // <.>
+      "status": 0,
+      "timeout": "2m0s", // <.>
+      "usedMemory": 960,
+      "uses": 1
+    }
+  // ...
+  }
+]
+----
+
+This query returns the following attributes:
+
+<.> [.out]`durabilityLevel`: string (durability level for all mutations within a transaction)
+<.> [.out]`durabilityTimeout`: duration (durability timeout per mutation within the transaction)
+<.> [.out]`id`: string (the transaction ID)
+<.> [.out]`isolationLevel`: string (the isolation level of the transaction)
+<.> [.out]`node`: string (the node where the transaction was started)
+<.> [.out]`numAtrs`: integer (the total number of active transaction records)
+<.> [.out]`scanConsistency`: string (the transactional scan consistency)
+<.> [.out]`timeout`: duration (the transaction timeout duration)
+
+Refer to xref:n1ql:n1ql-language-reference/transactions.adoc[N1QL Support for Couchbase Transactions] for more information.
 
 == Related Links
 
