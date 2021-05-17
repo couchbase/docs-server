@@ -17,13 +17,19 @@ NOTE: Since the 6.5 release, the handler code is compressed (with the compressed
 
 Eventing framework calls the following JavaScript functions as entry points to the handler.
 
-* Insert/Update Handler
+==== Insert/Update Handler
 
 The *OnUpdate* handler gets called when a document is created or modified. Two major limitations exist. First, if a document is modified several times in a short duration, the calls may be coalesced into a single event due to deduplication. Second, it is not possible to discern between Create and Update operations.
 
-* Delete Handler
+The entry point OnUpdate(doc,meta) passes both the document and meta which contains useful information such as the document's id, cas, expiration.
 
-The *OnDelete* handler gets called when a document is deleted. One major limitation exists - it is not possible to get the value of the document that was just deleted or expired. However, starting with version 6.6, it is possible to discern between Expiration and Delete operations by checking the new optional parameter options. 
+Starting with version 6.6.2, meta also contains the property datatype (JSON or binary) because Eventing can now process binary documents which were previously suppressed. [.status]#Couchbase Server 6.6.2#
+
+==== Delete Handler
+
+The *OnDelete* handler gets called when a document is deleted. One major limitation exists - it is not possible to get the value of the document that was just deleted or expired. 
+
+The entry point OnDelete(meta) passes meta which contains useful information such as the document's ID, CAS, expiration.  However, starting with version 6.6, the entry point OnDelete(meta) can have a second optional parameter `options`, which makes it possible to discern between Expiration and Delete operations by checking the the new parameter, `options.expired`, for true or false.
 
 === Statelessness
 
@@ -55,7 +61,9 @@ Often, such large integers are really only tokens, and it is not necessary to pe
 
 === Feed Boundary
 
-Feed Boundary is a time milestone used during an Eventing Function or Handler configuration. Using the Feed Boundary option, you can either invoke a handler on all data mutations available in the cluster (Everything) or choose to invoke a handler to process only future data mutations, post deployment (From now). However once deployed you may Pause/Resume a handler in this case; the Feed Boundary is a checkpoint such that no mutations are reprocessed or lost.
+Feed Boundary is a time milestone used during an Eventing Function or Handler configuration. Using the `Feed Boundary` option, you can either invoke a handler on all data mutations available in the cluster (`Everything`) or choose to invoke a handler to process only future data mutations, post deployment (`From now`). However, once deployed you may Pause/Resume a handler in this case; the Feed Boundary is a checkpoint such that no mutations are reprocessed or lost.
+
+NOTE: Starting with version 6.6.2, the Feed Boundary is now a persistent setting in the Function's definition and can only be set or altered when a Function is created, undeployed or paused. Thus, there is no longer a choice of a feed boundary when a function is deployed as the value is taken from the Function's definition [.status]#Couchbase Server 6.6.2#
 
 === Buckets
 
@@ -79,13 +87,25 @@ When implementing multiple Functions it is possible to create infinite recursion
 
 *Metadata Bucket*
 
-The Metadata Bucket stores artifacts (or configuration documents) that contain information about DCP streams, worker allocations, timer information, and internal checkpoints.
+The Metadata Bucket, also known as the Eventing Storage bucket, stores artifacts (or configuration documents) that contain information about DCP streams, worker allocations, timer information, and internal checkpoints.
 
 When you are creating an Eventing Function, ensure that a separate bucket is designated as a metadata bucket and reserved solely for the internal use of the Eventing Service. You can use a common metadata bucket across multiple Eventing Functions.
 
 NOTE: At any point, refrain from deleting the metadata bucket. Also, ensure that your handler code or other services do not perform a write or delete operation on the metadata bucket.
 
 If a metadata bucket gets accidentally deleted, then all deployed functions are undeployed and associated indexes and constructs get dropped.
+
+*Function Name*
+
+All Eventing Functoins must have a unique name in a Couchbase cluster. A Function name can only start with characters in range A-Z, a-z, 0-9, and can only contain characters in range A-Z, a-z, 0-9, underscore, and hyphen.
+
+*Description*
+
+The Description is an optional text that can be added to the Function, typically to describe the purpose of the particular business logic.
+
+*Deployment Feed Boundary*
+
+Using the `Feed Boundary` drop down, you can either set a handler to deploy for all data mutations available in the cluster (`Everything`) or choose to deploy the handler to process only future data mutations, post deployment (`From now`). However, once deployed you may Pause/Resume a handler in the Resume case; the Feed Boundary is a checkpoint made when the Function was paused such that no mutations are reprocessed or lost. [.status]#Couchbase Server 6.6.2#
 
 === Eventing Function or Handler Settings
 
@@ -102,10 +122,17 @@ This controls the consistency level for N1QL statements, but can be set on a per
 Allows the handler to be scaled up (or vertical scaling). Each worker process supports two fixed threads of execution, however this setting is limited to a maximum of 64 for system optimization purposes. The system automatically generates a warning message if the number of workers exceeds a set threshold based upon cluster resources, however, in this case the handler can still be deployed.
 * *Language compatibility*: The language version of the handler for backward compatibility.
 + 
-If the semantics of a language construct change in any given release the “language compatibility” setting will ensure an older handler will continue to see the runtime behavior that existed at the time it was authored, until such behavior is deprecated and removed. For example accessing non-existent items from a bucket returns undefined in 6.5.0, while in 6.0.0 an exception is thrown. (Note 6.0.0 and 6.5.0 are the only currently defined versions.)
+If the semantics of a language construct change in any given release the “language compatibility” setting will ensure an older handler will continue to see the runtime behavior that existed at the time it was authored, until such behavior is deprecated and removed. For example, accessing non-existent items from a bucket returns undefined in 6.5.0, while in 6.0.0 an exception is thrown.(Note 6.0.0, 6.5.0, and 6.6.2 are the only currently defined versions.)
++
+Only a Function with “language compatibility” of 6.6.2 in its settings will pass binary documents to the OnUpdate(doc,meta) handler. Earlier “language compatibility” values of 6.0.0 and 6.5.0 will filter all binary documents out of the DCP mutation stream. [.status]#Couchbase Server 6.6.2#
++
 * *Script Timeout*: Script Timeout provides a timeout option to terminate a non-responsive Function.
 +
 The entry points into the handler, e.g. OnUpdate and OnDelete, processing for each mutation must complete from start to finish prior to this specified timeout duration.
++
+* *Timer Context Max Size*: Timer Context Max Size limits the size of the context for any Timer created by the Function. 
++
+Eventing Timers can store and access a context which can be any JSON document, the context is used to store state when the timer is created and retrieve state when the timer fires.  By default the size is 1024 bytes, but this can be adjusted on a per Function basis. [.status]#Couchbase Server 6.6.2#
 
 [#section_mzd_l1p_m2b]
 === Bindings
