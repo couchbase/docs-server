@@ -21,33 +21,36 @@
 :querying-indexes: {sysinfo}#querying-indexes
 
 The `CREATE INDEX` statement allows you to create a secondary index.
-Secondary indexes contain a filtered or a full set of keys in a given bucket.
-Secondary indexes are optional but increase query efficiency on a bucket.
+Secondary indexes contain a filtered or a full set of keys in a given keyspace.
+Secondary indexes are optional but increase query efficiency on a keyspace.
 
-`CREATE INDEX` is by default a synchronous operation,
-which means that every `CREATE INDEX` statement blocks until the operation finishes.
-Index building starts by creating a task that is queued for index build.
-After this phase, if you lose connectivity, the index build operation continues in the background.
-You can also run index creation asynchronously using the `defer_build` clause.
-In the asynchronous mode, `CREATE INDEX` starts a task to create the index definition, and returns as soon as the task finishes.
+In Couchbase Server 7.0 and later, `CREATE INDEX` allows you to make concurrent index creation requests.
+If there is an index creation task already running, the Index Service queues the incoming index creation request, and schedules the index creation phase to run in the background.
+
+By default, when the index creation phase is complete, the Index Service then triggers the index build phase.
+If you lose connectivity, the index build operation continues in the background.
+You can also defer the index build phase using the `defer_build` clause.
+In deferred build mode, `CREATE INDEX` starts a task to create the index definition, and returns as soon as the task finishes.
 You can then build the index using the {build-index}[BUILD INDEX] command.
 
-GSI indexes provide a status field and mark index status pending.
-With GSI indexer, index status continues to report "pending".
-This status field and other index metadata can be queried using `system:indexes`.
+Index metadata provides a state field.
+The index state may be `scheduled for creation`, `deferred`, `building`, `pending`, `online`, `offline`, or `abridged`.
+This state field and other index metadata can be queried using {querying-indexes}[system:indexes].
 
 [IMPORTANT]
 ====
-Indexes cannot be built concurrently on a given bucket unless the `defer_build` option of the CREATE INDEX statement is used in combination with BUILD INDEX statement.
-The following error is reported if a second index build operation is kicked off before the completion of the ongoing index build.
+If you kick off multiple index creation operations concurrently, and the build phase is not deferred, then you may sometimes see transient errors during the build phase similar to the following.
+If this error occurs, the Index Service tries to run the build operation again in the background.
 
 [source,json]
 ----
 include::example$n1ql-language-reference/build-idx-error.jsonc[]
 ----
+
+If the Index Service still cannot build the index after retrying, the index is marked as failed in the Couchbase Web Console, so that you can drop the index.
 ====
 
-You can create multiple identical secondary indexes on a bucket and place them on separate nodes for better index availability.
+You can create multiple identical secondary indexes on a keyspace and place them on separate nodes for better index availability.
 In Couchbase Server Enterprise Edition, the recommended way to do this is using the `num_replicas` option.
 In Couchbase Server Community Edition, you need to create multiple identical indexes and place them using the `nodes` option.
 Refer to <<index-with,WITH Clause>> below for more details.
@@ -63,7 +66,7 @@ This is to avoid the possibility of duplicate index names.
 [discrete]
 ===== RBAC Privileges
 
-User executing the CREATE INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
+User executing the CREATE INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace.
 For more details about user roles, see
 {authorization-overview}[Authorization].
 
@@ -459,7 +462,7 @@ include::example$n1ql-language-reference/check-idx-defer.n1ql[]
 include::example$n1ql-language-reference/check-idx-defer.jsonc[]
 ----
 
-<1> The index is in the pending state (deferred).
+<1> The index is in the deferred state.
 ====
 
 [[ex-build-idx-defer]]
