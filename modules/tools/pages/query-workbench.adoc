@@ -5,6 +5,8 @@
 
 // Cross-references
 :scopes-and-collections: xref:learn:data/scopes-and-collections.adoc
+:cost-based-optimizer: xref:n1ql:n1ql-language-reference/cost-based-optimizer.adoc
+:begin-transaction: xref:n1ql:n1ql-language-reference/begin-transaction.adoc
 :infer: xref:n1ql:n1ql-language-reference/infer.adoc
 :limit: xref:n1ql:n1ql-language-reference/limit.adoc
 :update: xref:n1ql:n1ql-language-reference/update.adoc
@@ -16,12 +18,15 @@
 :covering-indexes: xref:n1ql:n1ql-language-reference/covering-indexes.adoc
 :recommendation-rules: xref:n1ql:n1ql-language-reference/advise.adoc#recommendation-rules
 :scan_consistency: xref:settings:query-settings.adoc#scan_consistency
+:max_parallelism: xref:settings:query-settings.adoc#max_parallelism
+:timeout_req: xref:settings:query-settings.adoc#timeout_req
+:txtimeout_req: xref:settings:query-settings.adoc#txtimeout_req
 :query_context: xref:settings:query-settings.adoc#query_context
 
 [abstract]
 {description}
 
-Using the [.ui]*Query Workbench*, you can conveniently explore data, create, edit, run, and save N1QL queries, view and save query results, and explore the document structures in a keyspace - all in a single window.
+Using the [.ui]*Query Workbench*, you can conveniently explore data, create, edit, run, and save N1QL queries, view and save query results, and explore the document structures in a keyspace -- all in a single window.
 
 Features of the Query Workbench include:
 
@@ -45,32 +50,56 @@ The [.ui]*Query Workbench* consists of three working areas as shown in the follo
 * <<results,Query Results and Plans>>
 
 .Query Workbench Areas
-image::query-workbench-areas.png[,720]
+image::query-workbench-areas.png["The Query Workbench with the Query Editor, Query Results, and Data Insights highlighted"]
 
 [#n1ql-editor]
 == Using the Query Editor
 
-The Query Editor is where you build queries, and run the queries using the btn:[Execute] button.
-
-TIP: You can also execute queries by typing a semi-colon (`;`) at the end of the query and hitting kbd:[Enter].
+The Query Editor is where you enter and edit queries.
 
 The Query Editor provides the following additional features:
 
 * *Syntax coloring* -- For easy viewing, N1QL keywords, numbers and string literals are differently colored.
 * *Auto-completion* -- When entering a keyword in the Query editor, if you press the kbd:[Tab] key or kbd:[Ctrl+Space], the tool offers a list of matching N1QL keywords and keyspace names that are close to what you have typed so far.
 For names that have a space or a hyphen (-), the auto-complete option includes back quotes around the name.
-If you expand a keyspace in the Data Insights, the tool learns and includes the field names from the schema of the expanded keyspace.
-* *Support for N1QL INFER statements* -- The tool supports the N1QL {infer}[INFER] statement.
+* *Auto-formatting* -- Click the format icon icon:align-right[] to reflow and indent the query to enhance readability.
+
+Click the double-headed arrow icon icon:expand-alt[] to enlarge the [.ui]*Query Editor* and [.ui]*Query Results* areas -- the [.ui]*Data Insights* area is resized accordingly.
 
 == Run a Query
 
 After entering a query, you can execute the query either by typing a semicolon (`;`) and pressing kbd:[Enter], or by clicking the btn:[Execute] button.
 When the query is running, the btn:[Execute] button changes to btn:[Cancel], which allows you to cancel the running query.
 When you cancel a running query, it stops the activity on the server side as well.
-After running the query, you can use the [.ui]*Explain* link to view the execution plan for the query.
+After running the query, you can view the <<results,query results>>, view the <<query-plans,query execution plan>>, or get <<index-advisor,index advice>> for the query.
 
 NOTE: The btn:[Cancel] button does not cancel index creation statements.
 The index creation continues on the server side even though it appears to have been canceled from the Query Workbench.
+
+You can also run a sequence of statements in the Query Editor.
+Each statement must be terminated with a semicolon.
+Since typing a semicolon and pressing kbd:[Enter] executes the query, you must compose the sequence of statements in a separate text editor, and then copy the whole sequence into the Query Editor.
+You can then click btn:[Execute] to run the sequence of statements.
+
+== Run a Transaction
+
+ifeval::['{page-component-version}' == '7.0']
+_(Introduced in Couchbase Server 7.0)_
+endif::[]
+
+You can use the Query Editor to execute a Couchbase transaction.
+To execute a single statement as a transaction, enter the statement in the Query Editor and click btn:[Run As Transaction].
+
+The btn:[Run As Transaction] button is hidden by default.
+To display it, click the rightward-pointing arrowhead icon:chevron-right[] to the right of the btn:[Execute] button.
+To hide it again, click the cross icon icon:times-circle[] to the right of the button.
+
+You can also use the Query Editor to execute a transaction containing multiple statements.
+The simplest way of doing this is to compose the sequence of statements in a separate text editor, and then copy the whole sequence into the Query Editor.
+You can then click btn:[Run As Transaction] to execute the transaction.
+
+To compose a transaction one statement at a time, you must begin a transaction with the {begin-transaction}[BEGIN TRANSACTION] statement, then set the <<query-preferences>> to specify the `txid` parameter for the rest of the statements in the transaction.
+In this case, be sure to unset the `txid` parameter after you have committed the transaction.
 
 [#query-context]
 == Set Query Context
@@ -83,7 +112,7 @@ You can set the query context using the query context drop-down menu at the top 
 This specifies the bucket and scope used to resolve partial keyspace references within the request.
 When the query context is set, you can write queries using just the collection names, without having to enter the keyspace path.
 
-image::query-workbench-context.png[]
+image::query-workbench-context.png["The query context menu with `travel-sample`.`inventory` selected"]
 
 The query context drop-down menu does not enable you to specify a namespace for the query context.
 Currently, only the `default` namespace is available.
@@ -106,7 +135,6 @@ For more information on scopes and collections, refer to {scopes-and-collections
 == View Query History
 
 The tool maintains a history of all the queries executed.
-Use the [.ui]*<* [.ui]*>* links at the top of the editor to navigate through the history.
 If you edit a previous query and execute it, the new query is stored at the end of the history.
 The history is persistent across browser sessions.
 The query history only saves queries; due to limited browser storage it does not save query results.
@@ -117,54 +145,93 @@ NOTE: Clearing the browser history clears the history maintained by the Query Ed
 Click the [.ui]*history* link, at the top of the editor, to open the [.ui]*Query History* window.
 When the window opens, the current query is selected.
 
-image::query-workbench-history.png[,570]
+image::query-workbench-history.png["The Query History window with several queries displayed",570]
 
-You can scroll through the entire query history, and click to select an individual query to be at the current spot in the history.
+* You can scroll through the entire query history, and click to select an individual query.
 
-Search history:: You can search the query history by entering a text in the search box located on the top.
+* You can search the query history by entering a text in the search box located on the top.
 All matching queries are displayed.
 If no matching query is found, then the entire history is displayed.
-Delete a specific entry:: Select a query, then click btn:[Delete Selected] to delete the query from the history.
-Delete all entries:: Click btn:[Delete All] to delete the entire query history.
-Re-run a specific query:: Select a query, then click btn:[Close & Run] to close the query history and re-run the query.
-Close the query history:: Click btn:[Close] to close the query history without making any further changes.
+
+* To delete a specific entry, select a query, then click btn:[Delete Selected].
+The query is deleted from the history.
+
+* To delete all entries, click btn:[Delete All].
+The entire query history is deleted.
+
+* To re-run a specific query, select a query, then click btn:[Close & Run].
+The query history is closed and the query is re-run.
+
+* To close the query history, click btn:[Close].
+The query history is closed without making any further changes.
 
 == History Status
 
 The currently shown position in the history is indicated by the numbers next to the history link.
-For example, (151/152) indicates that query #151 is currently shown, out of a total history length of 152 queries.
-Use the forward or back buttons to move to the next or previous query in the history.
-The forward button can also create a new blank query when you are already at the end of the query history.
+For example, [.ui]*(151/152)* indicates that query #151 is currently shown, out of a total history length of 152 queries.
+Use the forward or back arrowhead icons icon:angle-left[] icon:angle-right[] to move to the next or previous query in the history.
+The forward arrowhead icon icon:angle-right[] can also create a new blank query when you are already at the end of the query history.
 
-== Import Query
+[#import-query]
+== Import Data
 
-You can load a query from a file into the Query Editor.
-Click btn:[Import] and then select a local file that you wish to import.
+You can load a query from a file into the Query Editor, or load a set of queries from a file into the query history.
+
+. Click btn:[Import] to display the [.ui]*Import Query / History* window.
++
+image::query-workbench-import.png["The Import Query / History window",399]
+
+. Specify the data that you want to import:
++
+Query:: Loads the imported query into the Query Editor.
+Query History:: Adds the imported queries to the end of the current query history.
+
+. Choose btn:[Next] to continue, or btn:[Cancel] to cancel.
+
+NOTE: The browser's Open File dialog is displayed.
+Locate and open a text file or JSON file containing the data you want to import.
+
 Alternatively, you can drag and drop the file from the Desktop into the [.ui]*Query Editor* to a load a file.
 The content of the file is added in the [.ui]*Query Editor* as a new query at the end of the history.
 
-== Export Query or Results
+[#export-query-or-results]
+== Export Data
 
-You can export the query results or query statement.
-Click btn:[Export] to display the [.ui]*Export Query / Data* window.
+You can export the query statement, query results, or query history.
 
-* Choose the [.ui]*Query Results* option to export the results in the JSON file format.
-Specify the name of the JSON file where results are saved, click [.ui]*Save*.
-* Choose the [.ui]*Query Statement* option to export the statement in the .txt format.
-By default, the query is saved as a text file (.txt) in the Downloads directory when using Firefox and Chrome browsers.
+. Click btn:[Export] to display the [.ui]*Export Query / Data / History* window.
++
+image::query-workbench-export.png["The Export Query / Data / History window",399]
 
-NOTE: When using Safari, clicking Save loads the data into a new window.
+. Specify the data that you want to export:
++
+Current query results (JSON):: Exports the results in the JSON file format.
+Current results as tab-separated (text):: Exports the results as tab-separated text.
+Query history (JSON):: Exports just the query history in the JSON file format.
+Query history including results (JSON):: Exports the query history and results in the JSON format.
+Current Query Statement:: Exports the current query statement in the .txt format.
+
+. In the [.ui]*Filename* box, specify the name of the file where data is to be saved.
+The file extension is added automatically.
+By default, the query is saved in the Downloads directory when using Firefox and Chrome browsers.
+
+. Choose btn:[Next] to export the data, or btn:[Cancel] to cancel.
+
+NOTE: When using Safari, clicking btn:[Next] loads the data into a new window.
 You have to save the file manually using the menu:File[Save As] menu.
 
+[#query-preferences]
 == Query Preferences
 
-You can specify the query settings by clicking the btn:[Preferences] button image:query-workbench-settings.png[].
+To specify the query settings:
+
+. Click the cog icon icon:cog[] near the top right of the Query Workbench.
 The [.ui]*Run-Time Preferences* window is displayed.
++
+image::query-workbench-preferences.png["The Run-Time Preferences window",399]
 
-image::query-workbench-preferences.png[]
-
-Define the following options and click [.ui]*Save Preferences*.
-
+. Define the following options:
++
 Collect query timings::
 The server records the timing for most operations in the query plan, showing the updated query plan with the query result.
 Both graphical and textual query plans are updated with the timing information when the query is complete.
@@ -176,17 +243,21 @@ In some cases this may impact server performance.
 Automatically format queries before executing::
 The query workbench automatically formats queries with line breaks and indentation before executing.
 
+Use Cost-Based Optimizer::
+Specifies whether the {cost-based-optimizer}[cost-based optimizer] is enabled.
+
 Don't save query history::
 Disables auto-saving query history to local storage in your browser.
 This is a consideration for shared machines.
 When selected, any query history will be lost when you leave or refresh the query workbench.
 
 Max Parallelism::
-This is a cbq-engine option.
+Specifies the maximum parallelism for the query.
 If you do not specify, the cbq-engine uses its default value.
+For more information, refer to the {max_parallelism}[max_parallelism] parameter.
 
 Scan Consistency::
-This is a cbq-engine option.
+Specifies the consistency guarantee for index scanning.
 Select one of the following options:
 +
 * not_bounded
@@ -194,17 +265,29 @@ Select one of the following options:
 * statement_plus
 
 +
-For more information, see {scan_consistency}[Settings and Parameters].
++
+For more information, refer to the {scan_consistency}[scan_consistency] parameter.
 
 Positional Parameters::
-For the prepared queries, this option allows you to specify values for $0, $1, and so on, up to as many positional parameters as you have.
+For the prepared queries, this option allows you to specify values for $1, $2, and so on, up to as many positional parameters as you have.
 Click the btn:[+] button to add new positional parameters, and the btn:[-] button to remove the parameters.
-The parameters are automatically labelled as "$0", "$1", and so on.
+The parameters are automatically labelled as [.ui]*$1*, [.ui]*$2*, and so on.
 
 Named Parameters::
 For the prepared queries, this option allows you to specify any number of named parameters.
 Named parameters must start with the dollar sign ($) for use in prepared queries.
 Otherwise, they are interpreted as parameters to the Query REST API.
+
+Query Timeout::
+Specifies the maximum time to spend on a query before timing out.
+For more information, refer to the {timeout_req}[timeout] parameter.
+
+Transaction Timeout::
+Specifies the maximum time to spend on a transaction before timing out.
+Only applies to {begin-transaction}[BEGIN TRANSACTION] statements, or statements executed with the btn:[Run As Transaction] button.
+For more information, refer to the {txtimeout_req}[txtimeout] parameter.
+
+. Choose btn:[Save Preferences] to save the preferences, or btn:[Cancel] to cancel.
 
 [#bucket-analyzer]
 == Viewing the Data Insights
@@ -213,31 +296,37 @@ The *Data Insights* area displays all installed keyspaces in the cluster.
 By default, when the Query Workbench is first loaded, it retrieves a list of available keyspaces from the cluster.
 The [.ui]*Data Insights* area is automatically refreshed when keyspaces or indexes are added or removed.
 
-Click the btn:[Resize] button image:query-workbench-bucket-resize.png[] to enlarge the [.ui]*Data Insights* area -- the [.ui]*Query Editor* and [.ui]*Query Results* areas are resized accordingly.
+Click the double-headed arrow icon icon:expand-alt[] to enlarge the [.ui]*Data Insights* area -- the [.ui]*Query Editor* and [.ui]*Query Results* areas are resized accordingly.
 
-The keyspaces are grouped into the following categories based on the indexes created for the keyspace:
+Within the [.ui]*Data Insights* area, buckets, scopes, and collections are displayed in a hierarchy, which you can expand or collapse.
 
-* *Fully Queryable Keyspaces*: Contain a primary index or a primary index and secondary indexes.
-* *Queryable on Indexed Fields*: Do not contain a primary index, but have one or more secondary indexes.
-* *Non-Indexed Keyspaces*: Do not contain any indexes.
-These keyspaces do not support queries.
-You must first define an index before querying these keyspaces.
+* To expand a heading within the hierarchy, click the heading, or click the rightward-pointing arrowhead icon:caret-right[] before the heading.
 
-You can expand any keyspace to view the schema for that keyspace: field names, types, and if you hover the mouse pointer over a field name, you can see example values for that field.
+* To collapse a heading within the hierarchy, click the heading again, or click the downward-pointing arrowhead icon:caret-down[] before the heading.
+
+Buckets are displayed at the top level of the hierarchy.
+When you expand a bucket, the scopes within that bucket are displayed below it.
+Similarly, when you expand a scope, the collections within that scope are displayed below it.
+
+The number of collections within the bucket is displayed to the right of the bucket heading.
+Similarly, the number of documents within a collection is displayed to the right of the collection heading.
+You may need to refresh the [.ui]*Data Insights* area to see these figures.
+
+image::query-workbench-insights-keyspaces.png["Hierarchy of bucket, scopes, and collections in the Data Insights area"]
+
+When you expand a collection, one or more headings are displayed showing the flavors (types) of document stored within that collection.
+The percentage of documents of each flavor is shown to the right.
+If there are any indexes within that collection, an [.ui]*Indexes* heading is also displayed, showing the indexes within the collection.
+
+You can expand any document flavor to view the schema for those documents: field names, types, and if you hover the mouse pointer over a field name, you can see example values for that field.
 Keyspace analysis is based on the N1QL {infer}[INFER] statement, which you can run manually to get more detailed results.
-This command infers a schema for a keyspace by examining a random sample of documents.
-Because the command is based on a random sample, the results may vary slightly from run to run.
-The default sample size is 1000 documents.
-The syntax of the command is:
 
-----
-INFER keyspace-name [ WITH options ];
-----
+You can expand the [.ui]*Indexes* heading to view the names and definitions of the indexes within the collection.
 
-where [.var]`options` is a JSON object, specifying values for one or more of [.var]`sample_size`, [.var]`similarity_metric`, [.var]`num_sample_values`, or [.var]`dictionary_threshold`.
+image::query-workbench-insights-infer.png["Schema and indexes for a collection in the Data Insights area"]
 
-.Sample INFER statement: `+++INFER `travel-sample` with {"sample_size": 3000};+++`
-image::query-workbench-infer-sample.png[,720]
+The information in the [.ui]*Data Insights* area is updated regularly, but it may take a short time to reflect recent changes.
+To force the [.ui]*Data Insights* area to update, click btn:[Refresh].
 
 [#results]
 == Viewing the Query Results
@@ -245,7 +334,7 @@ image::query-workbench-infer-sample.png[,720]
 When you execute a query, the results are displayed in the [.ui]*Query Results* area.
 Since large result sets can take a long time to display, we recommend using the {limit}[LIMIT] clause as part of your query when appropriate.
 
-When a query finishes, the query metrics for that query are displayed on the right side of the btn:[Execute] and btn:[Explain] buttons.
+When a query finishes, the query metrics for that query are displayed to the right of the btn:[Execute] button.
 
 Status:: Shows the status of the query.
 The values can be: success, failed, or HTTP codes.
@@ -256,34 +345,39 @@ Mutation Count:: Shows the number of documents deleted or changed by the query.
 This appears only for {update}[UPDATE] and {delete}[DELETE] queries instead of Result Count.
 Result Size:: Shows the size in bytes of the query result.
 
-The following figures display the result of the query `pass:c[SELECT * FROM `travel-sample` LIMIT 1;]` in different formats.
+You can choose to view the results in several different formats.
+The diagrams below display the result of the following query in each of the available formats.
 
-You can choose to view the results in one of the following formats:
+[source,n1ql]
+----
+SELECT * FROM `travel-sample`.inventory.airline LIMIT 1;
+----
 
 === JSON Format
 
-JSON, where the results are formatted to make the data easy to read.
+Click *JSON* to display the results in JSON format.
+The results are highlighted to make the data easy to read.
 You can also expand and collapse objects and array values using the small arrow icons next to the line numbers.
 
-image::query-workbench-result-json.png[,720]
+image::query-workbench-result-json.png["Query results in JSON format"]
 
 === Table Format
 
-Table, where the results are presented in a tabular format.
+Click *Table* to present the results in a tabular format.
 The tool converts the JSON documents to HTML tables, and presents sub-objects or sub-arrays as sub-tables.
-This format works well for queries that return an array of objects, like `pass:c[select `beer-sample`.* from `beer-sample`;]`.
+This format works well for queries that return an array of objects.
 You can hover the mouse pointer over a data value to see the path to that value in a tool tip.
 You can sort a column by clicking the column header.
 
-image::query-workbench-result-table.png[,720]
+image::query-workbench-result-table.png["Query results in table format"]
 
 === Tree Format
 
-Tree (or list), where the results are presented in a tree (or list or outline) format.
+Click *Tree* to present the results in a tree (or list or outline) format.
 Each sub-object or sub-array is displayed as a sub-list.
 You can hover the mouse pointer over a data value to see the path to that value in a tool tip.
 
-image::query-workbench-result-tree.png[,720]
+image::query-workbench-result-tree.png["Query results in tree format"]
 
 == Query Plans
 
@@ -292,11 +386,15 @@ Each time a query is executed, an {explain}[EXPLAIN] command is automatically ru
 To display the query plan, click the *Plan* link or the *Plan Text* link in the [.ui]*Query Results* area.
 You may also generate the query plan and display the plan in graphical format by clicking btn:[Explain].
 
+The btn:[Explain] button is hidden by default.
+To display it, click the rightward-pointing arrowhead icon:chevron-right[] to the right of the btn:[Execute] button.
+To hide it again, click the cross icon icon:times-circle[] to the right of the button.
+
 === Plan
 
 This is where the results are presented in a graphical format.
 
-image::query-workbench-result-plan.png[]
+image::query-workbench-result-plan.png["Query plan in graphical format"]
 
 ➀ At the top, it shows a summary which also shows lists of the keyspaces, indexes, and fields used by the query.
 
@@ -318,7 +416,7 @@ NOTE: Projection is split into two parts (one before Order and one after Order),
 
 Clicking on any unit of the plan shows more details of it.
 
-image::query-workbench_Plan.png[]
+image::query-workbench_Plan.png["Query plan in graphical format with Initial Project pop-up shown"]
 
 In general, the preference of scan is:
 
@@ -332,7 +430,7 @@ In general, the preference of scan is:
 
 This simply shows the text output of the {explain}[EXPLAIN] command.
 
-image::query-workbench-result-plantext.png[,720]
+image::query-workbench-result-plantext.png["Query plan in JSON format"]
 
 == Index Advisor
 
@@ -344,13 +442,17 @@ When you execute a {select}[SELECT] query, a {merge}[MERGE] query, an {update}[U
 To display the index advice in graphical format, click the *Advice* link in the [.ui]*Query Results* area.
 You may also generate the index advice and display the advice in graphical format by clicking btn:[Advise].
 
+The btn:[Advise] button is hidden by default.
+To display it, click the rightward-pointing arrowhead icon:chevron-right[] to the right of the btn:[Execute] button.
+To hide it again, click the cross icon icon:times-circle[] to the right of the button.
+
 include::n1ql:partial$n1ql-language-reference/advice-workbench.adoc[]
 
 === Advice
 
 If there is any index advice for this query, the results of the Index Advisor are displayed under one or more of the following possible headings.
 
-image::query-workbench-result-advice.png[,720]
+image::query-workbench-result-advice.png["Index advice for the query"]
 
 Indexes Currently Used::
 The index or indexes currently used by this query are listed under this heading.
