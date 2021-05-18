@@ -1,21 +1,15 @@
 = Metadata Management
 
-:description: pass:q[A Couchbase Cluster's _metadata_ describes its configuration. Some categories of metadata are maintained by a _consensus_ methodology, based on the Raft algorithm; others by the _Master Services_ of the Cluster Manager. ]
+:description: pass:q[A Couchbase Cluster's _metadata_ describes its configuration. Some categories of metadata are maintained by means of a _consensus protocol_; others by means of _gossip-replication_. ]
 
 [abstract]
 {description}
 
-[#understanding-couchbase-server-metadata]
-== Understanding Couchbase-Server Metadata
+[#understanding-couchbase-server-metadata-management]
+== Understanding Couchbase-Server Metadata-Management
 
-In Couchbase Server 7.0+, metadata is considered to be of two kinds: metadata related to cluster topology; and all other metadata.
-Each kind is maintained in its own way.
-
-[#topology-related-metadata]
-=== Topology-Related Metadata
-
-Metadata related to cluster topology is maintained, with high consistency, by a consensus methodology, based on the https://raft.github.io/[Raft^] algorithm.
-This includes:
+In Couchbase Server 7.0+, metadata is managed by means of _Chronicle_; which is a _consensus-based_ system, based on the https://raft.github.io/[Raft^] algorithm.
+Chronicle manages:
 
 * The _node-list_ for the cluster.
 * The _status_ of each node.
@@ -25,33 +19,36 @@ This includes:
 
 The process whereby this metadata is maintained is described below, in xref:learn:clusters-and-availability/metadata-management.adoc#consensus-based-metadata-management[Consensus-Based Metadata-Management].
 
-[#all-other-metadata]
-=== All Other Metadata
-
-All other metadata for the cluster is maintained by _ns_sever_.
-This metadata includes:
+Additional cluster-metadata is handled by Couchbase Server's _legacy_ metadata-management system, which is based on _gossip-replication_.
+This legacy-managed metadata includes:
 
 * Compaction settings.
 * Security settings.
 * XDCR replications.
 * Settings and metadata for all services.
+* Per-node configuration settings.
 
-Every node in the cluster stores a copy of all such metadata.
-Metadata-changes are asynchronously replicated across the nodes by the xref:learn:clusters-and-availability/cluster-manager.adoc#master-services[Master Services] of the Cluster Manager: this leadership role is occupied by one node at a time; with a replacement node being elected if the current leader has become non-communicative.
+Changes to the legacy-managed metadata are asynchronously replicated across the nodes with _eventual consistency_, by means of _gossip_.
+This means that when a metadata change occurs on any node, that node attempts to replicate the change to all other nodes.
+Additionally, each node periodically pulls the configuration of some other, randomly selected node, in order to update its own configuration as necessary.
+By these means, over time, the latest configuration spreads throughout the cluster.
 
-A leader can only transmit metadata-changes when it is granted a _quorum lease_; which means that a majority of nodes in the cluster are continuing to communicate with it.
-Should at least half of the cluster's nodes become non-communicative, due to an unanticipated network partition, the leader can make no further changes to metadata until the partition is healed, or the cluster is otherwise fixed.
-(See xref:learn:clusters-and-availability/hard-failover.adoc#default-and-unsafe[Hard Failover in Default and Unsafe Modes], for information on failing over a cluster in such circumstances.)
-
-The asynchronous replication of metadata-changes by the Master Services means that updates occur across the cluster with _eventual consistency_.
-
-For a more detailed description of the cluster manager, see xref:learn:clusters-and-availability/cluster-manager.adoc[Cluster Manager].
+When a cluster-wide activity such as rebalance or failover needs to occur, this is performed by the cluster's _orchestrator_ (its master node).
+To do so, the orchestrator obtains a _lease_ on metadata changes; to ensure that no topology-related metadata changes can be made by any other node, while the cluster-wide activity is in process.
 
 [#consensus-based-metadata-management]
 == Consensus-Based Metadata-Management
 
-Topology data for the Couchbase-Server cluster &#8212; referring to nodes, services, buckets, scopes and collections, and vBuckets &#8212; is maintained by a consensus methodology, based on the https://raft.github.io/[Raft^] algorithm.
-Basic concepts are summarized below.
+In 7.0, Couchbase Server provides consensus-based metadata management, by means of _Chronicle_; which is  a methodology based on the https://raft.github.io/[Raft^] algorithm.
+Chronicle is:
+
+* Strongly consistent.
+* Supportive of full linearizability.
+* Fully tested with https://jepsen.io/[Jepsen^].
+
+Couchbase-Server administrators are not required to be familiar with the internal workings of Chronicle.
+However, for informational purposes, a sketch of how Chronicle works is provided below.
+See the https://raft.github.io/[Raft^] specification for a complete account of the algorithm on which Chronicle is based.
 
 [#logs-leaders-and-followers]
 === Logs, Leaders, and Followers
@@ -120,8 +117,8 @@ A _quorum failure_ occurs when half or more of the nodes in the cluster cannot b
 In this situation, commitment is prohibited; until either the communication problem is remedied, or the non-communicative nodes are failed over unsafely.
 In consequence, prior to remedy or failover, for the duration of the quorum failure:
 
-- Buckets, scopes, and collections can neither be created nor dropped.
+* Buckets, scopes, and collections can neither be created nor dropped.
 
-- Nodes cannot be added, joined, failed over safely, or removed.
+* Nodes cannot be added, joined, failed over safely, or removed.
 
 See xref:learn:clusters-and-availability/hard-failover.adoc#performing-an-unsafe-failover[Performing an Unsafe Failover], for information on failing over nodes in response to a quorum failure.
