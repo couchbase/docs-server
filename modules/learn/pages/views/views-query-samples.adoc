@@ -14,36 +14,36 @@ For background and examples, the following selections provide a number of differ
 There are some general points and advice for writing all views that apply irrespective of the document structure, query format, or view content.
 
 * Do not assume the field exists in all documents.
-
++
 Fields may be missing from your document, or may only be supported in specific document types.
 Use an `if` test to identify problems.
 For example:
-
++
 ----
 if (document.firstname)...
 ----
 
 * View output is case sensitive.
-
++
 The value emitted by the `emit()` function is case sensitive.
 Emitting a field value of ‘Martin’ but specifying a `key` value of ‘martin’ will not match the data.
 Emitted data, and the key selection values, should be normalized to eliminate potential problems.
 For example:
-
++
 ----
 emit(doc.firstname.toLowerCase(),null);
 ----
 
 * Number formatting
-
++
 Numbers within JavaScript may inadvertently be converted and output as strings.
 To ensure that data is correctly formatted, the value should be explicitly converted.
 For example:
-
++
 ----
 emit(parseInt(doc.value,10),null);
 ----
-
++
 The `parseInt()` built-in function will convert a supplied value to an integer.
 The `parseFloat()` function can be used for floating-point numbers.
 
@@ -564,205 +564,3 @@ For example, the blog post structure might be:
 ----
 
 To obtain the blog post information and the corresponding comments, create a view to find the blog post record, and then make a second call within your client SDK to get all the comment records from the Couchbase Server cache.
-
-== Simulating transactions
-
-Couchbase Server does not support transactions, but the effect can be simulated by writing a suitable document and view definition that produces the effect while still only requiring a single document update to be applied.
-
-For example, consider a typical banking application, the document structure could be as follows:
-
-----
-{
-   "account" : "James",
-   "value" : 100
-}
-----
-
-A corresponding record for another account:
-
-----
-{
-   "account" : "Alice",
-   "value" : 200
-}
-----
-
-To get the balance of each account, the following `map()` :
-
-----
-function(doc, meta) {
-    if (doc.account && doc.value)
-    {
-      emit(doc.account,doc.value);
-    }
-}
-----
-
-The `reduce()` function can use the built-in `_sum` function.
-
-When queried, using a `group_level` of 1, the balance of the accounts is displayed:
-
-----
-{"rows":[
-{"key":"Alice","value":200},
-{"key":"James","value":100}
-]
-}
-----
-
-Money in an account can be updated just by adding another record into the system with the account name and value.
-For example, adding the record:
-
-----
-{
-   "account" : "James",
-   "value" : 50
-}
-----
-
-Re-querying the view produces an updated balance for each account:
-
-----
-{"rows":[
-{"key":"Alice","value":200},
-{"key":"James","value":150}
-]
-}
-----
-
-However, if Alice wants to transfer $100 to James, two record updates are required:
-
-. A record that records an update to Alice’s account to reduce the value by 100.
-. A record that records an update to James’s account to increase the value by 100.
-
-Unfortunately, the integrity of the transaction could be compromised in the event of a problem between step 1 and step 2.
-Alice’s account may be deducted, without updates James’ record.
-
-To simulate this operation while creating (or updating) only one record, a combination of a transaction record and a view must be used.
-The transaction record looks like this:
-
-----
-{
-     "fromacct" : "Alice",
-     "toacct" : "James",
-     "value" : 100
-}
-----
-
-The above records the movement of money from one account to another.
-The view can now be updated to handle a transaction record and output a row through `emit()` to update the value for each account.
-
-----
-function(doc, meta)
-{
-  if (doc.fromacct)
-  {
-    emit(doc.fromacct, -doc.value);
-    emit(doc.toacct, doc.value);
-  }
-  else
-  {
-    emit(doc.account, doc.value);
-  }
-}
-----
-
-The above `map()` effectively generates two fake rows, one row subtracts the amount from the source account, and adds the amount to the destination account.
-The resulting view then uses the `reduce()` function to sum up the transaction records for each account to arrive at a final balance:
-
-----
-{"rows":[
-{"key":"Alice","value":100},
-{"key":"James","value":250}
-]
-}
-----
-
-Throughout the process, only one record has been created, and therefore transient problems with that record update can be captured without corrupting or upsetting the existing stored data.
-
-== Simulating multi-phase transactions
-
-The technique in Simulating Transactions works if your data will allow the use of a view to effectively roll-up the changes into a single operation.
-However, if your data and document structure do not allow it then you can use a multi-phase transaction process to perform the operation in a number of distinct stages.
-
-This method is not reliant on views, but the document structure and update make it easy to find out if there are ‘hanging’ or trailing transactions that need to be processed without additional document updates.
-Using views and the Observe operation to monitor changes could lead to long wait times during the transaction process while the view index is updated.
-
-To employ this method, you use a similar transaction record as in the previous example, but use the transaction record to record each stage of the update process.
-
-Start with the same two account records:
-
-----
-{
-   "type" : "account",
-   "account" : "James",
-   "value" : 100,
-   "transactions" : []
-}
-----
-
-The record explicitly contains a `transactions` field which contains an array of all the currently active transactions on this record.
-
-The corresponding record for the other account:
-
-----
-{
-   "type" : "account",
-   "account" : "Alice",
-   "value" : 200,
-   "transactions" : []
-}
-----
-
-Now perform the following operations in sequence:
-
-. Create a new transaction record that records the transaction information:
-+
-`{ "type" : "transaction", "fromacct" : "Alice", "toacct" : "James", "value" : 100, "status" : "waiting" }`
-+
-The core of the transaction record is the same, the difference is the use of a `status` field which will be used to monitor the progress of the transaction.
-+
-Record the ID of the transaction, for example, `transact_20120717163`.
-
-. Set the value of the `status` field in the transaction document to ‘pending’:
-+
-`{ "type" : "transaction", "fromacct" : "Alice", "toacct" : "James", "value" : 100, "status" : "pending" }`
-
-. Find all transaction records in the `pending` state using a suitable view:
-+
-`function(doc, meta) { if (doc.type && doc.status && doc.type == "transaction" && doc.status == "pending" ) { emit([doc.fromacct,doc.toacct], doc.value); } }`
-
-. Update the record identified in `toacct` with the transaction information, ensuring that the transaction is not already pending:
-+
-`{ "type" : "account", "account" : "Alice", "value" : 100, "transactions" : ["transact_20120717163"] }`
-+
-Repeat on the other account:
-+
-`{ "type" : "account", "account" : "James", "value" : 200, "transactions" : ["transact_20120717163"] }`
-
-. Update the transaction record to mark that the records have been updated:
-+
-`{ "type" : "transaction", "fromacct" : "Alice", "toacct" : "James", "value" : 100, "status" : "committed" }`
-
-. Find all transaction records in the `committed` state using a suitable view:
-+
-`function(doc, meta) { if (doc.type && doc.status && doc.type == "transaction" && doc.status == "committed" ) { emit([doc.fromacct, doc.toacct], doc.value); } }`
-+
-Update the source account record noted in the transaction and remove the transaction ID:
-+
-`{ "type" : "account", "account" : "Alice", "value" : 100, "transactions" : [] }`
-+
-Repeat on the other account:
-+
-`{ "type" : "account", "account" : "James", "value" : 200, "transactions" : [] }`
-
-. Update the transaction record state to ‘done’.
-This will remove the transaction from the two views used to identify unapplied, or uncommitted transactions.
-
-Within this process, although there are multiple steps required, you can identify at each step whether a particular operation has taken place or not.
-
-For example, if the transaction record is marked as ‘pending’, but the corresponding account records do not contain the transaction ID, then the record still needs to be updated.
-Since the account record can be updated using a single atomic operation, it is easy to determine if the record has been updated or not.
-
-The result is that any sweep process that accesses the views defined in each step can determine whether the record needs updating.
-Equally, if an operation fails, a record of the transaction, and whether the update operation has been applied, also exists, allowing the changes to be reversed and backed out.
