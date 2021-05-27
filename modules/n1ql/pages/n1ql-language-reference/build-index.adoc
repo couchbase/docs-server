@@ -8,20 +8,38 @@
 :selectclause: xref:n1ql-language-reference/selectclause.adoc
 :subqueries: xref:n1ql-language-reference/subqueries.adoc
 :logical-hierarchy: xref:n1ql-intro/sysinfo.adoc#logical-hierarchy
+:querying-indexes: xref:n1ql-intro/sysinfo.adoc#querying-indexes
 :keyspace-ref: xref:n1ql-language-reference/createindex.adoc#keyspace-ref
 
 [abstract]
 The BUILD INDEX statement enables you to build one or more GSI indexes that are marked for deferred building all at once.
 
-By default, CREATE INDEX statement starts building the created index.
-However for more efficient building of multiple indexes, CREATE INDEX command can mark indexes for deferred building using the `defer_build:true` option.
-BUILD INDEX is capable of building multiple indexes at once, and can utilize a single scan of documents in the bucket to feed many index build operations.
+By default, CREATE INDEX starts building the created index after the creation stage is complete.
+However for more efficient building of multiple indexes, CREATE INDEX can mark indexes for deferred building using the `defer_build:true` option.
+BUILD INDEX is capable of building multiple indexes at once, and can utilize a single scan of documents in the keyspace to feed many index build operations.
 
 BUILD INDEX is an asynchronous operation.
 BUILD INDEX creates a task to build the primary or secondary GSI indexes and returns as soon as the task is queued for execution.
-The full index creation operation happens in the background.
-Indexes of type GSI provide a status field and mark index status pending while the index build operation is in progress.
-This status field and other index metadata can be queried using `system:indexes`.
+The full index build operation happens in the background.
+
+Index metadata provides a state field.
+The index state may be `scheduled for creation`, `deferred`, `building`, `pending`, `online`, `offline`, or `abridged`.
+This state field and other index metadata can be queried using {querying-indexes}[system:indexes].
+You can also monitor the index state using the Couchbase Web Console.
+
+If you attempt to build an index which is still scheduled for background creation, the request fails.
+
+[IMPORTANT]
+====
+If you kick off multiple index build operations concurrently, then you may sometimes see transient errors similar to the following.
+
+[source,json]
+----
+include::example$n1ql-language-reference/build-idx-error.jsonc[]
+----
+
+To work around this issue, wait for index building to complete (that is, for all indexes to get to the online state), then issue the BUILD INDEX command again.
+====
 
 BUILD INDEX is also idempotent.
 On execution, the statement only builds indexes which have not already been built.
@@ -34,23 +52,9 @@ When building an index which has automatic index replicas, all of the replicas a
 [discrete]
 ===== RBAC Privileges
 
-User executing the BUILD INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace/bucket.
+User executing the BUILD INDEX statement must have the _Query Manage Index_ privilege granted on the keyspace.
 For more details about user roles, see
 {authorization-overview}[Authorization].
-
-[IMPORTANT]
-.Known Issue
-====
-If multiple index building operations are kicked off without waiting for all indexes to get to the online state, index building for some indexes might fail.
-In this case, `system:indexes` output might report an error similar to the following:
-
-[source,json]
-----
-include::example$n1ql-language-reference/build-idx-error.jsonc[]
-----
-
-To work around this issue, wait for index building to complete (that is, for all indexes to get to the online state), then issue the BUILD INDEX command again.
-====
 
 == Syntax
 
@@ -211,7 +215,7 @@ include::example$n1ql-language-reference/check-idx-defer.jsonc[]
 ----
 ====
 
-<1> The index is in the pending state (deferred).
+<1> The index is in the deferred state.
 
 [[ex-build-idx-single]]
 .Build a named index
@@ -233,6 +237,8 @@ Alternatively, kick off all deferred builds in the keyspace, using a subquery to
 ----
 include::example$n1ql-language-reference/build-idx-all.n1ql[]
 ----
+
+Note that it is only possible to kick off all deferred builds in a single collection -- it is not possible to kick off all deferred builds in all collections in all scopes within a bucket.
 ====
 
 <1> One set of parentheses delimits the whole group of index terms, and another set of parentheses delimits the subquery.
