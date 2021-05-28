@@ -5,21 +5,82 @@
 [abstract]
 {description}
 
-[#understanding-transactions]
+
+Couchbase provides Distributed ACID Transactions for K-V (data) and Query operations -- these are available through APIs in 
+xref:cxx-txns::distributed-acid-transactions-from-the-sdk.adoc[C++], 
+xref:dotnet-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[.NET], and 
+xref:java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Java].
+
+
 == Understanding Transactions
 
 _Distributed ACID Transactions_ are operations that ensure that when multiple documents need to be modified such that only the successful modification of all justifies the modification of any, either all the modifications do occur successfully; or none of them occurs.
 This _Atomicity_ supports _insert_, _update_, and _delete_ operations, across any number of documents.
+It also enables seamless integration between KV and xref:n1ql:n1ql-language-reference/begin-transaction.adoc#purpose[Query] operations within transactions.
+
+Only following commit of the documents modified by the transaction -- when the modified data-copy is removed from the meta data area (which uses xref:learn:data/extended-attributes-fundamentals.adoc[Extended Attributes]), and is written over the main body of the document’s data -- do the corresponding changes become readable by other transactions and operations.
+This is https://jepsen.io/consistency/models/read-committed[Read Committed^] isolation.
+
+A transaction can be performed across multiple buckets.
+Only nodes that contain data to be updated are affected by a transaction.
+
+Multiple transactions can read the same document at the same time.
+If two transactions simultaneously attempt to write to the same document, one is allowed to proceed, while the other is obliged to retry.
+
+Use of transactions requires _Network Time Protocol_ (NTP) to be used to synchronize time across all cluster-nodes.
+See xref:install:synchronize-clocks-using-ntp.adoc[Clock Sync with NTP], for details.
+
+=== Services and Transactions
+
+The indexes provided by the Index, Search, and Analytics Services are _not_ atomically updated with the commits performed by transactions: however, they are updated with https://en.wikipedia.org/wiki/Eventual_consistency[Eventual Consistency].
+
+Neither the Query Service nor the Search Service sees uncommitted data.
+However, https://jepsen.io/consistency/models/snapshot-isolation[Snapshot Isolation] is _not_ provided: consequently, if a transaction performs a commit while a query or search is ongoing, then the query or search may return data from both prior to and subsequent to the commit.
+
+
+// == Custom Metadata
+include::java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[tag=custom-metadata]
+
+
+== Deployment Considerations
+
+* Since transactions make use of the xref:learn:data/durability.adoc[Durability] provided by _synchronous writes_, in order to use transactions in development on a _single-node cluster_, the number of replicas assigned to any bucket to be used transactionally must be established as _zero_: if the number is greater than zero, the required durability level is unattainable, and the write fails.
++
+NOTE: If using a single node cluster (for example, during development), then note that the default number of replicas for a newly created bucket is 1.
+If left at this default, then all Key-Value writes performed at with durability will fail with a `DurabilityImpossibleException`.
+In turn this will cause all transactions (which perform all Key-Value writes durably) to fail.
+This setting can be changed via xref:manage:manage-buckets/create-bucket.adoc#couchbase-bucket-settings[GUI] or xref:cli:cbcli/couchbase-cli-bucket-create.adoc#options[command line].
+
+//  as "I've actually made it through the API that you can't do an AT_PLUS query."
+// commenting out, but keeping on hand as reminder that maybe this AT_PLUS limitation needs noting in another form!
+////
+* A Transactional N1QL Query using `AT_PLUS` will be automatically upgraded to `REQUEST_PLUS`.
+////
+
+* Non-transactional updates should not be made to any document involved in a transaction while the transaction is itself in progress: this prevents the non-transactional update from being overwritten.
+
+=== Limitations
+
+Couchbase Distributed ACID Transactions currently have the following limitations:
+
+* Only documents whose initial size is 10 MB or less can be included in a transaction.
+
+* The number of writes required by a transactional update is greater than the number required for a non-transactional update.
+Thus transactional updates may be less performant than non-transactional updates.
++
+Note that data within a single document is _always_ updated atomically (without the need for transactions): therefore, whenever multiple key-value pairs consistently require atomic update, their co-location within a single document may best ensure high performance.
+
+* xref:learn:clusters-and-availability/xdcr-overview.adoc[Cross Data Center Replication (XDCR)] supports _eventual consistency_: however, it does not support atomicity -- nor does
+xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution].
+Consequently, transactionally modified documents should only be replicated across clusters if no transactions involving the same documents can occur on those clusters simultaneously.
+In other words, Active-Active XDCR deployment (that is, where both clusters are being written to simultaneously) is not supported with the use of transactions and can lead to unexpected behavior and data loss.
++
+See xref:learn:clusters-and-availability/xdcr-overview.adoc#xdcr-direction-and-topology[XDCR Direction and Topology], for a description of _bidirectional_ XDCR.
+See xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc#ensuring_safe_failover[Ensuring Safe Failover], for information on failing a transactional application from one data center to another.
+
+=== Additional Storage Use
 
 Transactions make use of the xref:learn:data/durability.adoc[Durability] provided by _synchronous writes_.
-
-During execution, for each document, a transaction maintains a modified copy of the document in the xref:learn:data/extended-attributes-fundamentals.adoc[Extended Attributes] area of the document's meta data.
-Consequently, the changes that occur during the transaction prior to commitment &#8212; these constituting _uncommitted_ (or _dirty_) data &#8212; are non-readable by any operation other than this transaction itself.
-Only following commit of the documents modified by the transaction &#8212; when the modified data-copy is removed from the meta data area, and is written over the main body of the document’s data &#8212; do the corresponding changes become readable by other transactions and operations.
-This isolation-level is known as https://jepsen.io/consistency/models/read-committed[Read Committed].
-Note that this use of a document’s extended attributes area results in an approximate doubling of its pre-transaction size, while the transaction is underway.
-In consequence, transactions can only be used on documents whose maximum size is 10 MB (which is half of the maximum-permitted document-size, 20 MB).
-
 As well as making use of individual documents' extended attributes, transactions also create additional documents in each bucket that they access.
 These include:
 
@@ -35,54 +96,21 @@ The document is named `&#95;txn:client-record`.
 
 These documents, which may persist indefinitely, are automatically maintained by Couchbase Server, and should not be modified by any application.
 
-A transaction can be performed across multiple buckets.
 
-Only nodes that contain data to be updated are affected by a transaction.
-
-Multiple transactions can read the same document at the same time.
-If two transactions simultaneously attempt to write to the same document, one is allowed to proceed, while the other is obliged to retry.
-
-Use of transactions requires _Network Time Protocol_ (NTP) to be used to synchronize time across all cluster-nodes.
-See xref:install:synchronize-clocks-using-ntp.adoc[Clock Sync with NTP], for details.
-
-[#indexes-and-transactions]
-=== Services and Transactions
-
-The indexes provided by the Index, Search, and Analytics Services are _not_ atomically updated with the commits performed by transactions: however, they are updated with https://en.wikipedia.org/wiki/Eventual_consistency[Eventual Consistency].
-
-Neither the Query Service nor the Search Service sees uncommitted data.
-However, https://jepsen.io/consistency/models/snapshot-isolation[Snapshot Isolation] is _not_ provided: consequently, if a transaction performs a commit while a query or search is ongoing, then the query or search may return data from both prior to and subsequent to the commit.
-
-Note that the Query Service provides the xref:n1ql:n1ql-rest-api/index.adoc#table_xmr_grl_lt[At_Plus] feature, which allows queries to wait for indexes to be appropriately updated, following a transaction.
-
-[#limitations]
-== Limitations
-
-Transactions, which constitute an evolving technology, currently have the following limitations:
-
-* Only documents whose initial size is 10 MB or less can be included in a transaction.
-
-* Non-transactional updates should not be made to any document involved in a transaction while the transaction is itself in progress: this prevents the non-transactional update from being overwritten.
-
-* The number of writes required by a transactional update is greater than the number required for a non-transactional update: a transactional update requires writes in order to stage and commit data, and also to maintain transaction records.
-Consequently, transactional updates may be less performant than non-transactional updates.
-+
-Note that data within a single document is _always_ updated atomically: therefore, whenever multiple key-value pairs consistently require atomic update, their co-location within a single document may best ensure high performance.
-
-* xref:learn:clusters-and-availability/xdcr-overview.adoc[Cross Data Center Replication (XDCR)] supports _eventual consistency_: however, it does _not_ support atomicity &#8212; nor does
-xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution].
-Consequently, transactionally modified documents should only be replicated across clusters if no transactions involving the same documents can occur on those clusters simultaneously.
-+
-See xref:learn:clusters-and-availability/xdcr-overview.adoc#xdcr-direction-and-topology[XDCR Direction and Topology], for a description of _bidirectional_ XDCR.
-See xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc#ensuring_safe_failover[Ensuring Safe Failover], for information on failing a transactional application from one data center to another.
-
-* Since transactions make use of the xref:learn:data/durability.adoc[Durability] provided by _synchronous writes_, in order to use transactions in development on a _single-node cluster_, the number of replicas assigned to any bucket to be used transactionally must be established as _zero_: if the number is greater than zero, the required durability level is unattainable, and the write fails.
-+
-If, on a single-node cluster, a bucket's replica-assignment was previously greater than zero, and the number is reduced to zero in order to support synchronous writes, a rebalance must be performed prior to any synchronous write.
-
-[#creating-and-using-transactions]
 == Creating and Using Transactions
-For examples of creating and using transactions on Couchbase Server, see xref:3.0@java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Distributed Transactions from the Java SDK].
+
+For examples of creating and using transactions on Couchbase Server, see:
+
+* xref:cxx-txns::distributed-acid-transactions-from-the-sdk.adoc[Distributed Transactions through the C++ API].
+* xref:dotnet-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Distributed Transactions from the .NET SDK].
+* xref:java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Distributed Transactions from the Java SDK].
+
+// Commenting out for now - may need reinstating in some form if timing of releases means any customer confusion.
+// or could be added in individual SDK's txn pages.
+////
+NOTE: SDK Transactions Version 1.0.x do not support N1QL operations, but can be used with Couchbase Server 6.6.1.
+SDK Transactions Version 1.1.x require at least Server 7.0, and will work with N1QL operations.
+////
 
 It is also possible to create and use transactions using the N1QL query language.
 Refer to the xref:n1ql:n1ql-language-reference/index.adoc[N1QL Language Reference] for further details.
