@@ -25,7 +25,7 @@ For further information on initiating hard failover, see xref:manage:manage-node
 [#default-and-unsafe]
 == Hard Failover in Default and Unsafe Modes
 
-In the event of a cluster’s xref:learn:clusters-and-availability/cluster-manager.adoc#master-services[Master Services] not being able to contact a majority of the cluster’s nodes, an attempted hard failover will, by default, _not_ be executed.
+In the event of a cluster’s xref:learn:clusters-and-availability/cluster-manager.adoc#master-services[Master Services] not being able to contact a majority of the cluster’s nodes (sometimes referred to as a _quorum failure_), an attempted failover will _not_ be executed.
 This protects the cluster from the situation where:
 
 . The cluster’s nodes get divided into two separate sets, due to an unanticipated https://en.wikipedia.org/wiki/Network_partition[network partition^].
@@ -36,9 +36,57 @@ This protects the cluster from the situation where:
 
 Note that this restriction also protects the cluster in situations where multiple xref:learn:clusters-and-availability/groups.adoc[Server Groups] are accidentally divided into separate sets, in the same way.
 
-However, if an administrator is confident that simultaneous hard failovers will not occur, a single hard-failover can be performed in _unsafe_ mode; this is executed even when a majority of cluster-nodes cannot be contacted.
+[#performing-an-unsafe-failover]
+=== Performing an Unsafe Failover
+
+In Couchbase Server 7.0+, metadata is managed by a _consensus protocol_; which achieves strong consistency by _synchronously_ replicating metadata to a majority of the nodes before considering it committed.
+(This is described in xref:learn:clusters-and-availability/metadata-management.adoc[Metadata Management].)
+The metadata so managed includes _topology information_.
+Consequently, in the event of a quorum failure, no topology changes can be made on the cluster-nodes that remain responsive.
+Specifically, this means that:
+
+* Buckets, scopes, and collections can neither be created nor dropped.
+
+* Nodes cannot be added, joined, failed over safely, or removed.
+
+In order that users do not have to abandon a cluster in which a majority of nodes have failed or are unreachable, hard failover can be performed in _unsafe_ mode.
+Unsafe failovers override the consensus protocol; and may be performed even if a majority of nodes in the cluster cannot be contacted.
+No unsafe failover should be attempted without a full understanding of the consequences and requirements, which are listed immediately below.
+
+[#consequences-of-unsafe-failover]
+==== Consequences of Unsafe Failover
+
+In Couchbase Server Version 7.0+, the consequences of unsafe failover are:
+
+* Strong consistency of metadata is no longer guaranteed.
+
+* Metadata may have been lost.
+
+* The nodes that have been failed over are also immediately _removed_ from the cluster.
+They are, however, not informed of their removal; and so may continue to attempt to behave as if members of the cluster.
+
+* The failed over nodes _cannot be recovered_; and will therefore need to be _re-initialized_, if they are to be re-introduced into the cluster.
+
+The consequences of unsafe failover in Couchbase Server Version 7.0+ are therefore significantly different from in previous versions: previously, the failed over nodes remained in the cluster, and could be recovered; but in 7.0+, they are removed from the cluster, are non-recoverable, and must be re-initialized before being added back to the cluster.
+
+[#requirements-for-unsafe-failover]
+==== Requirements for Unsafe Failover
+
+Prior to unsafe failover:
+
+* A _safe_ failover should be attempted; in order to verify that safe failover is indeed not possible; and that unsafe failover is the only viable option.
+
+* It should be ascertained that no other administrator will be attempting to perform a simultaneous, unsafe failover.
+
+* It should be ascertained that all nodes to be unsafely failed over are permanently down; and are thereby incapable of restarting and attempting to resume communication with the cluster.
++
+As described above, in xref:learn:clusters-and-availability/hard-failover.adoc#consequences-of-unsafe-failover[Consequences of Unsafe Failover], following unsafe failover, the failed-over nodes cannot be recovered; and will need to be entirely re-initialized, in order to be re-introduced into the cluster.
+Therefore, the administrator may wish to preserve the nodes' data; and, once the cluster is re-established, restore that data to the cluster manually (for example, by means of a tool such as xref:cli:cbtools/cbtransfer.adoc[cbtransfer]).
+
+Note that to have _survived_ the failover, a node must be up and reachable by the other nodes that have survived.
 
 For information on the practical steps required to perform hard failover in both default and unsafe mode, see xref:manage:manage-nodes/failover-hard.adoc[Perform Hard Failover].
+For information on the consensus methodology used to maintain topology information, see xref:learn:clusters-and-availability/metadata-management.adoc[Metadata Management].
 
 == Effect of Hard Failover on Services
 
