@@ -174,11 +174,34 @@ A successful match is made, and `airline_8838` is duly replicated to the target 
 [#using-deletion-filters]
 == Using Deletion Filters
 
-_Deletion Filters_ control whether the deletion of a document at source causes the deletion of a corresponding replica-document on the target.
-These filters respectively control the replication of _deletions_, _expirations_, and document _TTL_ settings.
-Through the xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[UI], each filter is established by means of a checkbox.
-Through the xref:cbcli/cli/CLI and REST API, each filter is established by means of a parameter-value.
+_Deletion filters_ control whether the deletion of a document at source causes deletion of a replica document that exists on the replication-target.
+For the xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[UI] each filter is selected by means of a checkbox.
+For the xref:cli:cbcli/couchbase-cli-xdcr-replicate.adoc[CLI] and xref:rest-api:rest-xdcr-create-replication.adoc[REST API], parameter-values must be specified.
 
+Examples of filtering are provided in xref:manage:manage-xdcr/filter-xdcr-replication.adoc[Filter a Replication].
+
+=== Deletion-Filter Types
+
+Deletion filters are of three types, and control the following.
+
+==== Replication of Expirations
+
+Configured through the xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[UI] with the *Do not replicate document expirations* checkbox; through the xref:cli:cbcli/couchbase-cli-xdcr-replicate.adoc[CLI] with the `filter-expiration` flag; and through the xref:rest-api:rest-xdcr-create-replication.adoc[REST API] with the `filterExpiration` flag.
+Selecting this option means that if, having been replicated, the document at source expires and is deleted, the replicated copy of the document will _not_ be deleted.
+Conversely, if this option is not selected or left `false` (which are the defaults), expirations at source are replicated; meaning that the replicated copy of the document _will_ be deleted.
+
+==== Replication of Deletions
+
+Configured through the xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[UI] with the *Do not replicate DELETE operations* checkbox; through the xref:cli:cbcli/couchbase-cli-xdcr-replicate.adoc[CLI] with the `filter-deletion` flag; and through the xref:rest-api:rest-xdcr-create-replication.adoc[REST API] with the `filterDeletion` flag.
+Selecting this option determines that if, having been replicated, the document at source is deleted, the replicated copy of the document will _not_ be deleted.
+Conversely, leaving this option unselected or `false` (which are the defaults) replicates deletions that occur at source, meaning that the replicated copy of the document _will_ be deleted.
+
+==== Replication of TTL
+
+Configured through the xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[UI] with the *Remove TTL from replicated items* checkbox; through the xref:cli:cbcli/couchbase-cli-xdcr-replicate.adoc[CLI] with the `reset-expiry` flag; and with the xref:rest-api:rest-xdcr-create-replication.adoc[REST API] with the `filterBypassExpiry` flag.
+Selecting this option determines that the TTL that a document bears at source is _not_ made part of the replicated copy of the document: instead, the TTL of the replicated copy is set to 0.
+Conversely, if this option is not selected or left `false` (which are the defaults), the TTL is made part of the replicated copy of the document, and may thereby determine when the replicated copy of the document expires.
+Note, however, that the TTL applied to the replicated document at the target may be that of either the collection or the bucket in which it resides: for information, see xref:learn:buckets-memory-and-storage/expiration.adoc[Expiration].
 
 === Deletion Filters versus Filter Expressions
 
@@ -186,6 +209,34 @@ By default, any source-document deletion _is_ replicated to the target; resultin
 Note that such replication is _not_ prevented by the specifying of a filter that is formed with regular and other filtering expressions: such expressions only determine which non-deleted documents are to be replicated.
 Therefore, to ensure that document-deletions are _not_ replicated, _deletion filters_ must specifically be configured.
 
+=== Tombstones and Replication
+
+When a document is deleted or is expired, a tombstone is created.
+Tombstones and their management are described in xref:learn:buckets-memory-and-storage/storage.adoc#tombstones[Tombstones].
+In order to replicate a deletion or an expiration, XDCR must be able to find, on the source, a tombstone that corresponds to the deleted or expired document.
+When the tombstone is located, XDCR generates a corresponding deletion or expiration event, and replicates this to the target.
+
+Tombstones are periodically purged by Couchbase Server.
+If a document has been deleted or expired, and the resulting tombstone has been purged prior to XDCR being able to locate it, no deletion or replication event is replicated.
+This situation might occur if:
+
+* A document is deleted and then immediately recreated, such that the time during which the tombstone existed has been too brief for location of the tombstone by XDCR to occur.
+
+* First, a replication is deleted; then, source documents are deleted (resulting in the creation of tombstones); then, the tombstones are purged; and finally, a new replication is created (too late for the tombstones to have been located).
++
+Note, however, that conversely, creation of a new replication in this way, if performed with greater immediacy, may indeed cause XDCR to locate the tombstones of previously deleted documents, and duly replicate deletion events.
+
+=== Expiration, TTL, and Replication
+
+TTL can be established on individual documents, on collections, and on buckets.
+The relationship between these settings, and the way the setting on an individual document is resolved when replicated to the target, is fully described in xref:learn:buckets-memory-and-storage/expiration.adoc[Expiration].
+
+When a deletion or expiration event is replicated to the target, the replica-document at the target is deleted or expired irrespective of its current TTL.
+Thus, the replica-document's TTL may have been modified on the target, such that it specifies expiration at a later point in time than that specified by the TTL of the source document: nevertheless, when the source document expires, an expiration event is replicated, and the replica-document on the target is immediately expired.
+
+For more information, see xref:learn:clusters-and-availability/xdcr-filtering.adoc#configuring-deletion-filters-to-prevent-data-loss[Configuring Deletion Filters to Prevent Data-Loss], immediately below.
+
+[#configuring-deletion-filters-to-prevent-data-loss]
 === Configuring Deletion Filters to Prevent Data-Loss
 
 Appropriate deletion-filter settings protect data.
