@@ -28,24 +28,22 @@ For example, consider the following index and query:
 [[example-simple]]
 .Index Projection
 ====
-This example uses the `def_route_src_dst_day` index that comes pre-installed and can be made by the statement:
+This example uses the `def_inventory_route_route_src_dst_day` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
 ----
-CREATE INDEX `def_route_src_dst_day`
-ON `travel-sample`(`sourceairport`,`destinationairport`,
-   (distinct (array (`v`.`day`) for `v` in `schedule` end)))
-WHERE (`type` = "route") ;
+CREATE INDEX def_inventory_route_route_src_dst_day
+ON `travel-sample`.inventory.route(sourceairport, destinationairport,
+   (DISTINCT (ARRAY (v.day) FOR v IN schedule END)));
 ----
 
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT sourceairport FROM `travel-sample`
-USE INDEX (def_route_src_dst_day)
+EXPLAIN SELECT sourceairport FROM `travel-sample`.inventory.route
+USE INDEX (def_inventory_route_route_src_dst_day)
 WHERE sourceairport = "SFO"
-AND type = "route"
 LIMIT 1;
 ----
 
@@ -77,7 +75,7 @@ If the `index_projection` field is missing in the EXPLAIN output, then Indexer w
 The Query engine and GSI indexes support many optimizations for efficiently processing predicate push-downs.
 In general, this performance optimization is leveraged when the Query engine decides to use an Index-scan for processing a query, and whole or partial predicates can be pushed to the indexer to filter documents of interest to the query.
 
-For example, in the above query <<example-simple>> with a simple WHERE clause, the predicate (`sourceairport = "SFO"`) is pushed to the index `def_route_src_dst_day` with the following single `span` and `range`.
+For example, in the above query <<example-simple>> with a simple WHERE clause, the predicate (`sourceairport = "SFO"`) is pushed to the index `def_inventory_route_route_src_dst_day` with the following single `span` and `range`.
 These attributes exactly define different characteristics of the index scan:
 
 .Predicate Pushdown
@@ -87,7 +85,6 @@ The `span` and `range` from the EXPLAIN output of <<example-simple>>.
 .Result
 [source,json]
 ----
-...
 include::example$services-and-indexes/indexes/pushdown-simple.json[tag=predicate]
 ...
 ----
@@ -150,19 +147,17 @@ Consider the following query, which finds all destination airports within 2000 m
 .Index
 [source,n1ql]
 ----
-CREATE INDEX `def_route_src_dst_dist`
-ON `travel-sample`(`distance`,`sourceairport`,`destinationairport`)
-WHERE (`type` = "route");
+CREATE INDEX idx_route_src_dst_dist
+ON `travel-sample`.inventory.route(distance, sourceairport, destinationairport);
 ----
 
 .Query
 [source,n1ql]
 ----
 EXPLAIN SELECT destinationairport
-FROM `travel-sample`
-USE INDEX (def_route_src_dst_dist)
-WHERE type = "route"
-AND distance < 2000 AND sourceairport = "LAX"; <1>
+FROM `travel-sample`.inventory.route
+USE INDEX (idx_route_src_dst_dist)
+WHERE distance < 2000 AND sourceairport = "LAX"; <1>
 ----
 
 .Results
@@ -195,10 +190,6 @@ include::example$services-and-indexes/indexes/pushdown-comp-plan.json[tag=final]
 
 === Composite Predicate with Skip-Key Range Scan
 
-ifeval::['{page-component-version}' == '6.5']
-_(Introduced in Couchbase Server 6.5)_
-endif::[]
-
 In <<example-comp-explain>> above, the query has a composite predicate on continuous leading index-keys, namely the index-keys `distance` and `sourceairport`, which occur together at the start of the index definition.
 In Couchbase Server 6.5 and later, it is possible to push down a composite predicate on non-continuous leading index-keys.
 There must be a predicate on the first key in the index definition, and then on any of the subsequent index-keys.
@@ -212,10 +203,9 @@ Consider the following query, which is a variant of the query in <<example-comp-
 [source,n1ql]
 ----
 EXPLAIN SELECT sourceairport
-FROM `travel-sample`
-USE INDEX (def_route_src_dst_dist)
-WHERE type = "route"
-AND distance < 2000 AND destinationairport = "LAX"; <1>
+FROM `travel-sample`.inventory.route
+USE INDEX (idx_route_src_dst_dist)
+WHERE distance < 2000 AND destinationairport = "LAX"; <1>
 ----
 
 .Results
@@ -257,7 +247,7 @@ Hence, the pagination operators cannot be pushed when a query has JOIN clauses.
 .Pagination with Secondary Index
 ====
 When using a secondary index, both LIMIT and OFFSET operators are pushed to the index.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -268,7 +258,7 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT * FROM `travel-sample`
+EXPLAIN SELECT * FROM `travel-sample`.inventory.landmark
 WHERE city = "San Francisco"
 OFFSET  4000  LIMIT 10000;
 ----
@@ -288,18 +278,18 @@ include::example$services-and-indexes/indexes/pushdown-page-1.json[tag=excerpt]
 .Pagination with Primary Index
 ====
 When using a primary index, both LIMIT and OFFSET operators are pushed to the Indexer.
-This example uses the `def_primary` index that comes pre-installed and can be made by the statement:
+This example uses the `def_inventory_landmark_primary` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
 ----
-CREATE PRIMARY INDEX `def_primary` ON `travel-sample`;
+CREATE PRIMARY INDEX `def_inventory_landmark_primary` ON `travel-sample`.inventory.landmark;
 ----
 
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT * FROM `travel-sample`
+EXPLAIN SELECT * FROM `travel-sample`.inventory.landmark
 OFFSET  4000  LIMIT 10000;
 ----
 
@@ -318,7 +308,7 @@ include::example$services-and-indexes/indexes/pushdown-page-2.json[tag=excerpt]
 .Pagination with Different Index Order
 ====
 LIMIT and OFFSET operators are not pushed to the Indexer when the index order is different from that specified in the ORDER BY.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -328,8 +318,8 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT * FROM `travel-sample`
-USE INDEX(def_city)
+EXPLAIN SELECT * FROM `travel-sample`.inventory.landmark
+USE INDEX(def_inventory_landmark_city)
 WHERE city = "San Francisco"
 ORDER BY name
 OFFSET  4000  LIMIT 10000;
@@ -359,7 +349,7 @@ For example, ORDER BY may not be pushed down when the ORDER BY fields are not al
 .Ascending Sort by String Field
 ====
 Find all cities that start with "San", and sort the results by the city name in ascending order.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -370,7 +360,7 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT city FROM `travel-sample`
+EXPLAIN SELECT city FROM `travel-sample`.inventory.landmark
 WHERE city LIKE "San%"
 ORDER BY city;
 ----
@@ -392,7 +382,7 @@ That means order pushdown is being leveraged, and the query is relying on the in
 .Ascending Sort by Primary Key
 ====
 Find all cities that start with "San", and sort the results by the document primary key in ascending order.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -403,7 +393,7 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT city FROM `travel-sample`
+EXPLAIN SELECT city FROM `travel-sample`.inventory.landmark
 WHERE city LIKE "San%"
 ORDER BY meta().id;
 ----
@@ -427,9 +417,9 @@ Currently the Query engine supports order pushdown only when the ORDER BY keys a
 But reverse-scan of the index is not supported.
 
 For example, in <<example-idx-1>> above, you can see that the query plan does not have an ORDER operator before the final projection, because the index order is the same as the ascending order specified in the query.
-Similarly, in the following example <<example-idx-3>>, the ORDER BY clause has DESC, and that matches with the index order defined by the index `def_city_desc`.
+Similarly, in the following example <<example-idx-3>>, the ORDER BY clause has DESC, and that matches with the index order defined by the index `idx_landmark_city_desc`.
 
-However, the ASC order in <<example-idx-1>> will not be able to leverage the index order in the index `def_city_desc`, nor will the DESC order in <<example-idx-3>> be able to leverage the index order in the index `def_city`.
+However, the ASC order in <<example-idx-1>> will not be able to leverage the index order in the index `idx_landmark_city_desc`, nor will the DESC order in <<example-idx-3>> be able to leverage the index order in the index `def_inventory_landmark_city`.
 
 [[example-idx-3]]
 .Descending Sort by String Field
@@ -439,13 +429,13 @@ Descending variation of <<example-idx-1>>.
 .Index
 [source,n1ql]
 ----
-CREATE INDEX def_city_desc ON `travel-sample`(`city` DESC);
+CREATE INDEX idx_landmark_city_desc ON `travel-sample`.inventory.landmark(city DESC);
 ----
 
 .Query
 [source,n1ql]
 ----
-EXPLAIN SELECT city FROM `travel-sample`
+EXPLAIN SELECT city FROM `travel-sample`.inventory.landmark
 WHERE city LIKE "San%"
 ORDER BY city DESC;
 ----
@@ -474,8 +464,8 @@ This limitation has been removed in Couchbase Server 5.5 and later.
 
 .MAX of a String Field
 ====
-Find the alphabetically highest city name in `travel-sample`.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+Find the alphabetically highest city name in the `landmark` collection.
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -487,9 +477,9 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 [source,n1ql]
 ----
 EXPLAIN SELECT MAX(city)
-FROM `travel-sample`
-USE INDEX (def_city)
-WHERE city is not null;
+FROM `travel-sample`.inventory.landmark
+USE INDEX (def_inventory_landmark_city)
+WHERE city IS NOT NULL;
 ----
 
 .Result
@@ -509,8 +499,8 @@ This limitation has been removed in Couchbase Server 5.5 and later.
 
 .MIN of a String Field
 ====
-Find the alphabetically lowest city name in `travel-sample`.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+Find the alphabetically lowest city name in the `landmark` collection.
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -522,9 +512,9 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 [source,n1ql]
 ----
 EXPLAIN SELECT MIN(city)
-FROM `travel-sample`
-USE INDEX (def_city)
-WHERE city is not null;
+FROM `travel-sample`.inventory.landmark
+USE INDEX (def_inventory_landmark_city)
+WHERE city IS NOT NULL;
 ----
 
 .Result
@@ -542,8 +532,8 @@ This function returns the total number of non-Null values of an input field from
 [[example-count-out]]
 .Count of a String Field
 ====
-Find the number of cities entered in `travel-sample`.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+Find the number of cities entered in the `landmark` collection.
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -555,9 +545,9 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 [source,n1ql]
 ----
 SELECT COUNT(city) AS NumberOfCities
-FROM `travel-sample`
-use index (def_city)
-WHERE city is not null;
+FROM `travel-sample`.inventory.landmark
+USE INDEX (def_inventory_landmark_city)
+WHERE city IS NOT NULL;
 ----
 
 .Result
@@ -565,7 +555,7 @@ WHERE city is not null;
 ----
 [
   {
-    "NumberOfCities": 7341
+    "NumberOfCities": 4479
   }
 ]
 ----
@@ -580,9 +570,9 @@ The details behind <<example-count-out>>.
 [source,n1ql]
 ----
 EXPLAIN SELECT COUNT(city) AS NumberOfCities
-FROM `travel-sample`
-use index (def_city)
-WHERE city is not null;
+FROM `travel-sample`.inventory.landmark
+USE INDEX (def_inventory_landmark_city)
+WHERE city IS NOT NULL;
 ----
 
 .Result
@@ -602,8 +592,8 @@ This function returns the total number of unique non-Null values of an input fie
 .Count Distinct of a String Field
 [[example-distinct-out]]
 ====
-Find the number of unique city names in `travel-sample`.
-This example uses the `def_city` index that comes pre-installed and can be made by the statement:
+Find the number of unique city names in the `landmark` collection.
+This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
 [source,n1ql]
@@ -615,9 +605,9 @@ include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 [source,n1ql]
 ----
 SELECT COUNT (DISTINCT city) AS NumberOfDistinctCities
-FROM `travel-sample`
-USE index (def_city)
-WHERE city is not null;
+FROM `travel-sample`.inventory.landmark
+USE index (def_inventory_landmark_city)
+WHERE city IS NOT NULL;
 ----
 
 .Result
@@ -625,7 +615,7 @@ WHERE city is not null;
 ----
 [
   {
-    "NumberOfDistinctCities": 2301
+    "NumberOfDistinctCities": 625
   }
 ]
 ----
@@ -640,8 +630,9 @@ The details behind <<example-distinct-out>>.
 [source,n1ql]
 ----
 EXPLAIN SELECT COUNT (DISTINCT city) AS NumberOfDistinctCities
-FROM `travel-sample`
-use index (def_city)
+FROM `travel-sample`.inventory.landmark
+USE index (def_inventory_landmark_city)
+WHERE city IS NOT NULL;
 ----
 
 .Result
