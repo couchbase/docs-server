@@ -6,9 +6,12 @@
 Here is an example of aggregating using correlated subquery expression in projection.
 This query finds the top 3 overall rated hotels.
 The subquery in the projection finds the average overall rating across all rating of the given hotel document `t`.
-Note that the subquery uses nested paths in the FROM clause.
 
-[source,json]
+WARNING: Please note that the examples below will alter the data in your sample buckets.
+To restore your sample data, remove and reinstall the `travel-sample` bucket.
+Refer to xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for details.
+
+[source,n1ql]
 ----
 SELECT name, (SELECT raw avg(s.ratings.Overall)
               FROM   t.reviews  as s)[0] AS overall_avg_rating
@@ -16,14 +19,11 @@ FROM   `travel-sample`.inventory.hotel AS t
 ORDER BY overall_avg_rating DESC
 LIMIT 3;
 ----
-
 .Results
 [source,json]
 ----
-[
   {
     "name": "Culloden House Hotel",
-    "overall_avg_rating": 5
   },
   {
     "name": "The Bulls Head",
@@ -41,7 +41,7 @@ LIMIT 3;
 The following query shows how to use correlated subquery expression in projection with predicates and sorted results on specific nested fields.
 This query finds flight schedules starting after 10PM from SFO airport.
 
-[source,json]
+[source,n1ql]
 ----
 SELECT  id, sourceairport, destinationairport,
             (SELECT s.*
@@ -107,21 +107,21 @@ WHERE (SELECT raw count(*)
 LIMIT 3;
 ----
 
-.Results
+.Results:
 [source,json]
 ----
 [
   {
-    "airline": "FR",
-    "sourceairport": "BRE"
+    "airline": "AF",
+    "sourceairport": "TLV"
   },
   {
-    "airline": "WX",
-    "sourceairport": "ANR"
+    "airline": "AF",
+    "sourceairport": "TPE"
   },
   {
-    "airline": "BK",
-    "sourceairport": "TSN"
+    "airline": "AF",
+    "sourceairport": "TRI"
   }
 ]
 ----
@@ -176,10 +176,9 @@ WHEN MATCHED THEN UPDATE SET t.old_vacancy = t.vacancy, t.vacancy = false
 RETURNING meta(t).id, t.old_vacancy, t.vacancy;
 ----
 
-.Results
+.Results:
 [source,json]
 ----
-
 [
   {
     "id": "hotel_21728",
@@ -217,8 +216,6 @@ WHERE (SELECT RAW y.alt FROM x y)[0] > 6000;
 
 An example of using same keyspace name in subquery FROM clause that is used in the parent query.
 
-In this example, the subquery is not correlated with the parent query, so it returns all of the airports in the `airport` collection.
-
 [source,n1ql]
 ----
 SELECT array_length((SELECT RAW t1.geo.alt
@@ -226,7 +223,7 @@ SELECT array_length((SELECT RAW t1.geo.alt
 FROM `travel-sample`.inventory.airport LIMIT 4;
 ----
 
-.Results
+.Results:
 [source,json]
 ----
 [
@@ -257,7 +254,7 @@ SELECT array_length((SELECT RAW t1.geo.alt FROM t t1))
 FROM `travel-sample`.inventory.airport t;
 ----
 
-.Results
+.Results:
 [source,json]
 ----
 [
@@ -306,14 +303,33 @@ RETURNING t1.airportname_dup;
 
 A correlated subquery with UPDATE with nested paths.
 
+[source,n1ql]
+----
+UPDATE `travel-sample`.inventory.airport t1
+SET airportname_dup = "high_altitude_2 " || airportname
+WHERE (SELECT RAW geo.alt
+       FROM t1.geo
+       WHERE geo.alt > 6000)[0] = t1.geo.alt
+RETURNING t1.airportname_dup;
+----
+.Results
 [source,json]
 ----
-UPDATE  `travel-sample`  t1
-SET airportname_dup = "high_altitude_" || airportname
-WHERE  type = "airport" AND (SELECT RAW geo.alt
-                             FROM t1.geo
-                             WHERE geo.alt > 6000)[0] = t1.geo.alt
-RETURNING *;
+[
+  {
+    "airportname_dup": "high_altitude_2 Grants Milan Muni"
+  },
+  {
+    "airportname_dup": "high_altitude_2 Durango La Plata Co"
+  },
+  {
+    "airportname_dup": "high_altitude_2 Black Rock"
+  },
+  ...
+  {
+    "airportname_dup": "high_altitude_2 Colorado Springs East"
+  }
+]
 ----
 
 == Example 11
@@ -321,8 +337,6 @@ RETURNING *;
 The following correlated subquery with UPDATE.
 In this example, the subquery filters for 5 rated reviews and sorts them by reviewer name.
 The result of the subquery is assigned to a new field `reviews_5star` in the hotel document.
-
-If you are warned that the query contains no WHERE clause or USE KEYS, choose btn:[Continue].
 
 [source,n1ql]
 ----
@@ -352,14 +366,53 @@ RETURNING t1.reviews[*].author, t1.reviews1;
 
 A non-correlated subquery with INSERT.
 
+[source,n1ql]
+----
+INSERT INTO `travel-sample`.inventory.hotel (KEY UUID()) 
+    SELECT x.name, x.city, "landmark_hotels" AS type 
+      FROM `travel-sample`.inventory.hotel x
+      WHERE x.city WITHIN
+        ( SELECT DISTINCT t.city 
+            FROM `travel-sample`.inventory.landmark t)
+      LIMIT 4
+RETURNING *;
+----
+
+.Results
 [source,json]
 ----
-INSERT INTO `travel-sample`  t1 (KEY _k, VALUE _v)
-SELECT "newkey_" || meta(t2).id as _k, t2.airportname as _v
-FROM `travel-sample`.inventory.airport t2
-WHERE t2.geo.alt > 6400
-RETURNING _k;
+[
+  {
+    "hotel": {
+      "city": "Aberdeenshire",
+      "name": "Castle Hotel",
+      "type": "landmark_hotels"
+    }
+  },
+  {
+    "hotel": {
+      "city": "Aberdeenshire",
+      "name": "Two Bears Cottage",
+      "type": "landmark_hotels"
+    }
+  },
+  {
+    "hotel": {
+      "city": "Agoura Hills",
+      "name": "Malibu Creek Campground",
+      "type": "landmark_hotels"
+    }
+  },
+  {
+    "hotel": {
+      "city": "Altrincham",
+      "name": "Cresta Court Hotel",
+      "type": "landmark_hotels"
+    }
+  }
+]
 ----
+
 
 == Example 13
 
@@ -383,6 +436,6 @@ RETURNING t.name;
   },
   {
     "name": "Tan yr Eglwys Cottages"
-  }
+  },
 ]
 ----
