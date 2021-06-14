@@ -1,12 +1,11 @@
 = Scans
-:description: During query execution, when the index path is chosen, the query engine requests the scan by providing a range of values to return.
+:description: This section discusses how index spans are generated from query predicates and provides a number of examples.
 :page-aliases: performance:index-scans
 
 [abstract]
-{description}
-This range is represented as a _span_ in the query plan.
+During query execution, when the index path is chosen, the query engine requests the scan by providing a range of values to return.This range is represented as a _span_ in the query plan.
 Index scans play a major role in optimizing the query plan generation and execution.
-This section discusses how index spans are generated from query predicates and provides a number of examples.
+{description}
 
 Couchbase N1QL is a modern query processing engine designed to
 provide SQL for JSON on distributed data with a flexible data model.
@@ -28,7 +27,7 @@ This figure shows all the possible phases a SELECT query goes through to return 
 Not all queries need to go through every phase, some go through many of these phases multiple times.
 For example, the Sort phase can be skipped when there is no ORDER BY clause in the query; and the Scan-Fetch-Join phases will execute multiple times for correlated subqueries.
 
-*Inside a Query Node*
+=== Inside a Query Node
 
 [#inside_a_query_node]
 image::services-and-indexes/indexes/query_service.svg[,570]
@@ -60,13 +59,15 @@ To run the examples, xref:manage:manage-settings/install-sample-buckets.adoc[ins
 
 [source,n1ql]
 ----
-CREATE INDEX idx_id ON `travel-sample`(`id`);
+CREATE INDEX idx_airline_id ON `travel-sample`.inventory.airline(`id`);
 
-CREATE INDEX idx_name ON `travel-sample`(`name`);
+CREATE INDEX idx_airline_name ON `travel-sample`.inventory.airline(`name`);
 
-CREATE INDEX idx_s_d_airport_stops ON `travel-sample`(`sourceairport`, `destinationairport`, `stops`);
+CREATE INDEX idx_route_src_dst_stops
+ON `travel-sample`.inventory.route(sourceairport, destinationairport, stops);
 
-CREATE INDEX idx_sched ON `travel-sample`(DISTINCT ARRAY v.day FOR v IN schedule END) WHERE type = "route";
+CREATE INDEX idx_route_sched
+ON `travel-sample`.inventory.route(DISTINCT ARRAY v.day FOR v IN schedule END);
 ----
 
 === Example Translations
@@ -96,10 +97,10 @@ Consider the plan for the following query:
 
 [source,n1ql]
 ----
-EXPLAIN select meta().id from `travel-sample` where id = 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
 ----
 
-You can see the spans in the `IndexScan2` section of the Explain for the query:
+You can see the spans in the `IndexScan3` section of the Explain for the query:
 
 [source,json]
 ----
@@ -109,16 +110,18 @@ You can see the spans in the `IndexScan2` section of the Explain for the query:
       "#operator": "Sequence",
       "~children": [
         {
-          "#operator": "IndexScan2",
+          "#operator": "IndexScan3",
+          "bucket": "travel-sample",
           "covers": [
-            "cover ((`travel-sample`.`id`))",
-            "cover ((meta(`travel-sample`).`id`))"
+            "cover ((`airline`.`id`))",
+            "cover ((meta(`airline`).`id`))"
           ],
-          "index": "idx_id",
-          "index_id": "82d78c149171c640",
-          "keyspace": "travel-sample",
+          "filter": "(cover ((`airline`.`id`)) = 10)",
+          "index": "idx_airline_id",
+          "index_id": "39cf9192429a6581",
+          "keyspace": "airline",
           "namespace": "default",
-
+          "scope": "inventory",
           "spans": [
             {
               "exact": true,
@@ -131,8 +134,7 @@ You can see the spans in the `IndexScan2` section of the Explain for the query:
               ]
             }
           ],
-
-           "using": "gsi"
+          "using": "gsi"
         },
         {
           "#operator": "Parallel",
@@ -140,26 +142,19 @@ You can see the spans in the `IndexScan2` section of the Explain for the query:
             "#operator": "Sequence",
             "~children": [
               {
-                "#operator": "Filter",
-                "condition": "(cover ((`travel-sample`.`id`)) = 10)"
-              },
-              {
                 "#operator": "InitialProject",
                 "result_terms": [
                   {
-                    "expr": "cover ((meta(`travel-sample`).`id`))"
+                    "expr": "cover ((meta(`airline`).`id`))"
                   }
                 ]
-              },
-              {
-                "#operator": "FinalProject"
               }
             ]
           }
         }
       ]
     },
-    "text": "select meta().id from `travel-sample` where id = 10;"
+    "text": "SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;"
   }
 ]
 ----
@@ -201,7 +196,7 @@ If "Low" is missing, the scan starts with `MISSING`.
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id = 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
 ----
 
 In this example, the predicate `id = 10` is pushed to index scan.
@@ -218,12 +213,12 @@ In this example, the predicate `id = 10` is pushed to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -236,7 +231,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = 10;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex2-one-sided-range]
@@ -244,7 +239,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = 10;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id >= 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10;
 ----
 
 In this example, the predicate `id >= 10` is pushed to index scan.
@@ -261,12 +256,12 @@ In this example, the predicate `id >= 10` is pushed to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >= 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -278,7 +273,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >= 10;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex3-exclusive-one-sided-range]
@@ -286,7 +281,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >= 10;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id > 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10;
 ----
 
 In this example, the predicate `id > 10` is pushed to index scan.
@@ -303,12 +298,12 @@ In this example, the predicate `id > 10` is pushed to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id > 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -320,7 +315,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id > 10;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex4-inclusive-one-sided-range]
@@ -328,7 +323,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id > 10;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id <= 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <= 10;
 ----
 
 In this example, the predicate `+id <= 10+` is pushed to index scan.
@@ -346,12 +341,12 @@ This query predicate doesn’t contain an explicit start value, so the start val
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <= 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <= 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -364,7 +359,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <= 10;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex5-exclusive-one-sided-range]
@@ -372,7 +367,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <= 10;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id < 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id < 10;
 ----
 
 In this example, the predicate `id < 10` is pushed to index scan.
@@ -390,12 +385,12 @@ The query predicate doesn’t contain an explicit start value, so the start valu
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id < 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id < 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -408,7 +403,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id < 10;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex6-and]
@@ -416,7 +411,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id < 10;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id >= 10 AND id < 25;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10 AND id < 25;
 ----
 
 In this example, the predicate `id >= 10 AND id < 25` is pushed to index scan.
@@ -433,12 +428,12 @@ In this example, the predicate `id >= 10 AND id < 25` is pushed to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >=10 AND id < 25;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >=10 AND id < 25;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -451,7 +446,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >=10 AND id < 25;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex7-multiple-and]
@@ -459,7 +454,8 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >=10 AND id < 25;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id >= 10 AND id < 25 AND id <= 20;
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE id >= 10 AND id < 25 AND id <= 20;
 ----
 
 In this example, the predicate `+id >= 10 AND id < 25 AND id <= 20+` is pushed to the index scan.
@@ -476,12 +472,13 @@ In this example, the predicate `+id >= 10 AND id < 25 AND id <= 20+` is pushed t
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >=10 AND id < 25 AND id <= 20;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE id >=10 AND id < 25 AND id <= 20;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -494,7 +491,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >=10 AND id < 25 AND id <
               ]
             }
           ],
-...
+// ...
 ----
 
 Observe that the optimizer created the span without the `id < 25` predicate because the AND predicate `+id <=20+` makes the former predicate redundant.
@@ -544,7 +541,7 @@ Internally, the following steps occur:
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id > 10 AND id < 5;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10 AND id < 5;
 ----
 
 In this example, the predicate `id > 10 AND id < 5` is pushed to index scan.
@@ -564,12 +561,12 @@ In this case, the start value is higher than the end value and will not produce 
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id > 10 AND id < 5;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10 AND id < 5;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -582,7 +579,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id > 10 AND id < 5;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex9-between]
@@ -590,7 +587,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id > 10 AND id < 5;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id BETWEEN 10 AND 25;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id BETWEEN 10 AND 25;
 ----
 
 In this example, the predicate `id BETWEEN 10 AND 25` (that is, id >= 10 AND id \<= 25) is pushed to index scan.
@@ -607,12 +604,12 @@ In this example, the predicate `id BETWEEN 10 AND 25` (that is, id >= 10 AND id 
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id BETWEEN 10 AND 25;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id BETWEEN 10 AND 25;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -625,7 +622,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id BETWEEN 10 AND 25;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex10-simple-or]
@@ -633,7 +630,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id BETWEEN 10 AND 25;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id = 10 OR id = 20;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10 OR id = 20;
 ----
 
 In this example, the predicate `id = 10 OR id = 20` produces two independent ranges and both of them are pushed to index scan.
@@ -656,12 +653,12 @@ Duplicate ranges are eliminated, but overlaps are not eliminated.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = 10 OR id = 20;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10 OR id = 20;
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -684,7 +681,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = 10 OR id = 20;
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex11-simple-in]
@@ -692,7 +689,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = 10 OR id = 20;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id IN [10, 20];
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [10, 20];
 ----
 
 In this example, the predicate is `id IN [10,20]` (that is, id = 10 OR id = 20).
@@ -718,12 +715,12 @@ If the number of elements exceed 8192, then the index service performs a full sc
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [10, 20];
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [10, 20];
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -746,7 +743,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [10, 20];
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex12-or-between-and]
@@ -754,7 +751,9 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [10, 20];
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE (id BETWEEN 10 AND 25) OR (id > 50 AND id <= 60);
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE (id BETWEEN 10 AND 25)
+   OR (id > 50 AND id <= 60);
 ----
 
 In this example, the predicate `+(id BETWEEN 10 AND 25) OR (id > 50 AND id <= 60)+` is pushed to index scan.
@@ -776,12 +775,14 @@ In this example, the predicate `+(id BETWEEN 10 AND 25) OR (id > 50 AND id <= 60
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE (id BETWEEN 10 AND 25) OR (id > 50 AND id <= 60);
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE (id BETWEEN 10 AND 25)
+   OR (id > 50 AND id <= 60);
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -804,7 +805,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE (id BETWEEN 10 AND 25) OR (i
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex13-not]
@@ -812,7 +813,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE (id BETWEEN 10 AND 25) OR (i
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id <> 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <> 10;
 ----
 
 In this example, the predicate `id <> 10` is transformed to `id < 10 OR id > 10` and then pushed to index scan.
@@ -834,12 +835,12 @@ In this example, the predicate `id <> 10` is transformed to `id < 10 OR id > 10`
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <> 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <> 10;
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -861,7 +862,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <> 10;
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex14-not-and]
@@ -869,7 +870,8 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <> 10;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE NOT (id >= 10 AND id < 25);
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE NOT (id >= 10 AND id < 25);
 ----
 
 In this example, the predicate `id >= 10 AND id < 25` is transformed to `id <10 OR id >=25` and pushed to index scan.
@@ -891,12 +893,13 @@ In this example, the predicate `id >= 10 AND id < 25` is transformed to `id <10 
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE NOT (id >= 10 AND id < 25);
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE NOT (id >= 10 AND id < 25);
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -918,7 +921,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE NOT (id >= 10 AND id < 25);
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex15-equality-string]
@@ -926,7 +929,8 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE NOT (id >= 10 AND id < 25);
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE name = "American Airlines";
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name = "American Airlines";
 ----
 
 In this example, the predicate `name >= "American Airlines"` is pushed to index scan.
@@ -943,12 +947,13 @@ In this example, the predicate `name >= "American Airlines"` is pushed to index 
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name = "American Airlines";
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name = "American Airlines";
 ----
 
 [source,json]
 ----
-...
+// ...
          "spans": [
             {
               "exact": true,
@@ -961,7 +966,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name = "American Airlines";
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex16-range-string]
@@ -969,7 +974,9 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name = "American Airlines";
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE name >= "American Airlines" AND name <= "United Airlines";
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name >= "American Airlines"
+  AND name <= "United Airlines";
 ----
 
 In this example, the predicate `+name >= "American Airlines" AND name <= "United Airlines"+` is pushed to index scan.
@@ -986,14 +993,14 @@ In this example, the predicate `+name >= "American Airlines" AND name <= "United
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
   WHERE name >= "American Airlines"
     AND name <= "United Airlines";
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1006,7 +1013,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample`
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex17-like-1]
@@ -1014,7 +1021,8 @@ EXPLAIN SELECT meta().id FROM `travel-sample`
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE name LIKE "American%";
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name LIKE "American%";
 ----
 
 In this example, the predicate `name LIKE "American%"` is transformed to `name >= "American"` AND `name < "Americao"` (where "Americao" is the next string in N1QL collation order after "American") and then pushed to index scan.
@@ -1032,12 +1040,13 @@ In the LIKE predicate, the % means match with any number of any characters.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name LIKE "American%";
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name LIKE "American%";
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1050,7 +1059,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name LIKE "American%";
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex18-like-2]
@@ -1058,7 +1067,8 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name LIKE "American%";
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE name LIKE "%American%";
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name LIKE "%American%";
 ----
 
 In this example, the predicate `name LIKE "%American%"` is transformed and pushed to index scan.
@@ -1078,12 +1088,13 @@ In this LIKE predicate '%' is the leading portion of the string, so we can't pus
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name LIKE "%American%";
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE name LIKE "%American%";
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "range": [
@@ -1095,7 +1106,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name LIKE "%American%";
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex19-and-composite-index-1]
@@ -1103,7 +1114,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE name LIKE "%American%";
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample`
+SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops BETWEEN 0 AND 2;
@@ -1133,7 +1144,7 @@ In this example, the predicate `sourceairport = "SFO" AND destinationairport = "
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops BETWEEN 0 AND 2;
@@ -1141,7 +1152,7 @@ WHERE sourceairport = "SFO"
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1164,7 +1175,7 @@ WHERE sourceairport = "SFO"
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex20-and-composite-index-2]
@@ -1172,7 +1183,7 @@ WHERE sourceairport = "SFO"
 
 [source,n1ql]
 ----
-SELECT meta().id from `travel-sample`
+SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport IN ["SFO", "SJC"]
   AND destinationairport = "JFK"
   AND stops = 0;
@@ -1208,7 +1219,7 @@ In this example, the predicate `sourceairport IN ["SFO", "SJC"] AND destinationa
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport IN ["SFO", "SJC"]
   AND destinationairport = "JFK"
   AND stops = 0;
@@ -1216,7 +1227,7 @@ WHERE sourceairport IN ["SFO", "SJC"]
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1259,7 +1270,7 @@ WHERE sourceairport IN ["SFO", "SJC"]
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex21-composite-and-trailing-keys-missing]
@@ -1267,7 +1278,9 @@ WHERE sourceairport IN ["SFO", "SJC"]
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE sourceairport = "SFO" AND destinationairport = "JFK";
+SELECT meta().id FROM `travel-sample`.inventory.route
+WHERE sourceairport = "SFO"
+  AND destinationairport = "JFK";
 ----
 
 In this example, the predicate `sourceairport = "SFO" AND destinationairport = "JFK"` is pushed to index scan.
@@ -1289,14 +1302,14 @@ In this example, the predicate `sourceairport = "SFO" AND destinationairport = "
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK";
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1314,7 +1327,7 @@ WHERE sourceairport = "SFO"
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex22-composite-and-unbounded-high-trailing]
@@ -1322,7 +1335,7 @@ WHERE sourceairport = "SFO"
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample`
+SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops >= 0;
@@ -1352,7 +1365,7 @@ In this example, the predicate `sourceairport = "SFO" AND destinationairport = "
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops >= 0;
@@ -1360,7 +1373,7 @@ WHERE sourceairport = "SFO"
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1382,7 +1395,7 @@ WHERE sourceairport = "SFO"
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex23-equality-query-params]
@@ -1390,7 +1403,7 @@ WHERE sourceairport = "SFO"
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id = $1;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1;
 ----
 
 This example pushes the predicate `id = $1` to index scan.
@@ -1407,12 +1420,12 @@ This example pushes the predicate `id = $1` to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = $1;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1425,7 +1438,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = $1;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex24-and-query-params]
@@ -1433,7 +1446,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = $1;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id >= $1 AND id < $2;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= $1 AND id < $2;
 ----
 
 In this example, the predicate `id >= $1 AND id < $2` is pushed to the index scan.
@@ -1450,12 +1463,12 @@ In this example, the predicate `id >= $1 AND id < $2` is pushed to the index sca
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >= $1 AND id < $2;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= $1 AND id < $2;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1468,7 +1481,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >= $1 AND id < $2;
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex25-or-query-params]
@@ -1476,7 +1489,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id >= $1 AND id < $2;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id = $1 OR id < $2;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1 OR id < $2;
 ----
 
 This example pushes the predicate `id = $1 OR id < $2` to the index scan.
@@ -1498,12 +1511,12 @@ This example pushes the predicate `id = $1 OR id < $2` to the index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = $1 OR id < $2;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1 OR id < $2;
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -1526,7 +1539,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = $1 OR id < $2;
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex26-in-query-params]
@@ -1534,7 +1547,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id = $1 OR id < $2;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id IN [ $1, 10, $2] ;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [ $1, 10, $2] ;
 ----
 
 In this example, the predicate `id IN [$1, 10, $2]` is pushed to index scan.
@@ -1563,14 +1576,15 @@ In this example, the predicate `id IN [$1, 10, $2]` is pushed to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [$1, 10, $2];
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [$1, 10, $2];
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
+                "exact": true,
                 "range": [
                   {
                     "high": "$1",
@@ -1590,6 +1604,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [$1, 10, $2];
                 ]
               },
               {
+                "exact": true,
                 "range": [
                   {
                     "high": "$2",
@@ -1599,7 +1614,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [$1, 10, $2];
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex27-any-1]
@@ -1607,9 +1622,8 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id IN [$1, 10, $2];
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample`
-WHERE type = "route"
-  AND ANY v IN schedule SATISFIES v.day = 0
+SELECT meta().id FROM `travel-sample`.inventory.route
+WHERE ANY v IN schedule SATISFIES v.day = 0
 END;
 ----
 
@@ -1627,15 +1641,14 @@ In this example, the predicate `v.day = 0` is pushed to ARRAY index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
-WHERE type = "route"
-  AND ANY v IN schedule SATISFIES v.day = 0
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+WHERE ANY v IN schedule SATISFIES v.day = 0
 END;
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -1648,7 +1661,7 @@ END;
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex28-any-2]
@@ -1656,9 +1669,8 @@ END;
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample`
-WHERE type = "route"
-  AND ANY v IN schedule SATISFIES v.day IN [1,2,3]
+SELECT meta().id FROM `travel-sample`.inventory.route
+WHERE ANY v IN schedule SATISFIES v.day IN [1,2,3]
 END;
 ----
 
@@ -1688,15 +1700,14 @@ In this example, the predicate `v.day IN [1,2,3]` is pushed to ARRAY index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`
-WHERE type = "route"
-  AND ANY v IN schedule SATISFIES v.day IN [1,2,3]
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+WHERE ANY v IN schedule SATISFIES v.day IN [1,2,3]
 END;
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -1729,7 +1740,7 @@ END;
                 ]
               }
             ],
-...
+// ...
 ----
 
 [#ex29-equality-on-expr]
@@ -1739,7 +1750,7 @@ NOTE: The following examples don't have the right indexes, or the queries need t
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE abs(id) = 10;
+SELECT meta().id FROM `travel-sample`.inventory.airline WHERE abs(id) = 10;
 ----
 
 In this example, no predicate is pushed to index scan.
@@ -1756,12 +1767,12 @@ In this example, no predicate is pushed to index scan.
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE abs(id) = 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE abs(id) = 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "range": [
@@ -1772,19 +1783,19 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE abs(id) = 10;
               ]
             }
           ],
-...
+// ...
 ----
 
 The span indicates that the index service is performing a complete index scan.
 If the index does not cover the query, the query service fetches the document from the data node and then applies the predicate.
 For better performance, create a new index as follows:
 
-[source,json]
+[source,n1ql]
 ----
-CREATE INDEX `idx_absid` ON `travel-sample`(abs(`id`));
+CREATE INDEX `idx_airline_absid` ON `travel-sample`.inventory.airline(abs(`id`));
 ----
 
-When index `idx_absid` is used, the predicate `abs(id) = 10` is pushed to index scan.
+When index `idx_airline_absid` is used, the predicate `abs(id) = 10` is pushed to index scan.
 
 [cols="2,1,1,1"]
 |===
@@ -1798,12 +1809,14 @@ When index `idx_absid` is used, the predicate `abs(id) = 10` is pushed to index 
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` USE INDEX (idx_absid) WHERE abs(id) = 10;
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+USE INDEX (idx_airline_absid)
+WHERE abs(id) = 10;
 ----
 
 [source,json]
 ----
-...
+// ...
           "spans": [
             {
               "exact": true,
@@ -1816,7 +1829,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` USE INDEX (idx_absid) WHERE abs(id
               ]
             }
           ],
-...
+// ...
 ----
 
 [#ex30-overlap]
@@ -1824,7 +1837,9 @@ EXPLAIN SELECT meta().id FROM `travel-sample` USE INDEX (idx_absid) WHERE abs(id
 
 [source,n1ql]
 ----
-SELECT meta().id FROM `travel-sample` WHERE id <= 100 OR (id BETWEEN 50 AND 150);
+SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE id <= 100
+  OR (id BETWEEN 50 AND 150);
 ----
 
 In this example, the predicates `+id <= 100 OR (id BETWEEN 50 AND 150)+` are pushed to index scan as two ranges.
@@ -1846,12 +1861,14 @@ In this example, the predicates `+id <= 100 OR (id BETWEEN 50 AND 150)+` are pus
 
 [source,n1ql]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <= 100 OR (id BETWEEN 50 AND 150);
+EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+WHERE id <= 100
+  OR (id BETWEEN 50 AND 150);
 ----
 
 [source,json]
 ----
-...
+// ...
             "spans": [
               {
                 "exact": true,
@@ -1874,7 +1891,7 @@ EXPLAIN SELECT meta().id FROM `travel-sample` WHERE id <= 100 OR (id BETWEEN 50 
                 ]
               }
             ],
-...
+// ...
 ----
 
 == Summary
