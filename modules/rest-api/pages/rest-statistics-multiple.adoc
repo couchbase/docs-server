@@ -1,7 +1,7 @@
 = Getting Multiple Statistics
 
 [abstract]
-The REST API allows individual cluster-statistics to be retrieved by a single call, from one or more nodes.
+The REST API allows multiple cluster-statistics to be retrieved by a single call, from one or more nodes.
 
 [#http-methods-and-uris]
 == HTTP Method and URI
@@ -14,16 +14,15 @@ POST /pools/default/stats/range
 [#description]
 == Description
 
-This method and URI allows multiple cluster-statistics to be retrieved, based on the specification of metrics, and functions that determine the nature of the statistics to be derived from the metrics.
-Metrics, functions, and other parameters are expressed as an array of JSON objects, which is provided as data accompanying the call..
-
+This method and URI allow multiple cluster-statistics to be retrieved; based on the specification of _metrics_; and of _functions_, which determine the nature of the statistics to be derived from the metrics.
+Metrics, functions, and other parameters are expressed as an array of JSON objects; which is provided as data accompanying the call.
 
 [#curl-syntax]
 == Curl Syntax
 
 ----
 curl -X POST /pools/default/stats/range
- -d [<data>]
+ -d [ <data> ]
 ----
 
 Each `data` object within the array can contain the following parameters:
@@ -54,21 +53,165 @@ Each object takes the following form:
   "label": <label_name>,
   "value": <label_val>,
   "operator": "=" | "!=" | "=~" | "~="
-  }
+}
 ----
 
-The value of the key `label`, `label_name`, must be a string that specifies how the metric is identified: typically, this value is `"name"`.
-The value of the key `value`, `label_val`, must be a string that is the actual name used to identify the metric: for example, `"sys_cpu_utilization_rate"`.
-The value of the key `"operator"` must be 
+The value of the key `label`, `label_name`, must be a string that specifies how the metric is identified: for example, `name`, or `proc`.
+The value of the key `value`, `label_val`, must be a string that is the actual name used to identify the metric: for example, `sys_cpu_utilization_rate`.
+The value of the key `"operator"` must be `=`, `!=`, `=~`, or `~=`.
 
+* `applyFunctions.`
+Can be any of the functions described in the section xref:rest-api:rest-statistics-single.adoc#function[function], on the page xref:rest-api:rest-statistics-single.adoc[Getting a Single Statistic].
+
+* `nodes`.
+An array each of whose elements is a string whose value is the IP address or domain name of a node in the cluster.
+If this is not specified, the default is that all nodes are inferred.
+
+* `aggregationFunction`.
+Whether and how aggregation of retrieved statistics is to be performed.
+Possible values are `max`, `min`, `sum`, and `avg`.
+The default is that no aggregation is performed.
+
+* `start`.
+The point at which the gathering of metrics commences, specified in seconds as a negative integer.
+The negative integer-value is added to the current time when execution occurs, so as to derive a historic timestamp.
+Metrics are then gathered for the time-period that starts at the historic timestamp.
+If no `start` value is specified, it defaults to `-60`.
+If no `end` value is specified, it defaults to the time of execution.
+
+* `end`.
+The point at which the gathering of metrics concludes, specified in seconds as a negative integer.
+The negative integer-value is added to the current time when execution occurs, so as to derive a historic timestamp.
+Metrics are then gathered for the time-period that starts at the historic timestamp specified for `start`, and ends at the historic timestamp specified for `end`.
+If no `end` value is specified, it defaults to the time of execution.
+
+* `step`.
+The length of the interval that occurs between each statistic-retrieval during the time-period that commences with `start` and concludes with `end`, specified as a positive integer.
+For example, if `start` is `-100`, `end` is `-40`, and `step` is `15`, a statistic is gathered at `-100`. `-85`, `-70`, `-55`, and `-40`.
+If no value is specified for `step`, it defaults to `10`.
+
+* `timeout`.
+The period after which execution times out, in milliseconds.
+The default is `5` minutes.
+
+* `alignTimestamps`.
+Whether to align timestamps so that each is a multiple of `10` milliseconds.
+The value can be `true` or `false` (which is the default).
+For example, if the value is `false`, consecutive timestamps might be `1617274978`, `1617274988`, and `1617274998`; whereas if the value is `true`, they might be `1617275000`, `1617275010`, and `1617275020`.
 
 [#responses]
 == Responses
 
+A malformed URI returns `404 Object Not Found`.
+Failure to authenticate returns `401 Unauthorized`.
+If an internal error causes the call the fail, `500` is returned.
+
+If the URI is correct, and authentication succeeds, the operation is deemd successful.
+Success returns `200 OK`, and an object of the following kind.
+Note that incorrect specification of `metric-name` or `function-expression` does not produce execution-failure: indications of errors appear in the returned object.
 
 [#examples]
 == Examples
 
+The following example returns information on the metrics `sysproc_cpu_utilization` (specifying the `indexer` process) and `kv_disk_write_queue` (specifying the `travel-sample` bucket).
+Note that the example uses https://stedolan.github.io/jq/[jq^], to format the output for readability:
+
+----
+curl -u Administrator:password -X POST http://10.144.210.101:8091/pools/default/stats/range \
+-d '[
+  {
+    "metric": [
+      {"label": "name", "value": "sysproc_cpu_utilization"},
+      {"label": "proc", "value": "indexer"}
+    ],
+    "applyFunctions": ["avg"],
+    "alignTimestamps": true,
+    "step": 15,
+    "start": -60
+  },
+  {
+    "metric": [
+      {"label": "name", "value": "kv_disk_write_queue"},
+      {"label": "bucket", "value": "travel-sample"}
+    ],
+    "applyFunctions": ["sum"],
+    "step": 60,
+    "start": -300
+  }
+]' | jq '.'
+----
+
+If successful, this call returns a JSON array such as the following:
+
+----
+[
+  {
+    "data": [
+      {
+        "metric": {
+          "nodes": [
+            "10.144.210.101:8091"
+          ]
+        },
+        "values": [
+          [
+            1623745200,
+            "3"
+          ],
+          [
+            1623745215,
+            "3"
+          ],
+          [
+            1623745230,
+            "3"
+          ],
+          [
+            1623745245,
+            "4"
+          ],
+          [
+            1623745260,
+            "3"
+          ]
+        ]
+      }
+    ],
+    "errors": [],
+    "startTimestamp": 1623745200,
+    "endTimestamp": 1623745260
+  },
+  {
+    "data": [
+      {
+        "metric": {
+          "nodes": [
+            "10.144.210.101:8091"
+          ],
+          "name": "kv_disk_write_queue"
+        },
+        "values": [
+          [
+            1623745200,
+            "0"
+          ],
+          [
+            1623745260,
+            "0"
+          ]
+        ]
+      }
+    ],
+    "errors": [],
+    "startTimestamp": 1623744960,
+    "endTimestamp": 1623745260
+  }
+]
+----
+
 
 [#see-also]
 == See Also
+
+A single statistic can be returned by means of a single call.
+See xref:rest-api:rest-statistics-single.adoc[Getting a Single Statistic].
