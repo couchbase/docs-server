@@ -1,14 +1,18 @@
 = Upgrade Options
-:description: Upgrade a Couchbase Server cluster in a manner that is best suited to your operations.
+:description: A Couchbase-Server cluster can be upgraded in different ways.
 //:page-aliases: install:upgrade-strategy-for-features
 
 [abstract]
 {description}
 
-Couchbase Server can be upgraded in multiple ways.
+[#understanding-upgrade]
+== Understanding Upgrade
 
-[#upgrade-availability-and-rebalance]
-== Upgrade, Availability, and Rebalance
+Couchbase Server can be upgraded in different ways; each having its own benefits and requirements.
+This page presents an overview of the available options: all should be fully evaluated before a particular approach is selected, and cluster-upgrade performed.
+
+[#upgrade-and-availability]
+== Upgrade and Availability
 
 Upgrade of Couchbase Server occurs node by node.
 When every node has been upgraded to the latest version of Couchbase Server, the whole cluster is considered upgraded.
@@ -17,146 +21,112 @@ To be upgraded, each node must be _offline_: this means that although it is stil
 Therefore, to upgrade all the nodes in the cluster, one of the following approaches must be selected:
 
 * All the nodes of the cluster are taken offline together; and consequently, the cluster stops serving data.
-Each of the nodes is now upgraded.
-Then, a rebalance is performed, the cluster is brought online again, and the serving of data is resumed.
+Each of the nodes is upgraded.
+Then, a rebalance is performed, the cluster is brought back online, and the serving of data is resumed.
 +
-This approach to cluster-upgrade (referred to as _cluster offline_) offers the greatest simplicity.
+This approach to cluster-upgrade (referred to as _cluster offline_) offers the greater simplicity.
 However, it necessitates cluster-downtime.
 
-* Cluster nodes are taken off line individually, in sequence; with all other nodes remaining _online_.
-While offline, each node is upgraded, and then re-introduced into the cluster &#8212; by means of either _adding_ or _joining_ (as described in xref:learn:clusters-and-availability/nodes.html#clusters[Clusters]); and with a xref:learn:clusters-and-availability/rebalance.adoc[Rebalance] performed each time.
+* Each node in turn is taken offline; is upgraded; and is re-introduced into the cluster &#8212; by means of either _adding_ or _joining_, as described in xref:learn:clusters-and-availability/nodes.html#clusters[Clusters].
+This means that while any given node is offline, all other nodes remain online.
 +
-This process (referred to as _cluster online_) is more complex, since it requires every node to be removed and re-introduced in sequence.
-However, it allows the cluster to remain available.
-Its most prohibitive aspect is potentially the need to perform a rebalance each time a node is removed, and each time a node is reintroduced: this can be mitigated by means of _swap rebalance_.
+This process (referred to as _cluster online_) is more complex, but allows the cluster to continue serving data without interruption.
+Its greatest potential drawback is the overhead involved in repeatedly taking nodes out of the cluster, and then duly re-introducing them: given that a full xref:learn:clusters-and-availability/rebalance.adoc[Rebalance] is likely to consume considerable cluster-resources for a significant duration, whenever it is performed.
+However, overhead can be minimized, by means of either _swap rebalance_ or _graceful failover_.
 
+[#swap-rebalance]
 === Swap Rebalance
 
-_Swap Rebalance_ automatically occurs when:
+_Swap Rebalance_ is automatically performed by Couchbase Server when all the following conditions apply:
 
-* One or more nodes have been added to the cluster.
+* One or more nodes have been introduced into the cluster.
 
-* One or more nodes have been removed from the cluster.
+* One or more nodes have been taken out of the cluster.
 
-* The added nodes are identical in number and configuration to the nodes removed.
+* The introduced nodes are identical in number and configuration to the nodes that have been taken out.
 
 * Rebalance is triggered by the administrator.
 
-Since the added and removed nodes have equivalent capacities and configurations, _swap rebalance_ occurs, and confines the rebalance activity to the added and removed nodes: thus, for example, the vBucket layout across the removed nodes is directly copied onto the added nodes.
+Since the introduced nodes are recognized by Couchbase Server to have equivalent capacities and configurations to those that have been taken out, rebalance is performed as a _swap rebalance_; which confines its activity to the incoming and outgoing nodes.
+Thus, for example, if one Data Service node is removed and another added, the swap rebalance simply transfers the vBucket layout of the outgoing node directly onto the incoming node; with the layouts of other Data Service nodes not requiring modification.
 
-This has the advantage of limiting rebalance only to the affected nodes.
-For example, given a cluster of 20 nodes, if two Data Service nodes are removed, and a further two Data Service nodes are introduced, when rebalance is performed, it takes the form of a _swap rebalance_, and involved only the four nodes in transition.
-By contrast, if two Data Service nodes are removed, one Data Service node is added, and one Search Service node is added, since the incoming and outgoing nodes differ in configuration, a full rebalance is performed, involving many more nodes, and potentially the entire cluster of 20 nodes.
+By contrast, if two Data Service nodes are taken out, and one Data Service node and one Search Service node are introduced, since the incoming and outgoing nodes differ in configuration, when rebalance is triggered by the administrator, Couchbase Server performs a _full_ rebalance; involving more nodes than those in transit; and indeed, potentially involving the entire cluster.
 
-Given the performance advantage offered by swap rebalance, and assuming the desirability of keeping the cluster available during the upgrade process, online upgrade is recommended to be performed such that swap rebalance is constantly used whenever a node is removed, upgrade, and reintroduced.
-Options for achieving this are described below.
 Note that the effect of rebalance on different Couchbase Services is described in xref:learn:clusters-and-availability/rebalance.adoc[Rebalance]: familiarity with this information is required before proceeding.
+
+[#using-spare-nodes]
+==== Using Spare Nodes
+
+Since swap rebalance requires the introduction and taking out of nodes that are identical in number and configuration, _spare_ nodes must be used.
+For example, if the upgrade procedure is intended to upgrade one node at a time, a spare node must be introduced into the cluster in order to allow one of the existing nodes to be removed: swap rebalance is thereby confined to those two nodes.
+When the upgraded node is added (or joined) back into the cluster, the spare node is in turn taken out, and swap rebalance again occurs for those two nodes; this time copying vBuckets and/or other forms of data back onto the original node.
+
+If additional machines are available to be used as _spare nodes_, these will allow the cluster to continue to serve data at full capacity.
+This is described below, in xref:install:upgrade-strategies.adoc#cluster-online-swap-rebalance-at-full-capacity[Cluster Online: Swap Rebalance at Full Capacity].
+
+If no additional machines are available to be used as _spare nodes_, it must be determined whether acceptable cluster-performance can be maintained throughout the entire cluster-upgrade procedure, if one or more nodes are removed for the duration, and the cluster thus left to serve data at reduced capacity.
+If acceptable performance can indeed be maintained under such conditions, the appropriate number of nodes should be removed from the cluster, and a full rebalance performed.
+From this point, the diminished cluster will continue to serve data at acceptable performance-levels; while the nodes that have been removed are used as spares, throughout the entire duration of the cluster-upgrade procedure.
+This is described below, in xref:install:upgrade-strategies.adoc#cluster-online-swap-rebalance-with-capacity-reduced[Cluster Online: Swap Rebalance with Capacity Reduced].
+
+[#using-graceful-failover]
+==== Using Graceful Failover
+
+If it is ascertained that acceptable cluster-performance can be maintained throughout the entire cluster-upgrade procedure, if one or more Data Service nodes are removed for the duration, and the cluster thus left to serve data at reduced capacity, xref:manage:manage-nodes/failover-graceful.adoc[Graceful Failover] can be used to bring a Data Service node out of participation in the cluster, so that the node can be upgraded.
+The Graceful Failover procedure ensures that the node's vBuckets are all relocated onto other, existing Data Service nodes before the node is failed over.
+Once failover and upgrade have been achieved, the node can be reintegrated, by means of the procedure explained in xref:manage:manage-nodes/recover-nodes.adoc[Recover a Node and Rebalance].
+
+The main constraint of Graceful Failover is that it can _only_ be used for the Data Service.
+Further considerations are provided in xref:learn:clusters-and-availability/graceful-failover.html#advantages-and-disadvantages[Advantages and Disadvantages].
+(Note also that this option is not available when choosing to upgrade with _net-new_ systems &#8212; as in many Cloud-based deployments; since the new Data Service nodes do not have previous nodes’ data in place.)
 
 [#online-upgrade]
 == Upgrade with Cluster Online
 
 An _online upgrade_ means that the cluster continues to serve data while its nodes are progressively upgraded.
-To be upgraded, each individual node is taken out of the cluster; then, its version of Couchbase Server is upgraded; and finally, the node is reintroduced into the cluster.
-During this process, the individual node is considered _offline_.
-
 Online upgrade can be performed in any of the following ways.
 
+[#cluster-online-swap-rebalance-with-capacity-reduced]
+=== Cluster Online: Swap Rebalance at Full Capacity
+
+One or more spare nodes, which exist in addition to those committed to the cluster, are prepared for addition to the cluster.
+When these nodes are added to the cluster, the same number are removed.
+Addition occurs by means of either _joining_ or _adding_, as described in xref:learn:clusters-and-availability/nodes.html#clusters[Clusters].
+Note that the configuration of the added nodes must match that of the removed nodes.
+When rebalance is triggered by the administrator, Couchbase Server performs a _swap rebalance_.
+
+Removed nodes are kept _up_ and _network-accessible_: and in this state, are upgraded to the latest version of Couchbase Server.
+Then, following the upgrade procedure, the upgraded nodes are re-introduced into the cluster; and are given configuration that match the configurations of the spare nodes; and the spare nodes are themselves now removed.
+Finally, a further xref:learn:clusters-and-availability/rebalance.adoc[Rebalance] is performed, and the upgraded nodes become full members of the cluster.
+
+Once all nodes have been processed in this way, the entire cluster has been upgraded.
+
+[#cluster-online-swap-rebalance-with-capacity-reduced]
 === Cluster Online: Swap Rebalance with Capacity Reduced
 
-Each node is, in turn, removed from the cluster.
-(See xref:learn:clusters-and-availability/removal.adoc[Removal].)
-After removal, the node is kept _up_ and _network-accessible_: and in this state, is upgraded to the latest version of Couchbase Server.
-Then, following the upgrade procedure, the node is re-introduced into the cluster: it can either be _joined_ or _added_, as described in xref:learn:clusters-and-availability/nodes.html#clusters[Clusters]; and during this procedure, is given a configuration identical to that which it had prior to being removed from the cluster.
-Finally, a xref:learn:clusters-and-availability/rebalance.adoc[Rebalance] is performed.
+An assessment is made of how many nodes can be removed from the cluster while maintaining acceptable data-serving performance.
+A number of nodes no greater than the ascertained number is then removed, and a rebalance performed.
+The diminished cluster continues to serve data.
 
-Once each node has been treated in this way, the entire cluster has been upgraded.
+Upgrade now commences.
+One or more nodes are added to the cluster, and the same number are removed.
+The added nodes are configured such that when rebalance is triggered by the administrator, Couchbase Server performs a _swap rebalance_.
+Removed nodes are kept _up_ and _network-accessible_: and in this state, are upgraded to the latest version of Couchbase Server.
+Then, following the upgrade procedure, the upgraded nodes are re-introduced into the cluster: each can either be _joined_ or _added_, as described in xref:learn:clusters-and-availability/nodes.html#clusters[Clusters].
+The configuration of added nodes must match that of the spare nodes that are now removed.
+Finally, a further xref:learn:clusters-and-availability/rebalance.adoc[Rebalance] is performed, and the upgraded nodes become full members of the cluster.
 
-Note the following:
+Once all nodes have been processed in this way, the entire cluster has been upgraded.
 
-* The removal of each node causes a reduction in capacity.
-Therefore, to ensure the cluster's continued performance, it should be ascertained prior to upgrade that performance will not be significantly impacted by the temporary removal of any individual node.
+[#feature-availability]
+=== Feature Availability During Upgrade
 
-* If the cluster depends, for the serving of data, on a service that runs on a single node, temporary removal of that node brings the service down, and interrupts the serving of data.
-Therefore, to ensure the continued serving of data, the cluster must be configured, prior to rebalance, with at least two node-instances of every service required for the serving of data.
+Certain features of Couchbase Server may not be available while the upgrade of an online cluster is in progress; since the cluster is during this period running two different versions of Couchbase Server, and the features of the later version are not available to nodes still running the earlier.
 
+For details, see xref:install:upgrade-strategy-for-features.adoc[Upgrading to Couchbase Server 7.0].
 
+[#offline-upgrade]
+== Upgrade with Cluster Offline
 
-This method entails introducing new nodes into a Couchbase Server cluster as you remove an equal number of nodes to be upgraded.
-It uses a feature called Swap Rebalance to move data efficiently from the existing nodes to the new nodes, without involving other nodes in the cluster.
-+
-As long as you swap an equal number of nodes (e.g.
-one for one, two for two, etc.), a Swap Rebalance will be triggered.
-This also keeps the cluster capacity consistent so as to not interfere with the load running on the cluster.
-While this method is the safest and provides the most availability, it may require multiple rebalances and therefore be longer as compared to other upgrade options.
-If the speed of an upgrade is a primary concern for your cluster,
-see xref:manage:manage-nodes/failover-graceful.adoc[Graceful Failover] or
-xref:upgrade-offline.adoc[Performing the Offline Upgrade].
-
-Remove and Rebalance::
-This method is suitable when you must complete the upgrade using only the nodes currently in the cluster but want to maintain High Availability during the upgrade process.
-Since this will reduce the capacity of the cluster, it is important to ensure that there is enough spare capacity across all necessary resources (disk, CPU, RAM, etc) during the upgrade process.
-This process involves removing one running node from the cluster and rebalancing.
-That node can then be upgraded and used in the Swap Rebalance upgrade procedure above.
-When the last node has been upgraded, it can be rebalanced back into the cluster to return to full capacity.
-+
-Like a swap rebalance upgrade, this style will require multiple rebalances to complete.
-
-[[graceful]]Graceful Failover and Delta Recovery::
-This option involves performing a rolling online upgrade using
-xref:manage:manage-nodes/failover-graceful.adoc[Graceful Failover] followed by
-use of the procedure explained in
-xref:manage:manage-nodes/recover-nodes.adoc[Recover a Node and Rebalance],
-instead of the full addition and removal of nodes in a Swap Rebalance.
-It is typically faster and less resource intensive because data does not need to be completely moved between nodes, rather the replicas are synchronized and activated during the failover and the data resynchronized when the node returns following the upgrade.
-Another advantage compared to the other online upgrades is that this method preserves the global secondary indexes and doesn’t need to rebuild them.
-+
-The primary downside to this option is decreased high availability as replicas are used for faster failover and not recreated until the node is returned.
-This option is not available when choosing to upgrade with net-new systems (as in the case of many cloud deployments) since those new nodes would not have the previous nodes’ data in place.
-Use Option #1 when upgrading with net-new systems.
-
-
-
-[#offline]
-== Option #3 - Offline Upgrade
-
-Choose an offline upgrade when the situation calls for an easy and fast upgrade method as well as when the database can incur a controlled outage.
-The offline upgrade is more likely to succeed in situations where an online upgrade option might fail, but also the rare time a cluster is unstable and has been determined that a Couchbase Server upgrade will fix a specific issue.
-
-This procedure involves upgrading one or more nodes without removing them from the cluster.
-In some cases the whole cluster may be shut down, upgraded and restarted.
-
-It is recommended to disable auto-failover before using this method and to re-enable it once complete.
-
-== Choosing the Upgrade Strategy
-
-Both the online and offline upgrade processes have trade-offs.
-The following table illustrates some important aspects of the two upgrade strategies.
-
-.Differences between upgrades
-|===
-| Feature | Online upgrade | XDCR upgrade | Offline upgrade
-
-| Applications remain available
-| Yes
-| Yes
-| No
-
-| Cluster stays in operation
-| Yes
-| No
-| No
-
-| Cluster must be shut down
-| No
-| Yes
-| Yes
-
-| Typical steps
-| Rebalance, upgrade, rebalance
-| Switch to XDCR cluster, upgrade, switch back
-| Upgrade one or more nodes without removing from cluster.
-|===
-
-IMPORTANT: Direct upgrade is not supported on macOS.
-When upgrading on this platform, first back up your data and perform a clean uninstall of the old version.
-Once you install the new version, restore the data back to the new cluster.
+When the entire cluster is offline, each node can be individually upgraded, before a concluding full rebalance is required.
+Before upgrade of any node is performed, xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover] should be _disabled_; and should be _re-enabled_ only when upgrade is complete.
