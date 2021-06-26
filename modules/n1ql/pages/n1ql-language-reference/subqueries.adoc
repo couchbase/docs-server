@@ -1,5 +1,6 @@
 = Subqueries
 :page-topic-type: concept
+:imagesdir: ../../assets/images
 
 [abstract]
 In N1QL, a subquery is a SELECT query that is a constituent part of another N1QL query or subquery.
@@ -7,7 +8,7 @@ In N1QL, a subquery is a SELECT query that is a constituent part of another N1QL
 Using subqueries, you can create multiple levels of nesting of queries.
 The outer levels of queries are called outer or parent queries, and inner level subqueries are called inner or child queries, or simply subqueries.
 
-*Syntax*
+== Syntax
 
 image::n1ql-language-reference/subquery-expr.png[,270]
 
@@ -25,17 +26,31 @@ For instance, a SELECT statement can have a subquery in projection-list, WHERE c
 Similarly, an UPDATE, INSERT, DELETE can have a subquery in the WHERE clause.
 For example, consider the following query which finds all the cities with landmarks that have airports.
 
-[source#Q1,json]
+[#Q1]
+====
+.Q1
+[source,n1ql]
 ----
-Example Q1:
-
 SELECT t1.city
-FROM `travel-sample` t1
-WHERE t1.type = "landmark" AND
-      t1.city IN (SELECT RAW city
-                  FROM `travel-sample`
-                  WHERE type = "airport");
+FROM `travel-sample`.inventory.landmark t1
+WHERE t1.city IN (SELECT RAW city
+                  FROM `travel-sample`.inventory.airport
+                 );
 ----
+
+.Results
+[source,json]
+----
+[
+  {
+    "city": "Abbeville"
+  },
+  {
+    "city": "Avignon"
+  }..
+]
+----
+====
 
 In the above example, the subquery is used as a part of WHERE condition of the parent query and it returns an array of cities that have airports.
 
@@ -47,17 +62,49 @@ When subquery is used in the FROM clause, that must be aliased, to be able to ac
 In the following example <<Q2,Q2>>, the subquery is named as `t1`, and it returns the aggregated value of airport names by city and country.
 The outer query further processes the result of the subquery to find total number of airports by country where each city has more than 5 airports.
 
-[source#Q2,json]
+[#Q2]
+====
+.Q2
+[source,n1ql]
 ----
-Example Q2:
-
 SELECT t1.country, array_agg(t1.city), sum(t1.city_cnt) as apnum
 FROM (SELECT city, city_cnt, array_agg(airportname) as apnames, country
-      FROM `travel-sample` WHERE type = "airport"
+      FROM `travel-sample`.inventory.airport
       GROUP BY city, country LETTING city_cnt = count(city) ) AS t1
 WHERE t1.city_cnt > 5
 GROUP BY t1.country;
 ----
+
+.Results
+[source,json]
+----
+[
+  {
+    "$1": [
+      "Paris"
+    ],
+    "apnum": 9,
+    "country": "France"
+  },
+  {
+    "$1": [
+      "London"
+    ],
+    "apnum": 13,
+    "country": "United Kingdom"
+  },
+  {
+    "$1": [
+      "Houston",
+      "New York",
+      "San Diego"
+    ],
+    "apnum": 22,
+    "country": "United States"
+  }
+]
+----
+====
 
 For more examples, see the <<section_cjh_pck_mz,Examples>> section.
 
@@ -69,16 +116,28 @@ Subqueries can appear as independent SELECT queries or can be combined as a cons
 For example, in the above queries <<Q1,Q1>> and <<Q2,Q2>>, the subquery is a full independent SELECT query.
 In the following example <<Q3,Q3>>, the subquery is part of a N1QL expression.
 
-[source#Q3,json]
+[#Q3]
+====
+.Q3
+[source,n1ql]
 ----
-Example Q3:
-
 SELECT array_max((SELECT  count(city) as cnt
-                  FROM `travel-sample` WHERE type = "airport"
+                  FROM `travel-sample`.inventory.airport
                   GROUP BY city)[*].cnt);
 ----
 
-In this example, the subquery (in *bold*) is wrapped in a parenthesis ( ) and it occurs as part of the expression `[*].cnt` which treats the result of the subquery as an array of JSON documents (with one attribute `cnt`) and extracts the `cnt` values from all the subquery result array elements.
+.Results
+[source,json]
+----
+[
+  {
+    "$1": 14
+  }
+]
+----
+====
+
+In this example, the subquery is wrapped in a parenthesis ( ) and it occurs as part of the expression `[*].cnt` which treats the result of the subquery as an array of JSON documents (with one attribute `cnt`) and extracts the `cnt` values from all the subquery result array elements.
 Finally, the `array_max()` function is applied to this to get the maximum number of airports in any of the cities.
 
 [#section_onz_3tj_mz]
@@ -102,48 +161,77 @@ Q0: SELECT ...
 ----
 
 Note that the keyspace name identifiers themselves are NOT variables, whereas any aliases of the keyspace name identifiers are variables in the scope.
-For example, in the above query <<Q1,Q1>>, the keyspace identifier `pass:c[`travel-sample`]` in the outer query is not considered a variable for the subquery.
+For example, in the above query <<Q1,Q1>>, the keyspace identifier `pass:c[`travel-sample`.inventory.landmark]` in the outer query is not considered a variable for the subquery.
 In fact, that is the reason the subquery can also use the same keyspace name independently and still be a non-correlated subquery.
 However, the alias `t1` defined in the outer query is considered a variable in scope for the subquery.
 
 The following example <<Q4,Q4>> is a correlated subquery that uses the variable `t1` from the outer query:
 
-[source#Q4,json]
+[#Q4]
+====
+.Q4: Find the landmarks that are named with corresponding city name
+[source,n1ql]
 ----
-Example Q4: Find the landmark that are named with corresponding city name.
-
 SELECT t1.city, t1.name
-FROM `travel-sample` t1
-WHERE t1.type = "landmark" AND
-      t1.city IN SPLIT((SELECT RAW t2.name
+FROM `travel-sample`.inventory.landmark t1
+WHERE t1.city IN SPLIT((SELECT RAW t2.name
                         FROM t1 AS t2)[0]);
+----
 
+.Results
+[source,json]
+----
 [
   {
-    "city": "Dartmouth",
-    "name": "Dartmouth Castle"
+    "city": "Aberdour",
+    "name": "Aberdour Castle"
   },
   {
-    "city": "Edinburgh",
-    "name": "The Edinburgh Dungeon"
-  }, ...
+    "city": "Aberdour",
+    "name": "Aberdour Railway Station"
+  },
+  {
+    "city": "Aberdulais",
+    "name": "Aberdulais Falls and Tin Works"
+  }...
 ]
 ----
+====
 
 This above example <<Q4,Q4>> uses the alias `t1` from outer query in the FROM clause of subquery.
 The subquery aliases `t1` to `t2` to avoid conflict in same variable name `t1` being present in both outer and inner queries scope.
-The reference to `t2` in the subquery is actually referring to the same document from `pass:c[`travel-sample`]` that is being processed as `t1` in the outer query.
+The reference to `t2` in the subquery is actually referring to the same document from `pass:c[`travel-sample`.inventory.landmark]` that is being processed as `t1` in the outer query.
 In other words, the same query can be simply rewritten (without using subqueries) as follows:
 
+[#Q4A]
+====
+.Q4A
+[source,n1ql]
+----
+SELECT t1.city, t1.name
+FROM `travel-sample`.inventory.landmark t1
+WHERE t1.city IN SPLIT(t1.name);
+----
+
+.Results
 [source,json]
 ----
-Query Q4A:
-
-SELECT t1.city, t1.name
-FROM `travel-sample` t1
-WHERE t1.type = "landmark" AND
-      t1.city IN SPLIT(t1.name);
+[
+  {
+    "city": "Aberdour",
+    "name": "Aberdour Castle"
+  },
+  {
+    "city": "Aberdour",
+    "name": "Aberdour Railway Station"
+  },
+  {
+    "city": "Aberdulais",
+    "name": "Aberdulais Falls and Tin Works"
+  }...
+]
 ----
+====
 
 Typically, subqueries may refer to any variables and aliases available in the scope to build correlated subqueries and to perform subqueries specific to some context of outer query.
 See xref:n1ql-language-reference/correlated-subqueries.adoc[Correlated Subqueries] for more details and xref:n1ql-language-reference/subquery-examples.adoc[Examples].
@@ -151,7 +239,9 @@ See xref:n1ql-language-reference/correlated-subqueries.adoc[Correlated Subquerie
 [#from-clause]
 == FROM clause in Subqueries
 
-*Keyspace Identifier versus Expression*:: As described in the xref:n1ql-language-reference/from.adoc[FROM clause], the from-term can be a keyspace name or identifier or a N1QL expression:
+=== Keyspace Identifier versus Expression
+
+As described in the xref:n1ql-language-reference/from.adoc[FROM clause], the from-term can be a keyspace name or identifier or a N1QL expression:
 
 * Keyspace identifiers are independent sources of data for a query.
 * xref:n1ql-language-reference/index.adoc[N1QL expressions] can be constructed using various N1QL language constructs including subqueries.
@@ -160,7 +250,6 @@ See xref:n1ql-language-reference/correlated-subqueries.adoc[Correlated Subquerie
 These are applicable to subqueries.
  ** This applies irrespective of whether it is a simple identifier such as `alias`, `var` or a nested path identifier such as `keyspace.subdoc1.subdoc2.field`, `alias.subdoc.field`, or `var.subdoc.field`.
 
-+
 An expression can be a simple identifier or variable such as `alias`, `var` or more complex with various N1QL language constructs.
 Either way, N1QL evaluates `from-term` to resolve to keyspace identifiers or expressions as follows:
 
@@ -168,77 +257,96 @@ Either way, N1QL evaluates `from-term` to resolve to keyspace identifiers or exp
 * If simple identifier can be considered as identifier or expression depending on various factors.
 An identifier `var` is considered as an expression if it is variable in scope defined through LET or LETTING, or explicit keyspace alias in parent queries.
 
-+
-In the following equivalent queries, explicit alias `t` of `pass:c[`travel-sample`]` or LET variable `x` is treated as an expression and hence a nested path like `t.geo.lat` is allowed in the subquery FROM clause.
-+
-[source#Q5A,json]
-----
-Example Q5A:
+In the following equivalent queries, explicit alias `t` of `pass:c[`travel-sample`.inventory.airport]` or LET variable `x` is treated as an expression and hence a nested path like `t.geo.lat` is allowed in the subquery FROM clause.
 
-SELECT count(*) FROM `travel-sample` t
+[#Q5A]
+====
+.Q5A
+[source,n1ql]
+----
+SELECT count(*) FROM `travel-sample`.inventory.airport t
 WHERE (SELECT RAW t.geo.alt FROM t t1)[0] > 6000 ;
 ----
-+
-[source#Q5B,json]
-----
-Example Q5B:
+====
 
-SELECT count(*) FROM `travel-sample` t
+[#Q5B]
+====
+.Q5B
+[source,n1ql]
+----
+SELECT count(*) FROM `travel-sample`.inventory.airport t
 WHERE (SELECT RAW alt FROM t.geo.alt)[0] > 6000;
 ----
-+
-[source#Q5C,json]
-----
-Example Q5C:
+====
 
-SELECT count(*) FROM `travel-sample` t
+[#Q5C]
+====
+.Q5C
+[source,n1ql]
+----
+SELECT count(*) FROM `travel-sample` .inventory.airport t
 LET x = t.geo
 WHERE (SELECT RAW y.alt FROM x y)[0] > 6000;
 ----
-+
-[source#Q5D,json]
-----
-Example Q5D:
+====
 
-SELECT count(*) FROM `travel-sample` t
+[#Q5D]
+====
+.Q5D
+[source,n1ql]
+----
+SELECT count(*) FROM `travel-sample`.inventory.airport t
 WHERE (SELECT RAW geo.alt FROM t.geo)[0] > 6000;
 ----
+====
 
-*Implicit alias*::
+=== Implicit Alias
+
 When explicit alias is not defined, every identifier will have an implicit alias predefined with the same name as the identifier.
 Implicit alias of a nested path is defined as the last component in the path.
-In above example  <<Q5D,Q5D>>, the implicit alias of the nested path `t.geo` in subquery is `geo`, and in example <<Q5B,Q5B>>  the implicit alias of `t.geo.alt` is `alt`.
-+
+In above example  <<Q5D,Q5D>>, the implicit alias of the nested path `t.geo` in subquery is `geo`, and in example <<Q5B,Q5B>> the implicit alias of `t.geo.alt` is `alt`.
+
 For example, the following example <<Q6,Q6>> has no explicit alias for `pass:c[`travel-sample`]`.
-So the `pass:c[`travel-sample`]` used in subquery FROM clause is considered keyspace identifier, but not an expression.
-That makes the subquery non-correlated by the FROM clause, and the subquery returns all documents from keyspace `pass:c[`travel-sample`]`.
-+
-[source#Q6,json]
+So the `pass:c[`travel-sample`.inventory.airport]` used in the subquery FROM clause is considered a keyspace identifier, but not an expression.
+That makes the subquery non-correlated by the FROM clause, and the subquery returns all documents from keyspace `pass:c[`travel-sample`.inventory.airport]`.
+
+[#Q6]
+====
+.Q6
+[source,n1ql]
 ----
-Example Q6:
-
 SELECT array_length((SELECT RAW t1.geo.alt
-                     FROM `travel-sample` t1))
-FROM `travel-sample` LIMIT 4;
+                     FROM `travel-sample`.inventory.airport t1))
+FROM `travel-sample`.inventory.airport LIMIT 4;
+----
 
+.Results
+[source,json]
+----
 [
   {
-    "$1": 31596
+    "$1": 1968
   },
   ...
 ]
 ----
-+
+====
+
 Contrast Q6 with Q6A below, the subquery is correlated by using the keyspace alias in the FROM clause.
 The result is only `1` because the subquery is applicable to only the current document `t` being processed in the parent query.
-+
-[source#Q6A,json]
+
+[#Q6A]
+====
+.Q6A
+[source,n1ql]
 ----
-Example Q6A:
-
 SELECT array_length((SELECT RAW t1.geo.alt FROM t t1))
-FROM `travel-sample` t;
+FROM `travel-sample`.inventory.airport t;
+----
 
+.Results
+[source,json]
+----
 [
   {
     "$1": 1
@@ -246,115 +354,175 @@ FROM `travel-sample` t;
   ...
 ]
 ----
-+
+====
+
 Further, the subquery is required to alias its `from-term` to avoid conflict with the same identifier in both outer and inner queries.
 For example, the following example Q6B shows an error:
-+
-[source#Q6B,json]
+
+[#Q6B]
+====
+.Q6B
+[source,n1ql]
 ----
-Example Q6B:
-
 SELECT array_length((SELECT RAW t1.geo.alt
-                     FROM `travel-sample`))
-FROM `travel-sample`;
+                     FROM `travel-sample`.inventory.airport))
+FROM `travel-sample`.inventory.airport;
+----
 
+.Results
+[source,json]
+----
 [
   {
     "code": 4020,
-    "msg": "Duplicate subquery alias travel-sample",
-    "query_from_user": "SELECT array_length((SELECT RAW t1.geo.alt \nFROM `travel-sample` ))\nFROM `travel-sample`;"
+    "msg": "Duplicate subquery alias airport",
+    "query": "SELECT array_length((SELECT RAW t1.geo.alt\nFROM `travel-sample`.inventory.airport))\nFROM `travel-sample`.inventory.airport;"
   }
 ]
 ----
-+
+====
+
 An implicit keyspace alias is not considered as an expression, as in the above example Q6.
 However, the nested paths are expressions.
-In the following example Q6C, the `from-term` has nested path `pass:c[`travel-sample`.geo]` as expression where `pass:c[`travel-sample`]` is referring to the implicit alias of the keyspace in the parent query.
+In the following example Q6C, the FROM term has the nested path `airport.geo` as an expression, where `airport` refers to the implicit alias of the keyspace in the parent query.
 Hence this is a correlated subquery, and the result is `1` corresponds to the current document in the parent query.
-+
-[source#Q6C,json]
+
+[#Q6C]
+====
+.Q6C
+[source,n1ql]
 ----
-Example Q6C:
-
 SELECT array_length((SELECT RAW t1.alt
-                     FROM `travel-sample`.geo t1))
-FROM `travel-sample`
-WHERE type = "airport";
+                     FROM airport.geo t1))
+FROM `travel-sample`.inventory.airport
+LIMIT 1;
+----
 
+.Results
+[source,json]
+----
 [
   {
     "$1": 1
-  },
- ...
+  }
 ]
 ----
-+
+====
+
 If the expression does not resolve to any of the variables in scope for the subquery, then that is treated as keyspace identifier and subsequently if the keyspace is not found, an error is raised.
-For example, in the following query `pass:c[`beer-sample`]` is not defined in the scope and is treated as a new keyspace identifier.
-+
-[source#Q7,json]
-----
-Example Q7:
+For example, in the following query `pass:c[`travel-sample`.inventory.hotel]` is not defined in the scope and is treated as a new keyspace identifier.
 
-SELECT * FROM `travel-sample` t1
-WHERE t1.type = "landmark" AND
-      t1.city IN (SELECT RAW city
-                  FROM `beer-sample`
-                  WHERE type = "brewery");
+[#Q7]
+====
+.Q7
+[source,n1ql]
+----
+SELECT * FROM `travel-sample`.inventory.landmark t1
+WHERE t1.city IN (SELECT RAW city
+                  FROM `travel-sample`.inventory.hotel
+                  LIMIT 3
+                  );
 ----
 
-[[nested-path-expr]]*Nested Path Expressions in Subqueries*::
+.Results
+[source,json]
+----
+[
+  {
+    "t1": {
+      "activity": "see",
+      "address": "Prince Arthur Road, ME4 4UG",
+      "alt": null,
+      "city": "Gillingham",
+      "content": "Adult - £6.99 for an Adult ticket that allows you to come back for further visits within a year (children's and concessionary tickets also available). Museum on military engineering and the history of the British Empire. A quite extensive collection that takes about half a day to see. Of most interest to fans of British and military history or civil engineering. The outside collection of tank mounted bridges etc can be seen for free. There is also an extensive series of themed special event weekends, admission to which is included in the cost of the annual ticket.",
+      "country": "United Kingdom",
+      "directions": null,
+      "email": null,
+      "geo": {
+        "accuracy": "RANGE_INTERPOLATED",
+        "lat": 51.39184,
+        "lon": 0.53616
+      },
+      "hours": "Tues - Fri 9.00am to 5.00pm, Sat - Sun 11.30am - 5.00pm",
+      "id": 10019,
+      "image": null,
+      "name": "Royal Engineers Museum",
+      "phone": "+44 1634 822839",
+      "price": null,
+      "state": null,
+      "title": "Gillingham (Kent)",
+      "tollfree": null,
+      "type": "landmark",
+      "url": "http://www.remuseum.org.uk"
+    }
+  }...
+]
+----
+====
+
+[[nested-path-expr]]
+=== Nested Path Expressions in Subqueries
+
 As mentioned in the xref:n1ql-language-reference/from.adoc[FROM clause], the `from-term` of both parent and subqueries allow nested path expressions over constants and subqueries.
 However, only subqueries allow variable expressions (including paths), that are referenced through any <<section_onz_3tj_mz,variables defined in scope>> of the subquery.
 This is very powerful for language expressibility, simplicity and flexibility to N1QL queries.
 Especially, when combined with subqueries, nested path expressions over variables extend full power of N1QL syntax to array attributes/sub-documents without losing the structure of the array elements in results, or requiring tricky processing (with UNNEST, GROUP BY, ORDER BY and so).
 See the <<section_cjh_pck_mz,examples>> below.
-+
+
 NOTE: The usage of nested paths over keyspace identifiers is NOT allowed in the from-terms, and it results in a syntax error.
 Nested paths are always considered expressions in N1QL.
 
 [#section_cjh_pck_mz]
 == Examples
 
-*Example 1*::
+.{blank}
+====
 The following query is valid because the nested path in the subquery is based on the explicit alias variable `k1` in scope.
-+
-[source,json]
+
+[source,n1ql]
 ----
 SELECT * FROM keyspace1 AS  k1
-WHERE (SELECT … FROM k1.subdoc1.subdoc2.field3 …)
+WHERE (SELECT … FROM k1.subdoc1.subdoc2.field3 …);
+----
+====
+
+.{blank}
+====
+The following query is invalid and raises an error because the nested path is in the outermost query:
+
+[source,n1ql]
+----
+SELECT * FROM keyspace1.subdoc1.subdoc2.field3 … ;
 ----
 
-*Example 2*::
-The following query is invalid and raise error because the nested path is in the outermost query:
-+
-[source,json]
-----
-SELECT * FROM keyspace1.subdoc1.subdoc2.field3 …
-----
-+
 The subquery is based on the keyspace identifiers.
 Note that, the outer query has explicit alias defined, and hence the keyspace1/keyspace2 in subquery `from-term` are treated as identifiers.
-+
-[source,json]
+
+[source,n1ql]
 ----
 SELECT * FROM keyspace1 AS  k1
-WHERE (SELECT … FROM keyspace1.subdoc1.field3 …)
+WHERE (SELECT … FROM keyspace1.subdoc1.field3 …);
 
 SELECT * FROM keyspace1 AS  k1
-WHERE (SELECT … FROM keyspace2.subdoc2 …)
+WHERE (SELECT … FROM keyspace2.subdoc2 …);
 ----
+====
 
-*Example 3*::
+.{blank}
+====
 The following example shows usage of nested path over subquery expression.
-+
-[source,json]
+
+[source,n1ql]
 ----
 SELECT x.alt
-FROM (SELECT geo from `travel-sample`
-      WHERE type = "airport")[*].geo AS x
+FROM (SELECT geo from `travel-sample`.inventory.airport
+      )[*].geo AS x
 LIMIT 2;
+----
 
+.Results
+[source,json]
+----
 [
   {
     "alt": 12
@@ -364,17 +532,23 @@ LIMIT 2;
   }
 ]
 ----
+====
 
-*Example 4*::
+.{blank}
+====
 The following example shows usage of nested path over constant expression.
-+
-[source,json]
+
+[source,n1ql]
 ----
 SELECT x
 FROM [{"a" : 1, "b" : {"c" : 2}},
       {"a" : 3, "b" : {"d" : 4}}][*].b AS x
 LIMIT 2;
+----
 
+.Results
+[source,json]
+----
 [
   {
     "x": {
@@ -388,20 +562,25 @@ LIMIT 2;
   }
 ]
 ----
+====
 
-*Example 5*::
-The following two queries show valid and invalid examples with `travel-sample` data set.
-Note the nested paths (in *bold*) used in the FROM clause of the subquery.
-+
-[source#Q8,json]
+.{blank}
+====
+The following two queries show valid and invalid examples with the `airport` collection.
+Note the nested paths used in the FROM clause of the subquery.
+
+.Q8: Find airports that are at altitudes more than 4000ft
+[source#Q8,n1ql]
 ----
-Example Q8: Find airports that are at altitudes more than 4000ft
-
 SELECT t1.city, t1.geo.alt
-FROM `travel-sample` t1
-WHERE t1.type = "airport" AND
-     (SELECT RAW t2.alt
-      FROM `travel-sample`.geo t2)[0] > 4000;
+FROM `travel-sample`.inventory.airport t1
+WHERE (SELECT RAW t2.alt
+      FROM airport.geo t2)[0] > 4000;
+----
+
+.Results
+[source,json]
+----
 [
   {
     "code": 3000,
@@ -410,15 +589,18 @@ WHERE t1.type = "airport" AND
   }
 ]
 ----
-+
-[source#Q8A,json]
-----
-Example Q8A: Q8 rewritten to use nested path using outer query variable t1
 
+.Q8A: Q8 rewritten to use nested path using outer query variable t1
+[source#Q8A,n1ql]
+----
 SELECT t1.city, t1.geo.alt
-FROM `travel-sample` t1
-WHERE t1.type = "airport" AND
-      (SELECT RAW t2.alt FROM t1.geo t2)[0] > 4000;
+FROM `travel-sample`.inventory.airport t1
+WHERE (SELECT RAW t2.alt FROM t1.geo t2)[0] > 4000;
+----
+
+.Results
+[source,json]
+----
 [
   {
     "alt": 6537,
@@ -430,54 +612,89 @@ WHERE t1.type = "airport" AND
   }, ...
 ]
 ----
+====
 
-*Example 6*::
-The following example demonstrates the power of using nested path expressions in xref:n1ql-language-reference/correlated-subqueries.adoc[correlated subqueries] over the array subdocument `pass:c[`travel-sample`.reviews]`.
-The example Q9 finds the top 10 hotels and number of reviewers which have Overall rating at least 4 and rated by minimum 6 people.
-+
-[source#Q9,json]
+.{blank}
+====
+The following query demonstrates the power of using nested path expressions in xref:n1ql-language-reference/correlated-subqueries.adoc[correlated subqueries] over the array subdocument `hotel.reviews`.
+The query Q9 finds the top 10 hotels and number of reviewers which have Overall rating at least 4 and rated by minimum 6 people.
+
+.Q9
+[source#Q9,n1ql]
 ----
-Query Q9:
-
 SELECT name, cnt_reviewers
-FROM `travel-sample` AS t
+FROM `travel-sample`.inventory.hotel AS t
 LET cnt_reviewers = (SELECT raw count(*)
                      FROM t.reviews AS s
                      WHERE s.ratings.Overall >= 4)[0]
-WHERE type = "hotel" and cnt_reviewers >= 6
+WHERE cnt_reviewers >= 6
 ORDER BY cnt_reviewers DESC
 LIMIT 10;
+----
 
+.Results
+[source,json]
+----
 [
+  {
+    "cnt_reviewers": 9,
+    "name": "Holiday Inn London Kensington Forum"
+  },
+  {
+    "cnt_reviewers": 9,
+    "name": "Campanile"
+  },
+  {
+    "cnt_reviewers": 9,
+    "name": "Drop in Chalets"
+  },
   {
     "cnt_reviewers": 9,
     "name": "Cadogan Hotel"
   },
   {
     "cnt_reviewers": 9,
-    "name": "Holiday Inn London Kensington Forum"
+    "name": "Negresco"
   },
-  ...
+  {
+    "cnt_reviewers": 9,
+    "name": "Suites at Fisherman's Wharf"
+  },
+  {
+    "cnt_reviewers": 9,
+    "name": "Wyndham Parc 55 Hotel"
+  },
+  {
+    "cnt_reviewers": 8,
+    "name": "Lochmaddy Hotel"
+  },
+  {
+    "cnt_reviewers": 8,
+    "name": "Kensington West"
+  },
+  {
+    "cnt_reviewers": 8,
+    "name": "Ibis Hotel Stratford"
+  }
 ]
 ----
-+
-[source#Q9A,json]
-----
-Query Q9A:
 
+.Q9A
+[source#Q9A,n1ql]
+----
 SELECT name, cnt_reviewers
-FROM   `travel-sample` AS t
+FROM  `travel-sample`.inventory.hotel AS t
 LET cnt_reviewers = (SELECT raw count(*)
-                     FROM `travel-sample` tmp
+                     FROM `travel-sample`.inventory.hotel tmp
                      USE KEYS meta(t).id
                      UNNEST tmp.reviews s
                      WHERE s.ratings.Overall >= 4)[0]
-WHERE type = "hotel" and cnt_reviewers >= 6
+WHERE cnt_reviewers >= 6
 ORDER BY cnt_reviewers DESC
 LIMIT 10;
 ----
-+
-The above example Q9A is Couchbase Server 4.x equivalent of example <<Q6,Q6>> that does not use nested paths in subquery FROM clause.
-In Couchbase Server version 4.x the FROM clause of the subquery can only have either keyspace identifier name or a subquery.
+
+The above query Q9A is an equivalent of query <<Q9,Q9>> that does not use nested paths in the subquery FROM clause.
 Therefore, it requires a USE KEYS clause on the same document as in the outer query, that is `meta(t).id` where `t` refers to the outer query document.
 Nested paths cannot be used in the FROM clause and hence UNNEST is used on nested structures.
+====
