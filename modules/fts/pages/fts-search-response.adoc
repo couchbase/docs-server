@@ -1,0 +1,253 @@
+= Search response
+
+== Details for every field within the response object
+
+== Search Status to expect
+
+== Error Information
+
+NOTE: For all errors listed in the table below, the "status" in the search response always show "fail".
+
+.Search Query Response Codes
+|===
+| Error/Reason | Description | Response Status | Response Description 
+
+| success
+| query was processed successfully.
+| 200
+| OK
+
+| query request rejected
+| high memory consumption, throttler steps in
+| 429
+| Too many requests
+
+| authentication failure
+| incorrect auth credentials or no permissions
+| 403
+| Forbidden
+
+| malformed query request
+| unrecognized/bad query
+| 400
+| Bad request
+
+| page not found
+| endpoint is invalid
+| 404
+| Not found
+
+| pre-condition failed
+| pre-condition not met - consistency error	
+| 412
+| Precondition failed
+
+| .*
+| an error that the server can potentially recover from
+| 500
+| Internal server error
+
+|===
+
+=== Partial Errors
+
+It is possible that when some of the index partitions have reported failures, the "status" in the response does not show fail . This is when the user will see a partial result set for their query.
+
+Below is the sample response
+
+----
+{
+  "status": {
+    "total": 6,
+    "failed": 2,
+    "successful": 4,
+    "errors": {
+        "pindex_name_1": "xyz",
+        "pindex_name_2": "xyz"
+    }
+  },
+  "request": {
+    "query": {
+      ...
+    },
+    "size": 10,
+    "from": 0,
+    "facets": {},
+    "sort": [
+      "-_score"
+    ]
+  },
+  "hits": [...],
+  "total_hits": ...,
+  "max_score": ...,
+  "took": ...,
+  "facets": {}
+}
+----
+
+If one or more of the index partitions failed to cater to the request, the user can see partial results. In such case, the response status is shown as 200 and the errors object in the response will be a non-zero length value.
+
+.Partial Error Details
+|===
+| Partial Error | Description  
+
+| context deadline exceeded
+| request wasn’t processed/responded-to by the partition in the requested time period	
+
+
+| no planPIndexes for indexName	
+| FTS node in the process of a rebalance, partitions are being moved
+
+| bleve: pindex_consistency mismatched partition	
+| RYOW failure - received data from a vbucket with a different UUID while waiting on a sequence number - possibly due to KV rebalance/failover	
+
+| pindex not available
+| one or more primary index partitions (that do not have replicas) have been failed over (need to rebalance to set them up again)	
+
+| cannot perform operation on empty alias
+| one or more index partitions are in the process of being setup during a rebalance
+
+|===
+
+
+== Array positions
+
+== Fragments
+
+These objects, also known as snippets, contain field names that contain an array of one or more text strings.
+The text strings contain the "[.code]``<mark>``" tags surrounding the term that was matched in order to render highlighting.
+
+=== Example
+
+
+
+== Facets
+
+Facets are aggregate information collected on a particular result set.
+So, you have to already have a search in mind, and then you collect additional facet information along with it.
+All of the facet examples below are for the query "[.code]``water``" on the beer-sample dataset.
+
+FTS supports 3 types of facet:
+
+* Term Facet - A term facet counts up how many of the matching documents have a particular term in a particular field.
+Most of the time this only makes sense for relatively low cardinality fields, like a type or tags.
+It would not make sense to use it on a unique field like an ID.
+* Numeric Range Facet - A numeric range facet works by the user defining their own buckets (numeric ranges).
+The facet then counts how many of the matching documents fall into a particular bucket for a particular field.
+* Date Range Facet - same as numeric, but on dates instead of numbers.
+Full text search and Bleve expect dates to be in the format specified by https://www.ietf.org/rfc/rfc3339.txt[RFC-3339^], which is a specific profile of ISO-8601 that is more restrictive.
+
+NOTE: Most of the time, when building a term facet you want to use the keyword analyzer.
+Otherwise multi-term values get tokenized and the results are not what you expect.
+
+*Examples*
+
+* Term Facet - computes facet on the type field which has 2 values: `beer` and `brewery`.
++
+----
+curl -X POST -H "Content-Type: application/json" \
+http://localhost:8094/api/index/bix/query -d \
+'{
+    "size": 10,
+    "query": {
+        "boost": 1,
+        "query": "water"
+     },
+    "facets": {
+         "type": {
+             "size": 5,
+             "field": "type"
+         }
+    }
+}'
+----
++
+The result snippet below only shows the facet section for clarity.
+Run the curl command to see the HTTP response containing the full results.
++
+[source,json]
+----
+"facets": {
+    "type": {
+        "field": "type",
+        "total": 91,
+        "missing": 0,
+        "other": 0,
+        "terms": [
+            {
+                "term": "beer",
+                "count": 70
+            },
+            {
+                "term": "brewery",
+                "count": 21
+            }
+        ]
+    }
+}
+----
+
+* Numeric Range Facet - computes facet on the `abv` field with 2 buckets describing `high` (greater than 7) and `low` (less than 7).
++
+----
+curl -X POST -H "Content-Type: application/json" \
+http://localhost:8094/api/index/bix/query -d \
+'{
+    "size": 10,
+    "query": {
+        "boost": 1,
+        "query": "water"
+    },
+    "facets": {
+        "abv": {
+            "size": 5,
+            "field": "abv",
+            "numeric_ranges": [
+                {
+                    "name": "high",
+                    "min": 7
+                },
+                {
+                    "name": "low",
+                    "max": 7
+                }
+             ]
+        }
+    }
+}'
+----
++
+Results:
++
+[source,json]
+----
+facets": {
+    "abv": {
+        "field": "abv",
+        "total": 70,
+        "missing": 21,
+        "other": 0,
+        "numeric_ranges": [
+            {
+                "name": "high",
+                "min": 7,
+                "count": 13
+            },
+            {
+                "name": "low",
+                "max": 7,
+                "count": 57
+            }
+        ]
+    }
+}
+----
+
+== Hits
+
+== Scores
+
+== Index partitions
+
+== Took
+
