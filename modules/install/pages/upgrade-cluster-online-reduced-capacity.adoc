@@ -2,6 +2,7 @@
 
 :description: A cluster can be upgraded while still online, without additional nodes required.
 //:page-aliases: install:upgrade-strategy-for-features
+:tabs:
 
 [abstract]
 {description}
@@ -64,8 +65,7 @@ For the equivalent procedure as performed by the Backup Service, see xref:manage
 
 . Remove a node from the cluster.
 +
-This node will not be restored to the cluster until the very end of the upgrade procedure &#8212; the final stage of which will be the upgrade of this node itself.
-Until then, this node will function as a _spare_ node; allowing _swap rebalance_ to be performed on each successive node to be upgraded; and in consequence, the cluster will continue to serve data with reduced capacity.
+This node will function as a _spare_ node; allowing _swap rebalance_ to be performed on each successive node to be upgraded; and in consequence, the cluster will continue to serve data with reduced capacity.
 For information, see xref:install:upgrade-strategies.adoc#using-spare-nodes[Using Spare Nodes].
 +
 To remove a node with the Couchbase CLI, a command such as the following can be used:
@@ -81,3 +81,108 @@ Here, the `CLUSTER_NODE_HOSTNAME_OR_IP` is the IP address or domain name of any 
 The `NODE_HOSTNAME_OR_IP` is the IP address or domain name of the node that is to be removed from the cluster.
 +
 For a full description of steps whereby nodes can be removed from the cluster &#8212; using the UI, CLI, and REST API &#8212; see xref:manage:manage-nodes/remove-node-and-rebalance.adoc[Remove a Node and Rebalance].
+
+. Disable the `couchbase-server.service` service, on the node that has been removed.
+Enter the following command:
++
+----
+systemctl stop couchbase-server.service
+----
++
+This _stops_ the service; and so allows it to be restarted after reboot.
+
+. Back up the configuration files for the removed node.
+On a Linux system, these files are to be found in `/opt/couchbase/var/lib/couchbase/config`.
+Ideally, these should be backed up onto a different machine.
+The command takes the following form:
++
+----
+cp -r /opt/couchbase/var/lib/couchbase/config ${PATH_TO_A_SAFE_LOCATION}/${NODE_IP}_config_files
+----
+
+. Uninstall `couchbase-server` and its dependencies from the removed node.
+Enter the command that is appropriate for the platform.
+Note that the following examples remove _Enterprise Edition_ of Couchbase Server: to remove _Community Edition_, specify `couchbase-server-community` (instead of `couchbase-server`).
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+
+----
+yum autoremove couchbase-server
+----
+
+--
+
+Ubuntu & Debian::
++
+--
+
+----
+apt autoremove --purge couchbase-server
+----
+
+--
+====
+
+. Manually remove the files in `/opt/couchbase`.
+This folder contains configuration files for the previous server-version; which need to be overwritten by configuration files for the new version.
+If the administrator has manually included in this folder any files that were not provided by Couchbase Server, and need to be retained, these should be individually identified and backed up with with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
++
+Note that, based on settings made for this node when it was originally added or joined to the cluster, `/opt/couchbase` may also have contained _user data_, in the form of xref:learn:buckets-memory-and-storage/vbuckets.adoc[vBuckets]: however, since this node has been rebalanced out of the cluster, user data has been automatically copied off this node onto nodes that still remain in the cluster, as appropriate; and therefore, on this node, the folder `/opt/couchbase` now contains no user-data that needs to be manually backed up.
++
+Enter the following command:
++
+----
+rm -r /opt/couchbase
+----
+
+. Install Couchbase Server.
+Follow the per platform instructions provided in xref:install:install-intro.adoc[Install].
+
+. Put automated Couchbase-Server updates on _hold_.
+This ensures that no further upgrade can occur to this node until the next time the administrator manually performs the process.
++
+[{tabs}]
+====
+
+RedHat & Centos::
++
+--
+For Couchbase Server Enterprise Edition, add the following to the file `/etc/yum/yum.conf`:
+
+----
+apt-mark hold couchbase-server
+----
+
+(For Couchbase Server Community edition, specify `couchbase-server-community`, instead of `couchbase-server`).
+
+--
+
+Ubuntu & Debian::
++
+For Couchbase Server Enterprise Edition, run the following command:
++
+----
+apt-mark hold couchbase-server
+----
++
+(For Couchbase Server Community edition, specify `couchbase-server-community`, instead of `couchbase-server`).
+
+--
+====
+
+. _Add_ the upgraded swap node to the cluster, and _remove_ a node that is currently part of the cluster.
++
+For an overview of node-removal, see xref:learn:clusters-and-availability/remove.adoc[Remove]; and for practical examples of performing removal, see xref:manage:manage-nodes/remove-node-and-rebalance.adoc.
+For an overview of node-addition, see xref:learn:clusters-and-availability/nodes.html#clusters[Clusters]; and for practical examples of node-addition, see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
++
+Note that in this case, no rebalance should be performed until both the addition and the removal are complete.
+When the rebalance is performed, it is performed by Couchbase Server as a _swap rebalance_; confining rebalance activities only to the two nodes affected, and therefore heightening efficiency.
+
+. Upgrade the newly removed node in the same way as described above.
+Then, repeat the process of addition and removal; and upgrade the next removed node; and so continue.
+When the last node to be upgraded has been upgraded, add this node back into the cluster without removing any other node; and perform a rebalance.
+The cluster is now fully upgraded, and is at full capacity.
