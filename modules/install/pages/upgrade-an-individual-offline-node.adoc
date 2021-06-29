@@ -27,8 +27,37 @@ See xref:install:upgrade-strategy.adoc[Upgrade-Procedure Selection] for informat
 
 Proceed as follows:
 
-. Back up the node's user-data.
-This can be performed either with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service]; and should be a _full_ (rather than an incremental) backup.
+=== Stage One: Prepare the Node
+
+. Stop all applications on the node.
+Monitor the _disk-write queue_, to ensure that all data has been persisted to disk.
+A command of the following form can be used:
++
+----
+curl -s -u '${USERNAME}:${PASSWORD}' /
+${NODE_HOSTNAME}:${NODE_MANGEMENT_PORT}/pools/default/buckets/${BUCKET}/stats | /
+jq ".op.samples.disk_write_queue[-1]"
+----
++
+The command returns a single integer: when this is `0`, all data has been persisted to disk.
++
+For example, the following command (which uses https://github.com/stedolan/jq[jq^]) examines writes to the `travel-sample` bucket:
++
+----
+curl -s -u Administrator:password /
+http://localhost:8091/pools/default/buckets/travel-sample/stats | jq ".op.samples.disk_write_queue[-1]"
+----
++
+If all data has been persisted, the following is returned:
++
+----
+0
+----
+
+. Optionally, back up the node's user-data.
+If the node has recently been participating in an online cluster, and the entire cluster's user-data was backed up prior to the cluster-upgrade process, this step can be omitted.
++
+Backup can be performed either with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service]; and should be a _full_ (rather than an incremental) backup.
 +
 For example, to use `cbbackupmgr` to configure an archive and repository for the backup, a command of the following form should be entered:
 +
@@ -44,9 +73,7 @@ Once the archive and repository have been created, a command such as the followi
 +
 [source,bash]
 ----
-cbbackupmgr backup --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME} \
---cluster ${CLUSTER_ADDRESS} --username ${USERNAME} --password ${PASSWORD} \
---full-backup
+cbbackupmgr backup --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME} --cluster ${CLUSTER_ADDRESS} --username ${USERNAME} --password ${PASSWORD} --full-backup
 ----
 +
 Here, the `CLUSTER_ADDRESS` is the IP address or domain name of the node.
@@ -68,31 +95,8 @@ Enter a command such as the following;
 cp -r /opt/couchbase/var/lib/couchbase/config ${PATH_TO_A_SAFE_LOCATION}/${NODE_IP}_config_files
 ----
 
-. Stop all applications on the node.
-Monitor the _disk-write queue_, to ensure that all data has been persisted to disk.
-A command of the following form can be used:
-+
-----
-curl -s -u '${USERNAME}:${PASSWORD}' /
-${NODE_HOSTNAME}:${NODE_MANGEMENT_PORT}/pools/default/buckets/${BUCKET}/stats | /
-jq ".op.samples.disk_write_queue[-1]"
-----
-+
-The command returns a single integer: when this is `0`, all data has been persisted to disk.
-+
-For example, the following command (which uses https://github.com/stedolan/jq[jq^]) examines writes to the `travel-sample` bucket:
-+
-----
-curl -s -u Administrator:password /
-http://localhost:8091/pools/default/buckets/travel-sample/stats | \
-jq ".op.samples.disk_write_queue[-1]"
-----
-+
-If all data has been persisted, the following is returned:
-+
-----
-0
-----
+[#stage-two-upgrade-the-node]
+=== Stage Two: Upgrade the Node
 
 . Stop the `couchbase-server.service` service, on the node that has been removed.
 Enter the following command:
@@ -222,8 +226,13 @@ Note that this may take some time, if the buckets contain large amounts of data.
 The status of warmup can be checked as follows:
 +
 ----
-cbstats ${NODE_ADDRESS}:${NODE_KV_PORT} -u ${UESRNAME} -p ${PASSWORD} -b ${BUCKET} warmup | grep state
+cbstats ${NODE_ADDRESS}:${NODE_KV_PORT} -u ${USERNAME} -p ${PASSWORD} -b ${BUCKET} warmup | grep state
 ----
++
+For example:
++
+----
+/opt/couchbase/bin/cbstats localhost:11210 -u Administrator -p password -b travel-sample warmup | grep state
 +
 When warmup is complete, the command returns the following:
 +

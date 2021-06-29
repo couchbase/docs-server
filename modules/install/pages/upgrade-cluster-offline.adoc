@@ -1,1 +1,244 @@
 = Upgrade an Offline Cluster
+
+:description: A cluster can most simply be upgraded when entirely offline; meaning that it is not serving data.
+:tabs:
+
+[abstract]
+{description}
+
+== Understanding Offline Cluster-Upgrade
+
+Offline cluster-upgrade can occur when the cluster is not required to serve data for some period of time.
+All application-access to the cluster is stopped, and each node in turn is upgraded.
+Then, the cluster is brought back online, and application-access to it is restored.
+
+== Perform an Offline-Cluster Upgrade
+
+The procedure is presented in three stages; which correspond to cluster-preparation, upgrade of individual nodes, and cluster-reactivation.
+
+=== Stage One: Prepare the Cluster
+
+. Stop all applications that access the cluster.
+
+. Stop all applications on the node.
+Monitor the _disk-write queue_, to ensure that all data has been persisted to disk.
+A command of the following form can be used:
++
+----
+curl -s -u '${USERNAME}:${PASSWORD}' /
+${NODE_HOSTNAME}:${NODE_MANGEMENT_PORT}/pools/default/buckets/${BUCKET}/stats | /
+jq ".op.samples.disk_write_queue[-1]"
+----
++
+The command returns a single integer: when this is `0`, all data has been persisted to disk.
++
+For example, the following command (which uses https://github.com/stedolan/jq[jq^]) examines writes to the `travel-sample` bucket:
++
+----
+curl -s -u Administrator:password /
+http://localhost:8091/pools/default/buckets/travel-sample/stats | jq ".op.samples.disk_write_queue[-1]"
+----
++
+If all data has been persisted, the following is returned:
++
+----
+0
+----
+
+. Optionally, back up the node's user-data.
+If the node has recently been participating in an online cluster, and the entire cluster's user-data was backed up prior to the cluster-upgrade process, this step can be omitted.
++
+Backup can be performed either with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service]; and should be a _full_ (rather than an incremental) backup.
++
+For example, to use `cbbackupmgr` to configure an archive and repository for the backup, a command of the following form should be entered:
++
+[source,bash]
+----
+cbbackupmgr config --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME}
+----
++
+Here, `ABS_PATH_TO_ARCHIVE` is an absolute path to a filesystem location that will serve as the archive within which the backed up data will reside.
+The `REPO_NAME` is the name of the repository that will be associated with the location.
++
+Once the archive and repository have been created, a command such as the following performs a full backup:
++
+[source,bash]
+----
+cbbackupmgr backup --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME} --cluster ${CLUSTER_ADDRESS} --username ${USERNAME} --password ${PASSWORD} --full-backup
+----
++
+Here, the `CLUSTER_ADDRESS` is the IP address or domain name of the node.
+The `full-backup` flag ensures that the backup is indeed a _full_ backup.
++
+For the equivalent procedure as performed by the Backup Service, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#run-an-immediate-backup[Run an Immediate Backup].
++
+In the event of node-upgrade failing, the backed-up data can be restored by means of xref:backup-restore:cbbackupmgr-restore.adoc[cbbackupmgr restore] or xref:cli:cbtools/cbrecovery.adoc[cbrecovery]; or by means of the Backup Service (see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#restore-backups[Restore Backups]).
+
+. Disable auto-failover (to prevent auto-failover from occuring when individual nodes stop communicating with the rest of the cluster, during their upgrade).
+Disablement is performed by means of the xref:manage:manage-settings/general-settings.adoc[General Settings] screen, by means of the xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability] panel.
+This needs to be done only once, on one node.
++
+For example, enter a command of the following form:
++
+----
+couchbase-cli setting-autofailover -c ${NODE_HOSTNAME} -u ${USERNAME} -p ${PASSWORD} --enable-auto-failover 0
+----
+
+[#stage-two-upgrade-each-individual-node]
+=== Stage Two: Upgrade each Individual Node
+
+Each individual node must now be upgraded in turn.
+Therefore, for each node, proceed as follows:
+
+. Stop the `couchbase-server.service` service, on the node that has been removed.
+Enter the following command:
++
+----
+systemctl stop couchbase-server.service
+----
++
+This _stops_ the service; and so allows it to be restarted after reboot.
+Note that, optionally, at this point, the service can also be _disabled_; which prevents it from restarting after reboot.
+This may be useful if additional tasks, such as OS upgrade, need to be performed.
+If such disabling is desired, enter the following command:
++
+----
+systemctl disable --now couchbase-server.service
+----
++
+Note that to disable and/or stop Couchbase Server Community Edition, in these commands, `couchbase-server-community` should be substituted for `couchbase-server`.
+
+. If using Couchbase-provided repositories/PPAs, the Couchbase-Server version should be _unpinned_, to allow it to be upgraded.
+Proceed as follows, for the appropriate platform:
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+
+Move the reference to the `couchbase-server` (or `couchbase-server-community`, if using Community Edition) package to the `exclude` section of the `yum.conf` file, located in `/etc/yum/yum.conf`.
+
+--
+
+Ubuntu & Debian::
++
+--
+
+Run the following command (specifying, if using Community Edition, `couchbase-server-community`, rather than `couchbase-server`):
+
+----
+apt-mark unhold couchbase-server
+----
+
+--
+====
+
+. Upgrade the Couchbase Server package.
++
+If using a Couchbase-provided `yum` repository, enter the following:
++
+----
+yum update couchbase-server
+----
++
+If Using a Couchbase-provided PPA, enter the following:
++
+----
+apt --only-upgrade install couchbase-server
+----
++
+If using a downloaded package-archive, enter the command appropriate for the platform, as follows:
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+----
+yum install ${PATH_TO_RPM_PACKAGE}
+----
+--
+
+Ubuntu & Debian::
++
+--
+----
+dpkg -i ${PATH_TO_DEB_PACKAGE}
+----
+--
+====
+
+. _Repin_ future package-upgrades for Couchbase Server, so that none occurs before the administrator's next manually driven upgrade.
+Proceed as follows for the appropriate platform:
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+Add the `couchbase-server` (or `couchbase-server-community`) package
+to the `exclude` section of the `yum.conf` file, which is located at `/etc/yum/yum.conf`.
+The line appears as follows:
+
+----
+exclude=couchbase-server
+----
+--
+
+Ubuntu & Debian::
++
+--
+Run the following command (substituting, if running Community Edition, `couchbase-server-community` for `couchbase-server`):
+
+----
+apt-mark hold couchbase-server
+----
+
+--
+====
+
+. Enable the `couchbase-server` (or `couchbase-server-community`) service is enabled.
+(This may not be necessary, since the package installer should have performed enablement.
+However, explicit enablement is recommended as useful assurance.)
++
+After enablement, _start_ the service.
++
+Enter the following commands (substituting, if using Community Edition, `couchbase-server-community` for `couchbase-server`).
++
+----
+systemctl enable couchbase-server.service
+
+systemctl is-active --quiet couchbase-server.service || systemctl start couchbase-server.service
+----
+
+. Wait for the completion of _warmup_, for all _Couchbase_ buckets.
+Note that this may take some time, if the buckets contain large amounts of data.
++
+The status of warmup can be checked as follows:
++
+----
+cbstats ${NODE_ADDRESS}:${NODE_KV_PORT} -u ${USERNAME} -p ${PASSWORD} -b ${BUCKET} warmup | grep state
+----
++
+For example:
++
+----
+/opt/couchbase/bin/cbstats localhost:11210 -u Administrator -p password -b travel-sample warmup | grep state
+----
++
+When warmup is complete, the command returns the following:
++
+----
+ep_warmup_state:                 done
+----
++
+Note that _Ephemeral_ buckets do not require warmup.
+If an Ephemeral bucket is specified in this command, an error is returned.
+
+. Repeat the process described in this section, xref:install:upgrade-cluster-offline.adoc#stage-two-upgrade-each-individual-node[Stage Two: Upgrade Each Individual Node], for every other node in the cluster.
+
+=== Stage Three: Bring the Cluster Back Online
+
+When each node has been upgraded and all warmups are complete, restart all applications.
+The cluster is now upgraded, and begins serving data again.
