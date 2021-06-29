@@ -1,1 +1,203 @@
 = Upgrade an Individual, Offline Node
+
+:description: For a cluster to be upgraded, each of its individual nodes must be upgraded offline.
+:tabs:
+
+[abstract]
+{description}
+
+== Understanding Node Upgrade
+
+For a cluster to be upgraded, each of its individual nodes must be upgraded, in turn.
+To be upgraded, each node must be _offline_: this means that although the node is _up_ and _network-accessible_, it is no longer serving data within the cluster.
+The procedure for upgrading the individual node is the same for all nodes, in all circumstances; and therefore forms a procedural subset of every cluster-upgrade procedure.
+
+The instructions on this page assume:
+
+* The individual node is intended to run the current version of Couchbase Server, and is currently running a version of Couchbase Server that is lower than the current version and can be upgraded directly to the current version.
+For information, see xref:install:upgrade.adoc#supported-upgrade-paths[Supported Upgrade Paths].
+
+* The individual node is not currently participating in a multi-node cluster.
+This means either that it has been rebalanced out of such a cluster; or that it is currently a non-participating member of such a cluster, following a _graceful failover_.
+See xref:install:upgrade-strategy.adoc[Upgrade-Procedure Selection] for information.
+
+* The individual node is intended to be added back to a multi-node cluster as a full, participating member, after the node's upgrade.
+
+== Perform Node Upgrade
+
+Proceed as follows:
+
+. Back up the node's user-data.
+This can be performed either with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service]; and should be a _full_ (rather than an incremental) backup.
++
+For example, to use `cbbackupmgr` to configure an archive and repository for the backup, a command of the following form should be entered:
++
+[source,bash]
+----
+cbbackupmgr config --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME}
+----
++
+Here, `ABS_PATH_TO_ARCHIVE` is an absolute path to a filesystem location that will serve as the archive within which the backed up data will reside.
+The `REPO_NAME` is the name of the repository that will be associated with the location.
++
+Once the archive and repository have been created, a command such as the following performs a full backup:
++
+[source,bash]
+----
+cbbackupmgr backup --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME} \
+--cluster ${CLUSTER_ADDRESS} --username ${USERNAME} --password ${PASSWORD} \
+--full-backup
+----
++
+Here, the `CLUSTER_ADDRESS` is the IP address or domain name of the node.
+The `full-backup` flag ensures that the backup is indeed a _full_ backup.
++
+For the equivalent procedure as performed by the Backup Service, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#run-an-immediate-backup[Run an Immediate Backup].
++
+In the event of node-upgrade failing, the backed-up data can be restored by means of xref:backup-restore:cbbackupmgr-restore.adoc[cbbackupmgr restore] or xref:cli:cbtools/cbrecovery.adoc[cbrecovery]; or by means of the Backup Service (see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#restore-backups[Restore Backups]).
+
+
+. Manually back up the node's configuration files.
+These files reside in `/opt/couchbase/var/lib/couchbase/config`.
+It is recommended that the path to the backup-location for these files contain the node's domain name or IP address, to ensure accurate recovery.
+It is also recommended that the backup-location be on a separate machine.
++
+Enter a command such as the following;
++
+----
+cp -r /opt/couchbase/var/lib/couchbase/config ${PATH_TO_A_SAFE_LOCATION}/${NODE_IP}_config_files
+----
+
+. Stop all applications on the node.
+Monitor the _disk-write queue_, to ensure that all data has been persisted to disk.
+A command of the following form can be used:
++
+----
+curl -s -u '${USERNAME}:${PASSWORD}' /
+${NODE_HOSTNAME}:${NODE_MANGEMENT_PORT}/pools/default/buckets/${BUCKET}/stats | /
+jq ".op.samples.disk_write_queue[-1]"
+----
++
+The command returns a single integer: when this is `0`, all data has been persisted to disk.
++
+For example, the following command (which uses https://github.com/stedolan/jq[jq^]) examines writes to the `travel-sample` bucket:
++
+----
+curl -s -u Administrator:password /
+http://localhost:8091/pools/default/buckets/travel-sample/stats | \
+jq ".op.samples.disk_write_queue[-1]"
+----
++
+If all data has been persisted, the following is returned:
++
+----
+0
+----
+
+. Stop the `couchbase-server.service` service, on the node that has been removed.
+Enter the following command:
++
+----
+systemctl stop couchbase-server.service
+----
++
+This _stops_ the service; and so allows it to be restarted after reboot.
+Note that, optionally, at this point, the service can also be _disabled_; which prevents it from restarting after reboot.
+This may be useful if additional tasks, such as OS upgrade, need to be performed.
+If such disabling is desired, enter the following command:
++
+----
+systemctl disable --now couchbase-server.service
+----
++
+Note that to disable and/or stop Couchbase Server Community Edition, in these commands, `couchbase-server-community` should be substituted for `couchbase-server`.
+
+. If using Couchbase-provided repositories/PPAs, the Couchbase-Server version should be _unpinned_, to allow it to be upgraded.
+Proceed as follows, for the appropriate platform:
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+
+Move the reference to the `couchbase-server` (or `couchbase-server-community`, if using Community Edition) package to the `exclude` section of the `yum.conf` file, located in `/etc/yum/yum.conf`.
+
+--
+
+Ubuntu & Debian::
++
+--
+
+Run the following command (specifying, if using Community Edition, `couchbase-server-community`, rather than `couchbase-server`):
+
+----
+apt-mark unhold couchbase-server
+----
+
+--
+====
+
+. Upgrade the Couchbase Server package.
++
+If using a Couchbase-provided `yum` repository, enter the following:
++
+----
+yum update couchbase-server
+----
++
+If Using a Couchbase-provided PPA, enter the following:
++
+----
+apt --only-upgrade install couchbase-server
+----
++
+If using a downloaded package-archive, enter the command appropriate for the platform, as follows:
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+----
+yum install ${PATH_TO_RPM_PACKAGE}
+----
+--
+
+Ubuntu & Debian::
++
+--
+----
+dpkg -i ${PATH_TO_DEB_PACKAGE}
+----
+--
+====
+
+. _Repin_ future package-upgrades for Couchbase Server, so that none occurs before the administrator's next manually driven upgrade.
+Proceed as follows for the appropriate platform:
++
+[{tabs}]
+====
+RedHat & Centos::
++
+--
+Add the `couchbase-server` (or `couchbase-server-community`) package
+to the `exclude` section of the `yum.conf` file, which is located at `/etc/yum/yum.conf`.
+The line appears as follows:
+
+----
+exclude=couchbase-server
+----
+--
+
+Ubuntu & Debian::
++
+--
+Run the following command (substituting, if running Community Edition, `couchbase-server-community` for `couchbase-server`):
+
+----
+apt-mark hold couchbase-server
+----
+
+--
+====
