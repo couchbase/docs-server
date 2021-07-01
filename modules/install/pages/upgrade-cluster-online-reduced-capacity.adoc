@@ -1,6 +1,6 @@
-= Upgrade a Reduced-Capacity, Online Cluster
+= Upgrade an Online, Reduced-Capacity, Multi-Node Cluster
 
-:description: A cluster can be upgraded while still online, without additional nodes required.
+:description: A cluster can be upgraded while still online, without additional nodes required &#8212; provided that it is permitted to serve data at reduced-capacity, for the duration of the cluster-upgrade.
 //:page-aliases: install:upgrade-strategy-for-features
 :tabs:
 
@@ -13,7 +13,7 @@
 The context and overall requirements for upgrading a live cluster without the introduction of one or more additional nodes are described in xref:install:upgrade-strategies.adoc[Upgrade-Procedure Selection]: this fully explains the node-by-node upgrade of the cluster, using _swap rebalance_ to minimize overhead.
 It also explains how, if additional nodes are not available, the procedure can be completed with no more than the existing cluster-nodes, provided that the cluster can perform acceptably at reduced capacity, during the upgrade.
 
-The precise steps for this procedure are detailed on this page, below.
+The precise steps for this _reduced-capacity_ procedure are provided on this page, below.
 A full understanding of the information in xref:install:upgrade-strategies.adoc[Upgrade-Procedure Selection] should be acquired, before proceeding.
 
 [#perform-upgrade-with-reduced-capacity]
@@ -34,9 +34,14 @@ For information on _swap rebalance_, see xref:install:upgrade-strategies.adoc#sw
 
 * Nodes will be upgraded _one at a time_.
 
+The overall procedure is described in six stages, which are: xref:install:upgrade-cluster-online-reduced-capacity.adoc#prepare-the-cluster[Prepare the Cluster], xref:install:upgrade-cluster-online-reduced-capacity.adoc#remove-a-node[Remove a Node], xref:install:upgrade-cluster-online-reduced-capacity.adoc#upgrade-the-removed-node[Upgrade the Removed Node], xref:install:upgrade-cluster-online-reduced-capacity.adoc#add-back-the-upgraded-node-and-remove-another-node[Add Back the Upgraded Node, and Remove Another Node], xref:install:upgrade-cluster-online-reduced-capacity.adoc#repeat-stages-three-and-four[Repeat Stages Three and Four], and xref:install:upgrade-cluster-online-reduced-capacity.adoc#add-back-the-last-node[Add Back the Last Node].
+
 Proceed as follows:
 
-. Back up all cluster-data.
+[#prepare-the-cluster]
+=== Stage One: Prepare the Cluster
+
+Back up all cluster-data.
 This can be performed either with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service]; and should be a _full_ (rather than an incremental) backup.
 +
 For example, to use `cbbackupmgr` to configure an archive and repository for the backup, a command of the following form should be entered:
@@ -63,11 +68,15 @@ The `full-backup` flag ensures that the backup is indeed a _full_ backup.
 +
 For the equivalent procedure as performed by the Backup Service, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#run-an-immediate-backup[Run an Immediate Backup].
 
+[#remove-a-node]
+=== Stage Two: Remove a Node
+
 . Remove a node from the cluster.
 +
 This node will function as a _spare_ node; allowing _swap rebalance_ to be performed on each successive node to be upgraded; and in consequence, the cluster will continue to serve data with reduced capacity.
 For information, see xref:install:upgrade-strategies.adoc#using-spare-nodes[Using Spare Nodes].
 +
+For examples of removing a node, see xref:manage:manage-nodes/remove-node-and-rebalance.adoc[Remove a Node and Rebalance].
 To remove a node with the Couchbase CLI, a command such as the following can be used:
 +
 [source,bash]
@@ -82,7 +91,17 @@ The `NODE_HOSTNAME_OR_IP` is the IP address or domain name of the node that is t
 +
 For a full description of steps whereby nodes can be removed from the cluster &#8212; using the UI, CLI, and REST API &#8212; see xref:manage:manage-nodes/remove-node-and-rebalance.adoc[Remove a Node and Rebalance].
 
-. Stop the `couchbase-server.service` service, on the node that has been removed.
+. Perform a rebalance of the cluster.
+For details of rebalancing following node-removal, see see xref:manage:manage-nodes/remove-node-and-rebalance.adoc[Remove a Node and Rebalance].
++
+From this point until the end of the cluster-upgrade process, the online cluster continues to serve data with its current number of nodes, which is one less the previously.
+
+[#upgrade-the-removed-node]
+=== Stage Three: Upgrade the Removed Node
+
+Upgrade the node that has just been removed, by proceeding as follows:
+
+. Stop the `couchbase-server.service` service, on the node.
 Enter the following command:
 +
 ----
@@ -134,7 +153,6 @@ apt autoremove --purge couchbase-server
 --
 ====
 
-
 . Manually remove files from `/opt/couchbase`.
 This folder contains configuration files for the previous server-version; which need to be overwritten by configuration files for the new version.
 If the administrator has manually included in this folder any files that were not provided by Couchbase Server, and need to be retained, these should be individually identified and backed up with with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
@@ -147,11 +165,14 @@ Enter the following command:
 rm -r /opt/couchbase
 ----
 
-. Install Couchbase Server.
+. Determine whether any other files, still resident on the node, need to be either removed, or backed up and removed.
+If such files exist, deal with them accordingly.
+
+. Install Couchbase Server on the node.
 Follow the per platform instructions provided in xref:install:install-intro.adoc[Install].
 
-. Put automated Couchbase-Server updates for the node on _hold_.
-This ensures that no further upgrade can occur to this node until the next time the administrator manually performs the process.
+. _Pin_ (or _hold_) automated Couchbase-Server updates for the node.
+This ensures that no further upgrade can occur to this node until the next time the administrator electively performs the process.
 +
 [{tabs}]
 ====
@@ -197,18 +218,30 @@ To restart the service, enter the following command:
 systemctl start couchbase-server.service
 ----
 
-. _Add_ the upgraded spare node to the cluster, and _remove_ a node that is currently part of the cluster.
+[#add-back-the-upgraded-node-and-remove-another-node]
+=== Stage Four: Add Back the Upgraded Node, and Remove Another Node
+
+. _Add_ the upgraded, removed node back into the cluster, and _remove_ a node that is currently part of the cluster.
 +
-During the configuration routine, give the node that is being added the same configuration as that of the node that is to be removed.
+During the addition routine, configure the node that is being added to run the same service as that running on the node that is to be removed.
 For example, if the node to be removed is running the Data Service, configure the node to be added to run the Data Service.
-When addition and removal are complete, perform a rebalance.
-Couchbase Server will perform the rebalance as a _swap rebalance_, and so maximize the efficiency of the rebalance process.
+
+. When addition and removal are complete, perform a rebalance.
+Couchbase Server will execute the rebalance as a _swap rebalance_, to maximize efficiency.
 +
 For an overview of node-removal, see xref:learn:clusters-and-availability/removal.adoc[Removal]; and for practical examples of performing removal, see xref:manage:manage-nodes/remove-node-and-rebalance.adoc.
 For an overview of node-addition, see xref:learn:clusters-and-availability/nodes.html#clusters[Clusters]; and for practical examples of node-addition, see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
-(Note that in the current procedure, no rebalance should be performed until both the addition and the removal are complete.
+(Note that in the current procedure, no rebalance should be performed until both addition and removal are complete.
 
-. Upgrade the newly removed node in the same way as described above.
-Then, repeat the process of addition and removal; and upgrade the next removed node; and so continue.
+[#repeat-stages-three-and-four]
+=== Stage Five: Repeat Stages Three and Four
+
+Repeat xref:install:upgrade-cluster-online-reduced-capacity.adoc#upgrade-the-removed-node[Stage Three: Upgrade the Removed Node] and xref:install:upgrade-cluster-online-reduced-capacity.adoc#add-back-the-upgraded-node-and-remove-another-node[Stage Four: Add Back the Upgraded Node, and Remove Another Node] until all nodes have been upgraded and added back into the cluster, except one.
+
+[#add-back-the-last-node]
+=== Stage Six: Add Back the Last Node
+
 When the last node to be upgraded has been upgraded, add this node back into the cluster without removing any other node; and perform a rebalance.
+This will be executed by Couchbase Server as a _full_ rebalance.
+
 The cluster is now fully upgraded, and is at full capacity.
