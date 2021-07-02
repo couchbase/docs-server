@@ -1,4 +1,4 @@
-= Upgrade an Online, Full-Capacity, Multi-Node Cluster
+= Upgrade a Full-Capacity Online Cluster 
 
 :description: A cluster can be upgraded while still online; and maintained at full capacity.
 //:page-aliases: install:upgrade-strategy-for-features
@@ -15,11 +15,7 @@ It also explains how, if additional nodes are available, the procedure can be co
 
 The precise steps for this procedure are detailed on this page, below.
 A full understanding of the information in xref:install:upgrade-strategies.adoc[Upgrade-Procedure Selection] should be acquired, before proceeding.
-
-[#perform-upgrade-with-full-capacity]
-== Perform a Full-Capacity Upgrade
-
-The following procedure assumes that:
+The procedure assumes that:
 
 * The cluster to be upgraded must continue to serve data throughout the cluster-upgrade process.
 
@@ -35,50 +31,64 @@ For information on _swap rebalance_, see xref:install:upgrade-strategies.adoc#sw
 
 * Nodes will be upgraded _one at a time_.
 
-Proceed as follows:
+The overall procedure is described in seven stages, below.
 
-. Install the latest version of Couchbase Server on the spare node.
+[#prepare-a-spare-node]
+== Stage One: Prepare a Spare Node
+
+Install the latest version of Couchbase Server on the spare node.
 For instructions, see xref:install:install-intro.adoc[Install]; and follow steps 1, 2, and 3.
 
-. Back up all cluster-data.
+[#prepare-the-cluster]
+== Stage Two: Prepare the Cluster
+
+Back up all cluster-data.
 This can be performed either with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service]; and should be a _full_ (rather than an incremental) backup.
-+
+
 For example, to use `cbbackupmgr` to configure an archive and repository for the backup, a command of the following form should be entered:
-+
+
 [source,bash]
 ----
 cbbackupmgr config --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME}
 ----
-+
+
 Here, `ABS_PATH_TO_ARCHIVE` is an absolute path to a filesystem location that will serve as the archive within which the backed up data will reside.
 The `REPO_NAME` is the name of the repository that will be associated with the location.
-+
+
 Once the archive and repository have been created, a command such as the following performs a full backup:
-+
+
 [source,bash]
 ----
 cbbackupmgr backup --archive ${ABS_PATH_TO_ARCHIVE} --repo ${REPO_NAME} \
 --cluster ${CLUSTER_ADDRESS} --username ${USERNAME} --password ${PASSWORD} \
 --full-backup
 ----
-+
+
 Here, the `CLUSTER_ADDRESS` is the IP address or domain name of the cluster that is being backed up.
 The `full-backup` flag ensures that the backup is indeed a _full_ backup.
-+
+
 For the equivalent procedure as performed by the Backup Service, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#run-an-immediate-backup[Run an Immediate Backup].
 
-. _Add_ the upgraded spare node to the cluster, and _remove_ a node that is currently part of the cluster.
-+
+[#add-and-remove-a-node]
+== Stage Three: Add the Spare Node, and Remove a Node
+
+_Add_ the spare node to the cluster, and _remove_ a node that is currently part of the cluster.
+
 For an overview of node-removal, see xref:learn:clusters-and-availability/removal.adoc[Removal]; and for practical examples of performing removal, see xref:manage:manage-nodes/remove-node-and-rebalance.adoc[Remove a Node and Rebalance].
 For an overview of node-addition, see xref:learn:clusters-and-availability/nodes.adoc#clusters[Clusters]; and for practical examples of node-addition, see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
-+
+
 Note that in this case, no rebalance should be performed until both the addition and the removal are complete.
-+
+
 During node-addition, the added node should be given the same configuration as the node to be removed: this ensures that when the subsequent rebalance occurs, Couchbase Server implements it as a _swap rebalance_; which results in the most efficient rebalance.
 For example, if the node to be removed is running the Data Service, the node to be added should be configured to run the Data Service; and if the node to be removed is running the Search Service, the node to be added should be configured to run the Search Service.
 If multiple services are running on the node to be removed, the same services should be configured to run on the added node.
 
-. Stop the `couchbase-server.service` service, on the node that has been removed.
+[#upgrade-the-removed-node]
+== Stage Four: Upgrade the Removed Node
+
+Upgrade the node that has just been removed, by proceeding as follows:
+
+. Stop the `couchbase-server.service` service, on the node.
 Enter the following command:
 +
 ----
@@ -86,6 +96,13 @@ systemctl stop couchbase-server.service
 ----
 +
 This _stops_ the service; and so allows it to be restarted after reboot.
+Note that, optionally, at this point, the service can also be _disabled_; which prevents it from restarting after reboot.
+This may be useful if additional tasks, such as OS upgrade, need to be performed.
+If such disabling is desired, enter the following command:
++
+----
+systemctl disable --now couchbase-server.service
+----
 
 . Back up the configuration files for the removed node.
 On a Linux system, these files are to be found in `/opt/couchbase/var/lib/couchbase/config`.
@@ -127,19 +144,20 @@ apt autoremove --purge couchbase-server
 This folder contains configuration files for the previous server-version; which need to be overwritten by configuration files for the new version.
 If the administrator has manually included in this folder any files that were not provided by Couchbase Server, and need to be retained, these should be individually identified and backed up with with xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] or with the xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
 +
-Note that, based on settings made for this node when it was originally added or joined to the cluster, `/opt/couchbase` may also have contained _user data_, in the form of xref:learn:buckets-memory-and-storage/vbuckets.adoc[vBuckets]: however, since this node has been rebalanced out of the cluster, user data has been automatically copied off this node onto nodes that still remain in the cluster, as appropriate; and therefore, on this node, the folder `/opt/couchbase` now contains no user-data that needs to be manually backed up.
-+
 Enter the following command:
 +
 ----
 rm -r /opt/couchbase
 ----
 
-. Install Couchbase Server.
+. Determine whether any other files, still resident on the node, need to be either removed, or backed up and removed.
+If such files exist, deal with them accordingly.
+
+. Install Couchbase Server on the node.
 Follow the per platform instructions provided in xref:install:install-intro.adoc[Install].
 
-. Put automated Couchbase-Server updates for the node on _hold_.
-This ensures that no further upgrade can occur to this node until the next time the administrator manually performs the process.
+. _Pin_ (or _hold_) automated Couchbase-Server updates for the node.
+This ensures that no further upgrade can occur to this node until the next time the administrator electively performs the process.
 +
 [{tabs}]
 ====
@@ -170,21 +188,48 @@ apt-mark hold couchbase-server
 --
 ====
 
-. _Add_ the newly upgraded node back into the cluster, and _remove_ the previously added spare node.
+. Assuming that the `couchbase-server.service` service was _stopped_ on the node to be upgraded prior to that node's upgrade, restart the service.
++
+Note that if the service was also _disabled_, it must be _re-enabled_, prior to being started.
+To re-enable the service, if necessary, enter the following command:
++
+----
+systemctl enable --now couchbase-server.service
+----
++
+To restart the service, enter the following command:
++
+----
+systemctl start couchbase-server.service
+----
+
+[#add-back-the-upgraded-node-and-remove-another-node]
+== Stage Five: Add Back the Upgraded Node, and Remove Another Node
+
+Proceed as follows:
+
+. _Add_ the upgraded, removed node back into the cluster, and _remove_ a node that is currently part of the cluster.
++
+During the addition routine, configure the node that is being added to run the same service as that running on the node that is to be removed.
+For example, if the node to be removed is running the Data Service, configure the node to be added to run the Data Service.
+
+. When addition and removal are complete, perform a rebalance.
+Couchbase Server will execute the rebalance as a _swap rebalance_, to maximize efficiency.
 +
 For an overview of node-removal, see xref:learn:clusters-and-availability/removal.adoc[Removal]; and for practical examples of performing removal, see xref:manage:manage-nodes/remove-node-and-rebalance.adoc.
-For an overview of node-addition, see xref:learn:clusters-and-availability/nodes.adoc#clusters[Clusters]; and for practical examples of node-addition, see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
-+
-Note that in this case, no rebalance should be performed until both the addition and the removal are complete.
-When the rebalance is performed, it is performed by Couchbase Server as a _swap rebalance_; confining rebalance activities only to the two nodes affected, and therefore heightening efficiency.
+For an overview of node-addition, see xref:learn:clusters-and-availability/nodes.html#clusters[Clusters]; and for practical examples of node-addition, see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
+(Note that in the current procedure, no rebalance should be performed until both addition and removal are complete.
 
-. _Add_ the spare node back into the cluster, and remove a non-upgraded node that is currently part of the cluster.
-During the configuration routine, give the node that is being added the same configuration as that of the node that is to be removed.
-For example, if the node to be removed is running the Data Service, configure the node to be added to run the Data Service.
-When addition and removal are complete, perform a rebalance.
-Couchbase Server will perform the rebalance as a _swap rebalance_, and so maximize the efficiency of the rebalance process.
-+
-All previous configuration and other data on the added spare node are deleted by the process of addition.
+[#repeat-stages-three-and-four]
+== Stage Six: Continually Repeat Stages Four and Five
 
-. Upgrade the newly removed node as previously.
-Continue to upgrade nodes in this way until the cluster is fully upgraded.
+Upgrade the newly removed node as described above, in xref:install:upgrade-cluster-online-full-capacity.adoc#upgrade-the-removed-node[Stage Four: Upgrade the Removed Node].
+Then, add the upgraded node back into the cluster, and remove another node to be upgraded: as described above, in xref:install:upgrade-cluster-online-full-capacity.adoc#add-back-the-upgraded-node-and-remove-another-node[Stage Five: Add Back the Upgraded Node, and Remove Another Node].
+
+Continue to remove, upgrade, and restore nodes in this way; until the cluster is fully upgraded, and only the spare node remains outside the cluster.
+
+[#add-back-the-last-node]
+== Stage Seven: Repurpose the Spare Node
+
+One the cluster has been fully upgraded, the spare node can be repurposed.
+This concludes the overall cluster-upgrade process.
