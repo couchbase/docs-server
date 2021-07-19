@@ -43,32 +43,173 @@ These keywords are optional; you may include one of these keywords, or omit them
 == Examples
 
 [[ex-1]]
-.Commit a transaction -- cbq shell
+.Commit a Transaction
 ====
-.Request
-[source,console]
+If you want to try this example, refer to {transactions}[N1QL Support for Couchbase Transactions] to set up your environment.
+
+.Transaction
+[source,n1ql]
 ----
-cbq> COMMIT TRANSACTION;
+BEGIN WORK;
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+UPSERT INTO test VALUES("abc2", {"a":1});
+SAVEPOINT s1; -- <.>
+UPDATE test AS d SET d.b = 10 WHERE d.a > 0; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+SAVEPOINT s2; -- <.>
+UPDATE test AS d SET d.b = 10, d.c = "xyz" WHERE d.a > 0; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+ROLLBACK TRAN TO SAVEPOINT s2; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+COMMIT WORK; -- <.>
 ----
+
+<.> Set a savepoint.
+<.> Update the specified documents in the `test` keyspace to include a second attribute `b`.
+<.> Set a second savepoint.
+<.> Update the specified documents in the `test` keyspace to include a third attribute named `c`.
+<.> Roll back the transaction to the second savepoint.
+<.> Commit the transaction.
+
+.Results
+[source,json]
+----
+[
+  {
+    "_sequence_num": 1,
+    "_sequence_query": "BEGIN WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "txid": "d9dcc721-321b-42d2-825f-a623eefc28b6"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 2,
+    "_sequence_query": "\nUPSERT INTO test VALUES(\"abc2\", {\"a\":1});",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 3,
+    "_sequence_query": "\nSAVEPOINT s1;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 4,
+    "_sequence_query": "\nUPDATE test AS d SET d.b = 10 WHERE d.a > 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 5,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10, // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 6,
+    "_sequence_query": "\nSAVEPOINT s2;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 7,
+    "_sequence_query": "\nUPDATE test AS d SET d.b = 10, d.c = \"xyz\" WHERE d.a > 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 8,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10,
+        "c": "xyz", // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 9,
+    "_sequence_query": "\nROLLBACK TRAN TO SAVEPOINT s2;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 10,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10, // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 11,
+    "_sequence_query": "\nCOMMIT WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  }
+]
+----
+
+<.> Before setting the second savepoint, the `abc2` document has two attributes: `a` and `b`.
+<.> After setting the second savepoint and performing an update, the `abc2` document has three attributes: `a`, `b`, and `c`.
+<.> After rolling back to the second savepoint, the `abc2` document again has only two attributes: `a` and `b`.
 ====
 
 [[ex-2]]
-.Commit a transaction -- REST API
+.Check the result of <<ex-1>>
 ====
-.CURL request
-[source,console]
+Check the result of committing the transaction.
+
+.Query
+[source,n1ql]
 ----
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "COMMIT TRANSACTION",
-  "pretty": true,
-  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51" // <.>
-}'
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
 ----
 
-<.> The transaction ID generated when the transaction began.
+.Results
+[source,json]
+----
+[
+  {
+    "a": 1,
+    "b": 10,
+    "id": "abc2"
+  }
+]
+----
+
+Notice the `abc2` document has been added with the attributes that were present when the transaction was committed.
 ====
 
 == Related Links
