@@ -3,6 +3,8 @@
 :page-status: Couchbase Server 7.0
 :imagesdir: ../../assets/images
 :description: N1QL offers full support for Couchbase ACID transactions.
+:tabs:
+:page-partial:
 
 // Cross-references
 :insert: xref:n1ql:n1ql-language-reference/insert.adoc
@@ -15,6 +17,7 @@
 :prepare: xref:n1ql:n1ql-language-reference/prepare.adoc
 :execute: xref:n1ql:n1ql-language-reference/execute.adoc
 :transactions: xref:learn:data/transactions.adoc
+:install-sample-buckets: xref:manage:manage-settings/install-sample-buckets.adoc
 :sys-transactions: xref:manage:monitor/monitoring-n1ql-query.adoc#sys-transactions
 :query-workbench: xref:tools:query-workbench.adoc
 :cbq-shell: xref:tools:cbq-shell.adoc
@@ -38,6 +41,7 @@
 :numatrs-srv: xref:settings:query-settings.adoc#numatrs-srv
 :queryNumAtrs: xref:settings:query-settings.adoc#queryNumAtrs
 :scan_consistency: xref:settings:query-settings.adoc#scan_consistency
+:durability_level: xref:settings:query-settings.adoc#durability_level
 :transactional-scan-consistency: xref:settings:query-settings.adoc#transactional-scan-consistency
 
 // Related links
@@ -79,6 +83,8 @@ Refer to the documentation for each parameter for more information and examples.
 
 * The {kvtimeout}[kvtimeout] request-level parameter specifies the maximum time to spend on a KV operation within a transaction before timing out.
 
+* The {durability_level}[durability_level] request-level specifies the transactional durability level.
+
 * The {txtimeout_req}[txtimeout] request-level parameter, {txtimeout-srv}[txtimeout] node-level setting, and {queryTxTimeout}[queryTxTimeout] cluster-level setting specify the maximum time to spend on a transaction before timing out.
 
 * The {atrcollection_req}[atrcollection] request-level parameter and {atrcollection-srv}[atrcollection] node-level setting specify where the active transaction record is stored.
@@ -98,7 +104,7 @@ To create a Couchbase transaction using N1QL, you can use any of the tools that 
 There are slight differences in the way these tools operate when creating Couchbase transactions.
 These are explained below.
 
-When using the Query Workbench:
+=== Couchbase Transactions with the Query Workbench
 
 * To execute a transaction containing multiple statements, compose the sequence of statements in the Query Editor.
 Each statement must be terminated with a semicolon.
@@ -110,7 +116,7 @@ You can then click btn:[Execute] to execute the transaction.
 * In either case, you do not need to specify the `txid` parameter or the `tximplicit` parameter.
 If you need to specify any other parameters for the Couchbase transaction, you can use the query run-time preferences window.
 
-When using the cbq shell:
+=== Couchbase Transactions with the cbq shell
 
 * To execute a transaction containing multiple statements, you can create the transaction one statement at a time.
 Once you have started a transaction, all statements within the cbq shell session are assumed to be part of the same transaction until you rollback or commit the transaction.
@@ -122,7 +128,7 @@ In this case, you do not need to specify the `txid` parameter either.
 
 * You can specify parameters for the Couchbase transaction using the `\SET` command.
 
-When using the Query REST API:
+=== Couchbase Transactions with the Query REST API
 
 * To execute a transaction containing multiple statements, you can create the transaction one statement at a time.
 Once you have started the transaction, you must set the `txid` parameter to specify the transaction to which each subsequent statement belongs.
@@ -139,199 +145,481 @@ For more information, refer to {sys-transactions}[system:transactions].
 
 == Worked Example
 
-This worked example guides you through a complete Couchbase transaction session using the {cbq-shell}[cbq shell].
-Note that you must be using cbq shell version 2.0 or above.
+This worked example guides you through a complete Couchbase transaction session.
 
 [[preparation]]
 === Preparation
 
-. Start the cbq shell and connect to the Couchbase cluster.
-+
-[source,shell]
-----
-$ cbq -e http://localhost:8091 -u Administrator -p password
-----
+The worked example assumes that the supplied `travel-sample` bucket is installed.
+Refer to {install-sample-buckets}[Sample Buckets] for installation details.
 
-. For the purposes of this worked example, create a temporary keyspace called `test`.
+[discrete]
+===== Durability
+
+In order to meet transaction durability requirements, the bucket must be replicated to at least one other Data node.
+If the bucket is not replicated to any other data nodes, you must turn off replication for this bucket to be able to commit the transaction.
+
+[{tabs}]
+====
+Couchbase Web Console::
 +
-For example, if you have already installed the `travel-sample` bucket, create a scope called `transaction` within that bucket, and then create a collection called `test` within that scope. Note that "transaction" is a reserved N1QL keyword, so the name of the `transaction` scope must be delimited with backticks `{backtick}{backtick}`.
+--
+. In the Couchbase Web Console, click the *Buckets* menu title.
+
+. Click *travel-sample* to expand the options for the `travel-sample` bucket.
+
+. In the *travel-sample* bucket options, click btn:[Edit].
+
+. When the Edit Bucket Settings window appears, click *Advanced bucket settings* to expand the options.
+
+. Under *Replicas*, make sure the *Enable* check box is empty.
+  If it isn't, click the check box to clear it.
+
+. Choose btn:[Save Changes] to save the changes.
+
+. You now need to rebalance the servers.
+  Click the *Servers* menu title.
+
+. Click btn:[Rebalance] and wait for the rebalance to finish.
+--
+====
+
+[discrete]
+===== Keyspace
+
+For the purposes of this worked example, you must create a temporary keyspace and set the query context.
+
+[{tabs}]
+====
+Query Workbench::
 +
-[source,shell]
+--
+// tag::common[]
+. Create a scope called `transaction` within the `travel-sample` bucket, and then create a collection called `test` within that scope.
+Note that "transaction" is a reserved N1QL keyword, so the name of the `transaction` scope must be delimited with backticks `{backtick}{backtick}`.
++
+[source,n1ql]
 ----
-cbq> CREATE SCOPE `travel-sample`.`transaction`;
-cbq> CREATE COLLECTION `travel-sample`.`transaction`.test;
+CREATE SCOPE `travel-sample`.`transaction`;
+CREATE COLLECTION `travel-sample`.`transaction`.test;
 ----
 
 . Create a primary index on the `test` keyspace, so that you can query and update the documents in this keyspace.
 +
-[source,shell]
+[source,n1ql]
 ----
-cbq> CREATE PRIMARY INDEX ON `travel-sample`.`transaction`.test;
+CREATE PRIMARY INDEX ON `travel-sample`.`transaction`.test;
 ----
+// end::common[]
 
-. Set the default query context for the following statements, assuming that you have created the `test` collection within the `pass:c[`travel-sample`.`transaction`]` scope.
+. Set the default query context to `pass:c[`travel-sample`.`transaction`]`.
++
+image::query-workbench-context-tx.png["The query context drop-down menu, with 'travel-sample.transaction' selected"]
+--
+
+CBQ Shell::
++
+--
+include::transactions.adoc[tag=common]
+
+. Set the default query context to `pass:c[`travel-sample`.`transaction`]`.
 +
 [source,shell]
 ----
-cbq> \set -query_context `travel-sample`.`transaction`;
+\SET -query_context `travel-sample`.`transaction`;
 ----
+--
+====
 
-. If necessary, make sure the transaction timeout is set to a reasonably long duration, so that the transaction will not time out as you work through this worked example.
+[discrete]
+===== Parameters
+
+If necessary, set the transaction parameters for this worked example.
+
+[{tabs}]
+====
+Query Workbench::
 +
+--
+. Click the cog icon icon:cog[] to display the Run-Time Preferences window.
+
+. Open the *Scan Consistency* drop-down list and select *not_bounded*.
+
+. In the *Transaction Timeout* box, enter `120`.
+
+. Choose btn:[Save Preferences] to save the preferences and return to the Query Workbench.
+
+To specify the durability level, you could enter it as a named parameter.
+For this worked example, make sure there is no named parameter called `durability_level`, so that the durability level defaults to `"majority"`.
+--
+
+CBQ Shell::
++
+--
+Set the following parameters.
+
 [source,shell]
 ----
-cbq> \set -txtimeout "30m";
+\SET -txtimeout "2m"; -- <.>
+\SET -scan_consistency "not_bounded"; -- <.>
+\SET -durability_level "majority"; -- <.>
 ----
+
+<.> The transaction timeout.
+<.> The transaction scan consistency.
+No scan consistency is set for individual statements within the transaction; they inherit from the transaction scan consistency.
+<.> Durability level of all the mutations within the transaction.
+--
+====
 
 === Transaction
 
-. Start the transaction.
-+
-[source,shell]
+[[ex-1]]
+.Transaction using the Query Workbench or cbq shell
+====
+Copy the entire sequence below and paste it into either the {query-workbench}[Query Workbench] or the {cbq-shell}[cbq shell].
+Note that you must be using cbq shell version 2.0 or above.
+
+.Transaction
+[source,n1ql]
 ----
-cbq> BEGIN WORK;
+BEGIN WORK; -- <.>
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED; -- <.>
+UPSERT INTO test VALUES("abc2", {"a":1}); -- <.>
+SAVEPOINT s1; -- <.>
+UPDATE test AS d SET d.b = 10 WHERE d.a > 0; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0; -- <.>
+SAVEPOINT s2; -- <.>
+UPDATE test AS d SET d.b = 10, d.c = "xyz" WHERE d.a > 0; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0; -- <.>
+ROLLBACK TRAN TO SAVEPOINT s2; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0; -- <.>
+COMMIT WORK; -- <.>
 ----
-+
-Notice the statement returns a transaction ID.
-Since you are using the cbq shell, all statements within this session are assumed to be part of this transaction until you rollback or commit the transaction.
-+
+
+<.> Start the transaction.
+<.> Specify transaction settings.
+<.> Create a document in the `test` keyspace with the ID `abc2`, containing a single attribute `a`.
+<.> Set a savepoint.
+<.> Update the specified documents in the `test` keyspace to include a second attribute `b`.
+<.> Check the content of the specified documents in the `test` keyspace.
+<.> Set a second savepoint.
+<.> Update the specified documents in the `test` keyspace to include a third attribute named `c`.
+<.> Check the content of the specified documents in the `test` keyspace.
+<.> Roll back the transaction to the second savepoint.
+<.> Check the content of the specified documents in the `test` keyspace again.
+<.> Commit the transaction.
+
+The results of running the transaction in the Query Workbench are shown below.
+If you are using the cbq shell, the results are formatted differently, but contain the same information.
+
+.Results
 [source,json]
 ----
 [
-    {
-        "txid": "6dfa9dd6-303f-4adc-a99f-e05a44485c45"
+  {
+    "_sequence_num": 1,
+    "_sequence_query": "BEGIN WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "txid": "d9dcc721-321b-42d2-825f-a623eefc28b6" // <.>
+      }
+    ]
+  },
+  {
+    "_sequence_num": 2,
+    "_sequence_query": "\nUPSERT INTO test VALUES(\"abc2\", {\"a\":1});",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
     }
-]
-----
-
-. Create a document in the `test` keyspace with the ID `abc2`, containing a single attribute `a`.
-+
-[source,shell]
-----
-cbq> INSERT INTO test VALUES("abc2", {"a":1});
-----
-
-. Set a savepoint:
-+
-[source,shell]
-----
-cbq> SAVEPOINT s1;
-----
-
-. Update the specified documents in the `test` keyspace to include a second attribute `b`.
-+
-[source,shell]
-----
-cbq> UPDATE test AS d SET d.b = 10 WHERE d.a > 0;
-----
-
-. Check the content of the specified documents in the `test` keyspace.
-+
-[source,shell]
-----
-cbq> SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
-----
-+
-Notice the `abc2` document now has two attributes: `a` and `b`.
-+
-[source,json]
-----
-[
-    {
+  },
+  {
+    "_sequence_num": 3,
+    "_sequence_query": "\nSAVEPOINT s1;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 4,
+    "_sequence_query": "\nUPDATE test AS d SET d.b = 10 WHERE d.a > 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 5,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10, // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 6,
+    "_sequence_query": "\nSAVEPOINT s2;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 7,
+    "_sequence_query": "\nUPDATE test AS d SET d.b = 10, d.c = \"xyz\" WHERE d.a > 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 8,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
         "a": 1,
         "b": 10,
+        "c": "xyz", // <.>
         "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 9,
+    "_sequence_query": "\nROLLBACK TRAN TO SAVEPOINT s2;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
     }
+  },
+  {
+    "_sequence_num": 10,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10, // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 11,
+    "_sequence_query": "\nCOMMIT WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  }
 ]
 ----
 
-. Set a second savepoint.
-+
-[source,shell]
+<.> Beginning a transaction returns a transaction ID.
+<.> Before setting the second savepoint, the `abc2` document has two attributes: `a` and `b`.
+<.> After setting the second savepoint and performing an update, the `abc2` document has three attributes: `a`, `b`, and `c`.
+<.> After rolling back to the second savepoint, the `abc2` document again has only two attributes: `a` and `b`.
+====
+
+[[ex-2]]
+.Check the results of <<ex-1>>
+====
+Check the result of committing the transaction.
+
+.Query
+[source,n1ql]
 ----
-cbq> SAVEPOINT s2;
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
 ----
 
-. Update the specified documents in the `test` keyspace to include a third attribute named `c`.
-+
-[source,shell]
-----
-cbq> UPDATE test AS d SET d.b = 10, d.c = "xyz" WHERE d.a > 0;
-----
-
-. Check the content of the specified documents in the `test` keyspace.
-+
-[source,shell]
-----
-cbq> SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
-----
-+
-Notice the `abc2` document now has three attributes: `a`, `b`, and `c`.
-+
+.Results
 [source,json]
 ----
 [
-    {
-        "a": 1,
-        "b": 10,
-        "c": "xyz",
-        "id": "abc2"
-    }
+  {
+    "a": 1,
+    "b": 10,
+    "id": "abc2"
+  }
 ]
 ----
 
-. Roll back the transaction to the second savepoint.
-+
-[source,shell]
+Notice the `abc2` document has been added with the attributes that were present when the transaction was committed.
+====
+
+.Transaction using the Query REST API
+====
+For reference, this example shows the equivalent of <<ex-1>> using the Query REST API.
+
+.Begin transaction and set parameters
+[source,console]
 ----
-cbq> ROLLBACK TRAN TO SAVEPOINT s2;
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "BEGIN WORK",
+  "query_context": "`travel-sample`.`transaction`",
+  "txtimeout": "2m",
+  "scan_consistency": "request_plus",
+  "durability_level": "majority"
+}'
 ----
 
-. Check the content of the specified documents in the `test` keyspace again.
-+
-[source,shell]
+.Specify transaction settings
+[source,console]
 ----
-cbq> SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
-----
-+
-Notice the `abc2` document again has only two attributes: `a` and `b`.
-+
-[source,json]
-----
-[
-    {
-        "a": 1,
-        "b": 10,
-        "id": "abc2"
-    }
-]
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "SET TRANSACTION ISOLATION LEVEL READ COMMITTED;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
 ----
 
-. Roll back the entire transaction.
-+
-[source,shell]
+.Create a document with the ID "abc2", containing a single attribute "a"
+[source,console]
 ----
-cbq> ROLLBACK WORK;
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "UPSERT INTO test VALUES(\"abc2\", {\"a\":1});",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
 ----
 
-. Check the content of the specified documents in the `test` keyspace again.
-+
-[source,shell]
+.Set a savepoint
+[source,console]
 ----
-cbq> SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "SAVEPOINT s1;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
 ----
-+
-Notice the `abc2` document no longer exists.
 
-=== Finishing Off
+.Update the specified documents to include a second attribute "b"
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "UPDATE test AS d SET d.b = 10 WHERE d.a > 0;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
 
-. You can now exit the cbq shell.
-+
-[source,shell]
+.Check the content of the specified documents
+[source,console]
 ----
-cbq> \quit;
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
 ----
+
+.Set a second savepoint
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "SAVEPOINT s1;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
+
+.Update the specified documents to include a third attribute named "c"
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "UPDATE test AS d SET d.b = 10, d.c = \"xyz\" WHERE d.a > 0;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
+
+.Check the content of the specified documents
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
+
+.Roll back the transaction to the second savepoint
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "ROLLBACK TRAN TO SAVEPOINT s2;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
+
+.Check the content of the specified documents again
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
+
+.Commit the transaction
+[source,console]
+----
+curl http://localhost:8093/query/service \
+-u Administrator:password \
+-H 'Content-Type: application/json' \
+-d '{
+  "statement": "COMMIT TRANSACTION",
+  "query_context": "`travel-sample`.`transaction`",
+  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
+}' # <.>
+----
+
+<.> After beginning the transaction, each subsequent statement in the transaction must specify the transaction ID that was generated when the transaction began.
+====
 
 == Related Links
 
-* Blog post: https://blog.couchbase.com/transactions-n1ql-couchbase-distributed-nosql/[N1QL Support for Couchbase Transactions^].
+* Blog post: https://blog.couchbase.com/transactions-n1ql-couchbase-distributed-nosql/[Couchbase Transactions: Elastic, Scalable, and Distributed^].
