@@ -5,18 +5,21 @@
 *Goal*: Purge a document automatically based on self-contained start and duration fields.
 
 * This function *docControlledSelfExpiry* demonstrates self-expiry of a document for example a user trial.
-* Requires a metadata bucket and a source bucket.
-* The source bucket must be named "source" and the Function needs a bucket alias of "src_bkt" in mode read+write.
+* Requires Eventing Storage (or metadata collection) and a "source" collection.
+* Needs a Binding of type "bucket alias" (as documented in the Scriptlet).
 * When documents are created, they will have no expiration value. This function processes the initial mutation to calculate and set the proper TTL.
 * In Couchbase, when using a simple integer expiry value (as opposed to a proper date or time object), the expiration can be specified in two ways:
 ** As an offset from the current time. If the absolute value of the expiry is less than 30 days (60 * 60 * 24 * 30 seconds), it is considered an offset.
 ** As an absolute Unix time stamp. If the value is greater than 30 days (60 * 60 * 24 * 30 seconds), it is considered an absolute time stamp.
+** As described in xref:learn:buckets-memory-and-storage/expiration.adoc[Expiration], if a "Bucket Max Time-To-Live" is set (specified in seconds), it is an enforced hard upper limit. As such, any subsequent document mutation (by N1QL, Eventing, or any Couchbase SDK) will result in the document having its expiration adjusted and set to the bucket’s maximum TTL if the operation has: 
+*** No TTL.
+*** A TTL of zero.
+*** A TTL greater than the bucket TTL.
 * Will operate on any document with type == "trial_customers".
 * Will ignore any doc with a non-zero TTL (prevents infinite recursion)
 * Uses the _N1QL(...)_ function to update the source bucket instead of an inline N1QL statement because inline N1QL is prohibited from updating the source bucket of an Eventing handler to prevent infinite recursion scenarios.
 * The recursion from the N1QL(...) statement is ignored via the _if (meta.expiration !== 0) { ... }_ filter.
 * This is different than setting a TTL on a bucket which will typically update (or extend) the TTL of a document on each mutation.
-
 
 WARNING: You must use the function _N1QL(...)_ with great caution when updating the source bucket of your Eventing handler as you can easily create infinite  recursion which may crash your server.
 
@@ -28,8 +31,37 @@ WARNING: You must use the function _N1QL(...)_ with great caution when updating 
 docControlledSelfExpiry::
 +
 --
+Two variants of this function are available: a 6.6 version (*this Function*) that relies on N1QL, and a 6.6.1 version that directly sets the expiration.  
+Using _N1QL(...)_ is much slower than using _couchbase.replace(bucket_binding, meta, doc)_ in the advancedDocControlledSelfExpiry variant.
+
+* <<docControlledSelfExpiry,docControlledSelfExpiry (indirect TTL via N1QL)>>
+* xref:eventing-handler-advanced-docControlledSelfExpiry.adoc[advancedDocControlledSelfExpiry (direct TTL)]
+
+[#docControlledSelfExpiry]
+docControlledSelfExpiry (indirect TTL via N1QL)
+
 [source,javascript]
 ----
+// To run configure the settings for this Function, docControlledSelfExpiry, as follows:
+//
+// Version 7.0+
+//   "Listen to Location" 
+//     bulk.data.source 
+//   "Eventing Storage" 
+//     rr100.eventing.metadata 
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket.scope.collection", "Access"
+//       "bucket alias", "src_col",       "bulk.data.source",        "read and write"
+//
+// Version 6.X
+//   "Source Bucket" 
+//     source 
+//   "MetaData Bucket" 
+//     metadata 
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket",     "Access"
+//       "bucket alias", "src_col",       "source", "read and write"
+
 function OnUpdate(doc, meta) {
     // Filter items that don't have been updated, this also stops
     // any recursion when we update meta.expiration via N1QL(...) 
@@ -55,9 +87,9 @@ function OnUpdate(doc, meta) {
     if( nowMs >= (docTimeStampMs + keepDocForMs) ) {
         
         // Delete the document form the source bucket via the map alias
-        delete src_bkt[meta.id];
+        delete src_col[meta.id];
         
-        log(meta.id, "DELETE from src_bkt to dst_bkt alias as our expiration " +
+        log(meta.id, "DELETE from src_col to dst_bkt alias as our expiration " +
             new Date(docTimeStampMs + keepDocForMs).toString()) + " is already past";
     } else {
         var key = meta.id;
@@ -65,7 +97,7 @@ function OnUpdate(doc, meta) {
         var	ttlMs = docTimeStampMs + keepDocForMs;
 
         // Use N1QL to write back a non-zero TTL to the document hear we actually 
-        // have to use the real bucket name "source" instead of the alias src_bkt 
+        // have to use the real bucket name "source" instead of the alias src_col 
         // as we are using N1QL. This will cause recursion but it will be ignored 
         // since we ignore all non-zero TTLs
         
@@ -80,7 +112,7 @@ function OnUpdate(doc, meta) {
             N1QL(stmt);
             
             // Future in 6.6.1+ we can avoid N1QL via Eventing's new Advanced Bucket Ops
-            // couchbase.replace(src,{"id":meta.id,"expiration":Math.floor(ttlMs/1000)},doc);
+            // couchbase.replace(src_col,{"id":meta.id,"expiry_date":new Date(ttlMs)},doc);
         }
     }
 }
@@ -93,11 +125,11 @@ Input Data/Mutation::
 
 We want to create a test set of four (4) documents, use the Query Editor to insert the the data items (you do not need an index).
 
-Note, if the today is past 2020-09-24 just change the `trialStartDate` for the last two records to at least 90 days from now.
+Note, if the today is past 08-25-2021 (MM-DD-YYYY) just change the `trialStartDate` for the last two records to at least 90 days from now.
 
 [source,n1ql]
 ----
-  INSERT INTO `source` (KEY,VALUE)
+  INSERT INTO `bulk`.`data`.`source` (KEY,VALUE)
   VALUES ( "trial_customers::0", {
     "type": "trial_customers",
     "id": 0,
@@ -117,7 +149,7 @@ Note, if the today is past 2020-09-24 just change the `trialStartDate` for the l
   {
     "type": "trial_customers",
     "id": 2,
-    "trialStartDate": "08-25-2020",
+    "trialStartDate": "08-25-2021",
     "trialDurationDays": 30,
     "note": "this will get an exiration set"
   } ),
@@ -125,7 +157,7 @@ Note, if the today is past 2020-09-24 just change the `trialStartDate` for the l
   {
     "type": "trial_customers",
     "id": 3,
-    "trialStartDate": "08-26-2020",
+    "trialStartDate": "08-26-2021",
     "trialDurationDays": 60,
     "note": "this will get an exiration set"
   } );
@@ -143,7 +175,7 @@ NEW/OUTPUT: KEY trial_customers::2
   "id": 2,
   "note": "this will get an exiration set",
   "trialDurationDays": 30,
-  "trialStartDate": "08-25-2020",
+  "trialStartDate": "08-25-2021",
   "type": "trial_customers"
 }
 
@@ -153,7 +185,7 @@ NEW/OUTPUT: KEY trial_customers::3
   "id": 3,
   "note": "this will get an exiration set",
   "trialDurationDays": 60,
-  "trialStartDate": "08-26-2020",
+  "trialStartDate": "08-26-2021",
   "type": "trial_customers"
 }
 
@@ -161,8 +193,8 @@ We end up with two (2) of the four documents (obviously you may need to adjust t
 
 * "trial_customers::0" was deleted 
 * "trial_customers::1" was deleted 
-* "trial_customers::2" has an meta.expiration set for 1600930800 (or 2020-09-24 07:00:00 UTC) in it's metadata 
-* "trial_customers::3" has an meta.expiration set for 1603609200 (or 2020-10-25 07:00:00 UTC) in it's metadata 
+* "trial_customers::2" has an meta.expiration set for 1632466800 (or 2021-09-24 07:00:00 UTC) in it's metadata 
+* "trial_customers::3" has an meta.expiration set for 1635145200 (or 2021-10-25 07:00:00 UTC) in it's metadata 
 ----
 --
 ====

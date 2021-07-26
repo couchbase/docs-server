@@ -1,7 +1,8 @@
 = Timers
 :page-edition: Enterprise Edition
 
-Timers are asynchronous compute, which offers Eventing Functions the ability to execute in reference to wall-clock events. Timers also measure and track the amount of elapsed time and can be used while archiving of expired documents at a preconfigured time.
+Timers are asynchronous compute, which offers Eventing Functions the ability to execute in reference to wall-clock events.
+Timers also measure and track the amount of elapsed time and can be used while archiving of expired documents at a preconfigured time.
 
 NOTE: When using timers, it is required that all nodes of the cluster are synchronized at computer startup, and periodically afterwards using a clock synchronization tool like NTP.
 
@@ -11,21 +12,21 @@ A few important aspects related to timers are listed below:
 * Timers may run on a different node than the one on which it was created.
 * One execution of timers is guaranteed despite node failures and cluster rebalances.
 * During Function backlogs, timers get eventually executed.
-* The Metadata bucket (or Eventing Storage bucket) stores information about timers and its association with an Eventing Function's handler.
-* Ensure that the metadata bucket is not deleted or flushed, or the keys in metadata bucket get updated.
+* The Eventing Storage (or Metadata) collection stores information about timers and its association with an Eventing Function's handler.
+* Ensure that the Eventing Storage collection is not deleted or flushed, or the keys in Eventing Storage collection get updated.
 * Each active timer an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed. Where the context by default is not larger than 1024 bytes.
 * Timers are represented by two documents in KV plus a common tiny root document for that is shared among 1-N timers scheduled to fire in the same 7 second period of time.. Thus two or three inserts and then two or three deletes must be performed in KV for each timer (regardless if the timer is ultimately fired or canceled). 
-* The default timer context size, "timer_context_size", can be increased globally via the REST API through version 6.6.1. 
-* Starting with 6.6.2 timer context size may be adjusted up or down on a per Function handler basis in the Function's settings. [.status]#Couchbase Server 6.6.2#
-* With an increase in the usage of timers, the Metadata bucket's space assignment must also be increased to accommodate all active timers and any potential backlog. If the use-case mandates large numbers of timers in the system, it is required that the space assigned to the metadata bucket be suitably high as well.
+* The timer context size may be adjusted up or down on a per Function handler basis in the Function's settings.
+* With an increase in the usage of timers, the Eventing Storage collection's space assignment must also be increased to accommodate all active timers and any potential backlog. If the use-case mandates large numbers of timers in the system, it is required that the space assigned to the Eventing Storage collection be suitably high as well.
 * Due to runtime or programmatic errors in the Function handler code, if triggering of a timer fails, then timer execution may get permanently blocked.
-* Bindings for bucket-aliases can be reused in timers. Bucket-aliases, created during the Eventing Function definition, can be accessed by the timer constructs in the handler code.
+* Bindings for Bucket aliases to keyspaces can be reused in timers. Bucket aliases, created during the Eventing Function definition, can be accessed by the timer constructs in the handler code.
 * Timers get deleted (and thus all KV documents that define them) when the associated Function is deleted or undeployed.
 
 == The Timer Construct
 
 The Timers language construct is added to support requirements of Couchbase Eventing Functions.
 
+[#createtimer-function]
 To create a timer use the below syntax:
 
 ----
@@ -36,10 +37,11 @@ In the createTimer syntax:
 * callback - This function is called when the timer fires. The callback function must be a top-level function that takes a single argument, the context (see below).
 * date - This is a JavaScript Date object representing the time for the timer to fire. The date of a timer must always be in future when the timer is created, otherwise the behavior is unspecified.
 * reference - This is a unique string that must be passed in to help identify the timer that is being created. References are always scoped to the function and callback they are used with and need to be unique only within this scope. The call returns the reference string if timer was created successfully. If multiple timers are created with the same unique reference, old timers with the same unique reference are implicitly cancelled. If the reference parameter is set to JavaScript null value, a unique reference will be generated.
-* context - This is any JavaScript object that can be serialized. The context specified when a timer is created is passed to the callback function when the timer fires. The default maximum size for Context objects is 1kB. Larger objects would typically be stored as bucket objects, and document key can be passed as context.
+* context - This is any JavaScript object that can be serialized. The context specified when a timer is created is passed to the callback function when the timer fires. The default maximum size for Context objects is 1kB. Larger objects would typically be stored as keyspace objects, and document key can be passed as context.
 * return value - If the reference parameter was null, this call returns the generated unique reference. Otherwise, the passed in reference parameter is the return value.
-* Exceptions Thrown - The createTimer() function throws an exception if the timer creation fails for an unexpected reason, such as an error writing to the metadata bucket.
+* Exceptions Thrown - The createTimer() function throws an exception if the timer creation fails for an unexpected reason, such as an error writing to the Eventing Storage collection.
 
+[#canceltimer-function]
 To cancel a timer you can either  use _createTimer()_ with the same reference of an existing timer or you can use the below syntax:
 
 ----
@@ -50,9 +52,9 @@ In the cancelTimer syntax:
 * callback - This function that was scheduled to be called when the timer fires, as supplied to the _createTimer()_ call that is now being cancelled.
 * reference - This is the reference that was either passed in to the createTimer() call, or generated and returned by the createTimer() call in response to a null value for the incoming reference parameter. 
 * return value - A boolean value indicating if the specified timer could be cancelled successfully. A false return value typically indicates the timer never existed or had already fired prior to the cancellation request.
-* Exceptions Thrown - The _cancelTimer()_ function throws an exception if the timer cancellation fails for an unexpected reason, such as an error writing to the metadata bucket. (Note that cancelling stale or non-existent timers will be treated as a no-op and will not throw an exception).
+* Exceptions Thrown - The _cancelTimer()_ function throws an exception if the timer cancellation fails for an unexpected reason, such as an error writing to the Eventing Storage collection. (Note that cancelling stale or non-existent timers will be treated as a no-op and will not throw an exception).
 * The cancelTimer operation will only deletes one of the two or three documents that define the timer in KV, the other two documents will be cleaned up when the original timer (and any peer timers) was scheduled to fire.
-* In 6.6.2 and beyond the cancelTimer operation will remove two of the possible three documents that define the timer in KV leaving only the tiny common root document that was shared among all timers scheduled to fire in a given seven second period. Again this final root document will be cleaned up when the original timer (and any peer timers) were initially scheduled to fire. [.status]#Couchbase Server 6.6.2#
+* the cancelTimer operation will remove two of the possible three documents that define the timer in KV leaving only the tiny common root document that was shared among all timers scheduled to fire in a given seven second period. Again this final root document will be cleaned up when the original timer (and any peer timers) were initially scheduled to fire.
 
 *Example use of createTimer and cancelTimer:*
 ----
@@ -66,7 +68,7 @@ In the sample function calls above:
 * meta.id is a generic reference string that can be used in the Couchbase cluster.
 * context is the JavaScript object that is used in the Function handler code.
 
-Below we will show a control document and a working Eventing Function that creates a Timer scheduled to execute 60 seconds in the future. When the Timer fires the callback will create a document in the alias 'dest_bucket' (which must be a 'read and write' binding to an existing bucket in the function).
+Below we will show a control document and a working Eventing Function that creates a Timer scheduled to execute 60 seconds in the future. When the Timer fires the callback will create a document in the alias 'dst_col' (which must be a 'read and write' binding to an existing collection in the function).
 
 Create a document with KEY type_of_interest::1 and DATA
 
@@ -85,8 +87,8 @@ Create an Eventing Function and deploy it (optionally adjust "cancel_timer" to t
 function DocTimerCallback(context) {
    log('From DocTimerCallback: timer fired', context);
 
-   // Create a new document as per our received context in another bucket
-   dest_bucket[context.docId] = context.random_text; // upsert a portion of the context
+   // Create a new document as per our received context in another collection
+   dst_col[context.docId] = context.random_text; // upsert a portion of the context
 }
 
 function OnUpdate(doc,meta) {
@@ -153,14 +155,6 @@ Couchbase currently scans for active timers every 7 seconds this creates a maxim
 However, if timer is created and scheduled to close the wall clock of the system Couchbase may delay the actual scheduling by an additional 1 to 2 scan periods (up to a 14 second delay after the scheduled time) to avoid races. 
 
 The additional overall delay is an implementation artifact and may change between releases.
-
-== Limitations
-
-In Couchbase Server 6.6.0 and later, Eventing timers offer the following improvements over previous versions:
-
-* Eventing timers can be cancelled using cancelTimer() function, or by creating a new timer with the same reference as an existing timer.
-* Recurring timers are fully supported, i.e. a function that is invoked by a timer callback can reliably create fresh timers.
-* Timers can be created days/weeks/years in the future with no adverse performance impact on an otherwise idle Eventing system.
 
 == Examples
 
