@@ -15,14 +15,14 @@ Couchbase transactions support ACID properties for protected actions on the data
 
 *Consistency* - Couchbase transactions ensure that the database moves from one consistent state to another and all derived artifacts such as indexes are updated automatically (though asynchronously from the transaction). Note that the traditional definition of consistency is not relevant as there are no foreign key constraints in Couchbase.
 
-*Isolation* - Couchbase transactions guarantee that the changes made in a transaction are not visible to others until the transaction is committed. This is the ‘Read Committed’ level of isolation. 
+*Isolation* - Couchbase transactions guarantee that the changes made in a transaction are not visible until the transaction is committed. This is the ‘Read Committed’ level of isolation. 
 
-* The isolation provided to applications reading within a transaction is stricter than Read Committed - it is Monotonic Atomic View (MAV). Monotonic Atomic View ensures that all effects of a previously committed transaction are observed  i.e. after commit a transaction is never partially observed.
+* The isolation provided to transactional reads is stricter than Read Committed - it is Monotonic Atomic View (MAV). Monotonic Atomic View ensures that all effects of a previously committed transaction are observed  i.e. after commit a transaction is never partially observed.
 * Lost Updates are always prevented by checking against the CAS value which behaves like an optimistic lock. 
 
 *Durability* is a property that ensures changes made by committed transactions are not lost if failures occur. Couchbase transactions provide tunable durability to tolerate different failure scenarios with 3 different levels: 
 
-* `majority` - replicate to a majority of the replicas before acknowledging the write 
+* `majority` - replicate to a majority of the replicas before acknowledging the write. This is the default level. 
 * `majorityAndPersistActive` - replicate to a majority of the replicas and persist to disk on the primary before acknowledging the write
 * `persistToMajority` - persist to disk on a majority of the replicas before acknowledging the write. 
 
@@ -32,13 +32,13 @@ NOTE: Statement Level Atomicity is provided for N1QL statements that are execute
 
 === Distributed Transactions: Multi-node and Multi-Bucket
 
-Couchbase transactions are distributed and work across multiple documents which can reside on multiple nodes. However, only nodes that contain data to be updated are affected by a transaction. 
+Couchbase transactions are distributed and work across multiple documents which can reside on multiple nodes. Only nodes that contain data to be updated are affected by a transaction. 
 
 Further, these documents can belong to multiple collections, scopes, and buckets.
 
 === Operations Supported by Transactions API
 
-Transactions APIs support:
+Transaction APIs support:
 
 * Key-Value _insert_, _update_, and _delete_ operations, across any number of documents
 
@@ -46,7 +46,7 @@ Transactions APIs support:
 
 Multiple Key-Value and Query DML statements can be used together inside a transaction.
 
-When query DML statements are used within a transaction, Request_plus semantics is automatically used to ensure all updates done (and committed if done in a transaction) before the start of the transaction are visible to the query statements within it.
+When query DML statements are used within a transaction, xref:n1ql:n1ql-rest-api/index.adoc#table_xmr_grl_lt[request_plus] semantics are automatically used to ensure all updates done (and committed if done in a transaction) before the start of the transaction are visible to the query statements within it.
 
 == Using Transactions
 
@@ -134,9 +134,9 @@ Every transaction consists of one or more KV operations, and optionally one or m
 
 A transaction begins when one of the following conditions are true:
 
-* A single `transactions` object is created using the SDK (`transactions.run((ctx)` in the example above) 
+* A transactions is started from the SDK (`transactions.run((ctx)` in the example above) 
 * The xref:n1ql:n1ql-language-reference/begin-transaction.adoc[`BEGIN TRANSACTION`] statement is executed (for example, say from the Query Workbench). 
-* A single query transaction which implicitly starts a transaction is executed.
+* A single query transaction which implicitly starts a transaction is executed, using `transactions.query(statement)` from the SDK, enabling "Run as TX" from the Query Workbench, or using the `tximplicit` query parameter.
 
 === End Transaction
 
@@ -219,13 +219,11 @@ In Steps 4 and 5 in the illustration above, the documents “userA” and “use
 
 Only once the application logic (lambda) has successfully run to conclusion, will the attempt be committed. This updates the attempt entry, which can be used as a signal by transactional actors as to whether to use the post-transaction version of a document from its XATTRs. Hence updating the ATR entry is effectively an 'atomic commit' switch for the transaction.
 
-After this atomic commit point is reached, the individual documents are committed (or "unstaged").
+After this atomic commit point is reached, the individual documents are committed (or "unstaged"). This provides an eventually consistent commit for non-transactional actors (including standard Key-Value reads). Transactions will begin reading the post-transactional version of documents as soon as the ATR entry is changed to committed.
 
-In Step 4 in the illustration above, the transaction is marked as “Committed” in the ATR and the list of document ids involved in the transaction is updated.
+In Step 4 in the illustration above, the transaction attempt is marked as “Committed” in the ATR and the list of document ids involved in the transaction is updated.
 
-In Step 7 in the illustration above, the transaction is marked as “Completed” and is removed from the ATR. 
-
-NOTE: All mutations are made with the durability level chosen for the transaction. By default, the durability level is  `majority`.
+In Step 7 in the illustration above, the transaction attempt is marked as “Completed” and is removed from the ATR. 
 
 == Custom Metadata Collections
 
@@ -251,8 +249,6 @@ When specified:
 * The asynchronous cleanup started by this Transactions object will be looking for expired transactions only in this collection.
 
 For more information, see xref:java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc#custom-metadata-collections[Custom Metadata Collections] in the Transactions API documentation.
-
-IMPORTANT: Before changing the default to use a custom metadata collection, ensure that all existing transactions using metadata documents in the default collections have completed.
 
 == Implications When Using Transactions
 
@@ -292,7 +288,7 @@ Transactions can be configured using a number of settings and request-level para
 
 |Transaction expiry timer
 |Configures how long a transaction should last before it is rolled back.
-The transaction expiry timer (which is configurable) will begin ticking once the transaction starts, and is not paused while the transaction is in a deferred state.
+The transaction expiry timer (which is configurable) will begin ticking once the transaction starts.
 The default value is 15 seconds. Within this timeframe, if there are concurrency or node issues, a combination of wait and retry operations are used until the transaction reaches this time.
 For more information, see xref:java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc#error-handling[].
 
@@ -304,7 +300,7 @@ See xref:settings:query-settings.adoc#tximplicit[tximplicit] for details.
 |Specifies the maximum time to wait for a KV operation before timing out. The default value is 2.5s. See xref:settings:query-settings.adoc#kvtimeout[kvtimeout] for details.
 
 |atrcollection
-|Specifies the collection where the active transaction record (ATR) is stored. The collection must be present. If not specified, the ATR is stored in the default collection in the default scope in the bucket containing the first mutated document within the transaction. See 
+|Specifies the collection where the active transaction records (ATRs) and client records are stored. The collection must be present. If not specified, the ATR is stored in the default collection in the default scope in the bucket containing the first mutated document within the transaction. See 
 xref:settings:query-settings.adoc#atrcollection_req[atrcollection] for details.
 |===
 
