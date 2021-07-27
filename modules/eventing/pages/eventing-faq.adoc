@@ -26,7 +26,7 @@ Yes, the Eventing Service node can be co-located with other MDS-enabled services
 
 * Is it supported for both text and binary formats of the documents?
 + 
-*Yes* only for versions 6.6.2+ [.status]#Couchbase Server 6.6.2# 
+*Yes* only for versions 6.6.2+
 +
 For versions 6.6.2 and later, the value or the document must can be either text or binary. Starting with version 6.6.2, Eventing processes binary documents. Eventing handler can read a binary value from a bucket alias or via an Advanced Accessor. The documents are based on a key-value format where the value can be arbitrary text or binary data. However, in practice the value is typically a well formatted JSON text payload.  Note, Eventing handlers via the curl() function can also handle binary data to and from an external REST endpoint. Furthermore, every mutation OnUpdate(doc,meta) will now have a property "datatype" set to either "binary" or "json", however this information is not avaliable via OnDelete(meta,options) or Basic Bucket Ops.  
 +
@@ -46,8 +46,8 @@ This means that the event handlers see only those deduplicated events that are p
 
 * Can a Function listen to all changes across Couchbase Server?
 +
-A defined Function listens only to changes that are exposed using the DCP for the buckets (Couchbase and Ephemeral) in the data-nodes.
-Memcached buckets are not supported.
+A defined Function listens only to changes that are exposed using the DCP for the source collection (Couchbase and Ephemeral) in the data-nodes.
+Memcached buckets (and thus undelying collections) are not supported.
 The Function cannot listen to changes happening in other Couchbase components, such as FTS, Views, or GSI; nor can it listen to system events.
 
 
@@ -60,7 +60,7 @@ If versioning is important, include it as part of the data architecture.
 * Can I get old and new values of the document inside the Function?
 
 +
-No. We do not support versioning of documents; therefore, this feature is not available out of the box. However, you can have a parent bucket and its replica version. The replica bucket would retain the version of documents before the current set of changes.
+No. We do not support versioning of documents; therefore, this feature is not available out of the box. However, you can have a parent bucket and its replica version. The replica bucket would retain the version of documents before the current set of changes.   Look at the Eventing examples and scriplets for various work arounds.
 
 * Is the ordering of document mutations enforced?
 +
@@ -146,6 +146,11 @@ To invoke a REST Endpoint from inside the Function, refer to the https://docs.co
 The Functions offering is about server-side processing or compute of business logic; it does not require any additional infrastructure layer or middleware to be deployed or managed.
 Couchbase’s Kafka connector is an SDK component that needs an application container or middleware to run.
 
+* Do I have to update and/or deploy my Functions on each Eventing node?
++
+No. The Eventing service will properly distribute the Function code or lifecycle requests across all Eventing nodes.
+It is a best practice to only have one (1) Admin UI to a single node in your cluster when developing or modifying your Eventing Functions.
+Note that if you edit handlers (code or settings) in two browser windows or tabs (to same node or different nodes), you might inadvertently deploy a slightly older or “stale” definition if you switch back and forth between different UI sessions.
 
 == Function Handler Code
 
@@ -156,76 +161,77 @@ Only JavaScript (ECMAScript 6) is supported. However, to support the ability to 
 
 * Why can’t I create global variables?
 +
-Functions do not allow global variables, this restriction is mandatory for the Function logic to shard and scale and remain agnostic during rebalance. All state must be saved and retrieved from persistence providers, therefore KV bucket(s) made available to the Function through bindings can be used to store any required global state.
-
+Functions do not allow global variables, this restriction is mandatory for the Function logic to shard and scale and remain agnostic during rebalance. All state must be saved and retrieved from persistence providers, therefore KV bucket(s) made available to the Function through bindings can be used to store any required global state. Eventing Functions (as of 7.0.0) do however support global constants via the "Constant alias" binding.
 
 * What is in the "meta" Function parameter (OnUpdate, OnDelete)? Is this the metadata we currently write in order to figure out what has changed in the document?
 +
-No, the meta parameter does not include information on what fields changed or mutated in the document. This parameter is composed of the meta fields associated with the document. For more information, refer to the https://docs.couchbase.com/server/6.5/learn/data/data.html#metadata[metadata] section.  
+No, the meta parameter does not include information on what fields changed or mutated in the document. 
+This parameter is composed of the meta fields associated with the document. For more information, refer to the https://docs.couchbase.com/server/6.5/learn/data/data.html#metadata[metadata] section.  
 +
-It should be noted, “document metadata” is different from the “metadata bucket”, described in the next section, used by the Eventing Service to maintain state and checkpoints.
+It should be noted, “document metadata” is different from the "Evenitng Storage" keyspace (metadata collection), described in the next section, used by the Eventing Service to maintain state and checkpoints.
 
-* Can there be more than one Function listening to changes to a bucket?
+* Can there be more than one Function listening to changes to a collection?
 +
 Yes.
-More than one Function can be defined for the same source bucket.
+More than one Function can be defined for the same source collection.
 This lets you process the change according to the business logic that you enforce.
-But there is no enforced ordering; for example, if bucket 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
+But there is no enforced ordering; for example, if collection 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
 +
-However, for each Function you start a set of DCP streams so for a busy system you will get better performance by coalescing  multiple Eventing Functions that have the same source bucket into a single Function.  
+However, for each Function you start a set of DCP streams so for a busy system you will get better performance by coalescing  multiple Eventing Functions that have the same source collection into a single Function.  
 This merging is easy to do with a JavaScript switch statement or a simple if-then-else block.
 
 * Is it possible to get additional state during a Function execution? 
 +
 Yes.
-For example, you can fetch related data from another document (using a document id) from any other bucket that is exposed to the Function via a binding.  
+For example, you can fetch related data from another document (using a document id) from any other collection that is exposed to the Function via a "bucket binding".  
 It is also possible to utilize the cURL API to read additional state from an external REST endpoint.
 
 * Is it possible to update state (or change a document) during a Function execution? 
 +
 Yes.
-For example, you can your enrich or update a document with data from another document (using a document id) from any other bucket that is exposed to the Function via a binding with access level of "Read Write" inclusive of the source bucket.
+For example, you can your enrich or update a document with data from another document (using a document id) from any other collection that is exposed to the Function via a binding with access level of "Read Write" inclusive of the source collection.
 
-== The Metadata Bucket (or the Eventing Storage bucket)
+== The Eventing Storage keyspace (or metadata collection)
 
-* What is the metadata bucket? Do I need to create a separate bucket?
+* What is the Eventing Storage keyspace? Do I need to create a separate collection?
 +
-To provide better resiliency and restartability semantics across Eventing nodes, some of the metadata that is used by the Eventing service needs to be stored in a standard xref:learn:buckets-memory-and-storage/buckets.adoc[Couchbase bucket] (hereafter referred to as the 'metadata bucket').
+To provide better resiliency and restartability semantics across Eventing nodes, some of the metadata that is used by the Eventing service needs a collection to be stored in a standard xref:learn:buckets-memory-and-storage/buckets.adoc[Couchbase bucket] (hereafter referred to as the 'metadata collection').
 +
-After provisioning the Eventing nodes in your cluster, you'll need to create the metadata bucket before you can start using the Eventing service.
-All Eventing functions within a cluster can share the same metadata bucket (this is a best practice but not a requirement), regardless of the number of functions, or their source and destination buckets.
-(Setting up a metadata bucket is a one-time activity for the cluster should you choose to follow this best practice.)
+After provisioning the Eventing nodes in your cluster, you'll need to create the metadata collection before you can start using the Eventing service.
+All Eventing functions within a cluster can share the same metadata collection (this is a best practice but not a requirement), regardless of the number of functions, or their source and destination collection.
+(Setting up a metadata collection is a one-time activity for the cluster should you choose to follow this best practice.)
 +
-Some additional requirements of the metadata bucket are as follows:
+Some additional requirements of the metadata collection are as follows:
 +
-** You should enable xref:manage:manage-buckets/create-bucket.adoc[vBucket replicas] on the metadata bucket to allow for failure recovery.
-** You should reserve the metadata bucket solely for Eventing housekeeping.
+** You should enable xref:manage:manage-buckets/create-bucket.adoc[vBucket replicas] on the metadata collection to allow for failure recovery.
+** You should reserve the metadata collection solely for Eventing housekeeping.
 It shouldn't be used for any other data storage.
 ** Each Eventing function always requires a fixed amount of space of about 2MB (1024 docs * 1884 bytes).
-** If an Eventing function uses timers, then an additional fixed amount of space of about 0.2MB (1024 * docs of 196 bytes) is needed.
+** If an Eventing function uses timers, then an additional fixed amount of space of about 0.2MB (1024 * docs of 196 bytes) is needed. 
+From version 6.6.1 on only 0.04MB (256 docs * 196 bytes) is needed if the function uses timers.
 ** If an Eventing function uses timers, then for each active timer, an additional amount of space between 832 and 1856 bytes (832 bytes + sizeof(context)) is needed.
-Where by default the context cannot be larger than 1024 bytes and the maximum number of active timers is based on both the business logic and the mutation rate. Note, the "timer_context_size" can be overridden on a per function bases via the xref:eventing-api.adoc[Eventing: REST API]. It is best to keep the size of the context small by using a reference rather than passing and storing a massive document in the timer.
+Where by default the context cannot be larger than 1024 bytes and the maximum number of active timers is based on both the business logic and the mutation rate.
+Note, the "timer_context_size" can be overridden on a per function bases via the xref:eventing-api.adoc[Eventing: REST API]. 
+It is best to keep the size of the context small by using a reference rather than passing and storing a massive document in the timer.
+** Every timer requires up to three documents (_root_, _alarm_, and _context_) which are stored in the Eventing Storage (or metadata collection). 
+Note sometimes only two (2) additional documents are needed if the timer shares the same scan interval or _root_ document with a previous timer.
 
-* Can there be more than one Function listening to changes to a bucket?
+* Why is the metadata collection not getting cleared when I cancel a timer or a set of timers.
 +
-Yes.
-More than one Function can be defined for the same source bucket.
-This lets you process the change according to the business logic that you enforce.
-But there is no enforced ordering; for example, if bucket 'wine' has three different Functions, which are FunctionA, FunctionB, and FunctionC, you cannot enforce the order in which these Functions are executed.
-+
-However, for each Function you start a set of DCP streams so for a busy system you will get better performance by coalescing  multiple Eventing Functions that have the same source bucket into a single Function.  This merging is easy to do with a JavaScript switch statement or a simple if-then-else block.
+When a timer is canceled the _context_ document is removed immediately, however the _root_ and _alarm_ documents are removed in a lazy fashion when the canceled timer was originally scheduled to fire.  
+Thus is 100K timers are scheduled to fire one (1) year in the future and canceled up to 2 additional documents will persist for one (1) year. 
+Note the _cancelTimer()_ function was introduced in version 6.6.0.
 
-* Is it possible to get additional state during a Function execution? 
+* When I undeploy all handlers the metadata collection is not fully cleared (this ia a regression in 6.6.1 only).
 +
-Yes.
-For example, you can fetch related data from another document (using a document id) from any other bucket that is exposed to the
-Function via a binding.  It is also possible to utilize the cURL API to read additional state from an external REST endpoint.
-
-
-* Is it possible to update state (or change a document) during a Function execution? 
+This issue, https://issues.couchbase.com/browse/MB-43272[MB-43272], will happen when a Function is paused and then undeployed from the paused state (without resuming it again). 
+There are two solutions oo avoid this issue 
 +
-Yes.
-For example, you can your enrich or update a document with data from another document (using a document id) from any other bucket that is exposed to the Function via a binding with access level of "Read Write" inclusive of the source bucket.
+** In version 6.6.1 never undeploy from the paused state.
+** After this issue occures in version 6.6.1 (deploying from the pased state) you can clean things up via an Export, Delete and Import of the impacted Function after this issue occures. 
++
+Note the Export, Delete and Import actions won't actually delete the orphaned documents in metadata collection but this sequence will create a new functionUUID for the Eventing function and this function will only concern with the document (timer doc and checkpoint docs) created by the new functionUUID.  
+If this is an issue in your specific deployment please ask for a patch release.
 
 == Timer Behavior
 
@@ -239,7 +245,7 @@ For more details on Timer scheduling refer to xref:eventing-timers.adoc#wall-clo
 * Can I cancel a Timer? 
 +
 Yes.
-As of the release 6.6.0 Eventing Timers can be cancelled using cancelTimer() function, or by creating a new Timer with the same reference as an existing Timer refer to xref:eventing-timers.adoc#limitations[Timers: Limitations].
+As of the release 6.6.0 Eventing Timers can be cancelled using _cancelTimer()_ function, or by creating a new Timer with the same reference as an existing Timer refer to xref:eventing-timers.adoc#limitations[Timers: Limitations].
 
 * Can I create a Recurring timer?
 +
@@ -251,13 +257,23 @@ As of the release 6.6.0 Recurring Timers are fully supported, i.e. a function th
 Yes.
 As of the release 6.6.0, recurring Timers can be created days, weeks, or years in the future with no adverse performance impact on an otherwise idle Eventing system. Refer to xref:eventing-timers.adoc#limitations[Timers: Limitations].
 
-* Why do I see a burst of activity in metadata bucket OPs after a timer is paused for an extended period of time?
+* Why do I see a burst of activity in bucket OPs (in the bucket tha holds the metadata collection) after a timer is paused for an extended period of time?
 +
-Resuming a timer handler after a prolonged period of time where the Function was in the paused state (like days) will cause a period of high metadata bucket OPs upon resuming the Function.  In addition mutation processing is blocked until the timer scan is completed which can take some time (this delay is proportional to the duration of pause).
+Resuming a timer handler after a prolonged period of time where the Function was in the paused state (like days) will cause a period of high bucket OPs upon resuming the Function.  In addition mutation processing is blocked until the timer scan is completed which can take some time (this delay is proportional to the duration of pause).
 
-* Why do I see unexpected documents in the metadata bucket when I cancel or overwrite an Eventing Timer?
+* Why do I see unexpected documents in the metadata collection when I cancel or overwrite an Eventing Timer?
 +
-When overwriting or canceling a Timer only one of possible three documents, i.e. the "context", is immediately cleared from the metadata bucket. The extra documents, an "alarm" document associated with each Timer and a "root" document (1 per vBucket for the specific time) are left in the metadata bucket. These items are cleaned up at the time that the original execution time the the Timer was scheduled to fire.
+When overwriting or canceling a Timer only one of possible three documents, i.e. the "context", is immediately cleared from the metadata bucket. The extra documents, an "alarm" document associated with each Timer and a "root" document (1 per vBucket for the specific time) are left in the metadata bucket. These items are cleaned up at the original execution time that the Timer was scheduled to fire.
+
+* Can I pass a binding (Bucket or URL alias) in a Timer's context?
++
+No.
+Bindings, whether a Bucket alias or an URL alias, are not serializable objects and only exist in the scope of the executing V8 worker. When a Timer fires it can execute on a different thread. Of course the Timer's callback can reference the binding directly.  However you can pass a "Constant alias" to a timer callback.
+
+* Can I pass a JavaScript function in a Timer's context?
++
+No.
+A JavaScript function is a memory reference in a given V8 worker. As such, it is not a serializable object and only exists in the scope of the executing V8 worker. When a Timer fires it can execute on a different thread. Of course the Timer's callback can reference the function directly. Additionally, if needed, you can pass the name of the function in the context and utilize JavaScript's eval method.
 
 == Cluster Behavior
 
@@ -272,17 +288,21 @@ No. Functions do not lose any mutations during a rebalance operation.
 
 * I have Functions deployed on my cluster, when can I perform an Eventing rebalance operation?
 +
-The Function lifecycle operations (deploying, undeploying, pausing, resuming, and deleting) 
-and the Eventing rebalance operation are mutually exclusive. The Eventing rebalance 
-operation fails when a Function lifecycle operation is currently in progress. Likewise, 
-when the Eventing rebalance operation is in progress, you cannot perform a Function 
-lifecycle operation.
+The Function lifecycle operations (deploying, undeploying, pausing, resuming, and deleting) and the Eventing rebalance operation are mutually exclusive. 
+The Eventing rebalance  operation fails when a Function lifecycle operation is currently in progress. 
+Likewise, when the Eventing rebalance operation is in progress, you cannot perform a Function lifecycle operation.
++
+Due to a regression, https://issues.couchbase.com/browse/MB-43343[MB-43343], impacting only 6.6.1 during a rebalance in of an Eventing node a race can occur resulting in Eventing functions becoming hung in deploying state. 
+Users can run into this issue when they have multiple functions deployed against the same source collection and they try to rebalance-in an eventing node.  
+The workaround is to ensure that you pause all Eventing handlers before any rebalance.
 
 * How do I increase performance of an Eventing Function?
 +
-You can scale up vertically by adding additional workers (in the handler's settings) to increase performance  
-for a specific Function. 
-You can also scale out horizontally via Couchbase’s elastic scaling option by adding another node and rebalancing.  In this case each eventing node is assigned a subset of vBuckets. Note this sharding increases overall performance for all Functions.
+You can scale up vertically by adding additional workers (in the handler's settings) to increase performance for a specific Function. 
+You can also scale out horizontally via Couchbase’s elastic scaling option by adding another node and rebalancing.  
+In this case each eventing node is assigned a subset of vBuckets. Note this sharding increases overall performance for all Functions.
++
+In 7.0.0 the default number of workers for new Eventing Functions is now one (1), previously it was one (3).  Thus pay attention to your performance and adjust the number of works to fit your application. Note, all upgrades of existing Functions will keep the number of workers they were created with.
 +
 However keep in mind that sometimes the Function is limited by the overall performance of the Data Service. 
 In this case it is appropriate to scale the Data service.
@@ -290,7 +310,7 @@ In this case it is appropriate to scale the Data service.
 * When I maximize the workers Eventing Function I sometimes see a stall in processing?
 +
 When scaling up vertically by adding additional workers (in the handler's settings) typically above 48 workers (_the issues is workload 
-dependent and occurs typically on source bucket updates_) you may see a stall in Eventing handler's progress.  This is typically related 
+dependent and occurs typically on source collection updates_) you may see a stall in Eventing handler's progress.  This is typically related 
 to resources given to the Eventing service and can be solved by adding additional Memory Quota to Eventing in the Cluster Settings.  By 
 default Eventing allocates 256 MB, raising this value to 512 MB will typically solve this resource issue (this is one of the rare instances
 that you may need to raise the Memory Quota for Eventing).

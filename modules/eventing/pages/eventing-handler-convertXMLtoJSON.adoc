@@ -1,13 +1,12 @@
 = Function: convertXMLtoJSON
-:description: pass:q[Recursively and generically convert simple XML strings into JSON.]
 :page-edition: Enterprise Edition
 :tabs:
 
-*Goal*: {description}
+*Goal*: Recursively and generically convert simple XML strings into JSON.
 
 * This function *convertXMLtoJSON* shows how to convert simple XML strings into JSON.
 * If you need to also convert XML attributes refer to *xref:eventing-handler-convertAdvXMLtoJSON.adoc[convertAdvXMLtoJSON]*
-* Requires a metadata bucket and a source bucket with alias "src_bkt" in `read+write` mode.
+* Requires Eventing Storage (or metadata collection) and a "source" collection.
 * Will operate on any mutation where the KEY or meta.id starts with "xml:".
 * Will enrich the source document with a new JSON object representing the XML data.
 * Maintains a checksum to prevent the overhead of conversion if the `in_xml` property is unchanged.
@@ -19,6 +18,26 @@ convertXMLtoJSON::
 --
 [source,javascript]
 ----
+// To run configure the settings for this Function, convertXMLtoJSON, as follows:
+//
+// Version 7.0+
+//   "Listen to Location"
+//     bulk.data.source
+//   "Eventing Storage"
+//     rr100.eventing.metadata
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket.scope.collection", "Access"
+//       "bucket alias", "src_col",       "bulk.data.source",        "read and write"
+//
+// Version 6.X
+//   "Source Bucket"
+//     source
+//   "MetaData Bucket"
+//     metadata
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket",     "Access"
+//       "bucket alias", "src_col",       "source",     "read and write"
+
 function OnUpdate(doc, meta) {
     // filter out non XML
     if (!meta.id.startsWith("xml:")) return;
@@ -41,10 +60,23 @@ function OnUpdate(doc, meta) {
     doc.out_json = jsonDoc;
     doc.xmlchksum = xmlchksum;
     // ===========================================================
-    // enrich the source bucket with .out_json and .xmlchksum
-    src_bkt[meta.id] = doc;
+    // enrich the source collection with .out_json and .xmlchksum
+    src_col[meta.id] = doc;
 }
 
+// 7.0.0 version uses String.matchAll eliminates the need to make our own MatchAll function 
+function parseXmlToJson(xml) {
+    const json = {};
+    for (const res of xml.matchAll(/(?:<(\w*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<(\w*)(?:\s*)*\/>/gm)) {
+        const key = res[1] || res[3];
+        const value = res[2] && parseXmlToJson(res[2]);
+        json[key] = ((value && Object.keys(value).length) ? value : res[2]) || null;
+    }
+    return json;
+}
+
+/*
+// need this for 6.6.0 version
 function* MatchAll(str, regExp) {
   if (!regExp.global) {
     throw new TypeError('Flag /g must be set!');
@@ -60,18 +92,6 @@ function* MatchAll(str, regExp) {
 function parseXmlToJson(xml) {
     const json = {};
     for (const res of MatchAll(xml,/(?:<(\w*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<(\w*)(?:\s*)*\/>/gm)) {
-        const key = res[1] || res[3];
-        const value = res[2] && parseXmlToJson(res[2]);
-        json[key] = ((value && Object.keys(value).length) ? value : res[2]) || null;
-    }
-    return json;
-}
-
-/*
-// 7.0.0 version uses String.matchAll eliminates the need to make our own MatchAll function 
-function parseXmlToJson(xml) {
-    const json = {};
-    for (const res of xml.matchAll(/(?:<(\w*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<(\w*)(?:\s*)*\/>/gm)) {
         const key = res[1] || res[3];
         const value = res[2] && parseXmlToJson(res[2]);
         json[key] = ((value && Object.keys(value).length) ? value : res[2]) || null;
