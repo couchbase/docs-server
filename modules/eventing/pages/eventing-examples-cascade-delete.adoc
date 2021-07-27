@@ -1,34 +1,47 @@
 = Cascade Delete
 :page-edition: Enterprise Edition
 
-*Goal*: This example illustrates how to leverage the Eventing Service to perform a cascade delete operation. When a user is deleted, Couchbase Functions provide a reliable method to delete all the associated documents related to the deleted user.
+*Goal*: This example illustrates how to leverage the Eventing Service to perform a cascade delete operation.
+When a user is deleted, Couchbase Functions provide a reliable method to delete all the associated documents related to the deleted user.
 
 *Implementation*: Create a JavaScript Function that contains an *OnDelete* handler.
-The handler listens to mutations or data-changes within a specified, *users* source bucket.
-When a user within the source bucket gets deleted, the handler executes a routine to remove the deleted user.
+The handler listens to mutations or data-changes within a specified, *users* source collection.
+When a user within the source collection gets deleted, the handler executes a routine to remove the deleted user.
 When the delete operation is complete, all associated documents of the delete user also get removed.
+
+This Example uses N1QL unlike the similar scriptlet xref:eventing-handler-cascadeKvDeleteWithDoc.adoc[cascadeKvDeleteWithDoc] which uses just KV or the Data Service.
 
 *Preparations*:
 
-For this example, three buckets 'users', 'transactions', and 'metadata', are required (note the metadata bucket for Eventing can be shared with other Eventing functions). Make all three buckets with minimum size of 100MB.
+For this example, two (2) buckets *'bulk'* and *'rr100'* are required where the later is intended to be 100% resident.  
+Create the buckets with a minimum size of 100MB. 
+For information on buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+Within the buckets we need three (3) keyspaces *'bulk.data.users'*, *'bulk.data.transactions'*, and *'rr100.eventing.metadata'* 
+(we loosely follow this xref:eventing-Terminologies.adoc#single-tenancy[organization]).
 
-For steps to create buckets, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+_If you run a version of Couchbase prior to 7.0 you can just create the buckets *'users'*, *'transactions'*, and *'metadata'* and run this example.  Furthermore if your cluster was subsequently upgraded from say 6.6.2 to 7.0 your data would be moved to *'users._default._default'*, *'transactions._default._default'*, and *'metadata._default._default'* and your Eventing Function would be seamlessly upgraded to use the new keyspaces and continue to run correctly._
 
-NOTE: The 'metadata' bucket is for the sole use of the Eventing system, do not add, modify, or delete documents from this bucket. In addition do not drop or flush or delete the bucket while you have any deployed Eventing functions.
+// TODO7X - need to check/fix this (buckets, scopes, collections)
+For complete details on how to set up your keyspaces refer to xref:manage:manage-buckets/create-bucket.adoc[creating buckets] and 
+xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc[creating scopes and collections].  
+
+NOTE: The Eventing Storage keyspace, in this case *'rr100.eventing.metadata'*, is for the sole use of the Eventing system, do not add, modify, or delete documents from it.  In addition do not drop or flush or delete the containing bucket (or delete this collection) while you have any deployed Eventing functions. In a single tenancy deployment this collection can be shared with other Eventing functions.
 
 *Procedure*:
 
 . From the *Couchbase Web Console* > *Eventing* page, click *ADD FUNCTION*, to add a new Function.
 The *ADD FUNCTION* dialog appears.
 . In the *ADD FUNCTION* dialog, for individual Function elements provide the below information:
- ** For the *Source Bucket* drop-down, select *users*.
- ** For the *Metadata Bucket* drop-down, select *metadata*.
+ ** For the *Listen To Location* drop-down, select *bulk*, *data*, *users* as the keyspace.
+ ** For the *Eventing Storage* drop-down, select *rr100*, *eventing*, *metadata* as the keyspace.
  ** Enter *delete_orphaned_txns* as the name of the Function you are creating in the *Function Name* text-box.
- ** [Optional Step] Enter text *Delete Orphaned Transactions from the `transactions’ bucket when user_id is greater than or equal to 100*, in the *Description* text-box.
+ ** Leave the "Deployment Feed Boundary" as Everything.
+ ** [Optional Step] Enter text *Delete Orphaned Transactions from the `bulk`.`data`.`transactions` collection when user_id is greater than or equal to 100*, in the *Description* text-box.
  ** For the *Settings* option, use the default values.
- ** For the *Bindings* option, add one binding.
- *** For the binding, select "bucket alias", specify *src_user* as the "alias name" of the bucket, and select *users* as the associated bucket, and select "read only".  *Note we will not be using this binding as we have no need of it because we will use N1QL.*
- ** After configuring your settings your screen should look like:
+ ** For the *Bindings* option, add one bindings.
+ *** For the binding, select "bucket alias", specify *src_user* as the "alias name" of the collection, 
+ select *bulk*, *data*, *users* as the associated keyspace, and select "read only" for the access mode. *Note we will not be using this binding as we have no need of it because we will use N1QL.*
+ ** After configuring your settings the *ADD FUNCTION* dialog should look like this:
 +
 image::cascadedel_01_settings.png[,484]
 . After providing all the required information in the *ADD FUNCTION* dialog, click *Next: Add Code*.
@@ -46,14 +59,14 @@ function OnUpdate(doc, meta) {
     log('OnUpdate NOOP id: ' + meta.id + ' document:',doc);
 }
 function OnDelete(meta) {
-    // Ignore all keys not matching "user_#", allows other types in the source bucket
+    // Ignore all keys not matching "user_#", allows other types in the source collection
     if ((meta.id).startsWith("user_") == false) return;
     // implement a contrived filter, keep all user transactions where the user_id > 100
     var id = meta.id;
     var numeric_id = parseInt(id.substring(5));
     if(!isNaN(numeric_id) && numeric_id >= 100) {
        try  {
-            DELETE FROM `transactions` WHERE user_id = $numeric_id;
+            DELETE FROM bulk.data.transactions WHERE user_id = $numeric_id;
             log('OnDelete: removed orphaned transactions for:', id);
        } catch(e) {
            log('OnDelete: Exception:', e)
@@ -64,17 +77,16 @@ function OnDelete(meta) {
 }
 ----
 +
+Note, the N1QL keyspace of *bulk.data.transactions* in earlier releases would be simply the bucket *transactions*.
++
 After pasting, the screen appears as displayed below:
 +
 image::cascadedel_03_editor_with_code.png[,100%]
-** Click *Save*.
-** To return to the Eventing screen, click the '*< back to Eventing*' link (below the editor) or click *Eventing* tab.
+** Click *Save and Return*.
 
-. The *OnDelete* handler above is triggered for user delete transaction. The handler checks if the *user_id* is greater than or equal to 100 (_the contrived filter never deletes the orphaned transactions form any user with an id of < 100_). When this condition is fulfilled, then an N1QL query is triggered to delete all user related information. The handler also logs if the orphaned transactions were removed or kept to Function specific application log file.
+. The *OnDelete* handler above is triggered for user delete mutation. The handler checks if the *user_id* is greater than or equal to 100 (_this contrived filter never deletes the orphaned transactions from any user with an id of < 100_). When this condition is fulfilled, then an N1QL query is triggered to delete all user related information. The handler also logs if the orphaned transactions were removed or kept to Function specific application log file (refer to the log(...) statements in the above JavaScript).
 
-. From the *Eventing* screen, click *Deploy*.
-** In the *Confirm Deploy Function* dialog, select *Everything from the Feed boundary* option.
-** Starting with version 6.6.2, selecting a Feed Boundary has been deprecated and the Feed Boundary is read from the Function's settings. [.status]#Couchbase Server 6.6.2#
+. From the *Eventing* screen, click the *delete_orphaned_txns* function to select it, then click *Deploy*.
 ** Click *Deploy Function*.
 
 . The Eventing function is deployed and starts running within a few seconds. From this point, the defined Function is executed on all existing documents and on subsequent mutations.
@@ -84,7 +96,7 @@ image::cascadedel_03_editor_with_code.png[,100%]
 +
 [source,N1QL]
 ----
-INSERT INTO `users` (KEY,VALUE) 
+INSERT INTO `bulk`.`data`.`users` (KEY,VALUE) 
     VALUES ( "user_50",  { "user_id":  50, "name": "jeff shoemaker", "age": "77"} ),
     VALUES ( "user_100", { "user_id": 100, "name": "john doe",       "age": "30"} ),
     VALUES ( "user_101", { "user_id": 101, "name": "frank smith",    "age": "20"} ),
@@ -92,11 +104,10 @@ INSERT INTO `users` (KEY,VALUE)
     VALUES ( "user_103", { "user_id": 103, "name": "jerry springer", "age": "28"} );  
 ----
 ** Next create some transactions (9 total) one or more for each of our users
-SELECT count(*) FROM `transactions`; SELECT count(*) FROM `users`;
 +
 [source,N1QL]
 ----
-INSERT INTO `transactions` (KEY,VALUE) 
+INSERT INTO  `bulk`.`data`.`transactions` (KEY,VALUE) 
     VALUES ( "txid_999",  { "user_id":  50, "item": "vitamins", "price": 2.99} ),
     VALUES ( "txid_1000", { "user_id": 100, "item": "milk", "price": 3.50} ),
     VALUES ( "txid_1001", { "user_id": 100, "item": "cheese", "price": 2.50} ),
@@ -111,24 +122,24 @@ INSERT INTO `transactions` (KEY,VALUE)
 +
 [source,N1QL]
 ----
-CREATE PRIMARY INDEX `def_primary` ON `users`;
-CREATE PRIMARY INDEX `transactions` ON `transactions`;
+CREATE PRIMARY INDEX `def_primary` ON  `bulk`.`data`.`users`;
+CREATE PRIMARY INDEX `transactions` ON  `bulk`.`data`.`transactions`;
 ----
-** Before deleting a user to test our Eventing Function we will use the NIQL Query Editor to inspect our data we just made in the bucket in `users` we should have five (5) users.
+** Before deleting a user to test our Eventing Function we will use the NIQL Query Editor to inspect our data we just made in the collection in `bulk`.`data`.`users` we should have five (5) users.
 +
 [source,N1QL]
 ----
-SELECT * FROM `users` ORDER BY user_id;
+SELECT * FROM  `bulk`.`data`.`users` ORDER BY user_id;
 ----
 +
 After executing the above N1QL statement you should see a table of 'user' data as follows:
 +
 image::cascadedel_04_qryusers.png[,100%]
-** Next use the NIQL Query Editor to inspect our data we just made in the bucket in `users` we should have nine (9) transactions.
+** Next use the NIQL Query Editor to inspect our data we just made in the collection in `bulk`.`data`.`users` we should have nine (9) transactions.
 +
 [source,N1QL]
 ----
-SELECT * FROM `transactions` ORDER BY user_id;
+SELECT * FROM  `bulk`.`data`.`transactions` ORDER BY user_id;
 ----
 +
 After executing the above N1QL statement you should see a table of 'transaction' data as follows:
@@ -138,10 +149,13 @@ image::cascadedel_05_qrytrans.png[,100%]
 +
 [source,N1QL]
 ----
-SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+SELECT count(*) FROM `bulk`.`data`.`users`; 
+SELECT count(*) FROM `bulk`.`data`.`transactions`; 
 ----
++
+image::cascadedel_05a_counts.png[,100%]
 
-. Access the *Couchbase Web Console* > *Buckets* page and click the *Documents* link of the *users* bucket.
+. Access the *Couchbase Web Console* > *Documents* page then select the keyspace `bulk`.`data`.`users`
 ** You should see five user records.
 +
 image::cascadedel_06_usersdocs.png[,100%]
@@ -156,54 +170,57 @@ image::cascadedel_07_del_100_usersdocs.png[,100%]
 +
 [source,N1QL]
 ----
-SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+SELECT count(*) FROM `bulk`.`data`.`users`; 
+SELECT count(*) FROM `bulk`.`data`.`transactions`; 
 ----
 +
 After executing the above N1QL statement you should see a table showing counts as follows:
 +
-image::cascadedel_08_reminingcounts.png[,100%]
+image::cascadedel_08_remainingcounts.png[,100%]
 
 . Access the *Couchbase Web Console* > *Eventing* and click the *Log* link of the deployed *delete_orphaned_txns* Eventing function. 
 ** This Function Log dialog lists log statements in reverse order (newest items first).
 ** The most recent or top line should be similar to the following:
 +
 ----
-2020-01-17T11:33:38.457-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_100"
+2021-07-17T12:16:10.692-07:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_100"
 ----
 ** The next four lines came from the OnUpdate handler of the *delete_orphaned_txns* Eventing function and show when you created your users. If you eliminate the function OnUpdate(doc, meta) {...} handler in your Eventing function you would not get the below messages. 
 +
 ----
-2020-01-17T11:28:36.556-08:00 [INFO] "OnUpdate NOOP id: user_102 document:" {"age":"47","name":"jenny jones","user_id":102}
-2020-01-17T11:28:36.547-08:00 [INFO] "OnUpdate NOOP id: user_100 document:" {"age":"30","name":"john doe","user_id":100}
-2020-01-17T11:28:36.503-08:00 [INFO] "OnUpdate NOOP id: user_50 document:" {"age":"77","name":"jeff shoemaker","user_id":50}
-2020-01-17T11:28:36.503-08:00 [INFO] "OnUpdate NOOP id: user_103 document:" {"age":"28","name":"jerry springer","user_id":103}
-2020-01-17T11:28:36.499-08:00 [INFO] "OnUpdate NOOP id: user_101 document:" {"age":"20","name":"frank smith","user_id":101}
+2021-07-17T11:58:55.663-07:00 [INFO] "OnUpdate NOOP id: user_103 document:" {"age":"28","name":"jerry springer","user_id":103}
+2021-07-17T11:58:55.663-07:00 [INFO] "OnUpdate NOOP id: user_100 document:" {"age":"30","name":"john doe","user_id":100}
+2021-07-17T11:58:55.663-07:00 [INFO] "OnUpdate NOOP id: user_102 document:" {"age":"47","name":"jenny jones","user_id":102}
+2021-07-17T11:58:55.662-07:00 [INFO] "OnUpdate NOOP id: user_101 document:" {"age":"20","name":"frank smith","user_id":101}
+2021-07-17T11:58:55.662-07:00 [INFO] "OnUpdate NOOP id: user_50 document:" {"age":"77","name":"jeff shoemaker","user_id":50}
 ----
 
 . Access the *Couchbase Web Console* > *Query* and run the following N1QL statements
-** Verify counts in both bucket 'users' and bucket 'transactions'
+** Verify counts in both collectoin `bulk`.`data`.`users` and collection `bulk`.`data`.`transactions`
 +
 [source,N1QL]
 ----
-SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+SELECT count(*) FROM `bulk`.`data`.`users`; 
+SELECT count(*) FROM `bulk`.`data`.`transactions`; 
 ----
-** Delete all Users in bucket 'users'
+** Delete all Users in collection `bulk`.`data`.`users` as follows (because you have no WHERE clause you will get a warning just ignor eit and hit *Continue*) :
 +
 [source,N1QL]
 ----
-DELETE FROM `users`;
+DELETE FROM `bulk`.`data`.`users;
 ----
-** Verify counts again both bucket 'users' and bucket 'transactions' at this point you should only have one (1) transaction
+** Verify counts again both keyspace `bulk`.`data`.`users` and keyspace `bulk`.`data`.`transactions` at this point you should only have one (1) transaction
 +
 [source,N1QL]
 ----
-SELECT count(*) FROM `users`; SELECT count(*) FROM `transactions`; 
+SELECT count(*) FROM `bulk`.`data`.`users`; 
+SELECT count(*) FROM `bulk`.`data`.`transactions`; 
 ----
 ** Look at the one (1) remaining transaction it should be related to user_id 50
 +
 [source,N1QL]
 ----
-SELECT * FROM `transactions`; 
+SELECT * FROM `bulk`.`data`.`transactions`; 
 ----
 +
 After executing the above N1QL statement you should see only one 'transaction' item follows:
@@ -214,12 +231,15 @@ image::cascadedel_09_kepttrans.png[,100%]
 ** The most recent four lines should be similar to the statements:
 +
 ----
-Function Log - delete_orphaned_txns
-2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: user_id < 100, kept orphaned transactions for:" "user_50"
-2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_103"
-2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_102"
-2020-01-17T11:43:51.485-08:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_101"
+2021-07-17T12:27:35.280-07:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_102"
+2021-07-17T12:27:35.276-07:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_101"
+2021-07-17T12:27:35.271-07:00 [INFO] "OnDelete: user_id < 100, kept orphaned transactions for:" "user_50"
+2021-07-17T12:27:35.271-07:00 [INFO] "OnDelete: removed orphaned transactions for:" "user_103"
 ----
-** Note, the transaction(s) associated with user_id were kept as per our business logic.
+** Note, the transaction(s) associated with user_id *"user_50"* were kept as per our business logic.
 
-. Cleanup, go to the Eventing portion of the UI and undeploy the Function *delete_orphaned_txns*, this will remove the 1024 documents from the 'metadata' bucket (in the Bucket view of the UI).  Remember you may only delete the 'metadata' bucket if there are no deployed Eventing functions.
+*Cleanup*:
+
+Go to the Eventing portion of the UI and undeploy the Function *delete_orphaned_txns*, this will remove the 1024 documents for the function from the 'rr100.eventing.metadata' colection (in the Bucket view of the UI). Remember you may only delete the 'rr100.eventing.metadata' keyspace if there are no deployed Eventing Functions.
+
+Now flush the 'bulk' bucket if you plan to run other examples (you may need to Edit the bucket 'bulk' and enable the flush capability).

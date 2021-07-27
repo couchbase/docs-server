@@ -5,11 +5,11 @@
 *Goal*: Recursively and Generically Rename Keys in a document.
 
 * This function *genericRename* shows how a document can have its keys or fields renamed.
-* Requires a metadata bucket, a source bucket, and a destination bucket aliased to "dst_bkt" in mode read+write.
+* Requires Eventing Storage (or metadata collection), a "source" collection, and a "destination" collection.
 * Will operate on all documents where doc.type === "my_data_to_rename".
-* Will write transformed or flattened documents to the destination bucket with the same type and id.
-* The destination bucket can be shared (or replicated via XCDR to a business partner).
-* Will also remove the transformed document in the destination bucket when the original source document is removed.
+* Will write transformed or flattened documents to the destination collection with the same type and id.
+* The destination collection can be shared (or replicated via XCDR to a business partner - maybe to AWS, GCP, or Azure).
+* Will also remove the transformed document in the destination collection when the original source document is removed.
 * Note since the document is not available during an OnDelete we will filter by KEY prefix starting with "my_data_to_rename:".
 
 [{tabs}] 
@@ -19,6 +19,26 @@ genericRename::
 --
 [source,javascript]
 ----
+// To run configure the settings for this Function, genericRename, as follows:
+//
+// Version 7.0+
+//   "Listen to Location"
+//     bulk.data.source
+//   "Eventing Storage"
+//     rr100.eventing.metadata
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket.scope.collection", "Access"
+//       "bucket alias", "dst_col",       "bulk.data.destination",   "read and write"
+//
+// Version 6.X
+//   "Source Bucket"
+//     source
+//   "MetaData Bucket"
+//     metadata
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket",     "Access"
+//       "bucket alias", "dst_col",       "destinaton", "read and write"
+
 function renamePartsByMap(obj, rename_map) {
     if (obj !== null && typeof obj == "object") {
         Object.entries(obj).forEach(([k, v]) => {
@@ -52,8 +72,8 @@ function OnUpdate(doc, meta) {
     };
     var newdoc = renamePartsByMap(doc, rename_map);
 
-    // alias src_bkt to our source bucket. Since rev 6.5+ allowed to be in r/w mode
-    dst_bkt[meta.id] = newdoc;
+    // alias dst_col to our source collection. Since rev 6.5+ allowed to be in r/w mode
+    dst_col[meta.id] = newdoc;
 }
 
 function OnDelete(meta, options) {
@@ -62,7 +82,7 @@ function OnDelete(meta, options) {
 
     log("OnDelete expired=" + options.expired +" REM id: "+meta.id);
     try {
-        delete dst_bkt[meta.id];
+        delete dst_col[meta.id];
     } catch (e) {
         log("Error on delete: "+e+", id:",meta.id);
     }
@@ -70,12 +90,12 @@ function OnDelete(meta, options) {
 ----
 --
 
-Input Data/Mutation::
+Input Data/Mutation:: in keyspace bulk.data.source
 +
 --
 [source,json]
 ----
-INPUT: KEY my_data_to_flatten::1001
+INPUT: KEY my_data_to_rename::1001
 
 {
   "type": "my_data_to_rename",
@@ -120,12 +140,12 @@ INPUT: KEY my_data_to_flatten::1001
 ----
 --
 
-Output Data/Mutation::
+Output Data/Mutation:: in keyspace bulk.data.destination
 + 
 -- 
 [source,json]
 ----
-UPDATED/OUTPUT: KEY my_data_to_flatten::1001
+UPDATED/OUTPUT: KEY my_data_to_rename::1001 
 
 {
   "type": "my_data_to_rename",

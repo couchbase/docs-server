@@ -1,6 +1,18 @@
 = Troubleshooting and Best Practices
 :page-edition: Enterprise Edition
 
+== Why do similar functions that I write seem to run slower in 7.0.0 than 6.6.2?
+
+The default number of workers per function was three (3) in 6.X and is now one (1) in 7.0.0. You can simply raise the number of workers to 3 to get back the expected performance.  
+
+NOTE: all upgrades will carry forward the configured number of workers in an Eventing Function so you don't have to worry about a production system slowing down during an upgrade.
+
+Raising the worker counts should be down if you need higher levels of throughput, for example cURL functions access slow external REST endpoints need more workers to scale performance up (in this case you are IO bound and not CPU bound).
+
+== What is the Security role "Eventing Full Admin" for?
+
+Prior to 7.0.0 Eventing always run as "Full Admin" this blocked some use cases and adoption as this role allowed creation of new users and the ability to escalate privilege sets.  The new "Eventing Full Admin" role removes the capability of creating users and modifying credentials thus providing a bit more security.
+
 == What happens when more Workers are allocated for a Function?
 
 Couchbase Server for a specific Function limits the maximum number of workers to 64 (note the default is 3 workers). This upper limit is configured for system optimization purposes. You cannot create a function with more than this upper bound.
@@ -22,7 +34,6 @@ Only valid Functions get deployed. Using the _log()_ option within a _try-catch 
 
 During runtime, Application logs, by default, do not capture any handler code exceptions. To log exceptions, it is recommended to encapsulate your code in a _try-catch_ block.
 
-
 A sample _try-catch_ block is provided for reference:
 
 ----
@@ -30,7 +41,7 @@ function OnUpdate(doc, meta) {
     log('document', doc);
     try {
         var time_rand = random_gen();
-        dst_bucket[meta.id + time_rand] = doc;
+        dst_col[meta.id + time_rand] = doc;
     } catch(e) {
         log(e);
     }
@@ -40,75 +51,75 @@ function OnUpdate(doc, meta) {
 [#cyclicredun]
 == What are bucket alias considerations during a Function definition?
 
-Function handlers can trigger data mutations. To avoid a cyclic generation of data changes, ensure that you carefully consider the below aspects while specifying source and destination buckets:
+Function handlers can trigger data mutations. To avoid a cyclic generation of data changes, ensure that you carefully consider the below aspects while specifying source and destination collections:
 
 * Avoid infinite recursions.
-If you are using a series of handlers, then ensure that destination buckets to which event handlers perform a write operation, do not have other Function handlers configured that can create a loop by triggering cyclic mutations. For example the following design demonstrates an infinite recursion:
+If you are using a series of handlers, then ensure that destination collections to which event handlers perform a write operation, do not have other Function handlers configured that can create a loop by triggering cyclic mutations. For example the following design demonstrates an infinite recursion:
 +
-*functionA* with source bucketA target bucketB aliased as same.
+*functionA* with source collectionA target collectionB aliased as same.
 +
 ----
 function OnUpdate(doc, meta) {
-    bucketB[meta.id] = {"status":"updated by functionA"};
+    collectionB[meta.id] = {"status":"updated by functionA"};
 }
 ----
 +
-*functionB* with source bucketB target bucketC aliased as same.
+*functionB* with source collectionB target collectionC aliased as same.
 +
 ----
 function OnUpdate(doc, meta) {
-    bucketC[meta.id] = {"status":"updated by functionB"};
+    collectionC[meta.id] = {"status":"updated by functionB"};
 }
 ----
 +
-*functionC* with source bucketC target bucketA aliased as same.
+*functionC* with source collectionC target collectionA aliased as same.
 +
 ----
 function OnUpdate(doc, meta) {
-    bucketA[meta.id] = {"status":"updated by functionC"};
+    collectionA[meta.id] = {"status":"updated by functionC"};
 }
 ----
 +
-In the example above a single mutation in "bucketA" will create an infinite loop updating a record in "bucketB", then in "bucketC", then back to "bucketA", over and over.  
+In the example above a single mutation in "collectionA" will create an infinite loop updating a record in "collectionB", then in "collectionC", then back to "collectionA", over and over.  
 +
-One possible solution is to change the design above such that *functionC* updated bucketD (instead of bucketA) we would have no recursion as follows:
+One possible solution is to change the design above such that *functionC* updated collectionD (instead of collectionA) we would have no recursion as follows:
 +
-*functionC* (modified to write to a different bucket) with source bucketA target bucketD aliased as same.
+*functionC* (modified to write to a different collection) with source collectionA target collectionD aliased as same.
 +
 ----
 function OnUpdate(doc, meta) {
-    bucketD[meta.id] = {"status":"updated by functionC"};
+    collectionD[meta.id] = {"status":"updated by functionC"};
 }
 ----
 +
 Another possible solution to the design above is to change the design is changes such that *functionA* performs a check to ensure that if *functionC* has operated on the document to cease any new mutations as follows:
 +
-*functionA* (modified to stop recursion) with source bucketA target bucketB aliased as same.
+*functionA* (modified to stop recursion) with source collectionA target collectionB aliased as same.
 +
 ----
 function OnUpdate(doc, meta) {
     if (doc["status"] == "updated by functionC") return;
-    bucketB[meta.id] = {"status":"updated by functionA"};
+    collectionB[meta.id] = {"status":"updated by functionA"};
 }
 ----
-* Although the Couchbase Server can flag simple infinite recursions a long chain of source and destination buckets with a series of handlers, a complex infinite recursion condition may occur. The developer, carefully consider and avoid these cases.
+* Although the Couchbase Server can flag simple infinite recursions a long chain of source and destination collections with a series of handlers, a complex infinite recursion condition may occur. The developer, carefully consider and avoid these cases.
 
-* As a best practice, ensure that buckets to which the Function handler performs a write operation do not have other handlers configured for tracking data mutations.
+* As a best practice, ensure that collections to which the Function handler performs a write operation do not have other handlers configured for tracking data mutations.
 
-There is a special case of direct self-recursion, which is highly useful, when a handler chooses to create a Read-Write binding to its own source bucket we can perform document enrichment operations. In this case the direct self-recursive mutations and detected and suppressed by the Eventing framework. However this capability is only supported for the aliased JavaScript map and is not supported for mutations generated via N1QL.
+There is a special case of direct self-recursion, which is highly useful, when a handler chooses to create a Read-Write binding to its own source collection we can perform document enrichment operations. In this case the direct self-recursive mutations and detected and suppressed by the Eventing framework. However this capability is only supported for the aliased JavaScript map and is not supported for mutations generated via N1QL.
 
-NOTE: Since the 6.5 release, the handler code can directly mutate (or write back) to the source bucket, e.g. direct self-recursion.
+NOTE: Since the 6.5 release, the handler code can directly mutate (or write back) to the source bucket (now in 7.0.0 the source collection), e.g. direct self-recursion.
 
 * For example the following design is taken from the xref:eventing:eventing-example-data-enrichment.adoc[Data Enrichment, Case: 2]:
 +
-*functionDirectEnrich* with source bucketA target bucketA aliased as 'src'
+*functionDirectEnrich* with source collectionA target collectionA aliased as 'src'
 +
 ----
 function OnUpdate(doc, meta) {
   log('document', doc);
   doc["ip_num_start"] = get_numip_first_3_octets(doc["ip_start"]);
   doc["ip_num_end"]   = get_numip_first_3_octets(doc["ip_end"]);
-  // !!! write back to the source bucket !!!
+  // !!! write back to the source collection !!!
   src[meta.id]=doc;
 }
 function get_numip_first_3_octets(ip) {
@@ -136,19 +147,19 @@ Ensure that you configure the script timeout value after carefully evaluating th
 As a best practice use a combination of try-catch block and the application log options.
 This way you can monitor, debug and troubleshoot errors during the Function execution.
 
-== Why is it important that the metadata bucket be 100% memory resident?
+== Why is it important that the Eventing Storage keyspace (metadata collection) be 100% memory resident?
 
-If the bucket you chose to hold your meta data spills over to disk access is not 100% resident, your Eventing system can essentially stall and/or slow down by orders of magnitude and you can also experience failures and/or missed mutations.
+If the collection you chose to hold your meta data spills over to disk access is not 100% resident, your Eventing system can essentially stall and/or slow down by orders of magnitude and you can also experience failures and/or missed mutations.
 
-Always make sure that the memory quota on your metadata bucket is sufficiently large to ensure a residency ratio of 100%.
+Always make sure that the memory quota on your metadata Eventing Storage keyspace (metadata collection) is sufficiently large to ensure a residency ratio of 100%.
 
 == Eventing worked fine when application was first deployed but now I am getting LCB_ETMPFAIL failures.
 
-A low residency ratio for either the source or the destination bucket (sometimes these two can be the same) can result in a system that's unable to keep up with rate of mutations and internal logic's required reads and writes to the data service.
+A low residency ratio for either the source or the destination collection (sometimes these two can be the same) can result in a system that's unable to keep up with rate of mutations and internal logic's required reads and writes to the data service.
 
-NOTE: Watch the number of documents in your buckets (source, metadata, and destination) and in particular pay close attention to the change in the resident ratio. Typically, this could be due to growth in your overall data set.
+NOTE: Watch the number of documents in your collections (source, Eventing Storage, and destination(s)) and in particular pay close attention to the change in the resident ratio. Typically, this could be due to growth in your overall data set.
 
-For example, a high velocity Eventing function that is processing in excess of 12K mutations/sec with a source or destination bucket residency ratio of 100% can easily start to experience issues if the residency ratio drops below 18% (_this percentage isn't hard and fast and may vary based on a variety of factors such as the number of mutations acted on, the storage type, and so on_). 
+For example, a high velocity Eventing function that is processing in excess of 12K mutations/sec with a source or destination collection residency ratio of 100% can easily start to experience issues if the residency ratio drops below 18% (_this percentage isn't hard and fast and may vary based on a variety of factors such as the number of mutations acted on, the storage type, and so on_). 
 ----
 2020-03-13T11:46:32.383-07:00 [INFO] "Exception: " {"message":{"code":392,"desc": \
 "Temporary failure received from server. Try again later","name":"LCB_ETMPFAIL"}, \
@@ -159,7 +170,7 @@ The above error indicates that the system is under provisioned for the load.  Un
 
 There are two solutions: 
 
-. The first solution is to increase the memory quota of the bucket in question (thus increasing the resident ration).
+. The first solution is to increase the memory quota of the collection's bucket in question (thus increasing the resident ration).
 
 . The second solution is to add more Data nodes, faster disk IO, and more memory to eliminate the resource bottleneck.
 

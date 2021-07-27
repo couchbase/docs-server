@@ -5,11 +5,11 @@
 *Goal*: Flatten a document for integration with a non-NOSQL RDBMS.
 
 * This function *simpleFlatten* shows how a document can be flattened into a RDBMS importable record.
-* Requires a metadata bucket, a source bucket, and a destination bucket aliased to "dst_bkt" in mode read+write.
+* Requires Eventing Storage (or metadata collection), a "source" collection, and a "destination" collection.
 * Will operate on all documents where doc.type === "tosync".
 * Will write transformed or flattened documents to the destination bucket with the same type and id.
-* The destination bucket can be shared (or replicated via XCDR to a business partner).
 * Will also remove the flattened document in the destination bucket when the original source document is removed.
+* The "destination" collection can be shared (or replicated via XCDR to a business partner) too the cloud (AWS, Azure or GCP).
 * Note since the document is not available during an OnDelete we will filter by KEY prefix starting with `"tosync:".*`. This is a hard coded implementation. Refer to xref:eventing-handler-genericFlatten.adoc[genericFlatten] for a generic implementation.
 
 [{tabs}] 
@@ -19,6 +19,26 @@ simpleFlatten::
 --
 [source,javascript]
 ----
+// To run configure the settings for this Function, simpleFlatten, as follows:
+//
+// Version 7.0+
+//   "Listen to Location" 
+//     bulk.data.source 
+//   "Eventing Storage" 
+//     rr100.eventing.metadata 
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket.scope.collection", "Access"
+//       "bucket alias", "dst_col",       "bulk.data.destination",   "read and write"
+//
+// Version 6.X
+//   "Source Bucket" 
+//     source 
+//   "MetaData Bucket" 
+//     metadata 
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket",     "Access"
+//       "bucket alias", "dst_col",      "destination", "read and write"
+
 function OnUpdate(doc, meta) {
     // filter
     if (!doc.type || doc.type !== "tosync") return;
@@ -41,7 +61,7 @@ function OnUpdate(doc, meta) {
     }
     // save
     try {
-        dst_bkt[meta.id] = oracleDoc;
+        dst_col[meta.id] = oracleDoc;
     } catch (e) {
         log("Error on save: "+e+", id:", meta.id);
     }
@@ -53,7 +73,7 @@ function OnDelete(meta, options) {
    
     log("OnDelete expired=" + options.expired +" REM id: "+meta.id);
     try {
-        delete dst_bkt[meta.id];
+        delete dst_col[meta.id];
     } catch (e) {
         log("Error on delete: "+e+", id:",meta.id);
     }

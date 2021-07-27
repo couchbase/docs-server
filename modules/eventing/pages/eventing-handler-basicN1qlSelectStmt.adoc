@@ -6,10 +6,12 @@
 
 * This function *basicN1qlSelectStmt* demonstrates how to use an inline N1QL SELECT statement with a passed parameter.
 * Requires the "travel-sample" sample dataset to be loaded.
-* Requires a metadata bucket, a source bucket of "travel-sample".
-* Deploy the Function with a Feed Boundary "From now" (Note you will log 187 lines if you use "Everything").
+* Requires Eventing Storage (or metadata collection) and a "source" collection of travel-sample.inventory.airline.
 * Assuming you deployed "From now" mutate any document in "travel-sample" to generate a log line.
 * For more detail refer to xref:eventing-language-constructs.adoc#added-lang-features[N1QL Statements].
+* Configure the Function with a Feed Boundary "From now" (Note you will log 187 lines if you use "Everything").
+* [Optional] if Feed Boundary is "Everything" you can use SQL++ (N1QL) to add an index for performance:
+** CREATE INDEX adv_airline_type ON `default`:`travel-sample`.`inventory`.`route`(`airline`) WHERE (`type` = 'route')
 
 [{tabs}] 
 ====
@@ -18,24 +20,39 @@ basicN1qlSelectStmt::
 --
 [source,javascript]
 ----
-// Deploy from now then mutate a document in `travel-sample`
+// To run configure the settings for this Function, basicN1qlSelectStmt, as follows:
+//
+// Version 7.0+
+//   "Listen to Location"
+//     travel-sample.inventory.airline
+//   "Eventing Storage"
+//     rr100.eventing.metadata
+//   Binding(s) - none
+//
+// Version 6.X
+//   "Source Bucket"
+//     travel-sample
+//   "MetaData Bucket"
+//     metadata
+//   Binding(s) - none
+
 function OnUpdate(doc, meta) {
     // ignore information we don't care about
     if (doc.type !== 'airline') return;
-    
+
     var route_cnt = 0;       // we want to get the total routes per iata
     var airline = doc.iata;  // need a true variable as a N1QL parameter
     
-    var results =  
-        SELECT COUNT(*) AS cnt 
-        FROM `travel-sample` 
+    var results =
+        SELECT COUNT(*) AS cnt
+        FROM `travel-sample`.`inventory`.`route`
         WHERE type = "route" AND airline = $airline;
-        
+
     for (var item of results) {   // Stream results using 'for' iterator.
         route_cnt = item.cnt;
     }
     results.close();              // End the query and free resources held
-    
+
     // Just log the KEY, AIRLINE and ROUTE_CNT it to the Application log
     log("key: " + meta.id + ", airline: "+doc.iata+", route_cnt: "+route_cnt);
 }
@@ -47,7 +64,7 @@ Input Data/Mutation (via the following N1QL statement)::
 --
 [source,N1QL]
 ----
-UPDATE `travel-sample` USE KEYS "airline_24" SET id = 24;
+UPDATE `travel-sample`.`inventory`.`airline` USE KEYS "airline_24" SET id = 24
 ----
 --
 
@@ -56,7 +73,7 @@ Output Data/Logged::
 -- 
 [source,json]
 ----
-2020-08-25T14:19:13.589-07:00 [INFO] "key: airline_24, airline: AA, route_cnt: 2354"
+2021-07-19T07:37:39.237-07:00 [INFO] "key: airline_24, airline: AA, route_cnt: 2354" 
 ----
 --
 ====
