@@ -4,9 +4,14 @@
 :imagesdir: ../../assets/images
 
 // Cross-references
-:transactions: xref:learn:data/transactions.adoc
+:durability: xref:learn:data/durability.adoc
+:edit-bucket: xref:manage:manage-buckets/edit-bucket.adoc
+:durability_level: xref:settings:query-settings.adoc#durability_level
+:transactions: xref:n1ql:n1ql-language-reference/transactions.adoc
+:preparation: xref:n1ql:n1ql-language-reference/transactions.adoc#preparation
 
 // Related links
+:overview: xref:learn:data/transactions.adoc
 :begin-transaction: xref:n1ql-language-reference/begin-transaction.adoc
 :set-transaction: xref:n1ql-language-reference/set-transaction.adoc
 :savepoint: xref:n1ql-language-reference/savepoint.adoc
@@ -19,7 +24,7 @@ The `COMMIT TRANSACTION` statement enables you to commit a transaction.
 == Purpose
 
 The `COMMIT TRANSACTION` statement enables you to commit an ACID transaction.
-Refer to {transactions}[Transactions] for further information.
+Refer to {transactions}[N1QL Support for Couchbase Transactions] for further information.
 
 include::partial$n1ql-language-reference/transaction-id.adoc[]
 
@@ -39,41 +44,194 @@ image::n1ql-language-reference/commit-transaction.png["'COMMIT' ( 'WORK' | 'TRAN
 The `WORK`, `TRAN`, and `TRANSACTION` keywords are synonyms.
 These keywords are optional; you may include one of these keywords, or omit them entirely.
 
+== Usage
+
+The transaction can only be committed if the transactional {durability}[durability] requirements can be met.
+The transaction durability level is set by the request-level {durability_level}[durability_level] parameter.
+
+If transaction durability requirements cannot be met, then a 161 error code is generated when you attempt to commit the transaction, with the message "Durability requirements are impossible to achieve".
+For example: bucket replication is specified, but there are not enough Data nodes available on which to store the specified number of replicas at the requested durability level.
+
+To avoid this error, it is recommended that you add the correct number of Data nodes for the required durability level, and rebalance.
+As a temporary measure, you can set the request-level {durability_level}[durability_level] parameter to `"none"` to turn off durability for this request, or {edit-bucket}[turn off bucket replication].
+
 == Examples
 
 [[ex-1]]
-.Commit a transaction -- cbq shell
+.Commit a transaction
 ====
-.Request
-[source,console]
+If you want to try this example, first refer to {preparation}[Preparation] to set up your environment.
+
+.Transaction
+[source,n1ql]
 ----
-cbq> COMMIT TRANSACTION;
+BEGIN WORK;
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+UPSERT INTO test VALUES("abc2", {"a":1});
+SAVEPOINT s1; -- <.>
+UPDATE test AS d SET d.b = 10 WHERE d.a > 0; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+SAVEPOINT s2; -- <.>
+UPDATE test AS d SET d.b = 10, d.c = "xyz" WHERE d.a > 0; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+ROLLBACK TRAN TO SAVEPOINT s2; -- <.>
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+COMMIT WORK; -- <.>
 ----
+
+<.> Set a savepoint.
+<.> Update the specified documents in the `test` keyspace to include a second attribute `b`.
+<.> Set a second savepoint.
+<.> Update the specified documents in the `test` keyspace to include a third attribute named `c`.
+<.> Roll back the transaction to the second savepoint.
+<.> Commit the transaction.
+
+.Results
+[source,json]
+----
+[
+  {
+    "_sequence_num": 1,
+    "_sequence_query": "BEGIN WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "txid": "d9dcc721-321b-42d2-825f-a623eefc28b6"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 2,
+    "_sequence_query": "\nUPSERT INTO test VALUES(\"abc2\", {\"a\":1});",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 3,
+    "_sequence_query": "\nSAVEPOINT s1;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 4,
+    "_sequence_query": "\nUPDATE test AS d SET d.b = 10 WHERE d.a > 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 5,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10, // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 6,
+    "_sequence_query": "\nSAVEPOINT s2;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 7,
+    "_sequence_query": "\nUPDATE test AS d SET d.b = 10, d.c = \"xyz\" WHERE d.a > 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 8,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10,
+        "c": "xyz", // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 9,
+    "_sequence_query": "\nROLLBACK TRAN TO SAVEPOINT s2;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+  {
+    "_sequence_num": 10,
+    "_sequence_query": "\nSELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "a": 1,
+        "b": 10, // <.>
+        "id": "abc2"
+      }
+    ]
+  },
+  {
+    "_sequence_num": 11,
+    "_sequence_query": "\nCOMMIT WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  }
+]
+----
+
+<.> Before setting the second savepoint, the `abc2` document has two attributes: `a` and `b`.
+<.> After setting the second savepoint and performing an update, the `abc2` document has three attributes: `a`, `b`, and `c`.
+<.> After rolling back to the second savepoint, the `abc2` document again has only two attributes: `a` and `b`.
 ====
 
 [[ex-2]]
-.Commit a transaction -- REST API
+.Check the result of <<ex-1>>
 ====
-.CURL request
-[source,console]
+Check the result of committing the transaction.
+
+.Query
+[source,n1ql]
 ----
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "COMMIT TRANSACTION",
-  "pretty": true,
-  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51" // <.>
-}'
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
 ----
 
-<.> The transaction ID generated when the transaction began.
+.Results
+[source,json]
+----
+[
+  {
+    "a": 1,
+    "b": 10,
+    "id": "abc2"
+  }
+]
+----
+
+Notice the `abc2` document has been added with the attributes that were present when the transaction was committed.
 ====
 
 == Related Links
 
+* For an overview of Couchbase transactions, refer to {overview}[Transactions].
 * To begin a transaction, refer to {begin-transaction}[BEGIN TRANSACTION].
 * To specify transaction settings, refer to {set-transaction}[SET TRANSACTION].
 * To set a savepoint, refer to {savepoint}[SAVEPOINT].
 * To rollback a transaction, refer to {rollback-transaction}[ROLLBACK TRANSACTION].
-* Blog post: https://blog.couchbase.com/transactions-n1ql-couchbase-distributed-nosql/[N1QL Support for Couchbase Transactions^].
+* Blog post: https://blog.couchbase.com/transactions-n1ql-couchbase-distributed-nosql/[Couchbase Transactions: Elastic, Scalable, and Distributed^].

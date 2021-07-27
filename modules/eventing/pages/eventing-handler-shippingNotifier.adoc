@@ -5,11 +5,9 @@
 *Goal*: Send notifications when an order scheduled to arrive, when it is shipped, and when it is delivered.
 
 * This function *shippingNotifier* demonstrates a shipping workflow.
+* Requires Eventing Storage (or metadata collection), and "active", "archive", "notify" collections.
 * Requires four buckets metadata, active (the source), archive, and a notify.
-** bucket "metadata", common Eventing scratchpad across all handlers.
-** bucket "active",  binding alias "act_bck" in mode read+write, active shipping items.
-** bucket "archive", binding alias "arc_bck" in mode read+write, archived or complete shipments.
-** bucket "notify",  binding alias "snd_bck" in mode read+write, bucket to integrate with SDK or Kafka to send notifications.
+** The "notify"collection can be used to integrate with SDK or Kafka to send notifications.
 * Will operate on any doc with type === "ship".
 * Will update the source document with key information on each notify.
 * Delivered the shipping recored is archived.
@@ -29,12 +27,36 @@ shippingNotifier::
 --
 [source,javascript]
 ----
+// To run configure the settings for this Function, shippingNotifier, as follows:
+//
+// Version 7.0+
+//   "Listen to Location" 
+//     bulk.data.active 
+//   "Eventing Storage" 
+//     rr100.eventing.metadata 
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket.scope.collection", "Access"
+//       "bucket alias", "act_col",       "bulk.data.active",        "read and write"
+//       "bucket alias", "arc_col",       "bulk.data.archive",       "read and write"
+//       "bucket alias", "snd_col",       "bulk.data.notify",        "read and write"
+//
+// Version 6.X
+//   "Source Bucket" 
+//     source 
+//   "MetaData Bucket" 
+//     metadata 
+//   Binding(s)
+//    1. "binding type", "alias name...", "bucket",     "Access"
+//       "bucket alias", "act_col",       "active",     "read and write"
+//       "bucket alias", "arc_col",       "archive",    "read and write"
+//       "bucket alias", "snd_col",       "notify",     "read and write"
+
 function sendNotifySchedDelivCallback(context) {
     // This is a normal sceduled delivery notificaton
 
     // Look up the controlling ship: doc
     var shipkey = context.id;
-    var shipdoc = act_bkt[shipkey];
+    var shipdoc = act_col[shipkey];
     if (shipdoc === null) {
         // stale timer
         return;
@@ -45,11 +67,11 @@ function sendNotifySchedDelivCallback(context) {
 
     // Look up the realted order: doc
     var orderkey = "order" + ":" + shipdoc.id;
-    var orderdoc = act_bkt[orderkey];
+    var orderdoc = act_col[orderkey];
 
     // Look up the realted cusomer: doc
     var custkey = "cust" + ":" + orderdoc.cust_id;
-    var custdoc = act_bkt[custkey];
+    var custdoc = act_col[custkey];
     var notifyId = "ntfy" + ":" + context.idx + ":" + shipkey;
 
     // log('shipdoc',  shipdoc);
@@ -79,7 +101,7 @@ function sendNotifySchedDelivCallback(context) {
     }
 
     // Write to send bucket -or- emit via cURL
-    snd_bkt[notifyId] = senddoc;
+    snd_col[notifyId] = senddoc;
 
     // Mark as sent
     shipdoc.notifys[context.idx].notifySent = true;
@@ -88,12 +110,12 @@ function sendNotifySchedDelivCallback(context) {
     if (shipdoc.delivered && context.item.notifyReason === "delivered") {
         shipdoc.active = false;
         // Yes we can archive write to archive bucket
-        arc_bkt[shipkey] = shipdoc;
+        arc_col[shipkey] = shipdoc;
         // and remove
-        delete act_bkt[shipkey];
+        delete act_col[shipkey];
     } else {
         // No just update in the source bucket
-        act_bkt[shipkey] = shipdoc;
+        act_col[shipkey] = shipdoc;
     }
 
     log("senddoc", senddoc);
@@ -131,7 +153,7 @@ function OnUpdate(doc, meta) {
         // Add to the notification array or history
         doc.notifys.push(item);
         // Write the source doc since we will sending an immediate notification
-        act_bkt[meta.id] = doc;
+        act_col[meta.id] = doc;
         var context = {
             "item": item,
             "idx": doc.notifys.length - 1,
@@ -180,7 +202,7 @@ NOTE: For key "ship:dea0fca2-e7b7-11ea-adc1-0242ac120002", you may want to adjus
 
 [source,n1ql]
 ----
-  UPSERT INTO `active` (KEY,VALUE)
+  UPSERT INTO `bulk`.`data`.`active` (KEY,VALUE)
   VALUES ( "order:dea0fca2-e7b7-11ea-adc1-0242ac120002", {
     "type": "order",
     "id": "dea0fca2-e7b7-11ea-adc1-0242ac120002",
@@ -238,15 +260,15 @@ Output Data/Mutation::
 + 
 -- 
 
-To fully exercise the logic, run the following steps(to re-run flush the 'active', 'archive' and 'notify' buckets and redo the UPSERT the data):
+To fully exercise the logic, run the following steps(to re-run flush the 'active', 'archive' and 'notify' collections and redo the UPSERT the data):
 
 * Deploy the Function with a Feed Boundary from "Everything".
-** Wait for about 7-14 seconds (timers are high volume not wall clock accurate) and notice bucket "notify" has our first notification (the timer was scheduled in the past).
-** The shipping document will be modified in bucket 'active' as follows:
+** Wait for about 7-14 seconds (timers are high volume not wall clock accurate) and notice collection "notify" has our first notification (the timer was scheduled in the past).
+** The shipping document will be modified in collection 'active' as follows:
 +
 [source,json]
 ----
-UPDATED/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "active"
+UPDATED/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "active"
 {
   "active": true,
   "delivered": false,
@@ -269,11 +291,11 @@ UPDATED/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "active"
 }
 ----
 +
-** You will now have the first notificaton document in bucket 'notify' as follows:
+** You will now have the first notificaton document in collection 'notify' as follows:
 +
 [source,json]
 ----
-NEW/OUTPUT: KEY ntfy:0:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "notify"
+NEW/OUTPUT: KEY ntfy:0:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "notify"
 {
   "notifyReason": "scheduled delivery",
   "first_name": "John",
@@ -299,14 +321,14 @@ NEW/OUTPUT: KEY ntfy:0:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "noti
 +
 ** The application log for the Eventing handler will show something like the following:
 +
-2020-08-27T16:03:31.826-07:00 [INFO] "senddoc" {"notifyReason":"scheduled delivery","first_name":"John","last_name":"Smith","email":"jon.smith@gmail.com","phone":"+1 714-222-2222","items":[{"descr":"Ticondorna pencils 12 pack","qty":3,"sku":"SK18768"},{"descr":"Sharpie large marker","qty":1,"sku":"SK89736"}],"utcOffset":-420,"schedDelivTs":1598486400}
+2021-07-18T21:17:51.715-07:00 [INFO] "senddoc" {"notifyReason":"scheduled delivery","first_name":"John","last_name":"Smith","email":"jon.smith@gmail.com","phone":"+1 714-222-2222","items":[{"descr":"Ticondorna pencils 12 pack","qty":3,"sku":"SK18768"},{"descr":"Sharpie large marker","qty":1,"sku":"SK89736"}],"utcOffset":-420,"schedDelivTs":1598486400} 
 
-* In bucket "active" mutate ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 by setting "shipped" to true.
-** The shiping document will be modified in bucket 'active' as follows:
+* In collection "active" mutate ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 by setting "shipped" to true.
+** The shiping document will be automatically modified in collection 'active' as follows:
 +
 [source,json]
 ----
-UPDATED/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "active"
+UPDATED/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "active"
 {
   "active": true,
   "delivered": false,
@@ -321,24 +343,24 @@ UPDATED/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "active"
     },
     {
       "notifyReason": "shipped",
-      "notifyTs": 1598570096,
+      "notifyTs": 1626668498,
       "notifySent": true
     }
   ],
   "orderTs": 1598214610,
   "schedDelivTs": 1598486400,
   "shipped": true,
-  "shippedTs": 1598570096,
+  "shippedTs": 1626668498,
   "type": "ship",
   "utcOffset": -420
 }
 ----
 +
-** You will now have the second notificaton document in bucket 'notify' as follows:
+** You will now have the second notificaton document in collection 'notify' as follows:
 +
 [source,json]
 ----
-NEW/OUTPUT: KEY ntfy:1:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "notify"
+NEW/OUTPUT: KEY ntfy:1:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "notify"
 {
   "notifyReason": "shipped",
   "first_name": "John",
@@ -358,26 +380,26 @@ NEW/OUTPUT: KEY ntfy:1:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "noti
     }
   ],
   "utcOffset": -420,
-  "shippedTs": 1598570096
+  "shippedTs": 1626668498
 }
 ----
 +
 ** The Application log for the Eventing handler will show something like the following
 +
-2020-08-27T16:14:56.466-07:00 [INFO] "senddoc" {"notifyReason":"shipped","first_name":"John","last_name":"Smith","email":"jon.smith@gmail.com","phone":"+1 714-222-2222","items":[{"descr":"Ticondorna pencils 12 pack","qty":3,"sku":"SK18768"},{"descr":"Sharpie large marker","qty":1,"sku":"SK89736"}],"utcOffset":-420,"shippedTs":1598570096}
+2021-07-18T21:21:38.547-07:00 [INFO] "senddoc" {"notifyReason":"shipped","first_name":"John","last_name":"Smith","email":"jon.smith@gmail.com","phone":"+1 714-222-2222","items":[{"descr":"Ticondorna pencils 12 pack","qty":3,"sku":"SK18768"},{"descr":"Sharpie large marker","qty":1,"sku":"SK89736"}],"utcOffset":-420,"shippedTs":1626668498} 
 
-* In bucket "active", mutate ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 again by setting "delivered" to true.
-** The shiping document will be removed from bucket 'active' and archived to the bucket 'archive' as follows:
+* In collection "active", mutate ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 again by setting "delivered" to true.
+** The shiping document will be removed from collections 'active' and archived to the collection 'archive' as follows:
 +
 [source,json]
 ----
-DELETE/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "active"
+DELETE/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "active"
 
-NEW/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "archive"
+NEW/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "archive"
 {
   "active": false,
   "delivered": true,
-  "deliveredTs": 1598570331,
+  "deliveredTs": 1626668622,
   "exceptions": [],
   "id": "dea0fca2-e7b7-11ea-adc1-0242ac120002",
   "notifys": [
@@ -388,29 +410,29 @@ NEW/OUTPUT: KEY ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "archive"
     },
     {
       "notifyReason": "shipped",
-      "notifyTs": 1598570096,
+      "notifyTs": 1626668498,
       "notifySent": true
     },
     {
       "notifyReason": "delivered",
-      "notifyTs": 1598570331,
+      "notifyTs": 1626668622,
       "notifySent": true
     }
   ],
   "orderTs": 1598214610,
   "schedDelivTs": 1598486400,
   "shipped": true,
-  "shippedTs": 1598570096,
+  "shippedTs": 1626668498,
   "type": "ship",
   "utcOffset": -420
 }
 ----
 +
-** You will now have the third and final notificaton document in bucket 'notify' as follows:
+** You will now have the third and final notificaton document in collection 'notify' as follows:
 +
 [source,json]
 ----
-NEW/OUTPUT: KEY ntfy:2:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "notify"
+NEW/OUTPUT: KEY ntfy:2:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in collection "notify"
 {
   "notifyReason": "delivered",
   "first_name": "John",
@@ -430,13 +452,13 @@ NEW/OUTPUT: KEY ntfy:2:ship:dea0fca2-e7b7-11ea-adc1-0242ac120002 in bucket "noti
     }
   ],
   "utcOffset": -420,
-  "deliveredTs": 1598570331
+  "deliveredTs": 1626668622
 }
 ----
 +
 ** The Application log for the Eventing handler will show something like the following
 +
-2020-08-27T16:18:51.369-07:00 [INFO] "senddoc" {"notifyReason":"delivered","first_name":"John","last_name":"Smith","email":"jon.smith@gmail.com","phone":"+1 714-222-2222","items":[{"descr":"Ticondorna pencils 12 pack","qty":3,"sku":"SK18768"},{"descr":"Sharpie large marker","qty":1,"sku":"SK89736"}],"utcOffset":-420,"deliveredTs":1598570331}
+2021-07-18T21:23:42.248-07:00 [INFO] "senddoc" {"notifyReason":"delivered","first_name":"John","last_name":"Smith","email":"jon.smith@gmail.com","phone":"+1 714-222-2222","items":[{"descr":"Ticondorna pencils 12 pack","qty":3,"sku":"SK18768"},{"descr":"Sharpie large marker","qty":1,"sku":"SK89736"}],"utcOffset":-420,"deliveredTs":1626668622} 
 
 Note that with respect to the notifications that were created:
 
@@ -445,9 +467,9 @@ Note that with respect to the notifications that were created:
 notifyTs = 2020-08-26T14:00:00.000Z or Wed Aug 26 2020 07:00:00 GMT-0700 (Pacific Daylight Time)
 * index 1 was an event e.g. shipped was mutated to true (it didn't need a Timer) and fired instantly.
 +
-shippedTs = 2020-08-27T23:14:56.000Z or Thu Aug 27 2020 16:14:56 GMT-0700 (Pacific Daylight Time)
+shippedTs = 2021-07-19T04:21:38.000Z or Sun Jul 18 2021 21:21:38 GMT-0700 (Pacific Daylight Time)
 * index 2 was an event e.g. delivered was mutated to true (it didn't need a Timer) and fired instantly.
 +
-deliveredTs = 2020-08-27T23:18:51.000Z or Thu Aug 27 2020 16:18:51 GMT-0700 (Pacific Daylight Time)
+deliveredTs = 2021-07-19T04:23:42.000Z or Sun Jul 18 2021 21:23:42 GMT-0700 (Pacific Daylight Time)
 --
 ====

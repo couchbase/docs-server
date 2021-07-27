@@ -10,7 +10,7 @@ Couchbase Functions inherit support for most ECMAScript constructs by using Goog
 However, to support the ability to shard and scale Function-execution automatically, some capabilities have been removed.
 Additionally, to optimize language-utilization of the server environment, some new constructs have been added.
 
-NOTE: While every effort is made to ensure the accuracy of the content of the Eventing documentation herein, it should be noted that the controlling technical document is the https://github.com/couchbase/eventing/blob/master/docs/specification-65.pdf[Couchbase 6.5 Eventing Specification] available on GitHub.
+NOTE: While every effort is made to ensure the accuracy of the content of the Eventing documentation herein, it should be noted that the controlling technical document is the https://github.com/couchbase/eventing/blob/master/docs/specification-70.pdf[Couchbase 7.0 Eventing Specification] available on GitHub.
 
 [#removed-lang-features]
 == Removed Language Features
@@ -20,9 +20,10 @@ The following JavaScript features have been removed and cannot be used in handle
 * <<global_state,Global State>>
 * <<asynchrony,Asynchrony>>
 * <<browser_extensions,Browser and other Extensions>>
+* <<added-lang-features,Added Language Features>>
 
 [#global_state]
-*_Global State_:*
+=== Global State
 
 Function handlers do not allow global variables. All state must be saved and retrieved from persistence providers. In Couchbase Server, the Data Service provider is used as a persistence provider. Therefore, all global states are contained in the Data Service bucket(s) made available to the Function handlers through bindings. This restriction is mandatory for the Function's handler logic to remain agnostic of the rebalance operation.
 
@@ -34,10 +35,12 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-[#asynchrony]
-*_Asynchrony_:*
+Note the use of 'Constant alias' bindings in the Function's settings can be used to provide global constants accessible within a Function's JavaScript.  For example you might have a Constant alias of _debug_ with a value of _true_ (or _false_) to control verbose logging this would behaves just like adding a statement `const debug = true;` at the beginning of your JavaScript code.
 
-Asynchrony, particularly asynchronous callbacks, to be useful needs to retain access to their parent scope. As such asynchrony forms a node specific, long-running state that prevents the capture of the entire state in the persistence providers. Therefore, Function handlers are restricted to executing as short-running, straight-line code, without sleep and wakeups. Limited asynchrony is added back through time observers. Time observers are designed specifically not to make the state node specific.
+[#asynchrony]
+=== Asynchrony
+
+Asynchrony, particularly asynchronous callbacks, to be useful needs to retain access to their parent scope. As such asynchrony forms a node specific, long-running state that prevents the capture of the entire state in the persistence providers. Therefore, Function handlers are restricted to executing as short-running, straight-line code, without sleep and wakeups. 
 
 [source,javascript]
 ----
@@ -46,8 +49,10 @@ function OnUpdate(doc, meta) {
 }
 ----
 
+Limited asynchrony is added back through time observers (or Timers). Time observers are designed specifically not to make the state node specific.
+
 [#browser_extensions]
-*_Browser and other Extensions_:*
+=== Browser and other Extensions
 
 Function handlers execute as server-side code on Couchbase Server similar to the JavaScript code that is used in browsers.
 
@@ -67,12 +72,13 @@ function OnUpdate(doc, meta) {
 
 The following constructs have been added:
 
-* <<bucket_accessors,Bucket Accessors>>
+* <<bucket_accessors,Basic Keyspace Accessors>>
+* <<advanced_bucket_accessors,Advanced Keyspace Accessors>>
 * <<logging,Logging>>
 * <<n1ql_statements,N1QL Statements>>
 
 [#bucket_accessors]
-*_Bucket Accessors_:*
+=== Basic Keyspace Accessors
 
 Couchbase buckets, when bound to a Function, appear as a global JavaScript map.
 The map operations such as get, set and delete are exposed to the Data Service providers get, set, and delete operations respectively.
@@ -87,23 +93,119 @@ function OnUpdate(doc, meta) {
 }
 ----
 
-* The GET operation _(operator [] applied on a bucket binding and used as a value expression)_
+* *The GET operation* _(operator [] applied on a bucket binding and used as a value expression)_
 +
 This fetches the corresponding object from the KV bucket the variable is bound to, and returns the parsed JSON value as a JavaScript object. Fetching a non-existent object from a bucket will return JavaScript undefined value. This operation throws an exception if the underlying bucket GET operation fails with an unexpected error.
 
-* The SET operation _(operator [] appearing on left of = assignment statement)_
+* *The SET operation* _(operator [] appearing on left of = assignment statement)_
 +
 This sets the provided JavaScript value into the KV bucket the variable is bound to, replacing any existing value with the specified key. This operation throws an exception if the underlying bucket SET operation fails with an unexpected error.
 
-* The DELETE operation _(operator [] appearing after JavaScript delete keyword)_
+* *The DELETE operation* _(operator [] appearing after JavaScript delete keyword)_
 +
 This deletes the provided key from the KV bucket the variable is bound to. If the object does not exist, this call is treated as a no-op. This operation throws an exception if the underlying bucket DELETE operation fails with an unexpected error.
 
 
-[#logging]
-*_Logging_:*
+[#advanced_bucket_accessors]
+=== Advanced Keyspace Accessors
 
-An additional function, log() has been introduced to the language, which allows handlers to log user defined messages. These messages go into the eventing data directory and do not contain any system log messages. The function takes a string to write to the file. If non-string types are passed, a best effort string representation will be logged, but the format of these may change over time. This function does not throw exceptions.
+The following advanced bucket accessors have been added to expose a richer set of options and operators.  
+Unlike the basic bucket accessors these operations have non-trivial argument sets and return values for complete details refer to xref:eventing-advanced-keyspace-accessors.adoc[Advanced Keyspace Accessors Details].
+
+[#advanced-get-op]
+* *The Advanced GET operation*: _result = couchbase.get(binding, meta)_
++
+This operation allows reading a document from the bucket with an ability to specify the CAS value to be matched during the read.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-get-op[advanced GET operation].
+
+[#advanced-insert-op]
+
+* *The Advanced INSERT operation*: _result = couchbase.insert(binding, meta, doc)_
++
+This operation allows creating a fresh document in the bucket.
+This operation will fail if the document with the specified key already exists. 
+It allows specifying an expiration time (or TTL) to be set on the document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-insert-op[advanced INSERT operation].
+
+[#advanced-upsert-op]
+
+* *The Advanced UPSERT operation*: _result = couchbase.upsert(binding, meta, doc)_
++
+This operation allows updating an existing document in the bucket, or if absent, creating a fresh document with the specified key.
+The operation does not allow specifying CAS (it will silently ignore it).
+It also allows specifying an expiration time (or TTL) to be set on the document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-upsert-op[advanced UPSERT operation].
+
+[#advanced-replace-op]
+
+* *The Advanced REPLACE operation*: _result = couchbase.replace(binding, meta, doc)_
++
+This operation replaces an existing document in the bucket
+This operation will fail if the document with the specified key does not exist. 
+This operation allows specifying a CAS value that must be matched as a pre-condition before proceeding with the operation. 
+It also allows specifying an expiration time (or TTL) to be set on the document. 
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-replace-op[advanced REPLACE operation].
+
+[#advanced-delete-op]
+
+* *The Advanced DELETE operation*: _result = couchbase.delete(binding, meta)_
++
+This operation allows deleting a document in the bucket specified by key.
+Optionally, a CAS value may be specified which will be matched as a pre-condition to proceed with the operation.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-delete-op[advanced DELETE operation].
+
+[#advanced-increment-op]
+
+* *The Advanced INCREMENT operation*: _result = couchbase.incrment(binding, meta)_
++
+This operation atomically increments the field _"count"_ in the specified document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-increment-op[advanced INCREMENT operation].
++
+The document must have the below structure:
++
+[source,javascript]
+----
+{"count": 23} // 23 is the current counter value
+----
++
+The _increment_ operation returns the post-increment value. 
++
+If the specified counter document does not exist, one is created with _count_ value as 0 and the structure noted above. And so, the first returned value will be 1.
++
+Due to limitations in KV engine API, this operation cannot currently manipulate full document counters.
+
+[#advanced-decrement-op]
+
+* *The Advanced DECREMENT operation*: _result = couchbase.decrement(binding, meta)_
++
+This operation atomically decrements the field _"count"_ in the specified document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-decrement-op[advanced DECREMENT operation].
++
+The document must have the below structure:
++
+[source,javascript]
+----
+{"count": 23} // 23 is the current counter value
+----
++
+The _decrement_ operation returns the post-decrement value. 
++
+If the specified counter document does not exist, one is created with _count_ value as 0 and the structure noted above. And so, the first returned value will be -1.
++
+Due to limitations in KV engine API, this operation cannot currently manipulate full document counters.
+
+
+//****
+
+[#logging]
+=== Logging
+
+An additional function, log() has been introduced to the language, which allows handlers to log user defined messages. These log() statements will go the specific handler's log file also known as the application log.  
+The messages go files located in the eventing data directory and do not contain any system log messages. 
+The function takes a string to write to the file. If non-string types are passed, a best effort string representation will be logged, but the format of these may change over time. 
+This function does not throw exceptions.
+For more information see xref:eventing-debugging-and-diagnosability.adoc#application-logs[application logs].
+
 
 [source,javascript]
 ----
@@ -112,8 +214,11 @@ function OnUpdate(doc, meta) {
 }
 ----
 
+The Eventing Service also creates a system log file named *eventing.log* common across all handlers to capture management and lifecycle information, however the end-user cannot write to this file. 
+For more information see xref:eventing-debugging-and-diagnosability.adoc#system-log[system log].
+
 [#n1ql_statements]
-*_N1QL Statements_:*
+=== N1QL Statements
 
 Top level N1QL keywords, such as SELECT, UPDATE, INSERT and DELETE, are available as inline keywords in handlers. Operations that return values such as SELECT are accessible through a returned Iterable handle. N1QL Query results, via a SELECT, are streamed in batches to the Iterable handle as the iteration progresses through the result set.
 
@@ -199,10 +304,12 @@ The following built in functions have been added:
 
 * <<n1ql_call,The N1QL() function call>>
 * <<crc64_call,The crc64() function call>>
-
+* <<createtimer_call,The createTimer() function call>>
+* <<canceltimer_call,The cancelTimer() function call>>
+* <<curl_call,The curl() function call>>
 
 [#n1ql_call]
-*_The N1QL() function call_:*
+=== The N1QL() Function Call
 
 The _N1QL()_ function call  is documented below for reference purposes but should not used directly as doing so would bypass the various semantic and syntactic checks of the transpiler (notably: recursive mutation checks will no longer function, and the statement will need to manual escaping of all N1QL special sequences and keywords).
 
@@ -215,10 +322,52 @@ This is the identified N1QL statement. This will be passed to N1QL via SDK to ru
 * _params_
 +
 This can be either a JavaScript array (for positional parameters) or a JavaScript map. When the N1QL statement utilizes positional parameters (i.e., $1, $2 ...), then params is expected to be a JavaScript array corresponding to the values to be bound to these positional parameters. When the N1QL statement utilizes named parameters (i.e., $name), then params is expected to be a JavaScript map object providing the name-value pairs corresponding to the variables used by the N1QL statement. Positional and named value parameters cannot be mixed.
++
+_iterator using a positional params array_
++
+[source,javascript]
+----
+    // Using `travel-sample` demonstrate positional params.
+    // a) Positional param 1 is field 'iata' from the input doc
+    // b) Positional param 2 from a Handler variable: max_dist
+    // c) Will also prepare the statement for better performance
+    
+    var max_dist = 120;
+    var results = N1QL(
+        "SELECT COUNT(*) AS cnt " +
+        "FROM `travel-sample` WHERE type = \"route\" " +
+        "AND airline = $1 AND distance <= $2",
+        [doc.iata,max_dist], 
+        { 'isPrepared': true }
+    );
+----
++
+_iterator using a named params object_
++
+[source,javascript]
+----
+    // Using `travel-sample` demonstrate named params.
+    // a) Named param 1 '$mytype' is a hardcode
+    // b) Named param 2 '$myairline' is field 'iata' from the input doc
+    // c) Named param 3 '$mydistance' if from a Handler variable max_dist
+    // d) Set the consistancy in the options to none
+    
+    var max_dist = 120;
+    var results = N1QL("SELECT COUNT(*) AS cnt " +
+        "FROM `travel-sample` WHERE type = $mytype " +
+        "AND airline = $myairline AND distance <= $mydistance",
+        { '$mytype': 'route', '$mydistance': max_dist, '$myairline': doc.iata },         
+        { 'consistency': 'none' }
+    );
+----
 
 * _options_
 +
 This is a JSON object having various query runtime options as keys. Currently, the following settings are recognized:
+
+** _isPrepared_
++
+This controls if the statement will be prepared. Normally, this defaults to _false_ but can be set on a per statement basis to _true_ for any N1QL query that needs increased performance.
 
 ** _consistency_
 +
@@ -238,7 +387,7 @@ The N1QL() function throws an exception if the underlying N1QL query fails to pa
 
 
 [#crc64_call]
-*_The crc64() function call_:*
+=== The crc64() Function Call
 
 _crc64()_: This function calculates the CRC64 hash of an object using the ISO polynomial. The function
 takes one parameter, the object to checksum, and this can be any JavaScript object that can be
@@ -273,6 +422,30 @@ function OnUpdate(doc, meta) {
 ----
 Note that if multiple Eventing functions (or handlers) share the same Sync Gateway crc64() checksum documents, real mutations will be suppressed and missed. In this use case make the checksum documents unique to each handler, i.e. checksum_bucket["handler1:" + meta.id], checksum_bucket["handler2:" + meta.id], etc.
 
+== Timers
+
+Timers are asynchronous compute, which offers Eventing Functions the ability to execute in reference to wall-clock events, refer to xref:eventing-timers.adoc[Timers]. 
+
+[#createtimer_call]
+*The createTimer() Function Call*: _createTimer(callback, date, reference, context)_
+
+To create a timer a callback or JavaScript function will be executed at or close to the desired date. The reference is an identifier for the timer scoped to an Eventing function and callback. The context must be serializable data that is available to the callback when the timer is fired. 
+For more information see xref:eventing-timers.adoc#createtimer-function[createTimer function].
+
+[#canceltimer_call]
+*The cancelTimer() Function Call*: cancelTimer(callback, reference)
+
+To cancel a timer you can either by invoking _createTimer()_ with the same reference of an existing timer or you can use the _cancelTimer() function.
+For more information see xref:eventing-timers.adoc#canceltimer-function[cancelTimer function].
+
+== cURL
+
+[#curl_call]
+*The curl() Function Call*: response_object = curl(method, binding, [request_object])
+
+The curl() function provides a way of interacting with external entities via a REST endpoint from Eventing Functions using either HTTP or HTTPS.
+For more information see xref:eventing-curl-spec.adoc[curl function].
+
 [#handler-signatures]
 == Handler Signatures
 
@@ -282,7 +455,7 @@ Eventing Service or framework calls the following JavaScript functions as entry 
 * <<ondelete_handler,OnDelete Handler>>
 
 [#onupdate_handler]
-*_OnUpdate Handler_:*
+=== OnUpdate Handler
 
 This handler gets called when a document is created or modified, e.g. Insert/Update. The handler listens to mutations (the creation or modification of documents) in the associated source Bucket.
 
@@ -305,10 +478,10 @@ function OnUpdate(doc, meta) {
 
 
 [#ondelete_handler]
-*_OnDelete Handler_:*
+=== OnDelete Handler
 
 This handler gets called when a document is deleted or removed due to an expiry.
-The handler listens to mutations (deletions or expirations) in the associated source Bucket.  As of release 6.6.0 it is now possible to determine if the document was deleted or expired. This is accomplished via the optional argument "options" -- a JavaScript map object with a boolean entry named 'expired'.
+The handler listens to mutations (deletions or expirations) in the associated source Bucket.  It became possible to determine if the document was deleted or expired. This is accomplished via the optional argument "options" -- a JavaScript map object with a boolean property named 'expired'.
 
 In this handler the following limitation exists. This limitation arises due to KV engine design choices and may be revisited in the future:
 
@@ -404,4 +577,4 @@ During the Function deployment step, when the system validates the handler code,
 
 Reserved words as a property bindings value
 
-image::reserved-words-6_5.png[,642]
+image::reserved-words-7_0.png[,642]
