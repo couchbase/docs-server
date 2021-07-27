@@ -2,7 +2,7 @@
 :page-edition: Enterprise Edition
 
 [abstract]
-While using Eventing Functions or Handlers, the following terminologies are used.
+While using Eventing Functions or handlers, the following terminologies are used.
 
 == Functions
 
@@ -10,9 +10,9 @@ Eventing Functions offers a computing paradigm using which developers can handle
 
 === Handler
 
-A handler is a collection of JavaScript functions that together react to a class of events. A handler is stateless short running piece of code that must execute from start to end prior to a specified timeout duration. One or more handlers together constitute an Eventing Function.
+A handler is a collection of JavaScript functions that together react to a class of events. A handler is a stateless short running piece of code that must execute from start to end prior to a specified timeout duration. One or more handlers together constitute an Eventing Function.
 
-NOTE: Since the 6.5 release, the handler code is compressed (with the compressed size is limited to 128KB).
+NOTE: Since the 6.5 release, the handler code is compressed (with the compressed size limited to 128KB).
 
 Eventing framework calls the following JavaScript functions as entry points to the handler.
 
@@ -20,135 +20,168 @@ Eventing framework calls the following JavaScript functions as entry points to t
 
 The *OnUpdate* handler gets called when a document is created or modified. Two major limitations exist. First, if a document is modified several times in a short duration, the calls may be coalesced into a single event due to deduplication. Second, it is not possible to discern between Create and Update operations.
 
-The entry point OnUpdate(doc,meta) passes both the document and meta which contains useful information such as the document's id, cas, expiration.
+The entry point OnUpdate(doc,meta) passes both `doc`, the document, and `meta`, additional data containing useful information such as the document's id, cas, expiration, and datatype ("json" or "binary").
 
-Starting with version 6.6.2, meta also contains the property datatype (JSON or binary) because Eventing can now process binary documents which were previously suppressed. [.status]#Couchbase Server 6.6.2#
+NOTE: Unless the _Language compatibility_ in the settings of the Function is at least 6.6.2 binary documents will be suppressed.
 
 ==== Delete Handler
 
-The *OnDelete* handler gets called when a document is deleted. One major limitation exists - it is not possible to get the value of the document that was just deleted or expired. However, starting with version 6.6, it is possible to discern between Expiration and Delete operations by checking the new optional parameter options.
+The *OnDelete* handler gets called when a document is deleted. 
 
-The entry point OnDelete(meta) passes meta which contains useful information such as the document's ID, CAS, expiration.  However, starting with version 6.6, the entry point OnDelete(meta) can have a second optional parameter `options`, which makes it possible to discern between Expiration and Delete operations by checking the the new parameter, `options.expired`, for true or false.
+The entry point OnDelete(meta,options) passes both `meta` which contains useful information such as the document (see above) and also `options` which has one boolean parameter `options.expired` to indicate if the removal was due to a deletion or an expiration.
+
+One major limitation exists - it is not possible to get the value of the document that was just deleted or expired. 
 
 === Statelessness
 
 The persistent state of a handler is captured in the below external elements, and all states that appears on the execution stack are ephemeral
 
-* The metadata bucket (which in the future will eventually be moved to a system collection).
-* The documents being observed and their extended attributes.
-* The storage providers bound to the handler via a bucket alias.
-* The IO providers bound to a handler via a URL alias.
+* The Listen To Location (the Eventing source) a collection that is the source of the mutations sent to the Function via the Database Change Protocol (DCP).
+* The Eventing Storage (the Eventing metadata) a collection used a scratch pad for the Function's state (this can be shared across all a tenant's Functions).
+* The documents or mutations being observed along with their extended attributes.
+* Optional Bindings for Function. There are three distinct types of bindings:
+** Bucket alias, an alias and access mode used by the Function to access a collection.
+** URL alias, an alias and HTTP/S settings used by the Function to access external REST APIs.
+** Constant alias, an alias to an integer, decimal number, string, boolean, or a JSON object used as a global variable within the Function.
 
 === Deduplication
 
-Couchbase does not store every version of a document permanently. Hence, when a Handler asks for mutation history of a document,  it sees a truncated history of the document. However, the final state of a document is always present in all such histories  (as the current state is always available in the database).
+Couchbase does not store every version of a document permanently. Hence, when a handler receives the mutation history of documents from the Eventing source, it sees a truncated history of each document. However, the final state of a document is always present in all such histories (as the current state is always available in the database).
 
-Similarly, the KV data engine deduplicates multiple mutations made to any individual document rapidly in succession, to ensure  highest possible performance. So, when a document mutates rapidly, Handlers may not see all intermediate states, but in all  cases, will see the final state of the document.
+Similarly, the KV data engine deduplicates multiple mutations made to any individual document rapidly in succession, to ensure  highest possible performance. So, when a document mutates rapidly, handlers may not see all intermediate states, but in all cases, will see the final state of the document.
 
 === Recursive Mutation
 
-An abbreviation of convenience of the term Potentially Recursive Mutation. When a Handler manipulates documents in a bucket that  serves as the source of mutations to this or any other Handler, a write originated by a Handler will cause a mutation to be seen  by itself or another handler. These are called potentially recursive mutations. 
+An abbreviation of convenience of the term Potentially Recursive Mutation. When a handler manipulates documents in a keyspace that also serves as the source of mutations to this or any other handler, a write originated by a handler will cause a mutation to be seen by itself or another handler. These are called potentially recursive mutations.  
+
+[#json_number_percision]
+=== JSON Number Precision
+
+JSON does not have specialized types for integral and floating-point numbers. So many JavaScript runtimes utilize floating-point numbers to hold JSON numbers. This means that JavaScript numbers have a very large range but lesser precision when compared to traditional integers of the same size.
+
+v8 utilizes 64-bit floating-point numbers which yields a 53-bit precision. So, only integers up to +/- 253 can safely be handled in Eventing JavaScript. When handling very large integers, that is, numbers having 15 or more digits, one should utilize JavaScript BigInt types to safely handle them. The exact numbers where integral precision is lost is defined by JavaScript in the constants `Number.MAX_SAFE_INTEGER` and `Number.MIN_SAFE_INTEGER`.
+
+Often, such large integers are really only tokens, and it is not necessary to perform arithmetic on them, and only comparison for equality is necessary. Examples of this in Eventing are CAS values generated by Advanced Bucket Operations, or the result of the crc64() function. In these cases, it is appropriate to hold these large integers as strings, as it ensures full fidelity while retaining the ability to do equality comparisons.
 
 === Feed Boundary
 
-Feed Boundary is a time milestone used during an Eventing Function or Handler configuration. Using the `Feed Boundary` option, you can either invoke a handler on all data mutations available in the cluster (`Everything`) or choose to invoke a handler to process only future data mutations, post deployment (`From now`). However, once deployed you may Pause/Resume a handler in this case; the Feed Boundary is a checkpoint such that no mutations are reprocessed or lost.
+Feed Boundary is a time or progress milestone used during an Eventing Function or handler configuration. The Feed Boundary is a persistent setting in the Function's definition and can only be set or altered when a Function is created, undeployed or paused.
 
-NOTE: Starting with version 6.6.2, the Feed Boundary is now a persistent setting in the Function's definition and can only be set or altered when a Function is created, undeployed or paused. Thus, there is no longer a choice of a feed boundary when a function is deployed as the value is taken from the Function's definition [.status]#Couchbase Server 6.6.2#
+Based on the `Feed Boundary` setting, when a handler is deployed it can either process all data mutations available in the cluster (`Everything`) or  process only future data mutations (`From now`) that occur post deployment. However, once deployed you may Pause/Resume a handler in this case; the Feed Boundary is a checkpoint of the Function's actual progress such that no mutations are reprocessed or lost. 
 
-=== Buckets
+=== Keyspaces
 
-There are two key buckets used by every Eventing Function or Handler: the source bucket and the metadata bucket.
+A keyspace is a fully qualified path to a collection of the form "bucket-name.scope-name.collection-name". For backward comptibility a keyspace can also be of the form "bucket-name._default._default" which is the form of a 6.6 bucket upgraded to 7.0.  The two terms keyspace and collection can be considered equivelent.
 
-*Source Bucket*
+=== Eventing Keyspaces
 
-Couchbase Eventing Functions use a bucket to track data mutations. This bucket is termed as the source bucket. The source bucket can be either Couchbase or Ephemeral bucket type. However, memcached bucket types are not supported.
+There are two keyspaces used by every Eventing Function or handler: the Listen To Location (the Eventing source) collection and the Eventing Storage (the Eventing metadata) collection.  
 
-When you are creating a function, you need to specify a source bucket. The handler code watches this bucket via DCP to track data mutations.
+*Listen To Location (the Eventing source)*
 
-NOTE: You can use a common source bucket to listen to multiple Eventing Functions running different code.  However it is less resource intensive to merely code an if-then-else or switch statement in your Handler’s JavaScript.
+Couchbase Eventing Functions use a collection as the source of data mutations. This collection is referred to as the Eventing source. This source collection can be either Couchbase or Ephemeral keyspace type. However, memcached keyspace types are not supported.
 
-When a source bucket is deleted, all deployed functions associated with this source bucket, are undeployed.
+When you are creating a Function, you need to specify a source collection. The handler code watches this collection via DCP to both receive and track data mutations.
 
-In the course of processing the handler code, documents can be mutated in a different bucket. For understanding purposes, this bucket can be termed as a destination buckets which are bound to the Function via bucket aliases.
+NOTE: You can have multiple Eventing Functions running different code listening to the same source collection.  However it is less resource intensive to use just one Eventing Function and merely code an if-then-else or switch statement in your handler’s JavaScript.
 
-At times, the handler code itself can trigger data mutations on documents. 
-If the handler code directly modifies documents in the source bucket, the Eventing Service will suppress the mutation back to the Handler making the mutation. 
+When a source collection is deleted, all deployed (or paused) Functions associated with this source collection are undeployed.
+
+In the course of processing the handler code, documents can be mutated in different collections. For understanding purposes, these keyspaces can be termed as destination collections which are bound to the Function via Bucket aliases.
+
+At times, the handler code itself can trigger data mutations on documents via the Data Service (KV) via either Basic Keyspace Accessors or Advanced Keyspace Accessors. 
+If the handler code directly modifies documents in the source collection, the Eventing Service will suppress the mutation back to the handler making the mutation. 
 When implementing multiple Functions it is possible to create infinite recursions, however the Eventing Service by default will prevent deploying Functions that would result in recursion loops.  It should be noted that not all recursion loops can be detected nor are all recursion loops wrong -- the default recursion checks can be disabled. For more detail on cyclic generation of data changes, refer to xref:troubleshooting-best-practices.adoc#cyclicredun[Bucket Allocation Considerations].
 
-*Metadata Bucket*
+At times, the handler code itself can trigger data mutations on documents via the Query Service (SQL++/N1QL) via inline N1QL statements or N1QL() function calls. In this case the handler will see the mutation it just generated and additional business logic may be needed to terminate  or protect against possible recursion.
 
-The Metadata Bucket, also known as the Eventing Storage bucket, stores artifacts (or configuration documents) that contain information about DCP streams, worker allocations, timer information, and internal checkpoints.
+*Eventing Storage (the Eventing metadata)*
 
-When you are creating an Eventing Function, ensure that a separate bucket is designated as a metadata bucket and reserved solely for the internal use of the Eventing Service. You can use a common metadata bucket across multiple Eventing Functions.
+The Eventing Storage (or Metadata) collection, stores artifacts (or configuration documents) that contain information about DCP streams, worker allocations, timer information/state, and internal checkpoints.
 
-NOTE: At any point, refrain from deleting the metadata bucket. Also, ensure that your handler code or other services do not perform a write or delete operation on the metadata bucket.
+When you are creating an Eventing Function, ensure that a separate collection is designated as an Eventing metadata and reserved solely for the internal use of the Eventing Service. You can use a common Eventing metadata collection across multiple Eventing Functions for the same tenant.  
 
-If a metadata bucket gets accidentally deleted, then all deployed functions are undeployed and associated indexes and constructs get dropped.
+NOTE: At any point, refrain from deleting the Eventing metadata collection. Also, ensure that your handler code or other services do not perform a write or delete operation on the Eventing metadata collection.
+
+If an Eventing metadata collection gets accidentally deleted, then all deployed functions are undeployed and associated indexes and constructs get dropped.
 
 *Function Name*
 
-All Eventing Functoins must have a unique name in a Couchbase cluster. A Function name can only start with characters in range A-Z, a-z, 0-9, and can only contain characters in range A-Z, a-z, 0-9, underscore, and hyphen.
+All Eventing Functions must have a unique name in a Couchbase cluster. A Function name can only start with characters in range A-Z, a-z, 0-9, and can only contain characters in range A-Z, a-z, 0-9, underscore, and hyphen.
+
+*Deployment Feed Boundary*
+
+Using the `Feed Boundary` drop down, you can either set a handler to deploy for all data mutations available in the cluster (`Everything`) or choose to deploy the handler to process only future data mutations, post deployment (`From now`). However, once deployed you may Pause/Resume a handler in the Resume case; the Feed Boundary is a checkpoint of the Function's actual progress when the Function was paused such that no mutations are reprocessed or lost upon a subsequent Resume.
 
 *Description*
 
 The Description is an optional text that can be added to the Function, typically to describe the purpose of the particular business logic.
 
-*Deployment Feed Boundary*
-
-Using the `Feed Boundary` drop down, you can either set a handler to deploy for all data mutations available in the cluster (`Everything`) or choose to deploy the handler to process only future data mutations, post deployment (`From now`). However, once deployed you may Pause/Resume a handler in the Resume case; the Feed Boundary is a checkpoint made when the Function was paused such that no mutations are reprocessed or lost. [.status]#Couchbase Server 6.6.2#
-
+[#function-settings]
 === Eventing Function or Handler Settings
 
-The log levels, N1QL Consistency, Workers, and Script Timeout, are additional options available during the Eventing Function definition process.
+There are several advanced settings (by default hidden within a collapsible panel) that can be adjusted. The System Log Level, N1QL Consistency, Workers, Language compatibility, Script Timeout, and Timer Context Max Size are additional options available during the Eventing Function definition process.
 
-* *Log Levels*: Use log levels to determine the granularity of log messages.
+* *System Log Level*: Determines the granularity at which messages are logged to the common system log messages across all Eventing Functions. The available choices are: `Info` (the default), `Error`, `Debug`, `Warning`, and `Trace`.
 +
-The available choices are: Info, Error, Debug, Warning, and Trace.
+Typically you will never need to adjust this from the default setting of `Info`, the data in this file is generally only used by support.
+
+* *Application log location* The directory path to the log file for the application or the Function specific log messages named <<function_name>>.log. 
+The Function designer uses log() statments to write to this file in addition it will also record some Function specific system level errors.  
+In the UI when "Log" is selected these files are combined across all Eventing nodes and displayed.  This value is read-only and set at systemm initilization time and can not be subsequently changed.
+
 * *N1QL Consistency*: The default consistency level of N1QL statements in the handler.
-+
-This controls the consistency level for N1QL statements, but can be set on a per statement basis. The valid values are "None" and "Request".
+This controls the consistency level for N1QL statements, but can be set on a per statement basis. The valid values are `None` (the default) and `Request`.
+
 * *Workers*: Workers the number of worker processes to be started for the handler.
-+
-Allows the handler to be scaled up (or vertical scaling). Each worker process supports two fixed threads of execution, however this setting is limited to a maximum of 64 for system optimization purposes. The system automatically generates a warning message if the number of workers exceeds a set threshold based upon cluster resources, however, in this case the handler can still be deployed.
+Allows the handler to be scaled up (or vertical scaling). Each worker process supports two fixed threads of execution, however this setting is limited to a maximum of 64 for system optimization purposes. 
+The system automatically generates a warning message if the number of workers exceeds a set threshold based upon cluster resources, however, in this case the handler can still be deployed.
+The minimum value is 1 (the default) and the recomended maximum is 64.  In most cases the maximum should be the number of vCPUs.
+
 * *Language compatibility*: The language version of the handler for backward compatibility.
 + 
-If the semantics of a language construct change in any given release the “language compatibility” setting will ensure an older handler will continue to see the runtime behavior that existed at the time it was authored, until such behavior is deprecated and removed. For example, accessing non-existent items from a bucket returns undefined in 6.5.0, while in 6.0.0 an exception is thrown.(Note 6.0.0, 6.5.0, and 6.6.2 are the only currently defined versions.)
+If the semantics of a language construct change in any given release the “Language compatibility” setting will ensure an older handler will continue to see the runtime behavior that existed at the time it was authored, until such behavior is deprecated and removed. Note 6.0.0, 6.5.0, and 6.6.2 are the only currently defined versions and for newly authored Functions the default is the highest compatibility version available, currently 6.6.2.
 +
-Only a Function with “language compatibility” of 6.6.2 in its settings will pass binary documents to the OnUpdate(doc,meta) handler. Earlier “language compatibility” values of 6.0.0 and 6.5.0 will filter all binary documents out of the DCP mutation stream. [.status]#Couchbase Server 6.6.2#
-+
+For example, accessing non-existent items from a keyspace returns undefined in 6.5.0, while in 6.0.0 an exception is thrown. In addition only a Function with “language compatibility” of 6.6.2 in its settings will pass binary documents to the OnUpdate(doc,meta) handler. In addition alues of 6.0.0 and 6.5.0 will filter all binary documents out of the DCP mutation stream, only 6.6.2 will pass binary documents to the Function handlers. 
+
 * *Script Timeout*: Script Timeout provides a timeout option to terminate a non-responsive Function.
 +
-The entry points into the handler, e.g. OnUpdate and OnDelete, processing for each mutation must complete from start to finish prior to this specified timeout duration.
-+
+The entry points into the handler, e.g. OnUpdate and OnDelete, processing for each mutation must complete from start to finish prior to this specified timeout duration. The default is 60 seconds.
+
 * *Timer Context Max Size*: Timer Context Max Size limits the size of the context for any Timer created by the Function. 
 +
-Eventing Timers can store and access a context which can be any JSON document, the context is used to store state when the timer is created and retrieve state when the timer fires.  By default the size is 1024 bytes, but this can be adjusted on a per Function basis. [.status]#Couchbase Server 6.6.2#
+Eventing Timers can store and access a context which can be any JSON document, the context is used to store state when the timer is created and retrieve state when the timer fires.  By default the size is 1024 bytes, but this can be adjusted on a per Function basis.
 
 [#section_mzd_l1p_m2b]
 === Bindings
 
-A binding is a construct that allows separating environment specific variables (example: bucket names, external endpoint URLs, credentials) from the handler source code. It provides a level of indirection between environment specific artifacts to symbolic names, to help moving a handler definition from development to production environments without changing code. Binding names must be valid JavaScript identifiers and must not conflict any built-in types.
+A binding is a construct that allows separating environment specific variables (example: keyspace names, external endpoint URLs plus credentials, or global constants) from the handler source code. It provides a level of indirection between environment specific artifacts to symbolic names, to help moving a handler definition from development to production environments without changing code. Binding names must be valid JavaScript identifiers and must not conflict with any built-in types.
 
-An Eventing Function can have no binding, one binding, or several bindings.
+An Eventing Function can have no binding, one binding, or several bindings.  There are three distinct types of bindings:
 
-*Bucket Bindings*
+*Bucket alias*
 
-Bucket bindings allow JavaScript handlers to access Couchbase KV buckets. The buckets are then accessible by the bound name as a JavaScript map in the global space of the handler. 
+Bucket aliases allow JavaScript handlers to access Couchbase KV collections from the Data Service or KV. The keyspaces (bucket.scope.collection) are then accessible by the bound name as a JavaScript map in the global space of the handler. 
 
-You can add bucket bindings via the 'bucket-alias' choice then entering a tuple of: alias-name, bucket-name, and an access level. Where the alias-name that you can use to refer to the bucket from your handler code; the bucket-name is the actual name of the bucket in the cluster; and the access level is either 'read only' or 'read and write'.
+You can add bucket aliases via the 'Bucket alias' choice then entering a tuple of: alias-name, keyspace, and an access level. Where the alias-name that you can use to refer to the keyspace or collection from your Handler code; the keyspace is the full path to a collection in the cluster; and the access level to the keyspace is either 'read only' or 'read and write'.
 
-NOTE: One or more bucket bindings (or bucket-aliases) are mandatory when your handler code performs any bucket related operations.
+NOTE: One or more Bucket alias bindings (or Bucket aliases) are mandatory when your handler code performs any collection related operations against the Data Service.
 
-* Read Only Bindings: A binding with access level of "Read Only" allows reading documents from the bucket, but cannot be used to write (create, update or delete) documents in such a bucket. Attempting to do so will throw a runtime exception.
+* Read Only Bindings: A binding with access level of "Read Only" allows reading documents from the collection, but cannot be used to write (create, update or delete) documents in such a collection. Attempting to do so will throw a runtime exception.
 
-* Read-Write Bindings: A binding with access level of "Read Write" allows both reading and writing (create, update, delete) of documents in the bucket.  If you wish to modify the document passed to the OnUpdate entry point (or any other document in the source bucket) you will need to provide a Read-Write binding alias to the Function's source bucket.
+* Read-Write Bindings: A binding with access level of "Read Write" allows both reading and writing (create, update, delete) of documents in the collection.  If you wish to modify the document passed to the OnUpdate entry point (or any other document in the source collection) you will need to provide a Read-Write binding alias to the Function's source collection.
 
-*URL Bindings*
+*URL alias*
 
 These bindings are utilized by the cURL language construct to access external resources. The binding specifies the endpoint, the protocol (http/https), and credentials if necessary. Cookie support can be enabled via the binding if desired when accessing trusted remote nodes. When a URL binding limits access through to be the URL specified or descendants of it. The target of a URL binding should not be a node that belongs to the Couchbase cluster.
 
-You can add URL bindings via the 'URL-alias' choice then entering the following: alias-name, URL, allow cookies setting, and security settings of validate SSL certificate and an auth type of (no auth, basic, bearer, and digest).  For more details refer to xref:eventing-curl-spec.adoc#bindings[cURL Bindings].
+You can add URL bindings via the 'URL alias' choice then entering the following: alias-name, URL, allow cookies setting, security settings of validate SSL certificate and an auth type of (no auth, basic, bearer, and digest).  For more details refer to xref:eventing-curl-spec.adoc#bindings[cURL Bindings].
 
+*Constant alias*
+
+These bindings are utilized by the Function's JavaScript handler code as global variables. 
+
+You can add URL bindings via the 'Constant alias' choice then entering an alias-name and value. The value can be either an integer, decimal number, string, boolean, or a JSON object.  For example you might have an alias of _debug_ with a value of _true_ (or _false_) to control verbose logging this would act just like adding a statement `const debug = true;` at the beginning of your JavaScript code (_although the Eventing syntax wouldn't allow this global to be added to the actual JavaScript_).
 
 == Operations
 
@@ -156,27 +189,27 @@ The following operations are exposed through the UI, couchbase-cli and REST APIs
 
 === Deploy
 
-The deploy operation activates an Eventing function or handler. Eventing functions or handlers can be deployed in a cluster.
+The deploy operation activates an Eventing function or handler. Eventing functions or handlers can be deployed in a cluster.  
 
 This operation activates a handler. Source validations are performed, and only valid handlers can be deployed. Deployment transpiles the code and creates the executable artifacts. The source code of an activated (or deployed and running) handler cannot be edited. Unless a handler is in deployed state, it will not receive or process any events. Deployment of a Function creates necessary metadata, spawns worker processes, calculates initial partitions, and initiates check-pointing of DCP stream to processes. 
 
-Deployment for DCP observer (or Feed Boundary) has two variations:
+Deployment for DCP observer (or Feed Boundary) has two variations controlled by the setting of the handler's "Deployment Feed Boundary":
 
-* Deploy from Start: The Handler will see a deduplicated history of all documents, ending with the current value of each document. Hence, the Handler will see every document in the bucket at least once.
+* Everything: The handler will see a deduplicated history of all documents, ending with the current value of each document. Hence, the Handler will see every document in the keyspace at least once.
 
-* Deploy from Now: The handlers will see mutations from current time. In other words, the Handler will see only documents that mutate after it is deployed.
+* From now: The handlers will see mutations from current time. In other words, the handler will see only documents that mutate after it is deployed.
 
 === Undeploy
 
-This operation causes the handler to stop processing events of all types and shuts down the worker processes associated with the handler. It deletes all timers created by the handler being undeployed and their context documents. It releases any runtime resources acquired by the handler. Handlers in undeployed state allow code to be edited. Newly created handlers start in Undeployed state.
+This operation causes the handler to stop processing events of all types and shuts down the worker processes associated with the handler. It deletes all timers created by the handler being undeployed and their context documents. It releases any runtime resources acquired by the handler.  A handler in the Undeployed state can have its code edited and settings altered. Newly created handlers start in Undeployed state.
 
 === Pause
 
-This action stops all processing associated with a handler including timer callbacks and performs a checkpoint (to be used for a subsequent resume). A handler in paused state can be edited. Handlers in Paused state can be either Resumed or Undeployed.
+This action stops all processing associated with a handler including timer callbacks and performs a checkpoint (to be used for a subsequent resume). A handler in the Paused state can have its code edited and settings altered. handlers in Paused state can be either Resumed or Undeployed.
 
 === Resume
 
-This action continues processing of a handler that was previously Paused. The Resume process is akin to a Deploy but utilizes a checkpoint to restart such that no mutations are reprocessed or lost. The backlog of mutations that occurred when the handler was paused will now be processed. The backlog of timers that came due when the handler was paused will now fire. Depending on the system capacity and how long the handler was paused, clearing the backlog may take some time before Handler moves on to current mutations and timers.
+This action continues processing of a handler that was previously Paused. The Resume process is akin to a Deploy but utilizes a progress checkpoint (made when the Handler was paused) to restart such that no mutations are reprocessed or lost. The backlog of mutations that occurred when the handler was paused will now be processed. The backlog of timers that came due when the handler was paused will now fire even if that timer is now in the past. Depending on the system capacity and how long the handler was paused, clearing the backlog may take some time before Handler moves on to current mutations and timers.
 
 === Delete
 
@@ -184,6 +217,6 @@ When a handler is deleted, the source code implementing the handler, all timers,
 
 === Debug
 
-Debug is a special flag on a handler that causes the next event instance received by the handler be trapped and sent to a separate v8 worker with debugging enabled. The debug worker pauses the trapped event processing and opens a TCP port and generates a Chrome Developer Tools URL with a session cookie that can be used to control the debug worker. All other events, except the trapped event instance, continue unencumbered. If the debugged event instance completes execution, another event instance is trapped for debugging, and this continues till debugging is stopped, at which point any trapped instance runs to completion and debug worker becomes passive.
+Debug is a special flag on a handler that causes the next event instance received by the handler to be trapped and sent to a separate v8 worker with debugging enabled. The debug worker pauses the trapped event processing and opens a TCP port and generates a Chrome Developer Tools URL with a session cookie that can be used to control the debug worker. All other events, except the trapped event instance, continue unencumbered. If the debugged event instance completes execution, another event instance is trapped for debugging, and this continues till debugging is stopped, at which point any trapped instance runs to completion and the debugging worker becomes passive.
 
-Debugging is convenience feature intended to help during handler development and should not be used in production environments. Debugger does not provide correctness or functionality guarantees.
+Debugging is convenience feature intended to help during handler development and should not be used in production environments. It also be noted that using the debugger does not provide correctness or functionality guarantees.

@@ -1,7 +1,9 @@
 = Cost-Based Optimizer
 :page-topic-type: concept
 :page-status: Couchbase Server 7.0
+:page-edition: Enterprise Edition
 :imagesdir: ../../assets/images
+:description: The cost-based optimizer takes into account the cost of memory, CPU, network transport, and disk usage when choosing the optimal plan to execute a query.
 
 // Cross-references
 :query-settings: xref:settings:query-settings.adoc
@@ -17,19 +19,26 @@
 :explain: {n1ql}/explain.adoc
 :updatestatistics: {n1ql}/updatestatistics.adoc
 :collation: {n1ql}/datatypes.adoc#collation
-
-:query-service-architecture: xref:learn:services-and-indexes/services/query-service.adoc#query-service-architecture
+:query-service: xref:learn:services-and-indexes/services/query-service.adoc
+:query-service-architecture: {query-service}#query-service-architecture
+:query-execution: {query-service}#query-execution
 :query-settings: xref:manage:manage-settings/general-settings.adoc#query-settings
 
 [abstract]
-The cost-based optimizer takes into account the cost of memory, CPU, network transport, and disk usage when choosing the optimal plan to execute a query.
+{description}
 
 [[overview]]
 == Overview
 
-The _cost-based optimizer_ (CBO) is a built-in feature that enables the Query service to create the most efficient plan to execute a query.
+The _cost-based optimizer_ (CBO) is a feature available in Couchbase Server Enterprise Edition that enables the Query service to create the most efficient plan to execute a query.
 
-The cost-based optimizer uses metadata and statistics to estimate the amount of processing (memory, CPU, and I/O) required for each operation.
+The execution of a query involves {query-execution}[many possible operations]: scan, fetch, join, filter, and so on.
+When the query processor is planning the query execution, there may be several possible choices for each operation: for example, there may be different possible indexes, or a choice of join types.
+With each of these operations, some of these choices are quicker and more efficient than others.
+The query processor attempts to choose the most efficient options when creating the query execution plan.
+The legacy {query-service-architecture}[rules-based optimizer] (RBO), as its name suggests, takes a rules-based approach; but this does not always lead to the optimum query plan.
+
+The cost-based optimizer uses metadata and statistics to estimate the amount of processing (memory, CPU, network traffic, and I/O) required for each operation.
 It compares the cost of alternative routes, and then selects the query-execution plan with the least cost.
 
 .Query execution flow, showing the cost-based optimizer using statistics and metadata
@@ -37,15 +46,42 @@ image::cbo_query_execution_flow.png["Query execution flow"]
 
 The cost-based optimizer can generate a query plan for {select}[SELECT], {update}[UPDATE], {delete}[DELETE], {merge}[MERGE], and {insert}[INSERT INTO with SELECT] queries.
 
+****
+As an analogy, imagine that you need to travel from one side of a major city to the other by train.
+There may be many options available to you: commuter rail, metro, or light rail.
+You may also need to change from one service to another at an interchange station, perhaps more than once.
+By combining the fastest services with the smallest number of changes and the shortest wait time at each interchange, you can get to your destination in the most efficient way.
+
+Of course, to plan your route, you need to have knowledge of the train frequencies, the size and accessibility of the interchange stations, and how busy the services are likely to be at the time when you travel.
+Each of these factors imposes a cost on the options that are available to you.
+If you have a greater knowledge and experience of the city's rail network, you will be better informed about these costs, and better able to plan the optimum journey.
+****
+
+[[advantages]]
+== Advantages of the Cost-Based Optimizer
+
+The cost-based optimizer calculates a cost for a query plan that takes into consideration resource usages during query execution, thus can potentially generate an optimum query plan.
+
+[[index-selection]]
+=== Index Selection
+
+The cost-based optimizer takes into consideration the characteristics of each qualified index, and thus can better differentiate among similar indexes.
+The cost-based optimizer also reduces the need for intersect scans since it can better determine whether one index is better than another index based on cost information.
+
+[[join-method]]
+=== Join Method
+
+In Couchbase Server Enterprise Edition, two join methods are supported: nested-loop join and hash join.
+With the legacy {query-service-architecture}[rules-based optimizer], nested-loop join is used by default, and hash join is only considered when a USE HASH hint is specified.
+With the cost-based optimizer, both join methods are considered, and the optimizer chooses a join method based on cost information.
+
 [[optimizer-stats]]
 == Optimizer Statistics
 
-Before you can use the cost-based optimizer with a query, you must first gather the statistics that it needs.
 The cost-based optimizer uses keyspace statistics, index statistics, and distribution statistics.
+Before you can use the cost-based optimizer with a query, you _must_ first gather the statistics that it needs using the {updatestatistics}[UPDATE STATISTICS] statement.
 
-Keyspace statistics and index statistics are supplied to the cost-based optimizer automatically;
-for instance, index statistics are refreshed whenever the index changes significantly.
-However, you must gather distribution statistics yourself using the {updatestatistics}[UPDATE STATISTICS] statement.
+If the cost-based optimizer cannot properly calculate cost information for any step of a query plan, e.g. due to lack of the necessary optimizer statistics, the Query service falls back on the {query-service-architecture}[rules-based N1QL optimizer] to generate a query plan.
 
 The cost-based optimizer uses the following statistics.
 
@@ -54,7 +90,7 @@ For keyspaces:
 * The number of documents in the keyspace.
 * The average document size.
 
-For indexes:
+For indexes using standard index storage:
 
 * The number of items in the index.
 * The number of index pages.
@@ -62,6 +98,11 @@ For indexes:
 * The average item size.
 * The average page size.
 * The number of documents indexed.
+
+For indexes using memory-optimized index storage:
+
+* The number of items in the index.
+* The average item size.
 
 For data:
 
@@ -88,19 +129,6 @@ These sample values are sorted into _distribution bins_ by data type and value.
 . After being separated by data type, values are sorted further into separate bins depending on their value.
 
 The distribution bins are of approximately equal size, except for the last distribution bin for each data type, which could be a partial bin.
-
-The sample size can be specified when you use the {updatestatistics}[UPDATE STATISTICS] statement.
-
-[[resolution]]
-=== Resolution
-
-The number of distribution bins is determined by the _resolution_.
-
-The default resolution is `1.0`, meaning each distribution bin contains 1% of the documents, and therefore 100 bins are required.
-The minimum resolution is `0.02` (5000 distribution bins) and the maximum is `5.0` (20 distribution bins).
-The cost-based optimizer calculates the bin size based on the resolution and the number of documents in the collection.
-
-The resolution can be specified when you use the {updatestatistics}[UPDATE STATISTICS] statement.
 
 [[overflow-bins]]
 === Overflow Bins
@@ -139,11 +167,32 @@ This forms a histogram of statistics for the index-key expression across multipl
 .Distribution bins and boundary bins for integers, strings, and arrays
 image::cbo_distribution_bins.png["Distribution bins"]
 
+[[resolution]]
+=== Resolution
+
+The number of distribution bins is determined by the _resolution_.
+
+The default resolution is `1.0`, meaning each distribution bin contains 1% of the documents, and therefore 100 bins are required.
+The minimum resolution is `0.02` (5000 distribution bins) and the maximum is `5.0` (20 distribution bins).
+The cost-based optimizer calculates the bin size based on the resolution and the number of documents in the collection.
+
+The resolution can be specified when you use the {updatestatistics}[UPDATE STATISTICS] statement.
+
+[[sample-size]]
+=== Sample Size
+
+The size of the sample that is collected when gathering statistics is determined by the _sample size_.
+
+The cost-based optimizer calculates a default minimum sample size based on the resolution information.
+You can optionally specify the sample size when you use the {updatestatistics}[UPDATE STATISTICS] statement.
+
+If you do not specify a sample size, or if the specified sample size is smaller than the default minimum sample size, the default minimum sample size is used instead.
+
 [[settings-and-parameters]]
 == Settings and Parameters
 
-The cost-based optimizer is active by default.
-You can activate or deactivate it as required.
+The cost-based optimizer is enabled by default.
+You can enable or disable it as required.
 
 * The {use_cbo_req}[request-level] `use_cbo` parameter specifies whether the cost-based optimizer is enabled per request.
 If a request does not include this parameter, the node-level setting is used.
@@ -153,14 +202,14 @@ It defaults to `true`.
 
 * The {queryUseCBO}[cluster-level] `queryUseCBO` setting enables you to specify the node-level setting for all the nodes in the cluster.
 
-You can also activate or deactivate the cost-based optimizer using the {query-settings}[Query Settings] in the Couchbase Web Console.
+You can also enable or disable the cost-based optimizer using the {query-settings}[Query Settings] in the Couchbase Web Console.
 
-If the cost-based optimizer is not active, the Query service falls back on the {query-service-architecture}[rules-based N1QL optimizer].
+If the cost-based optimizer is not enabled, the Query service falls back on the {query-service-architecture}[rules-based N1QL optimizer].
 
 [[operations]]
-== Using the Optimizer
+== Using the Cost-Based Optimizer
 
-When active, the optimizer performs the following tasks when a query is executed:
+When enabled, the optimizer performs the following tasks when a query is executed:
 
 . Rewrite the query if necessary, in the same manner as the previous rules-based optimizer.
 
@@ -172,11 +221,11 @@ When active, the optimizer performs the following tasks when a query is executed
 
 . Compare the costs and generate a query execution plan with the lowest cost.
 
-The cost-based optimizer can choose the optimal join type for each join, but does not yet rewrite the query to use the optimal join ordering.
+As described above, the cost-based optimizer can choose the optimal join method for each join, but does not yet rewrite the query to use the optimal join ordering.
 
 The optimizer adds cost and cardinality estimates to every step in the query plan.
 You can see these estimates using the {explain}[EXPLAIN] command.
-For examples, refer to the documentation for the {updatestatistics}[UPDATE STATISTICS] statement.
+Refer to the documentation for the {updatestatistics}[UPDATE STATISTICS] statement to see examples of how to generate optimizer statistics, and queries that use these optimizer statistics to calculate cost information in order to generate a query plan.
 
 == Related Links
 

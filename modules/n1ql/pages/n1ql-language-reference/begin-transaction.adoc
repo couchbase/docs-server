@@ -13,11 +13,13 @@
 :execfunction: xref:n1ql:n1ql-language-reference/execfunction.adoc
 :prepare: xref:n1ql:n1ql-language-reference/prepare.adoc
 :execute: xref:n1ql:n1ql-language-reference/execute.adoc
-:transactions: xref:learn:data/transactions.adoc
+:transactions: xref:n1ql:n1ql-language-reference/transactions.adoc
+:preparation: xref:n1ql:n1ql-language-reference/transactions.adoc#preparation
 :tximplicit: xref:settings:query-settings.adoc#tximplicit
 :txid: xref:settings:query-settings.adoc#txid
 
 // Related links
+:overview: xref:learn:data/transactions.adoc
 :begin-transaction: xref:n1ql-language-reference/begin-transaction.adoc
 :set-transaction: xref:n1ql-language-reference/set-transaction.adoc
 :savepoint: xref:n1ql-language-reference/savepoint.adoc
@@ -30,7 +32,7 @@ The `BEGIN TRANSACTION` statement enables you to begin a transaction.
 == Purpose
 
 The `BEGIN TRANSACTION` statement enables you to begin a sequence of statements as an ACID transaction.
-Refer to {transactions}[Transactions] for further information.
+Refer to {transactions}[N1QL Support for Couchbase Transactions] for further information.
 
 include::partial$n1ql-language-reference/transaction-restrictions.adoc[]
 
@@ -40,7 +42,8 @@ NOTE: You can also specify a single DML statement as an ACID transaction by sett
 
 [subs="normal"]
 ----
-begin-transaction ::= ( BEGIN | START ) ( WORK | TRAN | TRANSACTION ) [ ISOLATION LEVEL READ COMMITTED ]
+begin-transaction ::= ( BEGIN | START ) ( WORK | TRAN | TRANSACTION )
+                      [ ISOLATION LEVEL READ COMMITTED ]
 ----
 
 image::n1ql-language-reference/begin-transaction.png["( 'BEGIN' | 'START' ) ( 'WORK' | 'TRAN' | 'TRANSACTION' ) ( 'ISOLATION' 'LEVEL' 'READ' 'COMMITTED' )?"]
@@ -64,112 +67,83 @@ The statement returns an object containing the following property.
 txid::
 The transaction ID.
 
-If you are using the Query Workbench or the Query REST API, you must set the {txid}[txid] query parameter to specify the transaction ID for any subsequent statements that form part of the same transaction.
+If you are using the Query REST API, you must set the {txid}[txid] query parameter to specify the transaction ID for any subsequent statements that form part of the same transaction.
 
-If you are using the cbq shell, you don't need to specify the transaction ID for any subsequent statements that form a part of the same transaction.
+If you are using the Query Workbench, you don't need to specify the transaction ID for any statements that form a part of the same transaction within a multi-statement request.
+If you start a transaction within a multi-statement request, all statements within the request are assumed to be part of the same transaction until you rollback or commit the transaction.
+
+Similarly, if you are using the cbq shell, you don't need to specify the transaction ID for any statements that form a part of the same transaction.
 Once you have started a transaction, all statements within the cbq shell session are assumed to be part of the same transaction until you rollback or commit the transaction.
 footnote:[You must be using cbq shell version 2.0 or above to use the automatic transaction ID functionality.]
 
-== Examples
+== Example
 
-[[ex-1]]
-.Begin a transaction with default parameters
+If you want to try this example, first refer to {preparation}[Preparation] to set up your environment.
+
+.Begin a transaction
 ====
-.Request
+.Transaction
 [source,n1ql]
 ----
-START TRANSACTION;
+BEGIN WORK; -- <.>
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+UPSERT INTO test VALUES("abc2", {"a":1}); -- <.>
+SAVEPOINT s1;
+UPDATE test AS d SET d.b = 10 WHERE d.a > 0;
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+SAVEPOINT s2;
+UPDATE test AS d SET d.b = 10, d.c = "xyz" WHERE d.a > 0;
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+ROLLBACK TRAN TO SAVEPOINT s2;
+SELECT d.*, META(d).id FROM test AS d WHERE d.a >= 0;
+COMMIT WORK;
 ----
+
+<.> Begin a transaction.
+<.> A statement participating in the transaction.
 
 .Result
 [source,json]
 ----
 [
-    {
-        "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51" // <.>
+  {
+    "_sequence_num": 1,
+    "_sequence_query": "BEGIN WORK;",
+    "_sequence_query_status": "success",
+    "_sequence_result": [
+      {
+        "txid": "9d0e0818-085a-40cf-92fc-8473cd5be586" // <.>
+      }
+    ]
+  },
+  {
+    "_sequence_num": 2,
+    "_sequence_query": "\nSET TRANSACTION ISOLATION LEVEL READ COMMITTED;",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
     }
+  },
+  {
+    "_sequence_num": 3,
+    "_sequence_query": "\nUPSERT INTO test VALUES(\"abc2\", {\"a\":1});",
+    "_sequence_query_status": "success",
+    "_sequence_result": {
+      "results": []
+    }
+  },
+...
 ]
 ----
-<.> The transaction ID.
-If you are using the Query Workbench or the Query REST API, you must use this ID to add further statements to the transaction.
-====
 
-[[ex-2]]
-.Begin a transaction and set parameters -- cbq shell
-====
-.Request
-[source,console]
-----
-cbq> \SET -txtimeout "2m"; -- <.>
-cbq> \SET -scan_consistency "request_plus"; -- <.>
-cbq> \SET -durability_level "majority"; -- <.>
-cbq> START TRANSACTION;
-----
-
-<.> The transaction timeout.
-<.> The transaction scan consistency.
-No scan consistency is set for individual statements within the transaction; they inherit from the transaction scan consistency.
-<.> Durability level of all the mutations within the transaction.
-====
-
-[[ex-3]]
-.A statement participating in the transaction -- cbq shell
-====
-.Request
-[source,console]
-----
-cbq> SELECT ...;
-----
-
-You do not need to specify the transaction ID within the same cbq shell session.
-====
-
-[[ex-4]]
-.Begin a transaction and set parameters -- REST API
-====
-.CURL request
-[source,console]
-----
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "START TRANSACTION",
-  "pretty": true,
-  "txtimeout": "2m",
-  "scan_consistency": "request_plus",
-  "durability_level": "majority"
-}'
-----
-
-This is equivalent to the request in <<ex-2>>.
-====
-
-[[ex-5]]
-.A statement participating in the transaction -- REST API
-====
-.CURL request
-[source,console]
-----
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "SELECT ...",
-  "pretty": true,
-  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51" // <.>
-}'
-----
-
-This is equivalent to the request in <<ex-3>>.
-
-<.> The transaction ID generated when the transaction began.
+<.> Beginning a transaction returns the transaction ID.
 ====
 
 == Related Links
 
+* For an overview of Couchbase transactions, refer to {overview}[Transactions].
 * To specify transaction settings, refer to {set-transaction}[SET TRANSACTION].
 * To set a savepoint, refer to {savepoint}[SAVEPOINT].
 * To rollback a transaction, refer to {rollback-transaction}[ROLLBACK TRANSACTION].
 * To commit a transaction, refer to {commit-transaction}[COMMIT TRANSACTION].
-* Blog post: https://blog.couchbase.com/transactions-n1ql-couchbase-distributed-nosql/[N1QL Support for Couchbase Transactions^].
+* Blog post: https://blog.couchbase.com/transactions-n1ql-couchbase-distributed-nosql/[Couchbase Transactions: Elastic, Scalable, and Distributed^].
