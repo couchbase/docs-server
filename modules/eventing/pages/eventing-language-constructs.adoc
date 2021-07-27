@@ -58,7 +58,7 @@ Function handlers execute as server-side code on Couchbase Server similar to the
 
 Because handlers do not execute in the context of a browser, the extensions that browsers add to the core language, such as window methods, DOM events etc. are not available. The Couchbase Server prevents these browser extensions from executing in a handler.  However a limited subset is added back (such as function timers in lieu of setTimeout, and curl calls in lieu of XHR).
 
-For example that the code displayed in the below example runs in the browser. The ‘window’ term in the code *window.XMLHttpRequest()*, is not a server-side construct but is in the context of a browser and as such is not available to your Function handlers.
+For example some code that runs in the browser is excluded from use in Eventing Functions. The ‘window’ term in the code *window.XMLHttpRequest()*, is not a server-side construct but is in the context of a browser and as such is not available to your Function handlers.
 
 [source,javascript]
 ----
@@ -86,7 +86,7 @@ The map operations such as get, set and delete are exposed to the Data Service p
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
-  // Assuming 'dest' is a bucket alias binding
+  // Assuming 'dest' is a bucket alias or binding to a keyspace
   var val = dest[meta.id];         // this is a bucket GET operation.
   dest[meta.id] = {"status":3};    // this is a bucket SET operation.
   delete dest[meta.id];            // this is a bucket DEL operation.
@@ -201,7 +201,7 @@ Due to limitations in KV engine API, this operation cannot currently manipulate 
 === Logging
 
 An additional function, log() has been introduced to the language, which allows handlers to log user defined messages. These log() statements will go the specific handler's log file also known as the application log.  
-The messages go files located in the eventing data directory and do not contain any system log messages. 
+The messages go files located in the Eventing data directory and do not contain any system log messages. 
 The function takes a string to write to the file. If non-string types are passed, a best effort string representation will be logged, but the format of these may change over time. 
 This function does not throw exceptions.
 For more information see xref:eventing-debugging-and-diagnosability.adoc#application-logs[application logs].
@@ -220,29 +220,31 @@ For more information see xref:eventing-debugging-and-diagnosability.adoc#system-
 [#n1ql_statements]
 === N1QL Statements
 
-Top level N1QL keywords, such as SELECT, UPDATE, INSERT and DELETE, are available as inline keywords in handlers. Operations that return values such as SELECT are accessible through a returned Iterable handle. N1QL Query results, via a SELECT, are streamed in batches to the Iterable handle as the iteration progresses through the result set.
+Top level N1QL keywords, such as SELECT, UPDATE, INSERT and DELETE, are available as inline keywords in handlers. Operations that return values such as SELECT are accessible through a returned iterable handle. N1QL Query results, via a SELECT, are streamed in batches to the iterable handle as the iteration progresses through the result set.
 
 NOTE: N1QL DML statements cannot manipulate documents in the same bucket as the handler is listening for mutations on to avoid recursion. Workaround: use the exposed data service KV map in your Eventing function.
 
 JavaScript variables can be referred by N1QL statements using *$<variable>* syntax. Such parameters will be substituted with the corresponding JavaScript variable's runtime value using N1QL named parameters substitution facility.
+
+When deploying the below Function with a feed boundary of "Everything" the same N1QL statement will execute 7,303 times. If the feed boundary is configured to "From now" and you then mutate just one (1) document in the keyspace `beer-sample`.`_default`.`_default` only one (1) query will be executed.  Also keep in mind that adding an optimal index can speed up the query performance by 24X.
 
 [source,javascript]
 ----
 function OnUpdate(doc, meta) {
     var strong = 70;
     var results =
-        SELECT *                  /* N1QL queries are embedded directly.    */
-        FROM `beer-sample`        /* Token escaping is standard N1QL style. */
-        WHERE abv > $strong;      // Local variable reference using $ syntax.
-    for (var beer of results) {   // Stream results using 'for' iterator.
+        SELECT *                               /* N1QL queries are embedded directly.    */
+        FROM `beer-sample`._default._default   /* Token escaping is standard N1QL style. */
+        WHERE abv > $strong;                   // Local variable reference using $ syntax.
+    for (var beer of results) {                // Stream results using 'for' iterator.
         log(beer);
         break;
     }
-    results.close();              // End the query and free resources held
+    results.close();                           // End the query and free resources held
 }
 ----
 
-The call starts the query and returns a JavaScript Iterable object representing the result set of the query. The query is streamed in batches as the iteration proceeds. The returned handle can be iterated using any standard JavaScript mechanism including _for...of_ loops.
+The embedded N1QL call starts the query and returns a JavaScript Iterable object representing the result set of the query. The query is streamed in batches as the iteration proceeds. The returned handle can be iterated using any standard JavaScript mechanism including _for...of_ loops.
 
 In multiline N1QL statements (as above) you cannot use single line [.var]`// end of line comments like this` +
 prior to the terminating semicolon as it will cause a syntax error in the transpilation of the N1QL statement, however multiline [.var]`/* comments like this */` are allowed.
@@ -266,7 +268,7 @@ Instead of [.param]`meta.id` expression, you can use `var id = meta.id` in an N1
 +
 [source, N1QL]
 ----
-DELETE FROM `transactions` WHERE username = $meta.id;
+DELETE FROM mybucket.myscope.transactions WHERE username = $meta.id;
 ----
 
 * Valid N1QL Statement
@@ -274,27 +276,27 @@ DELETE FROM `transactions` WHERE username = $meta.id;
 [source, N1QL]
 ----
 var id = meta.id;
-DELETE FROM `transactions` WHERE username = $id;
+DELETE FROM mybucket.myscope.transactions WHERE username = $id;
 ----
-
-When you use a N1QL query inside a Function handler, remember to use an escaped identifier for bucket names with special characters
+ 
+When you use a N1QL query inside a Function handler, remember to use an escaped identifier for keyspaces (bucket.scope.collection) with special characters
 (+++`+++[.param]`bucket-name`+++`+++).
-Escaped identifiers are surrounded by backticks and support all identifiers in JSON
+Escaped identifiers are surrounded by back ticks and support all identifiers in JSON
 
 For example:
 
-* If the bucket name is [.param]`beer-sample`, then use the N1QL query such as:
+* If the bucket name is [.param]`beer-sample` and the scope and collection are both _default, then only the bucket in the N1QL needs to be escaped:
 +
 [source, N1QL]
 ----
-SELECT * FROM `beer-sample` WHERE type...
+SELECT * FROM `beer-sample`._default._default WHERE type ...
 ----
 
-* If bucket name is [.param]`beersample`, then use the N1QL query such as:
+* However if the bucket name was [.param]`beersample`, then the keyspace of the N1QL query needs no escaping:
 +
 [source, N1QL]
 ----
-SELECT * FROM beersample WHERE type ...
+SELECT * FROM beersample._default._default WHERE type ...
 ----
 
 [#build-in-functions]
@@ -323,38 +325,46 @@ This is the identified N1QL statement. This will be passed to N1QL via SDK to ru
 +
 This can be either a JavaScript array (for positional parameters) or a JavaScript map. When the N1QL statement utilizes positional parameters (i.e., $1, $2 ...), then params is expected to be a JavaScript array corresponding to the values to be bound to these positional parameters. When the N1QL statement utilizes named parameters (i.e., $name), then params is expected to be a JavaScript map object providing the name-value pairs corresponding to the variables used by the N1QL statement. Positional and named value parameters cannot be mixed.
 +
+Note, adding an optimal index to the `travel-sample`.`_default.`_default` keyspace for the below query can increase the performance by 57X.
++
 _iterator using a positional params array_
 +
 [source,javascript]
 ----
-    // Using `travel-sample` demonstrate positional params.
+    // Using `travel-sample`._default._default to demonstrate params.
     // a) Positional param 1 is field 'iata' from the input doc
     // b) Positional param 2 from a Handler variable: max_dist
     // c) Will also prepare the statement for better performance
     
+    if (doc.type !== "airline") return; // only process airline docs
+    
     var max_dist = 120;
     var results = N1QL(
         "SELECT COUNT(*) AS cnt " +
-        "FROM `travel-sample` WHERE type = \"route\" " +
+        "FROM `travel-sample`._default._default " +
+        "WHERE type = \"route\" " +
         "AND airline = $1 AND distance <= $2",
         [doc.iata,max_dist], 
         { 'isPrepared': true }
     );
 ----
 +
-_iterator using a named params object_
+_Example iterator using a named params object_
 +
 [source,javascript]
 ----
-    // Using `travel-sample` demonstrate named params.
+    // Using `travel-sample`._default._default to demonstrate named params.
     // a) Named param 1 '$mytype' is a hardcode
     // b) Named param 2 '$myairline' is field 'iata' from the input doc
     // c) Named param 3 '$mydistance' if from a Handler variable max_dist
-    // d) Set the consistancy in the options to none
+    // d) Set the consistency in the options to none
+    
+    if (doc.type !== "airline") return; // only process airline docs
     
     var max_dist = 120;
     var results = N1QL("SELECT COUNT(*) AS cnt " +
-        "FROM `travel-sample` WHERE type = $mytype " +
+        "FROM `travel-sample`._default._default " +
+        "WHERE type = $mytype " +
         "AND airline = $myairline AND distance <= $mydistance",
         { '$mytype': 'route', '$mydistance': max_dist, '$myairline': doc.iata },         
         { 'consistency': 'none' }
@@ -470,7 +480,7 @@ A sample OnUpdate handler is displayed below:
 ----
 function OnUpdate(doc, meta) {
   if (doc.type === 'order' && doc.value > 5000) {
-    // ‘phonverify’ is a bucket alias that is specified as a Bucket binding.
+    // ‘phonverify’ is a bucket alias or binding to a keyspace.
     phoneverify[meta.id] = doc.customer;
   }
 }
@@ -494,7 +504,7 @@ A sample OnDelete handler is displayed below:
 function OnDelete(meta,options) {
     if (options.expired) log("Document expired", meta.id);
     var addr = meta.id;
-    var res = SELECT id from orders WHERE shipaddr = $addr;
+    var res = SELECT id from mybucket.myscope.orders WHERE shipaddr = $addr;
     for (var id of res) {
         log("Address invalidated for pending order: " + id);
     }
@@ -545,7 +555,7 @@ Reserved words are words that cannot be used in a handler as a variable name, fu
 
 *What Happens If You Use a Reserved Word?*
 
-Let's say you try to create a new Function handler code using a reserved word for variable names, for function names, and as a property bindings value. All three cases generate a deployment error.
+Let's say you try to create a new Function handler code using a reserved word for variable names, for function names, and as a property binding value. All three cases generate a deployment error.
 
 Reserved words as a variable name:
 
