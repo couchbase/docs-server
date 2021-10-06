@@ -12,7 +12,7 @@
 * In Couchbase, when using a simple integer expiry value (as opposed to a proper date or time object), the expiration can be specified in two ways:
 ** As an offset from the current time. If the absolute value of the expiry is less than 30 days (60 * 60 * 24 * 30 seconds), it is considered an offset.
 ** As an absolute Unix time stamp. If the value is greater than 30 days (60 * 60 * 24 * 30 seconds), it is considered an absolute time stamp.
-** As described in xref:learn:buckets-memory-and-storage/expiration.adoc[Expiration], if a "Bucket Max Time-To-Live" is set (specified in seconds), it is an enforced hard upper limit. As such, any subsequent document mutation (by N1QL, Eventing, or any Couchbase SDK) will result in the document having its expiration adjusted and set to the bucket’s maximum TTL if the operation has: 
+** As described in xref:learn:data/expiration.adoc[Expiration], if a "Bucket Max Time-To-Live" is set (specified in seconds), it is an enforced hard upper limit. As such, any subsequent document mutation (by N1QL, Eventing, or any Couchbase SDK) will result in the document having its expiration adjusted and set to the bucket’s maximum TTL if the operation has:
 *** No TTL.
 *** A TTL of zero.
 *** A TTL greater than the bucket TTL.
@@ -21,12 +21,12 @@
 * Will ignore any doc with a non-zero TTL
 * This is different than setting a TTL on a bucket or a collection which will typically update (or extend) the TTL of a document on each mutation.
 
-[{tabs}] 
+[{tabs}]
 ====
 advancedDocControlledSelfExpiry::
 +
 --
-Two variants of this function are available - a 6.6 version that relies on N1QL and a 6.6.1+/7.0.0+ version (*this Function*) that directly sets the expiration.  
+Two variants of this function are available - a 6.6 version that relies on N1QL and a 6.6.1+/7.0.0+ version (*this Function*) that directly sets the expiration.
 You can completely avoid _N1QL(...)_ and use _couchbase.replace(bucket_binding, meta, doc)_ as the advancedDocControlledSelfExpiry variant is much faster.
 
 * xref:eventing-handler-docControlledSelfExpiry.adoc[docControlledSelfExpiry (indirect TTL via N1QL)]
@@ -40,19 +40,19 @@ advancedDocControlledSelfExpiry (direct TTL)
 // To run configure the settings for this Function, advancedDocControlledSelfExpiry, as follows:
 //
 // Version 7.0+
-//   "Listen to Location" 
-//     bulk.data.source 
-//   "Eventing Storage" 
-//     rr100.eventing.metadata 
+//   "Listen to Location"
+//     bulk.data.source
+//   "Eventing Storage"
+//     rr100.eventing.metadata
 //   Binding(s)
 //    1. "binding type", "alias name...", "bucket.scope.collection", "Access"
 //       "bucket alias", "src_col",       "bulk.data.source",        "read and write"
 //
 // Version 6.6.1
-//   "Source Bucket" 
-//     source 
-//   "MetaData Bucket" 
-//     metadata 
+//   "Source Bucket"
+//     source
+//   "MetaData Bucket"
+//     metadata
 //   Binding(s)
 //    1. "binding type", "alias name...", "bucket", "Access"
 //       "bucket alias", "src_col",       "source", "read and write"
@@ -60,40 +60,40 @@ advancedDocControlledSelfExpiry (direct TTL)
 function OnUpdate(doc, meta) {
     // Filter items that don't have been updated
     if (meta.expiration !== 0) {
-        log(meta.id, "IGNORE expiration "+meta.expiration+" !== 0 or "+ 
+        log(meta.id, "IGNORE expiration "+meta.expiration+" !== 0 or "+
             new Date(meta.expiration).toString());
         return;
     }
-    
+
     // Optional filter to a specic field like 'type'
     if (doc.type !== 'trial_customers') return;
-    
+
     // Our expiry is based on a JavaScript date parsable field, it must exist
     if (!doc.trialStartDate || !doc.trialDurationDays) return;
-    
+
     // Convert the doc's field timeStamp and convert to unix epoch time (in ms.).
-    var docTimeStampMs = Date.parse(doc.trialStartDate);  
-    
+    var docTimeStampMs = Date.parse(doc.trialStartDate);
+
     var keepDocForMs = doc.trialDurationDays * 1000 * 60 * 60 * 24 ;
     var nowMs = Date.now();  // get current unix time (in ms.).
-    
+
     // Archive if we have kept it for too long no need to set the expiration
     if( nowMs >= (docTimeStampMs + keepDocForMs) ) {
-        
+
         // Delete the document form the source collection via the map alias
         delete src_col[meta.id];
-        
+
         log(meta.id, "DELETE from src_col to dst_bkt alias as our expiration " +
             new Date(docTimeStampMs + keepDocForMs).toString()) + " is already past";
     } else {
         var key = meta.id;
         //set the meta.expiration=ttlMs
         var	ttlMs = docTimeStampMs + keepDocForMs;
-        
-        if (ttlMs !== 0) { 
+
+        if (ttlMs !== 0) {
             log(meta.id, "UPDATE expiration "+meta.expiration+" === 0 set to "+
                 ttlMs+" or " + new Date(ttlMs).toString());
-            // Advanced Bucket Accessors use JavaScript Date objects 
+            // Advanced Bucket Accessors use JavaScript Date objects
             var expiryDate = new Date(ttlMs);
             // This is 4X to 5X faster than using N1QL(...) and no need to worry about recursion.
             var res = couchbase.replace(src_col,{"id":meta.id,"expiry_date":expiryDate},doc);
@@ -152,8 +152,8 @@ Note, if the today is past 08-25-2021 (MM-DD-YYYY) just change the `trialStartDa
 --
 
 Output Data/Mutation::
-+ 
--- 
++
+--
 [source,json]
 ----
 NEW/OUTPUT: KEY trial_customers::2
@@ -178,10 +178,10 @@ NEW/OUTPUT: KEY trial_customers::3
 
 We end up with two (2) of the four documents (obviously you may need to adjust the N1QL INSERT in a few months as all the document would be immediately deleted).
 
-* "trial_customers::0" was deleted 
-* "trial_customers::1" was deleted 
-* "trial_customers::2" has an meta.expiration set for 1632466800 (or 2021-09-24 07:00:00 UTC) in it's metadata 
-* "trial_customers::3" has an meta.expiration set for 1635145200 (or 2021-10-25 07:00:00 UTC) in it's metadata 
+* "trial_customers::0" was deleted
+* "trial_customers::1" was deleted
+* "trial_customers::2" has an meta.expiration set for 1632466800 (or 2021-09-24 07:00:00 UTC) in it's metadata
+* "trial_customers::3" has an meta.expiration set for 1635145200 (or 2021-10-25 07:00:00 UTC) in it's metadata
 
 ----
 --
