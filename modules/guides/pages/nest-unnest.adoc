@@ -1,8 +1,9 @@
 = Deep Traversal for Nested Documents
 :page-topic-type: guide
-:imagesdir: ../../assets/images
+:imagesdir: ../assets/images
+:clauses: Nests and Unnests
 :tabs:
-:description: How to join data sources for a N1QL selection query, and how to use subqueries.
+:description: How to nest and unnest arrays of embedded objects.
 
 [abstract]
 {description}
@@ -12,33 +13,125 @@
 Couchbase Server is a document database.
 Data is stored as JSON documents in keyspaces, rather than as rows in tables.
 This means that documents can contain arrays of embedded subdocuments.
-N1QL provides syntax which enables you to _unnest_ (flatten) or _nest_ (create) arrays of embedded documents in a query.
+N1QL provides syntax which enables you to _nest_ (create) or _unnest_ (flatten) arrays of embedded documents in a query.
 
-== Before You Begin
+include::partial$before-you-begin.adoc[]
 
-If you want to try out the examples in this section, follow the instructions given in xref:getting-started:do-a-quick-install.adoc[Do a Quick Install] to install Couchbase Server, configure a cluster, and load a sample dataset.
+include::partial$query-tools.adoc[]
 
-== Query Tools
+== Nesting Data
 
-Read the following for further information about the tools available for editing and executing queries:
+Nesting is like creating a join from a document to documents from another data source.
+However, in the resultset, the nested documents are embedded in an array within the parent document.
 
-* xref:tools:cbq-shell.adoc[cbq: The Command Line Shell for N1QL]
-+
-....
-cbq> 
-....
+N1QL offers several types of nest syntax.
+This guide focuses on ANSI nest, which is the recommended nest syntax.
+It enables you to nest objects from one keyspace within objects fom another using arbitrary fields.
 
-* xref:tools:query-workbench.adoc[Query Workbench]
-+
-image::manage:manage-ui/queryTab.png[,100,align=left]
+To create a nest:
+
+1. Use the FROM clause to specify the data source on the left-hand side of the nest.
+This may be a keyspace identifier, a subquery, or a subquery.
+
+2. Use the NEST clause to specify the data source on the right-hand side of the nest.
+This must be a keyspace reference.
+
+3. Use the ON keyword to specify the nest predicate.
+This is a condition that must be met in order to nest an object on the right-hand side within an object on the left-hand side.
+
+TIP: To use a xref:learn:data/data.adoc#keys[document key] in the nest predicate, use the META() function to return the `id` field from the document metadata.
+
+For example, the following query selects a route and the associated airline.
+
+====
+[source,N1QL]
+----
+include::example$query/ansi-nest-example.n1ql[]
+----
+
+<.> The `route` keyspace is the left-hand side of the nest.
+<.> The `airline` keyspace is the right-hand side of the nest.
+<.> The `airlineid` field on the left-hand side must be equal to the document key on the right-hand side.
+====
+
+For more information and examples, refer to xref:n1ql:n1ql-language-reference/nest.adoc#section_tc1_nnx_1db[ANSI NEST Clause].
+
+== Nest Types
+
+ANSI nests support two types of nest: _inner nests_ and _left outer nests_.
+(There is no provision for right outer nests, because objects from the right-hand side cannot be nested within an object that doesn't exist.)
+
+=== Inner Nests
+
+The default nest type is an inner nest.
+An inner nest returns nested objects _only_ where a source object from the left-hand side of the nest matches a source object from the right-hand side of the nest.
+
+image::inner-nest.png['Inner nest: the result contains only matching objects from the left-hand side and right-hand side']
+
+To create an inner nest, omit the nest type, or optionally include the `INNER` keyword before the NEST clause.
+
+For example, the following query lists only airports in Toulouse which have routes starting from them, and gives details of the routes.
+
+====
+[source,N1QL]
+----
+include::example$query/ansi-nest-inner.n1ql[]
+----
+
+.Results
+[source,JSON]
+----
+include::example$query/ansi-nest-inner.jsonc[tags=start;ellipsis]
+----
+====
+
+=== Left Outer Nests
+
+A left outer nest returns nested objects using _all_ the source objects from the left-hand side of the nest, but only including source objects from the right-hand side of the nest if they match.
+
+image::left-nest.png['Left outer nest: the result contains all objects from the left-hand side, and only matching objects from the right-hand side']
+
+To create a left outer nest, include the `LEFT` or `LEFT OUTER` keywords before the NEST clause.
+
+For example, the following query lists all airports in Toulouse, and gives details any routes that start from each airport.
+
+====
+[source,N1QL]
+----
+include::example$query/ansi-nest-left.n1ql[]
+----
+
+.Results
+[source,JSON]
+----
+include::example$query/ansi-nest-left.jsonc[tags=start;ellipsis;end]
+----
+====
+
+== Legacy Nest Syntax
+
+N1QL also provides two legacy syntaxes for nests.
+
+* A _lookup nest_ uses a foreign key field on the left-hand side of the nest and the primary document key on the right-hand side of the nest.
+For more information and examples, refer to xref:n1ql:n1ql-language-reference/nest.adoc#nest[Lookup NEST Clause].
+
+* An _index join_ uses the primary document key on the left-hand side of the nest and a foreign key field on the right-hand side of the nest.
+For more information and examples, refer to xref:n1ql:n1ql-language-reference/nest.adoc#section_rgr_rnx_1db[Index NEST Clause].
 
 == Unnesting Data
 
-Unnesting data is like creating joins from a parent document to subdocuments in an array within that document.
+Unnesting data is the opposite of nesting.
+Unnesting is like creating a join from a parent document to subdocuments in an array within that document.
 In the resultset, the subdocuments are flattened and joined to the parent document.
 
-To unnest subdocuments from an array, use the UNNEST clause.
-The following query unnests the schedule data from within the route document to get a list of flights on Monday 1 (day `1`).
+image::unnest.png['Unnest: the result contains subdocuments flattened and joined to their parent documents']
+
+To unnest subdocuments from an array:
+
+1. Use the FROM clause to specify the parent data source on the left-hand side of the unnest.
+2. Use the UNNEST clause to specify the nested data on the right-hand side of the unnest.
+
+For example, the following query unnests the schedule data from within the route document to get a list of flights on Monday 1 (day `1`).
 
 ====
 [source,n1ql]
@@ -55,32 +148,18 @@ include::n1ql:example$select/unnest.jsonc[]
 
 For more information and examples, refer to xref:n1ql:n1ql-language-reference/unnest.adoc[UNNEST Clause].
 
-== Nesting Data
-
-Nesting data is the opposite of unnesting.
-Nesting is like creating joins from a document to documents in another keyspace.
-However, in the resultset, the joined documents are embedded in an array within the parent document.
-
-There are three ways of nesting data: ANSI nests, lookup nests, and index nests.
-
-=== ANSI Nests
-
-To nest using arbitrary fields, use an ANSI nest clause.
-
-
-=== Lookup Nests
-
-=== Index Nests
+include::partial$recursive-joins.adoc[]
 
 == Next Steps
 
-* xref:join.adoc[Querying Across Relationships]
+* xref:group-agg.adoc[Grouping and Aggregation]
 
 == Related Links
 
 Reference and explanation:
 
-* xref:n1ql:n1ql-language-reference/join.adoc[JOIN Clause]
+* xref:n1ql:n1ql-language-reference/nest.adoc[NEST Clause]
+* xref:n1ql:n1ql-language-reference/unnest.adoc[UNNEST Clause]
 
 Tutorials:
 
