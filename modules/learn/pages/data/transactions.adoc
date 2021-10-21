@@ -58,24 +58,24 @@ transactions.run((txnctx) -> {
     // get the account documents for Andy and Beth    
     var andy = txnctx.get(collection, "Andy");
     var andyContent = andy.contentAsObject();
-
     int andyBalance = andyContent.getInt("account_balance");
-    var beth = txnctx.get(collection, "Beth");
 
-	var bethContent = beth.contentAsObject();
+    var beth = txnctx.get(collection, "Beth");
+    var bethContent = beth.contentAsObject();
     int bethBalance = bethContent.getInt("account_balance"); 
 
     // if Beth has sufficient funds, make the transfer
     if (bethBalance > transferAmount) {
-	 	andyContent.put("account_balance", andyBalance + transferAmount);
+        andyContent.put("account_balance", andyBalance + transferAmount);
         txnctx.replace(andy, andyContent);
     
         bethContent.put("account_balance", bethBalance - transferAmount);
         txnctx.replace(beth, bethContent)
-        }
-        else throw new InsufficientFunds();  
-   	// commit transaction - optional, can be omitted
-   	txnctx.commit();
+    }
+    else throw new InsufficientFunds();
+
+    // commit transaction - optional, can be omitted
+    txnctx.commit();
 });
 ---- 
 
@@ -85,21 +85,38 @@ Note the use of a lambda function to express the transaction.
 The application supplies the logic for the transaction inside a lambda, including any conditional logic required, and the transactions API takes care of getting the transaction committed. If the transactions API encounters a transient error, such as a temporary conflict with another transaction, then it can rollback what has been done so far and run the lambda again. 
 The application does not have to do these retries and error handling itself.
 
-For more information and examples of using the transactions API, see Java, C++, and C SDK documentation.
+For more information and examples of using the transactions API, see xref:java-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[Java], xref:cxx-txns::distributed-acid-transactions-from-the-sdk.adoc[C++], and xref:dotnet-sdk:howtos:distributed-acid-transactions-from-the-sdk.adoc[.NET] SDK documentation.
 
 NOTE: Use transactions only on documents less than 10 MB in size.
 
 For application-level transactions, create and use transactions through Couchbase SDK APIs. 
 
-Here is another example that combines the usage of key-value and query operations:
+Here is another example that combines the usage of key-value and query operations.
+It's possible to call regular methods from the lambda, as shown here, permitting complex logic to be performed.
+(Note that as the lambda may be called multiple times, so may the method.  Pure, side-effect methods are therefore recommended.)
 
 [source,java]
 ----
 transactions.run((ctx) -> {
-    QueryResult qr = ctx.query(inventory, "UPDATE hotel SET price = $1 WHERE name = $2",
-    TransactionQueryOptions.queryOptions()
-    .parameters(JsonArray.from("from £89", "Glasgow Grand Central")));
-    assert(qr.metaData().metrics().get().mutationCount() == 1);
+    // Find all hotels of the chain.
+    QueryResult qr = ctx.query(inventory, "SELECT reviews FROM hotel WHERE url LIKE $1 AND country = $2",
+            TransactionQueryOptions.queryOptions()
+                    .parameters(JsonArray.from(hotelChain, country)));
+
+    // This function (not provided here) will use a trained machine learning model to provide a
+    // suitable price based on recent customer reviews.
+    double updatedPrice = priceFromRecentReviews(qr);
+
+    // Set the price of all hotels in the chain.
+    ctx.query(inventory, "UPDATE hotel SET price = $1 WHERE url LIKE $2 AND country = $3",
+            TransactionQueryOptions.queryOptions()
+                    .parameters(JsonArray.from(updatedPrice, hotelChain, country)));
+
+    // Keep an audit of the change.
+    ctx.insert(audit, UUID.randomUUID().toString(), JsonObject.create()
+            .put("timestamp", new Date().getTime())
+            .put("operation", "updating hotel prices")
+            .put("price", updatedPrice));
 });
 ----
 
