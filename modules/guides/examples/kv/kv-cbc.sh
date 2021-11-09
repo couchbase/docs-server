@@ -1,5 +1,23 @@
 #!/usr/bin/env sh
 
+# tag::cbc-simple-insert[]
+cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
+	--mode insert airport-123 <./tmp/airport-123.json
+# end::cbc-simple-insert[]
+
+# tag::cbc-simple-get[]
+cbc cat -u Administrator -P password -U couchbase://localhost/travel-sample airport-123
+# end::cbc-simple-get[]
+
+# tag::cbc-simple-update[]
+cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
+	--mode replace airport-123 <./tmp/airport-123.json
+# end::cbc-simple-update[]
+
+# tag::cbc-simple-delete[]
+cbc rm -u Administrator -P password -U couchbase://localhost/travel-sample airport-123
+# end::cbc-simple-delete[]
+
 # tag::cbc-kv-insert[]
 cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--scope='inventory' \
