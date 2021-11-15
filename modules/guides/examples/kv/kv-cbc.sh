@@ -21,25 +21,27 @@ cbc rm -u Administrator -P password -U couchbase://localhost/travel-sample airpo
 # tag::cbc-kv-insert[]
 cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--scope='inventory' \
-	--collection='airport' \
-	--mode insert airport-123 <./tmp/airport-123.json
+	--collection='hotel' \
+	--mode insert hotel-123 <./tmp/hotel-123.json
 # end::cbc-kv-insert[]
 
 # tag::cbc-kv-insert-expiry[]
 cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--scope='inventory' \
-	--collection='airport' \
-	--mode insert airport-456 \
-	--expiry 60 <./tmp/airport-456.json
+	--collection='hotel' \
+	--mode insert hotel-456 \
+	--expiry 60 <./tmp/hotel-456.json
 # end::cbc-kv-insert-expiry[]
 
 # tag::cbc-kv-get[]
-cbc cat airport-123 -u Administrator -P password -U couchbase://localhost/travel-sample \
+cbc cat hotel-123 -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--scope='inventory' \
-	--collection='airport'
+	--collection='hotel'
 # end::cbc-kv-get[]
 
-# tag::cbc-subdoc-get[]
-echo "get airport_1254 --path geo" |
-	cbc-subdoc -u Administrator -P password -U couchbase://localhost/travel-sample
-# end::cbc-subdoc-get[]
+# tag::cbc-kv-get-with-opts[]
+cbc cat hotel-123 -u Administrator -P password -U couchbase://localhost/travel-sample \
+	--scope='inventory' \
+	--collection='hotel' \
+	--expiry=60
+# end::cbc-kv-get-with-opts[]
