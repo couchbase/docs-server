@@ -1,0 +1,54 @@
+= Rebalance/Failover for Search Service
+
+== Rebalance 
+The search service maintains a cluster-wide set of index definitions and metadata, which allows the redistribution of indexes and index replicas during a rebalance.
+
+== Handling partitions during a rebalance
+
+The search service redistributes the index partitions across the available search service nodes for a balanced partition-node assignment during a rebalance operation. The newly assigned index partitions are built afresh over DCP feed on the new nodes. And once the new partitions are built up to the current / latest sequence numbers, they are promoted to take the live traffic, and the older partitions are deleted from the system. 
+
+== Impacts on the live traffic updates
+
+The live traffic is never functionally affected. Nevertheless, we can't entirely rule out the performance impacts of a concurrent rebalance on a live cluster.
+
+== Tips for faster rebalance operations
+
+As the rebalance is a resource-consuming cluster management operation, It is always recommended to perform rebalance during off-peak hours. Search service moves or builds the index partitions one at a time per node during the rebalance operations, which could significantly increase the overall time taken for the rebalance operation.
+
+There is a configurable option [maxConcurrentPartitionMovesPerNode] to bring the additional concurrency to how we move/build partitions during a rebalance operation. 
+Suppose we override this parameter (maxConcurrentPartitionMovesPerNode to N) as a runtime cluster option. In that case, we could concurrently build that many partitions in parallel per node at a time, and the rebalance ought to complete faster.
+
+=== Configuring the maximum concurrent partition moves per node
+Use the update endpoint for manager options.
+
+[source,shell]
+----
+curl -XPUT -uAdministrator:asdasd http://<nodeIP>:8094/api/managerOptions -d ' {| |"maxConcurrentPartitionMovesPerNode":"5"}'
+----
+
+Checking the current value for `maxConcurrentPartitionMovesPerNode` in a cluster
+
+[source,shell]
+----
+curl -XGET -uAdministrator:asdasd http://<nodeIP>:8094/api/manager
+----
+
+Note: When multiple partitions are built parallel, it needs more RAM and mandates a higher RAM quota. As the rebalance operations consume resources, it is always advisable to plan them during non-peak hours. One way to speed up the rebalance operation is to enable the movement of partitions parallelly in a configurable way.
+
+== Dealing with rebalance failures
+
+=== Failovers 
+
+During failover of Search service nodes, there is no partition movement, and hence the failover-rebalance is instantaneous. Search service promotes the replica index partitions to primary so that those serve the live cluster traffic instantly. Users could use failover and recovery rebalance for applying patches or upgrading software/hardware for a shorter duration. 
+ 
+=== Things to keep track of during a rebalance
+
+During a strict recovery rebalance operation (no extra node additions/removals), the index partitions residing on the recovered node would be reused. And this ensures a quick recovery rebalance operation.
+
+=== Failover-recovery steps
+
+1. Failover of the node which needs quick software or hardware maintenance.
+2. With replica partitions, live traffic is served seamlessly.
+3. Perform the software/hardware maintenance operation.
+4. Perform recover rebalance operation.
+5. Cluster is back to normal/pre-failover safe state.
