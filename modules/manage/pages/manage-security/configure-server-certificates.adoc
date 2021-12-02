@@ -353,7 +353,8 @@ Note that a certificate cannot be deleted once it has provided its authority to 
 curl -X POST http://10.143.192.102:8091/node/controller/reloadCertificate -u Administrator:password
 ----
 +
-The node certificate is now activated for the current node.
+The node certificate is now activated for the current node, bearing the authority of the root CA with which it was signed.
+
 Note that when, as is typical, the cluster contains more than one node, this step must be performed on _each node_ of the cluster, with each individual IP address thereby specified in turn.
 
 For more information using the REST API to manage certificates, see xref:rest-api:rest-certificate-management.adoc[Certificate Management API].
@@ -610,7 +611,6 @@ sudo cp ca.pem /opt/couchbase/var/lib/couchbase/inbox/CA/.
 ----
 
 . Upload the root certificate, thereby activating it for the entire cluster.
-Then, reload the node certificate from disk, for the current node.
 +
 ----
 curl -X POST http://10.144.220.103:8091//node/controller/loadTrustedCAs -u Administrator:password
@@ -646,7 +646,9 @@ Note that access by means of a client certificate must be specifically enabled, 
 [#protection-of-multi-node-clusters]
 == Protection of Multi-Node Clusters
 
-The certificate-management procedures described above, for single-node clusters, can be used for multi-node clusters, if the following modifications are made:
+When the certificate-management procedures described above are used, as intended, for multi-node clusters, the following modifications should be observed:
+
+* Each CA certificate to be used by the cluster must be copied into an appropriately located `inbox/CA` directory on a cluster node, and must be loaded from there, using the call demonstrated above, and fully described in xref:rest-api:load-trusted.cas.adoc[Load Root Certificates].
 
 * A separate `chain.pem` must be prepared for each node.
 Each `chain.pem` should be generated from a new, unique private key (`pkey.key`); must be an appropriate concatenation of the node certificate with whatever intermediate certificates have formed its chain; and must have its own node's IP address specified as a `subjectAltName`.
@@ -656,20 +658,6 @@ An inbox must be created on that node, and the `chain.pem` and `pkey.key` files 
 
 * The node certificate must be reloaded individually for each node in the cluster, after the `chain.pem` and `pkey.key` file have been moved into the node's inbox.
 Each reload command must therefore specify the node's own IP address.
-
-Since this is a gradual process, prior to its conclusion, the certificates for the cluster will go through periods of mismatch.
-Error messages are duly provided:
-
-* When the root certificate is uploaded and reloaded for any one of the nodes in the cluster, it becomes the root certificate for all the nodes in the cluster.
-However, for each node whose corresponding `chain.pem` and `pkey.key` files have not yet been copied to its inbox, the following error message appears on the *Root Certificate* panel of the Couchbase Web Console *Security* screen: `Warning: ns_1:<ip-address>: Certificate is not signed with cluster CA`.
-+
-Respond by copying the `chain.pem` and `pkey.key` for the node into its inbox, then perform a reload of the node certificate, specifying the IP address of the node.
-This coordinates and activates the new certificates for the node, and removes the error message.
-
-* If a new cluster certificate is uploaded and reloaded for a node _before_ the node's `chain.pem` and `pkey.pem` have been copied into the node's inbox, the successful reload gives the following error message: `"Unable to read certificate chain file /opt/couchbase/var/lib/couchbase/inbox/chain.pem. The file does not exist"`.
-+
-Respond by copying the `chain.pem` and `pkey.pem` files to the inbox, and then reloading the node certificate, specifying the node's IP address.
-This coordinates and activates the new certificates for the node.
 
 [#adding-new-nodes]
 == Adding New Nodes
@@ -684,18 +672,24 @@ Consequently:
 This is because a node can be joined to a cluster only prior to the node's provisioning; while certificate-deployment can only occur _subsequent to_ the node's provisioning.
 
 * A node can be _added_ to a cluster only after the appropriate certificates have been deployed on it, as a provisioned, one-node cluster.
-If certificate-preparation has not been completed, the following error message appears in the *Add Server Node* dialog of Couchbase Web Console: `Attenton: Prepare join failed. failed to establish TLS connection to <ip-address>:8091: "unknown ca"`.
+Appropriate certificates are:
 
-Therefore, to perform node-addition, prepare a `chain.pem` and `pkey.key` for the node; transfer these files to the running node, create an inbox, and move the files into the inbox; then upload the root certificate for the cluster to which the node is to be added; the reload the node certificate for the node that is to be added.
-When this sequence has been completed, the new node can be added to the cluster.
-(Note that although other aspects of the node's prior provisioning will be erased by the addition, the new certificates will remain in place.)
+** A root CA that has already been uploaded into the trust store of the cluster to which the node is being added.
+
+** A node certificate that is signed by that root CA, or by one or more intermediate certificates that confer that root CA's authority.
+
+If certificate-preparation has not been completed, the following error message appears in the *Add Server Node* dialog of Couchbase Web Console: `Attention: Prepare join failed. failed to establish TLS connection to <ip-address>:8091: "unknown ca"`.
+
+Note that although other aspects of the node's prior provisioning will be erased by the addition, the certificates remain in place.
 
 [#regenerating-default-certificates]
-== Regenerating the Default Certificates
+== Regenerating Default Certificates
 
-The _default_ certificates provided automatically by Couchbase Server &#8212; including the _root_ certificate and each of the _node_ certificates for the cluster &#8212; can be _regenerated_ at any time, by means of the REST API.
-This means that the administrator-uploaded certificates are removed, and default certificates re-substituted.
-For information, see xref:rest-api:rest-regenerate-all-certs.adoc[Regenerate All Certificates].
+_Default_ certificates provided automatically by Couchbase Server &#8212; including the _root_ certificate and each of the _node_ certificates for the cluster &#8212; can be _regenerated_ at any time, by means of the REST API.
+This means that the current node and (if they have been uploaded) intermediate certificates are removed; and new, system-generated root and node certificates are made active for the node.
+Note that previously system-generated and uploaded root certificates remain in the trust store of the cluster, unless explicitly deleted.
+For information on regenerating certificates, see xref:rest-api:rest-regenerate-all-certs.adoc[Regenerate All Certificates].
+For information on deleting root certifictes, see xref:rest-api:delete-trusted-cas.adoc[Delete Root Certificates].
 
 [#further-information]
 == Further Information
