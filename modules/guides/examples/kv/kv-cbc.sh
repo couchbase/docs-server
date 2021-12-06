@@ -45,3 +45,17 @@ cbc cat hotel-123 -u Administrator -P password -U couchbase://localhost/travel-s
 	--collection='hotel' \
 	--expiry=60
 # end::cbc-kv-get-with-opts[]
+
+# tag::cbc-kv-upsert[]
+cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
+	--scope='inventory' \
+	--collection='hotel' \
+	--mode upsert hotel-123 <./tmp/hotel-123.json
+# end::cbc-kv-upsert[]
+
+# tag::cbc-kv-replace[]
+cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
+	--scope='inventory' \
+	--collection='hotel' \
+	--mode replace hotel-123 <./tmp/hotel-123.json
+# end::cbc-kv-replace[]
