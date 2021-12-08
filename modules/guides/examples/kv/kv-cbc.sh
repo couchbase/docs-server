@@ -59,3 +59,10 @@ cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--collection='hotel' \
 	--mode replace hotel-123 <./tmp/hotel-123.json
 # end::cbc-kv-replace[]
+
+# tag::cbc-bulk-get[]
+cbc cat -u Administrator -P password -U couchbase://localhost/travel-sample \
+	--scope='tenant_agent_00' \
+	--collection='users' \
+	0 1
+# end::cbc-bulk-get[]
