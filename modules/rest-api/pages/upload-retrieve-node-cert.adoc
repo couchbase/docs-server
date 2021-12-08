@@ -29,7 +29,7 @@ Note that the `POST` API _can_ be used on clusters one or more of whose nodes is
 The `GET` API can likewise be used: however, node-certificates for pre-7.1 nodes are not returned.
 
 Both calls require either the Full Admin or the Security Admin role.
-For the loading of the node-certificate to succeed, the private key must be owned by user `couchbase`.
+For the loading of the node-certificate to succeed, the private key and chain file must both be readable by user `couchbase`.
 
 [#curl-syntax]
 == Curl Syntax
@@ -53,22 +53,6 @@ Note that if the node-certificate has already been loaded, in order to register 
 
 The following examples show how to register a passphrase in association with an encrypted private key.
 
-==== Plain
-
-A JSON object of the following kind can be used to register a passphrase of type `plain`:
-
-----
-{"privateKeyPassphrase": {"type": "plain",
-                          "password": "124!*oU"}}
-----
-
-The specified `type` is `plain`.
-The value of `password` is the passphrase established for the private key.
-
-The specified passphrase is stored on the node with the Couchbase-Server procedures for managing system secrets.
-See xref:manage:manage-security/manage-system-secrets.adoc[Manage System Secrets].
-When the private key is accessed, the passphrase is transmitted in the clear (unless Https is used), and can be transmitted between nodes: this is insecure, and consequently, the `plain` option is recommended only for pre-production use.
-
 ==== Script
 
 A JSON object of the following kind can be used to register a passphrase of type `script`:
@@ -82,7 +66,7 @@ A JSON object of the following kind can be used to register a passphrase of type
 ----
 
 The specified `type` is `script`.
-The value of `path` is the path to the script on the current node: this must be in the `data/script` directory.
+The value of `path` is the path to the script on the current node: for security reasons, this must be in the `data/script` directory.
 The value of `args` is an array optionally containing one or more strings to be passed as arguments to the script.
 The value of `trim` can be either `true` or `false`, and determines whether redundant characters are to be removed from the script.
 The value of `timeout` specifies the number of milliseconds that must elapse before the script is timed out.
@@ -114,6 +98,22 @@ When the private key is accessed, Couchbase Server attempts to extract the passw
 If `200` is returned, the returned text is treated as the passphrase for the private key.
 If anything else is returned, this is considered an error.
 
+==== Plain
+
+A JSON object of the following kind can be used to register a passphrase of type `plain`:
+
+----
+{"privateKeyPassphrase": {"type": "plain",
+                          "password": "124!*oU"}}
+----
+
+The specified `type` is `plain`.
+The value of `password` is the passphrase established for the private key.
+
+The specified passphrase is stored on the node with the Couchbase-Server procedures for managing system secrets.
+See xref:manage:manage-security/manage-system-secrets.adoc[Manage System Secrets].
+When the private key is accessed, the passphrase is transmitted in the clear (unless Https is used), and can be transmitted between nodes: this is insecure, and consequently, the `plain` option is recommended only for pre-production use.
+
 [#responses]
 == Responses
 
@@ -124,10 +124,10 @@ An incorrectly specified IP address or domain name causes the attempted connecti
 
 If the `POST` is called with either no node certificate or no node-private key in the `inbox` directory, the call fails with `400 Bad Request`, and either the notification `"Unable to read private key file /opt/couchbase/var/lib/couchbase/inbox/pkey.key. The file does not exist."`; or the notification `"Unable to read certificate chain file /opt/couchbase/var/lib/couchbase/inbox/chain.pem. The file does not exist."`.
 
-If the `POST` is called with the private key for the node-certificate not owned by user `couchbase`, the call fails with an error message such as the following: `"Unable to read private key file /opt/couchbase/var/lib/couchbase/inbox/pkey.key. Missing permission for reading the file, or for searching one of the parent directories."`
-In such a case, ownership of the private key should be changed to user `couchbase`.
+If the `POST` is called with either the private key for the node-certificate or the chain file not readable by user `couchbase`, the call fails with an error message such as the following: `"Unable to read private key file /opt/couchbase/var/lib/couchbase/inbox/pkey.key. Missing permission for reading the file, or for searching one of the parent directories."`
+In such a case, the private key and chain file should both be made readable by user `couchbase`.
 
-If the `GET` method is used with no administrator-configured node-certificate having been uploaded, the call fails with `404 Object Not Found`, and the notification `Certificate is not set up on this node`.
+If the `GET` method is used with no administrator-configured node-certificate having been uploaded, the call returns the default, system-generated certificate.
 
 [#examples]
 == Examples
@@ -148,7 +148,7 @@ curl -v -X GET http://10.143.201.101:8091/pools/default/certificate/node/10.143.
 -u Administrator:password
 ----
 
-If successful, the call returns `200 OK`, and an object whose fields specify warnings, the Subject Common Name, the expiry date, the type (whether _generated_ by Couchbase Server, or _uploaded_ by the administrator), the pem-encoded contents of the node certificate, and the passphrase for the private key (securely displayed as asterisks), if one has been established:
+If successful, the call returns `200 OK`, and an object whose fields specify warnings, the Subject Common Name, the expiry date, the type (whether _generated_ by Couchbase Server, or _uploaded_ by the administrator), the pem-encoded contents of the node certificate, and, when the plain password-type has been used for an encrypted private key, the passphrase for the private key (securely displayed as asterisks):
 
 ----
 {
