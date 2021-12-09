@@ -6,6 +6,7 @@
 [abstract]
 {description}
 It can also be used to retrieve information on the cluster, by referencing a copy of the root certificate.
+These methods are deprecated in Couchbase Server Version 7.1.
 
 [#http-method-and-uri]
 == Http Methods and URIs
@@ -13,23 +14,26 @@ It can also be used to retrieve information on the cluster, by referencing a cop
 ----
 POST /controller/uploadClusterCA
 
-GET /pools/default/certificate
+POST /settings/security/allowNonLocalCACertUpload
 
-GET /pools/default
+GET /settings/security/allowNonLocalCACertUpload
+
+GET /pools/default/certificate
 ----
 
 [#description]
 == Description
 
-The `POST` method and `/controller/uploadClusterCA` URI upload an appropriately configured certificate to the cluster, so that it becomes the root certificate for the cluster.
+The `POST` method and `/controller/uploadClusterCA` URI (which are deprecated in 7.1) upload an appropriately configured certificate to the cluster, so that it becomes the root certificate for the cluster.
 Either the Full Admin or the Security Admin role is required.
 The certificate must be specified as binary data, in a location on the filesystem, for successful upload to occur.
+For security reasons, in versions 7.1 and after, by default, this method and URI can be used on _localhost_ only.
+However, this default setting can be changed, by means of the `POST` method and `/settings/security/allowNonLocalCACertUpload` URI, with the `-d false` flag: this also can be used on _localhost_ only.
+The status of the current setting can be retrieved with the `GET` method and `/settings/security/allowNonLocalCACertUpload` URI.
 
-The `GET` method and `/pools/default/certificate` URI make a copy of the cluster's current root certificate, and returns the copy.
+The `GET` method and `/pools/default/certificate` URI are deprecated in 7.1.
+After the cluster has been upgraded to 7.1, they continue to return the certificate that was used prior to upgrade, until at least one new root certificate is uploaded: following which they always return `400 Bad Request`, with the message `deprecated, please use /pools/default/trustedCAs`.
 This call is authorized for all Couchbase Server roles.
-
-The `GET` method and `/pools/default` URI return an object containing cluster information
-
 
 [#curl-syntax]
 == Curl Syntax
@@ -42,20 +46,24 @@ curl -X POST
   http://<ip-address-or-host-name>:8091/controller/uploadClusterCA
   -u <username>:<password>
 
+curl -X POST
+  http://<ip-address-or-host-name>:8091/settings/security/allowNonLocalCACertUpload
+  -d <true | false>
+  -u <username>:<password>
+
+curl -X GET
+  http://<ip-address-or-host-name>:8091/settings/security/allowNonLocalCACertUpload
+  -u <username>:<password>
+
 curl -X GET
   http://<ip-address-or-domain-name>:8091/pools/default/certificate
   -u <username>:<password>
-
-curl -X GET
-  http://<ip-address-or-domain-name>:18091/pools/default
-  --cacert <copy-of-current-root-certificate>
-  -u <username>:<password>
 ----
 
-The certificate specified for upload to the `POST` method must be an appropriately configured binary, accessible by means of the given path.
+The certificate specified for upload to the deprecated `POST` method must be an appropriately configured binary, accessible by means of the given path.
 The certificate must be named `ca.pem`.
 
-The certificate-copy returned by the `GET` method and `/pools/default/certificate` URI should be appropriately saved: for example, with `> <certificate-copy-name>`, on the local filesystem.
+The certificate-copy returned by the deprecated `GET` method and `/pools/default/certificate` URI should be appropriately saved: for example, with `> <certificate-copy-name>`, on the local filesystem.
 Note that if the URI is extended to `/pools/default/certificate?extended=true`, an _object_ is returned, rather than the raw, pem-encoded certificate-content alone.
 This object contains the following fields:
 
@@ -69,12 +77,6 @@ This object contains the following fields:
 
 * `warnings`: Warnings, if appropriate.
 
-The argument to the `cacert` flag used by `GET /pools/default` must be a copy of the current root certificate for the current cluster.
-If the current node is specified, the `ip-address-or-domain-name` can be the _loopback_ IP address, `127.0.0.1`.
-An object containing information on the current cluster is returned and displayed.
-
-Note that `GET /pools/default` must employ _secure access_ to Couchbase Server, via the secure port `18091`.
-
 [#responses]
 == Responses
 
@@ -85,12 +87,9 @@ An incorrectly specified URI fails with `404 Object Not Found`.
 Failure to specify an appropriately configured certificate fails with `400 Bad Request` and the notification `{"error":"Malformed certificate"}` (the message `Couldn't read data from file` may also be displayed).
 An incorrectly specified IP address or domain name causes the attempted connection to time out, with a `Failed to connect` notification.
 
-For the `GET` method and `/pools/default/certificate` URI, success gives `200 OK`, and returns the readable text of the uploaded certificate.
-Failure to authenticate gives `401 Unauthorized`.
-A malformed URI fails, with `404 Object Not Found`.
-An incorrectly specified IP address or domain name causes the attempted connection to time out, with a `Failed to connect` notification.
+If `GET /pools/default/certificates`, which is deprecated in version 7.1, is used on a cluster with more than one root CA, `400 Bad Request` is returned, with the following error message: `deprecated, please use /pools/default/trustedCAs`.
 
-For the `GET` method and `/pools/default` URI, success gives `200 OK`, and displays an object containing information on the current cluster.
+For the `GET` method and `/pools/default/certificate` URI, success gives `200 OK`, and returns the readable text of the uploaded certificate.
 Failure to authenticate gives `401 Unauthorized`.
 A malformed URI fails, with `404 Object Not Found`.
 An incorrectly specified IP address or domain name causes the attempted connection to time out, with a `Failed to connect` notification.
@@ -101,7 +100,7 @@ An incorrectly specified IP address or domain name causes the attempted connecti
 The following example uploads an appropriately configured root certificate:
 
 ----
-curl -v -X POST http://10.143.201.101:8091/controller/uploadClusterCA \
+curl -v -X POST http://localhost:8091/controller/uploadClusterCA \
 --data-binary "@./ca.pem" \
 -u Administrator:password
 ----
@@ -130,76 +129,10 @@ curl -v -X GET http://10.143.201.101:8091/pools/default/certificate \
 
 If successful, this returns `200 OK`, with a copy of the current root certificate.
 This can be inspected at the command line, with a tool such as `more`.
-
-Once retrieved, a root certificate can be used with either the `curl` or the `wget` command, to return information on the current cluster.
-The following example shows how to use `curl` in this way.
-The file `cert-copy` is a copy of the root certificate, already retrieved by means of `GET /pools/default/certificate`:
-
-----
-curl -v -X GET https://127.0.0.1:18091/pools/default \
---cacert ./cert-copy \
--u Administrator:password
-----
-
-If successful, the call returns `200 OK` and displays an object containing cluster information.
-The initial sections of this object, appropriately formatted, may appear as follows:
-
-----
-{
-  "name": "default",
-  "nodes": [
-    {
-      "systemStats": {
-        "cpu_utilization_rate": 17.97752808988764,
-        "cpu_stolen_rate": 0,
-        "swap_total": 536866816,
-        "swap_used": 536842240,
-        "mem_total": 1040723968,
-        "mem_free": 60387328,
-        "mem_limit": 1040723968,
-        "cpu_cores_available": 1,
-        "allocstall": 38930
-      },
-      "interestingStats": {
-        "cmd_get": 0,
-        "couch_docs_actual_disk_size": 64626447,
-        "couch_docs_data_size": 42551296,
-        "couch_spatial_data_size": 0,
-        "couch_spatial_disk_size": 0,
-        "couch_views_actual_disk_size": 974397,
-        "couch_views_data_size": 970245,
-        "curr_items": 38894,
-        "curr_items_tot": 38894,
-        "ep_bg_fetched": 0,
-        "get_hits": 0,
-        "mem_used": 84958992,
-        "ops": 0,
-        "vb_active_num_non_resident": 0,
-        "vb_replica_curr_items": 0
-      },
-      "uptime": "179052",
-      "memoryTotal": 1040723968,
-      "memoryFree": 60387328,
-            .
-            .
-            .
-----
-
-The command `wget` can be similarly used, as follows:
-
-----
-wget --ca-certificate ./cert-copy \
-https://127.0.0.1:18091/pools/default -O output \
---user Administrator --password password
-----
-
-Note that `wget` here uses the secure port `18091`.
-The returned object is written to the file `output`.
+Note that success only occurs if the cluster has at most one root CA: if the cluster has more than one root CA, `400 Bad Request` is returned, with the following error message: `deprecated, please use /pools/default/trustedCAs`.
 
 [#see-also]
 == See Also
 
-Information on uploading and retrieving node certificates with the REST API is provided in xref:rest-api:upload-retrieve-node-cert.adoc[Upload and Retrieve a Node Certificate].
-Information on certificate regeneration is provided in xref:rest-api:rest-regenerate-all-certs.adoc[Regenerate All Certificates].
-A general introduction to certificates is provided in xref:learn:security/certificates.adoc[Certificates].
-Routines for generating and deploying server and client certificates are provided in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates] and xref:manage:manage-security/configure-client-certificates.adoc[Configure Client Certificates], respectively.
+An overview of certificate management is provided in xref:learn:security/certificates.adoc[Certificates].
+Steps for certificate creation are provided in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates] and xref:manage:manage-security/configure-client-certificates.adoc[Configure Client Certificates].
