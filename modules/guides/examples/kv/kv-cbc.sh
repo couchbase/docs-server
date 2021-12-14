@@ -42,6 +42,10 @@ cbc create -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--mode replace hotel-123 <./tmp/hotel-123.json
 # end::cbc-kv-replace[]
 
+# tag::cbc-kv-delete[]
+cbc rm -u Administrator -P password -U couchbase://localhost/travel-sample airport_1254
+# end::cbc-kv-delete[]
+
 # tag::cbc-bulk-get[]
 cbc cat -u Administrator -P password -U couchbase://localhost/travel-sample \
 	--scope='tenant_agent_00' \
