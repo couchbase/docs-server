@@ -1,12 +1,11 @@
 = Eventing REST API
-:description:  The Eventing REST API, available by default at port 8096, provides the methods available to work with Couchbase Eventing Functions.
+:description:  The Eventing REST API, available by default at port 8096, provides the methods available to work with and manipulate Couchbase Eventing Functions.
 :page-edition: Enterprise Edition
 
 [abstract]
 {description}
 
-NOTE: The Eventing Functions REST API endpoints on this page are supported, as long as the content of the handler body is not created or modified externally (as the internal format of the body is not yet standardized).
-
+NOTE: Changes to the Eventing Function definition files made outside of this REST API or the interactive UI are only supported for version 7.0 (and above) if the Eventing schemas located in https://github.com/couchbase/eventing/tree/master/parser are adhered to.
 
 .Eventing Functions API (basic activation/deactivation)
 [cols="2,10,18"]
@@ -134,8 +133,8 @@ curl -XPOST  -d @./[array_of_functions].json http://Administrator:password@192.1
 a| View a definition of a Function.
 Provides a listing of a complete Function definition available in the cluster.
 The Function could be in any state: deployed, undeployed, or paused.
-If saved to a file the function definition can be imputed into the cluster or a different cluster. 
-However any changes to the function definition made to the file outside the UI are discouraged and not supported.
+If saved to a file the function definition can be imported into the cluster or a different cluster. 
+However any changes to the function definition made to the file outside the UI are discouraged.
 
 |
 2+a|
@@ -160,8 +159,8 @@ curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[samp
 a| View definitions of all Functions.
 Provides an array of definitions of all Functions available in the cluster.
 The Functions could be in any state: deployed, undeployed, or paused.
-If saved to a file the function definitions can be imputed into the cluster or a different cluster. 
-However any changes to the function definition made to the file outside the UI are discouraged and not supported.
+If saved to a file the function definitions can be imported into the cluster or a different cluster. 
+However any changes to the function definition made to the file outside the UI are discouraged.
 
 |
 2+a|
@@ -181,6 +180,31 @@ Sample API (to file):
 curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions -o array_of_functions.json
 ----
 
+| GET
+| [.path]_/api/v1/export_
+a| This is a convenience method to export all function definitions. 
+Exported functions are always set to undeployed state at the time of export, regardless of the state in the cluster at time of export. 
+If saved to a file the function definitions can be imputed into the cluster or a different cluster. 
+However any changes to the function definition made to the file outside the UI are discouraged.
+
+|
+2+a|
+Sample API (to standard out):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/export 
+----
+
+|
+2+a|
+Sample API (to file):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/export -o array_of_functions.json
+----
+
 | DELETE
 | [.path]_/api/v1/functions/[function_name]_
 a| Deletes a specific Function from the cluster.
@@ -197,7 +221,7 @@ curl -XDELETE http://Administrator:password@192.168.1.5:8096/api/v1/functions/[s
 
 | DELETE
 | [.path]_/api/v1/functions_
-a| Deletes multiple Functions from the cluster.
+a| Deletes multiple Functions (*as in all Functions*) from the cluster.
 WARNING: Use this API with caution as it is irreversible.
 
 |
@@ -210,9 +234,347 @@ curl -XDELETE http://Administrator:password@192.168.1.5:8096/api/v1/functions
 ----
 
 | GET
+| [.path]_/api/v1/functions/[function_name]/settings_
+a|
+Export or return the full definition for one Eventing Function in the cluster.  The definition can be subsequently imported.  
+However any changes to the function definition made to the file outside the UI are discouraged.
+
+|
+2+a|
+Sample API (to standard out):
+
+[source,console]
+----
+curl http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+|
+2+a|
+Sample API (to file):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings -o [sample_name].json
+----
+
+| POST
+| [.path]_/api/v1/functions/[function_name]/settings_
+a| 
+Updates an undeployed or paused function with the provided setting. 
+Note settings can only be altered when the function is paused or undeployed, attempting to adjust a deployed function will result in an error. 
+During an edit, settings provided are merged. Unspecified attributes retain their prior values.
+Note that you must always specify *deployment_status* (deployed/undeployed) and *processing_status* (paused/not-paused) when using this REST endpoint to update any option or set of options.
+
+The current values of *deployment_status* and *processing_status* can be queried via _api/v1/status_ or _api/v1/status/[sample_name]_  
+
+By adjusting *deployment_status* and *processing_status* this command can also deploy or resume a function, however it cannot pause or undeploy a function.  
+
+|
+2+a|
+Sample API (alter worker_count):
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":false,"processing_status":false,"worker_count":6}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+|
+2+a|
+Sample API (alter app_log_max_files and app_log_max_size) _this function is currently undeployed_:
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":false,"processing_status":false,"app_log_max_files":5,"app_log_max_size":10485760}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+|
+2+a|
+Sample API (alter timer_context_size) _this function is currently paused_:
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":true,"processing_status":false,"timer_context_size":2048}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+|
+2+a|
+Sample API (alter worker_count AND resume) _this function is currently paused_:
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":true,"processing_status":true,"worker_count":8}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+
+| GET
+| [.path]_/api/v1/functions/[function_name]/config_
+a|
+Export or return the configuration of the source keyspace and the eventing storage (metadata) keyspace for one Eventing Function in the cluster.  The definition can be subsequently imported.  
+However any changes to the function definition made to the file outside the UI are discouraged.
+
+|
+2+a|
+Sample API (to standard out):
+
+[source,console]
+----
+curl http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/config
+----
+
+|
+2+a|
+Sample API (to file):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/config -o [sample_name].json
+----
+
+| POST
+| [.path]_/api/v1/functions/[function_name]/config_
+a| 
+Import the configuration and alter the source keyspace and the eventing storage (metadata) keyspace for one Eventing Function in the cluster.  
+You can only change these values if a function is in the undeployed state and the two keyspaces exist.
+
+|
+2+a|
+Sample API (alter source and eventing storage keyspaces):
+
+[source,console]
+----
+curl -XPOST http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/config -d '{ "source_bucket": "bulk", "cust01": "orders", "source_collection": "customer01", "metadata_bucket": "rr100", "metadata_scope": "eventing", "metadata_collection": "metadata" }'
+----
+
+|
+2+a|
+Sample API (alter source and eventing storage keyspaces from a file):
+
+[source,console]
+----
+curl -XPOST http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/config -d @./[sample_name].json
+----
+
+| GET
+| [.path]_/api/v1/functions/[function_name]/appcode_
+a| Export only the JavaScript code for one Eventing Function in the cluster.  
+Note the JavaScript is not escaped (unlike /api/v1/functions/[function_name]) and the code is runnable in other environments.
+The JavaScript code can be subsequently imported.  
+However any changes to the function definition made to the file outside the UI are discouraged.
+
+|
+2+a|
+Sample API (to standard out):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/appcode
+----
+
+|
+2+a|
+Sample API (to file):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/appcode -o [sample_name].json
+----
+
+| POST
+| [.path]_/api/v1/functions/[function_name]/appcode_
+a| Import only the JavaScript code for one Eventing Function in the cluster.  
+Note the JavaScript supplied is not escaped (unlike /api/v1/functions/[function_name]) and could come from other environments.
+It is highly recommended that you use the flag *--data-binary* or *--upload-file* when importing your JavaScript "appcode" fragments
+to avoid potential encoding issues due to string escaping.
+
+|
+2+a|
+Sample API (import and replace JavaScript):
+
+[source,console]
+----
+curl -XPOST http://Administrator:password@192.168.1.5:8096/api/v1/functions/aa/appcode --data-binary 'function OnUpdate(doc, meta) { log("id",meta.id); }'
+----
+
+|
+2+a|
+Sample API (import and replace JavaScript from a file, do not use *-d*):
+
+[source,console]
+----
+curl -XPOST http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/import --data-binary @./[sample_name].json
+----
+
+or
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/import --upload-file ./[sample_name].json
+----
+
+|===
+
+
+.Eventing Status API (advanced)
+[cols="2,10,18"]
+|===
+| HTTP Method | *URI Path* | *Description*
+
+| GET
+| [.path]_/api/v1/status_
+a|
+Returns a list (array) of all Eventing Functions showing their corresponding *composite_status*. 
+A Function's status can have one of the following values - _undeployed_, _deploying_, _deployed_, _undeploying_, _paused_, and '_pausing_.  
+Note, there is no value of _resuming_ when resuming a paused Eventing Function the *composite_status* will return _deploying_ until it reaches the _deployed_ state.
+
+|
+2+a|
+Sample API (status):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/status
+----
+
+| GET
+| [.path]_/api/v1/status/[sample_name]_
+a|
+Returns a specific Eventing Functions showing its corresponding *composite_status*. 
+It can have one of the following values - _undeployed_, _deploying_, _deployed_, _undeploying_, _paused_, and '_pausing_.  
+Note, there is no value of _resuming_ when resuming a paused Eventing Function the *composite_status* will return _deploying_ until it reaches the _deployed_ state.
+
+|
+2+a|
+Sample API (status):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/status/[sample_name]
+----
+
+|===
+
+
+.Eventing Log API (advanced)
+[cols="2,10,18"]
+|===
+| HTTP Method | *URI Path* | *Description*
+
+| GET
+| [.path]_/getAppLog?name=[sample_name]_
+a|
+Returns the most recent application log messages for a specific Eventing Function.  
+
+This API by default accesses a single Eventing node but can access all Eventing nodes by setting the optional parameter *aggregate=true*. 
+
+By default the amount of logging information returned is approximately 40960 bytes unless you specify the optional size parameter *size=#* where # is in bytes.  Note when specifying the *size* parameter and fetching from more than one Eventing node only *size/#nodes* bytes are returned from each node.
+
+|
+2+a|
+Sample API (fetch recent Application log info from one Eventing node):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/getAppLog?name=[sample_name]
+----
+
+|
+2+a|
+Sample API (fetch recent Application log info from all Eventing nodes):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/getAppLog?name=[sample_name]&aggregate=true
+----
+
+|
+2+a|
+Sample API (fetch recent Application log info from all Eventing nodes but limited to 2048 bytes):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/getAppLog?name=[sample_name]&aggregate=true&size=2048
+----
+
+|===
+
+.Eventing List API (advanced)
+[cols="2,10,18"]
+|===
+| HTTP Method | *URI Path* | *Description*
+
+| GET
+| [.path]_/api/v1/list/functions_
+a|
+Returns a list (array) of the names of all Eventing Functions in the cluster.
+The returned list can also be filtered by the following: *deployed* status _true_ or _false_ (in this case paused is considered deployed), 
+*source_bucket* filter by the bucket with the listen to keyspace, and *function_type* _notsbm_ or _sbm_ (the later if the functions that modifies its own listen to keyspace).
+
+|
+2+a|
+Sample API (list):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/list/functions
+----
+
+| GET
+| [.path]_/api/v1/list/functions/query?deployed=true_
+a|
+Returns a list (array) of the names of all deployed (or paused) Eventing Functions in the cluster.  
+Note, if we had specified _deployed=false_ we would get all undeployed functions.
+
+|
+2+a|
+Sample API (status):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/list/functions/query?deployed=true
+----
+
+| GET
+| [.path]_/api/v1/list/functions/query?source_bucket=[bucket_name]_
+a|
+Returns a list (array) of the names of Eventing Functions in the cluster that have a source keyspace under a particular bucket.  
+
+|
+2+a|
+Sample API (status):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/list/functions/query?source_bucket=[bucket_name]
+----
+
+| GET
+| [.path]_/api/v1/list/functions/query?function_type=sbm_
+a|
+Returns a list (array) of the names of Eventing Functions in the cluster that modify their own a source keyspace.  
+
+|
+2+a|
+Sample API (status):
+
+[source,console]
+----
+curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/list/functions/query?function_type=sbm
+----
+
+|===
+
+
+.Eventing Global Config API (advanced)
+[cols="2,10,18"]
+|===
+| HTTP Method | *URI Path* | *Description*
+
+| GET
 | [.path]_/api/v1/config_
 a| List global configuration.
-The response shows all global Eventing settings.
+The response shows all global Eventing settings.  There are currently just two settings:
+*enable_debugger* (default value of false) and *ram_quota* (default value of 256 MB).  
+Both of these settings can also be adjusted via the UI.
 
 |
 2+a|
@@ -238,132 +600,13 @@ Sample API (alter ram_quota):
 curl -XPOST -d '{"ram_quota": 512}' http://Administrator:password@192.168.1.5:8096/api/v1/config
 ----
 
-| GET
-| [.path]_/api/v1/functions/[function_name]/settings_
-a|
-Export or return the full definition for one Eventing Function in the cluster.  The definition can be subsequently imported.  
-However any changes to the function definition made to the file outside the UI are discouraged and not supported.
-
 |
 2+a|
-Sample API (to standard out):
+Sample API (alter enable_debugger):
 
 [source,console]
 ----
-curl http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
-----
-
-|
-2+a|
-Sample API (to file):
-
-[source,console]
-----
-curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings -o [sample_name].json
-----
-
-| POST
-| [.path]_/api/v1/functions/[function_name]/settings_
-a| 
-Updates an undeployed Function with the provided setting. Do not update settings for a deployed or paused function.
-During an edit, settings provided are merged. Unspecified attributes retain their prior values.
-Note that you must always specify deployment_status (deployed/undeployed) and processing_status (paused/not-paused) 
-when using this REST endpoint to update any option or set of options.
-
-|
-2+a|
-Sample API (alter worker_count):
-
-[source,console]
-----
-curl -XPOST -d '{"deployment_status":false,"processing_status":false,"worker_count":6}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
-----
-
-|
-2+a|
-Sample API (alter app_log_max_files and app_log_max_size):
-
-[source,console]
-----
-curl -XPOST -d '{"deployment_status":false,"processing_status":false,"app_log_max_files":5,"app_log_max_size":10485760}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
-----
-
-|
-2+a|
-Sample API (alter timer_context_size):
-
-[source,console]
-----
-curl -XPOST -d '{"deployment_status":false,"processing_status":false,"timer_context_size":2048}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
-----
-
-| GET
-| [.path]_/api/v1/status_
-a|
-Returns a list (arrary) of all Eventing Functions showing their corresponding *composite_status*. 
-It can have one of the following values - _undeployed_, _deploying_, _deployed_, _undeploying_, _paused_, and '_pausing_.  
-Note, there is no value of _resuming_ when resuming a paused Eventing Function the *composite_status* will return _deploying_ until it reaches the _deployed_ state.
-
-|
-2+a|
-Sample API (status):
-
-[source,console]
-----
-curl -XGET http://Administrator:password@192.168.1.5:8096/api/v1/status
-----
-
-|===
-
-.Eventing Functions API (deprecated activation/deactivation)
-[cols="2,10,18"]
-|===
-| HTTP Method | *URI Path* | *Description*
-
-| POST
-| [.path]_/api/v1/functions/[function_name]/settings_
-a|
-Deploys an undeployed Function or resumes a paused function from its paused DCP checkpoint.  Deprecated, see (basic activation/deactivation) for preferred invocation.
-A deploy/resume CURL example is provided for reference.
-
-|
-2+a|
-Sample API:
-
-[source,console]
-----
-curl -XPOST -d '{"deployment_status":true,"processing_status":true}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
-----
-
-| POST
-| [.path]_/api/v1/functions/[function_name]/settings_
-a|
-Undeploys a Function. Deprecated, see (basic activation/deactivation) for preferred invocation.
-An undeploy CURL example is provided for reference.
-
-|
-2+a|
-Sample API:
-
-[source,console]
-----
-curl -XPOST -d '{"deployment_status":false,"processing_status":false}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
-----
-
-| POST
-| [.path]_/api/v1/functions/[function_name]/settings_
-a|
-Pauses a Function and creates a DCP checkpoint such that on a subsequent resume no mutations will be lost. 
-Deprecated, see (basic activation/deactivation) for preferred invocation.
-A pause CURL example is provided for reference.
-
-|
-2+a|
-Sample API:
-
-[source,console]
-----
-curl -XPOST -d '{"deployment_status":true,"processing_status":false}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+curl -XPOST -d '{"enable_debugger": true}' http://Administrator:password@192.168.1.5:8096/api/v1/config
 ----
 
 |===
@@ -441,6 +684,59 @@ Sample API:
 [source,console]
 ----
 curl -XGET http://Administrator:password@192.168.1.5:8096/getFailureStats?name=[function_name]
+----
+
+|===
+
+.Eventing Functions API (*deprecated activation/deactivation*)
+[cols="2,10,18"]
+|===
+| HTTP Method | *URI Path* | *Description*
+
+| POST
+| [.path]_/api/v1/functions/[function_name]/settings_
+a|
+Deploys an undeployed Function or resumes a paused function from its paused DCP checkpoint.  Deprecated, see (basic activation/deactivation) for preferred invocation.
+A deploy/resume CURL example is provided for reference.
+
+|
+2+a|
+Sample API:
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":true,"processing_status":true}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+| POST
+| [.path]_/api/v1/functions/[function_name]/settings_
+a|
+Undeploys a Function. Deprecated, see (basic activation/deactivation) for preferred invocation.
+An undeploy CURL example is provided for reference.
+
+|
+2+a|
+Sample API:
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":false,"processing_status":false}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
+----
+
+| POST
+| [.path]_/api/v1/functions/[function_name]/settings_
+a|
+Pauses a Function and creates a DCP checkpoint such that on a subsequent resume no mutations will be lost. 
+Deprecated, see (basic activation/deactivation) for preferred invocation.
+A pause CURL example is provided for reference.
+
+|
+2+a|
+Sample API:
+
+[source,console]
+----
+curl -XPOST -d '{"deployment_status":true,"processing_status":false}' http://Administrator:password@192.168.1.5:8096/api/v1/functions/[sample_name]/settings
 ----
 
 |===
