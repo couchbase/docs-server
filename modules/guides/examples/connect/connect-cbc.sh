@@ -13,7 +13,7 @@ cbc ping -v -U "couchbases://127.0.0.1/travel-sample?certpath=ca.pem" \
 # end::cbc-connect-cert[]
 
 # tag::cbc-connect-capella[]
-cbc ping -v -U "cb.<your endpoint address>.dp.cloud.couchbase.com/travel-sample?certpath=ca.pem" \
+cbc ping -v -U "cb.<endpoint>.dp.cloud.couchbase.com/travel-sample?certpath=ca.pem" \
 	--count=1 \
 	--table
 # end::cbc-connect-capella[]
