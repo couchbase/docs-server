@@ -1,0 +1,100 @@
+= Using Your Own Prometheus Server to Consume Couchbase Statistics
+:description: With Couchbase 7.x, it's not necessary to write a custom Prometheus Exporter.This page will demonstrate how to enable a Prometheus server to read from Couchbase's Prometheus-ready endpoints.
+
+[abstract]
+{description}
+
+== Prerequisites
+
+In this tutorial, we're going to use a Docker instance of https://prometheus.io/[Prometheus] to build our consumer. Make sure that you have Docker installed and running on your machine. You should also have an available Couchbase cluster with at least one running node.
+
+
+:sectnums:
+
+== Prepare the target configuration file
+You need to create a file that contains a list of the cluster's node targets. This is done by issuing a request to the server from the command line:
+
+[source, console]
+----
+wget --content-disposition \
+    'http://10.112.211.101:8091/prometheus_sd_config.yaml' \
+    --http-user Administrator --http-password password
+----
+
+This will generate a configuration file containing the target addresses of the servers in your node. The name of your file will depend on the name of your cluster, but the file suffix will be `yml`.
+
+.couchbase_sd_config_my-cluster.yml
+[source, yaml]
+----
+- targets:
+    - '10.144.220.101:8091'
+    - '10.144.220.102:8091'
+----
+
+Now create a new directory on your system and copy the file to new directory:
+
+[source, console]
+----
+mkdir ~/prometheus
+cp couchbase_sd_config_my-cluster.yml ~/prometheus
+----
+
+== Create the Prometheus configuration file
+Create a new file called `prometheus.yml` in the directory containing the targets file. Populate the file with the following text:
+
+.prometheus.yml
+[source, yaml]
+----
+scrape_configs:
+  - job_name: 'couchbase_cluster'    # <.>
+    basic_auth:
+      username: 'Administrator'    # <.>
+      password: 'password'    #<.>
+    file_sd_configs:
+      - files:
+          - 'couchbase_sd_config_my-cluster.yml'    # <.>
+        refresh_interval: 15s
+----
+
+<.> This is the name that Prometheus will assign to the process retrieving data from your target nodes.
+<.> The username the process can use to log into your cluster.
+<.> The password the process will use to log into your cluster.
+<.> The name of target file from which the process can read address of the cluster nodes.
+
+Now you should have a directory containing two configuration files:
+
+[source, text]
+----
+📂 ~ (home directory)
++ 📂 prometheus
+    📄 prometheus.yml
+    📄 couchbase_sd_config_my-cluster.yml
+
+----
+
+== Install Prometheus
+
+Open a terminal window and run the following command to provision Prometheus:
+
+[source, console]
+----
+docker run \
+    -p 9090:9090 \    # <.>
+    -v ~/prometheus:/etc/prometheus \    # <.>
+    prom/prometheus
+----
+<.> The port through which the Prometheus server is accessed and takes the form: `-p{nbsp}host-port:container-port`.
++
+[horizontal]
+*host-port*:: the port of the host machineused to access the Prometheus service.
+*container-port*:: this is the port used internally by the container. The host port maps on to this.
+
+<.> This is the mapping of the Prometheus configuration directory: the host machine configuration that you just created `~/prometheus` will be mapped on to the Prometheus instance configuration directory inside the Docker container.
+
+== Test your configuration.
+Once the Docker container has started up, visit `http://localhost:9090/targets` to ensure that Prometheus is accessing your cluster correctly:
+
+image::monitor/prometheus-alert.png[]
+
+
+
