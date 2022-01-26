@@ -1,0 +1,653 @@
+= Importing Data
+// Importing and Streaming Data
+:page-topic-type: guide
+:imagesdir: ../assets/images
+:tabs:
+:page-toclevels: 2
+:description: How to import documents into Couchbase server.
+:github: Click the GitHub button icon:github[] on any sample to view the code in context.
+
+
+[abstract]
+{description}
+
+== Introduction
+
+Importing data can be done from the Couchbase Server UI, via the  
+xref:tools:cbimport.adoc[cbimport] command-line tool shipped with Couchbase Server,
+or using the SDK to script the process.
+
+Data load essentially consists of the following steps:
+
+. Prepare data in some well known format such as Comma Separated Values or JSON documents. 
+
+. Parse this data, and iterate over each document.
+
+. Connect to your Couchbase instance.
+
+. Connect to the appropriate bucket, scope, and collection.
+
+. Decide on the key for this document (could be an ID, a sequence number, or some combination of fields).
+
+. Do any additional processing if required.
+
+. Insert the document.
+
+// tag::clients_section[]
+// include::partial$clients.adoc[]
+// following section copied/tweaked from above
+// differences: cbc vs cbimport, topic, etc.
+=== Couchbase Clients
+
+Clients access data by connecting to a Couchbase cluster over the network.
+The most common type of client is a Couchbase SDK, which is a full programmatic API that enables applications to take the best advantage of Couchbase.
+This developer guide focuses on the most commonly-used SDKs, but full explanations and reference documentation for all SDKs is available.
+
+The command line clients also provide a quick and streamlined interface for simple access and are suitable if you just want to access an item without writing any code. For this guide, we are especially interested in the `cbimport` tool.
+
+[NOTE]
+====
+With some editions, the command line clients are provided as part of the installation of Couchbase Server.
+Assuming a default installation, you can find them in the following location, depending on your operating system:
+
+[horizontal]
+Linux:: `/opt/couchbase/bin`
+Windows:: `C:\Program Files\Couchbase\Server\bin`
+macOS:: `/Applications/Couchbase Server.app/Contents/Resources/couchbase-core/bin`
+====
+
+The Couchbase Server UI also offers a graphical interface to `cbimport`.
+
+Read the following for further information about the clients available for importing data:
+
+* xref:tools:cbimport.adoc[cbimport]
+
+* xref:home::sdk.adoc[SDK Clients]
+
+* xref:manage:import-documents/import-documents.adoc[Couchbase Server UI]
+
+// end::clients_section[]
+
+== Preparing the Data
+
+To prepare the data, extract or generate your data in an appropriate data format.
+
+The following are well supported for export as well as by `cbimport` and the module ecosystems of all Couchbase SDKs.
+
+[{tabs}]
+====
+CSV::
++
+--
+Comma Separated Values (.csv) are easily exported from many spreadsheet and database applications.
+
+Ensure that the first row is a header row containing the names of the columns within the document.
+
+[source,csv]
+----
+include::nodejs-sdk:howtos:example$import.csv[]
+----
+--
+
+TSV::
++
+--
+Tab Separated Values (.tsv) are a common variant of CSV files.
+
+[source,tsv]
+----
+include::nodejs-sdk:howtos:example$import.tsv[]
+----
+--
+
+JSON::
++
+--
+JSON (.json) files are especially well suited to import into Couchbase, as it is the default native datatype.
+
+A .json file contains only one single value, so to give flexibility to import one or many values, format this as an *array* of the values you want to store.
+
+[source,json]
+----
+include::nodejs-sdk:howtos:example$import.json[]
+----
+--
+
+JSONL::
++
+--
+JSON Lines (.json) also known as NDJSON is a common format for streaming JSON, with one JSON object per line of text.
+
+// "jsonl" not currently supported by highlighter
+[source,json]
+----
+include::nodejs-sdk:howtos:example$import.jsonl[]
+----
+--
+====
+
+== Using `cbimport`
+
+Using xref:tools:cbimport.adoc[cbimport] is straight-forward.
+Ensure you have the path to the command line clients in Couchbase Server in your path.
+
+You can import all of the data formats described above.
+
+[{tabs}]
+====
+CSV::
++
+--
+[source,console]
+----
+cbimport csv \
+  --dataset -d file://./import.csv \ <.>
+  --cluster localhost --username Administrator --password password \ <.>
+  --bucket travel-sample --scope-collection-exp inventory.airline \ <.>
+  --generate-key %type%_%id% <.>
+----
+<.> Import a local CSV file.
+<.> Replace these values with your connection details.
+<.> Replace the bucket, scope, and collection as required.
+<.> Specify an ID for the imported documents. This generator will generate IDs such as `airline_1234`.
+--
+
+TSV::
++
+--
+[source,console]
+----
+cbimport csv \
+  --dataset -d file://./import.tsv --field-separator "\t" \ <.>
+  --cluster localhost --username Administrator --password password \ <.>
+  --bucket travel-sample --scope-collection-exp inventory.airline \ <.>
+  --generate-key %type%_%id% <.>
+----
+<.> Import a local TSV file.
+<.> Replace these values with your connection details.
+<.> Replace the bucket, scope, and collection as required.
+<.> Specify an ID for the imported documents. This generator will generate IDs such as `airline_1234`.
+--
+
+JSON::
++
+--
+[source,console]
+----
+cbimport json \
+  --dataset -d file://./import.json --format list \ <.>
+  --cluster localhost --username Administrator --password password \ <.>
+  --bucket travel-sample --scope-collection-exp inventory.airline \ <.>
+  --generate-key %type%_%id% <.>
+----
+<.> Import a local JSON file.
+<.> Replace these values with your connection details.
+<.> Replace the bucket, scope, and collection as required.
+<.> Specify an ID for the imported documents. This generator will generate IDs such as `airline_1234`.
+--
+
+JSONL::
++
+--
+[source,console]
+----
+cbimport json \
+  --dataset -d file://./import.jsonl --format lines \ <.>
+  --cluster localhost --username Administrator --password password \ <.>
+  --bucket travel-sample --scope-collection-exp inventory.airline \ <.>
+  --generate-key %type%_%id% <.>
+----
+<.> Import a local JSONL file.
+<.> Replace these values with your connection details.
+<.> Replace the bucket, scope, and collection as required.
+<.> Specify an ID for the imported documents. This generator will generate IDs such as `airline_1234`.
+--
+====
+
+
+== Importing Using an SDK
+
+While `cbimport` accomplishes all the necessary steps in a single command, as above,
+using an SDK gives you more flexibility and control.
+However all the same considerations apply, so let us look at those in turn.
+
+=== Parsing the Import into an Array or Stream of Records
+
+The details of how to parse the import data vary depending on the chosen input format, and the most appropriate library for your SDK.
+
+==== Parsing CSV and TSV Data
+
+[{tabs}]
+====
+pass:[.NET]::
++
+--
+To parse CSV and TSV data, use the https://joshclose.github.io/CsvHelper/[CsvHelper^] library.
+
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=csv-tsv-import,indent=0]
+----
+
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=importCSV,indent=0]
+----
+
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=importTSV,indent=0]
+----
+
+NOTE: {github}
+--
+
+Java::
++
+--
+To parse CSV and TSV data, use the http://opencsv.sourceforge.net/[opencsv^] library.
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=csv-tsv-import,indent=0]
+----
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importCSV,indent=0]
+----
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importTSV;!omit,indent=0]
+----
+
+If you are using the *Reactor API* then, as OpenCSV doesn't have a built-in converter, 
+use the https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html#generate-java.util.concurrent.Callable-java.util.function.BiFunction-java.util.function.Consumer-[`Flux::generate`] method to convert the CSV or TSV file into a stream:
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importCSV_batch;!omit,indent=0]
+----
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importTSV_batch;!omit,indent=0]
+----
+
+NOTE: {github}
+--
+
+Node.js::
++
+--
+To parse CSV and TSV data, use the https://csv.js.org/parse/[csv-parse^] library.
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=csv-tsv-import,indent=0]
+----
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=csvStream,indent=0]
+----
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=tsvStream,indent=0]
+----
+
+NOTE: {github}
+--
+
+Python::
++
+--
+To parse CSV and TSV data, use the https://docs.python.org/3/library/csv.html[csv^] library.
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=csv-tsv-import,indent=0]
+----
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=csvImport,indent=0]
+----
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=tsvImport,indent=0]
+----
+
+
+NOTE: {github}
+--
+====
+
+==== Parsing JSON and JSONL Data
+
+[{tabs}]
+====
+pass:[.NET]::
++
+--
+To parse JSON and JSONL data, use https://www.newtonsoft.com/json[Newtonsoft^].
+
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=json-jsonl-import,indent=0]
+----
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=importJSON,indent=0]
+----
+
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=importJSONL,indent=0]
+----
+
+NOTE: {github}
+--
+
+Java::
++
+--
+To parse *JSON* data, read the file as a string, then use the built-in Couchbase xref:java-sdk:howtos:json.adoc[JSON] handling to parse the result into an array of JSON objects.
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=json-jsonl-import,indent=0]
+----
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importJSON,indent=0]
+----
+
+If you are using the *Reactor API* then, once you've read the JSON array, use the https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html#fromIterable-java.lang.Iterable-[`Flux::fromIterable`] method to convert it into streams:
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importJSON_batch;!omit,indent=0]
+----
+
+To parse *JSONL* data: do the same, but read the file line-by-line.
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importJSONL;!omit,indent=0]
+----
+
+If you are using the *Reactor API* then open the JSONL file as a stream using the https://projectreactor.io/docs/core/release/api/reactor/core/publisher/Flux.html#using-java.util.concurrent.Callable-java.util.function.Function-java.util.function.Consumer-[`Flux::using`] method.
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=importJSONL_batch;!omit,indent=0]
+----
+
+NOTE: {github}
+--
+
+Node.js::
++
+--
+Use the https://github.com/uhop/stream-json[stream-json^] library.
+
+NOTE: stream-json formats its output with a `{ key: ..., value: ...}` wrapper, so we need to map the stream into the expected format.
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=json-jsonl-import,indent=0]
+----
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=jsonStream,indent=0]
+----
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=jsonlStream,indent=0]
+----
+
+NOTE: {github}
+--
+
+Python::
++
+--
+Use the https://docs.python.org/3/library/json.html[json^] library:
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=json-jsonl-import,indent=0]
+----
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=jsonImport,indent=0]
+----
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=jsonlImport,indent=0]
+----
+
+NOTE: {github}
+--
+====
+
+=== Connecting to the Couchbase Server
+
+First, you need the connection details for the Couchbase server.
+
+Now decide which bucket and xref:learn:data/scopes-and-collections.adoc[scope and collection] you want to import to (and create them if they don't already exist.)
+
+[{tabs}]
+====
+pass:[.NET]::
++
+--
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=connect,indent=0]
+----
+
+NOTE: {github}
+
+For more information, refer to xref:dotnet-sdk:howtos:managing-connections.adoc[].
+--
+
+Java::
++
+--
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=connect,indent=0]
+----
+
+If you are using the xref:java-sdk:howtos:concurrent-async-apis.adoc#reactive-programming-with-reactor[Reactive API], then use the reactive collection instead:
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=reactiveCollection,indent=0]
+----
+
+For more information, refer to xref:java-sdk:howtos:managing-connections.adoc[].
+
+NOTE: {github}
+--
+
+Node.js::
++
+--
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=connect,indent=0]
+----
+
+For more information, refer to xref:nodejs-sdk:howtos:managing-connections.adoc[].
+
+NOTE: {github}
+--
+
+Python::
++
+--
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=connect,indent=0]
+----
+
+For more information, refer to xref:python-sdk:howtos:managing-connections.adoc[].
+
+NOTE: {github}
+--
+====
+
+=== Inserting the Documents
+
+Having processed each imported document, you can insert it into the keyspace.
+Couchbase is a key-value store, and the document is the value, so before you can insert the document, you need to determine the key.
+
+To insert an imported document into the keyspace:
+
+. Specify the key. This could be as simple as extracting the `id` field from the document, or using an incrementing sequence number.
+
+. Do any additional processing, for example calculating fields, or adding metadata about the importer.
+
+. Finally, use an upsert operation to the store the document.
+
+TIP: Use `upsert` rather than `insert` to upload the document even if the target key already has a value.
+This means that in the case of any error, it is easy to make any required tweaks to the import file and re-run the whole import.
+
+[{tabs}]
+====
+pass:[.NET]::
++
+--
+To store the data, hook the prepared data into an `upsert` routine.
+
+NOTE: As CsvHelper and Newtonsoft generate different outputs, we've provided some overloaded options that work for either.
+
+[source,csharp]
+----
+include::dotnet-sdk:howtos:example$Import.csx[tags=upsertDocument,indent=0]
+----
+
+For more information, refer to xref:dotnet-sdk:howtos:kv-operations.adoc[].
+
+NOTE: {github}
+--
+
+Java::
++
+--
+To store the data, hook the prepared data into an `upsert` routine.
+For the blocking API, use the method below.
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=upsertDocument,indent=0]
+----
+
+The *Reactive API* examples above already include a call to `ReactiveCollection::upsert`.
+
+In both cases, you must provide a preprocess routine which returns a key-value tuple object:
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=JsonDocument,indent=0]
+----
+
+[source,java]
+----
+include::java-sdk:howtos:example$Import.java[tags=preprocess,indent=0]
+----
+
+For more information, refer to xref:java-sdk:howtos:kv-operations.adoc[].
+
+NOTE: {github}
+--
+
+Node.js::
++
+--
+To iterate the prepared data stream, use a simple `for` loop in the same way as an array.
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=importStream,indent=0]
+----
+
+Hook the prepared stream in to an `upsertDocument` routine:
+
+[source,nodejs]
+----
+include::nodejs-sdk:howtos:example$import.js[tags=upsertDocument,indent=0]
+----
+
+For more information, refer to xref:nodejs-sdk:howtos:kv-operations.adoc[].
+
+NOTE: {github}
+--
+
+Python::
++
+--
+// extracted to functions as there's a multi example below
+To store the data, define functions to determine the key, and process the value.
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=key,indent=0]
+----
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=process,indent=0]
+----
+
+Hook the prepared data into an `upsertDocument` routine which uses these functions.
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=upsertDocument,indent=0]
+----
+
+For more information, refer to xref:python-sdk:howtos:kv-operations.adoc[].
+
+NOTE: The Python SDK offers a set of batch operations which are marked as _volatile_ as of SDK 3.2.3, which may be more efficient. Here's a brief example for CSV:
+
+[source,python]
+----
+include::python-sdk:howtos:example$import.py[tags=csvImportMulti,indent=0]
+----
+
+NOTE: {github}
+--
+====
+
+== Related Links
+
+Reference and information:
+
+* The xref:manage:import-documents:import-documents.adoc[Couchbase Server UI] offers a graphical view of documents, to check your imports interactively.
+
+How-to guides:
+
+* The xref:guides:kv-operations.adoc[] guide shows how to read and update the data you have imported. 
+
+Key-Value Operations with SDKs:
+
+* xref:c-sdk:howtos:kv-operations.adoc[C]
+| xref:dotnet-sdk:howtos:kv-operations.adoc[.NET]
+| xref:go-sdk:howtos:kv-operations.adoc[Go]
+| xref:java-sdk:howtos:kv-operations.adoc[Java]
+| xref:nodejs-sdk:howtos:kv-operations.adoc[Node.js]
+| xref:php-sdk:howtos:kv-operations.adoc[PHP]
+| xref:python-sdk:howtos:kv-operations.adoc[Python]
+| xref:ruby-sdk:howtos:kv-operations.adoc[Ruby]
+| xref:scala-sdk:howtos:kv-operations.adoc[Scala]
