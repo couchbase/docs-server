@@ -1,0 +1,685 @@
+= Searching from N1QL
+
+Search functions enable you to use full text search queries directly within a N1QL query.
+
+== Prerequisites
+
+To use any of the search functions, the Search service must be available on the cluster.
+It is also recommended, but not required, that you should create suitable full text indexes for the searches that you need to perform.
+
+[NOTE]
+--
+The examples in this page all assume that demonstration full text indexes have been created.
+--
+
+=== Authorization
+
+You do not need credentials for the FTS service to be able to use the search functions in a query.
+The role *Data Admin* must be assigned to those who intend to create indexes; and the role *Data Reader* to those who intend to perform searches.
+For information on creating users and assigning roles, see xref:learn:security/authorization-overview.adoc[Authorization].
+
+=== When to Use Search Functions
+
+The search functions are useful when you need to combine a full text search with the power of a N1QL query; for example, combining joins and natural-language search in the same query.
+
+If you only need to use the capabilities of a full text search without any N1QL features, consider making use of the Search service directly, through the user interface, the REST API, or an SDK.
+
+[[search,SEARCH()]]
+== SEARCH(`identifier`, `query`[, `options`])
+
+=== Description
+
+This function enables you to use a full text search to filter a result set, or as a join predicate.
+It is only allowed in the xref:n1ql-language-reference/where.adoc[WHERE] clause or the xref:n1ql-language-reference/join.adoc[ON] clause.
+
+If a query contains a SEARCH function, the Query engine analyzes the entire query, including the search specification, to select the best index to use with this search, taking any index hints into account.
+The Query engine then passes the search specification over to the Search engine to perform the search.
+
+[TIP]
+--
+If no suitable full text index can be selected, or no full text index exists, the Query engine falls back on a Primary index or qualified GSI index to produce document keys, and then fetches the documents.
+The Search service then creates a temporary index in memory to perform the search.
+This process may be slower than using a suitable full text index.
+--
+
+=== Arguments
+
+identifier::
+[Required] An expression in the form `__keyspaceAlias__[.__path__]`, consisting of the keyspace or keyspace alias in which to search, followed by the path to a field in which to search, using dot notation.
++
+[NOTE]
+--
+* The identifier must contain the keyspace or keyspace alias if there is more than one input source in the FROM clause.
+If there is only one input source in the FROM clause, and the identifier contains a path, the keyspace or keyspace alias may be omitted.
+However, if the path is omitted, the keyspace or keyspace alias is mandatory.
+
+* When the identifier contains a path, it is used as the default field in the _query_ argument, as long as the _query_ argument is a query string.
+If the path is omitted, the default field is set to `{underscore}all`.
+If the _query_ argument is a query string which specifies a field, this field takes priority, and the path in the identifier is ignored.
+Similarly, if the _query_ argument is a query object, the path is ignored.
+
+* The path must use Search syntax rather than N1QL syntax; in other words, you cannot specify array locations such as `[*]` or `[3]` in the path.
+
+* If the keyspace, keyspace alias, or path contains any characters such as `-`, you must surround that part of the identifier with backticks `{backtick}{backtick}`.
+--
++
+The _identifier_ argument cannot be replaced by a N1QL query parameter.
+
+query::
+[Required] The full text search query.
+This may be one of the following:
++
+[cols="1a,4a", options="header"]
+|===
+| Type
+| Description
+
+| string
+| A query string.
+For more details, refer to xref:fts:fts-supported-queries-query-string-query.adoc[Query String Query].
+
+| object
+| The query object within a full text search request.
+For more details, refer to xref:fts:fts-supported-queries.adoc[Supported queries].
+
+| object
+| A complete full text search request, including sort and pagination options, and so on.
+For more details, refer to xref:fts:fts-sorting.adoc[Sorting Query Results].
+
+[NOTE]
+====
+When specifying a complete full text search request with the N1QL SEARCH() function, if the value of the `size` parameter is greater than the maximum number of full text search results, the query ignores the `size` parameter and returns all matching results.
+
+This is different to the behavior of a complete full text search request in the Search service, where the query returns an error if the value of the `size` parameter is greater than the maximum number of full text search results.
+====
+|===
++
+The _query_ argument may be replaced by a N1QL query parameter, as long as the query parameter resolves to a string or an object.
+
+options::
+[Optional] A JSON object containing options for the search.
+The object may contain the following fields:
++
+[cols="1a,1a,3a", options="header"]
+|===
+| Name
+| Type
+| Description
+
+| `index`
+[Optional]
+| string, object
+| The `index` field may be a string, containing the name of a full text index in the keyspace.
+(This may be a full text index alias, but only if the full text index is in the same keyspace.)
+This provides an index hint to the Query engine.
+If the full text index does not exist, an error occurs.
+
+[TIP]
+--
+You can also provide an index hint to the Query engine with the xref:n1ql-language-reference/hints.adoc#use-index-clause[USE INDEX clause].
+This takes precedence over a hint provided by the `index` field.
+--
+
+'''
+
+The `index` field may also be an object, containing an example of a full text index mapping.
+This is treated as an input to the index mapping.
+It overrides the default mapping and is used during index selection and filtering.
+
+The object must either have a default mapping with no type mapping, or a single type mapping with the default mapping disabled.
+For more information, refer to xref:fts:fts-creating-indexes.adoc[Creating Indexes].
+
+| `indexUUID`
+[Optional]
+| string
+| A string, containing the UUID of a full text index in the keyspace.
+This provides an index hint to the Query engine.
+If the full text index cannot be identified, an error occurs.
+
+You can use the `indexUUID` field alongside the `index` field to help identify a full text index.
+The `indexUUID` field and the `index` field must both identify the same full text index.
+If they identify different full text indexes, or if either of them does not identify a full text index, an error occurs.
+
+You can find the UUID of a full text index by viewing the index definition.
+You can do this using the xref:fts:fts-creating-index-using-the-index-definition-preview.adoc[Index Definition Preview] in the Query Workbench, or the xref:rest-api:rest-fts-indexing.adoc[Index Definition] endpoints provided by the Full Text Search REST API.
+
+| `out`
+[Optional]
+| string
+| A name given to this full text search operation in this keyspace.
+You can use this name to refer to this operation using the <<search_meta>> and <<search_score>> functions.
+If this field is omitted, the name of this full text search operation defaults to `"out"`.
+
+| (other)
+[Optional]
+| (any)
+| Other fields are ignored by the Query engine and are passed on to the Search engine as options.
+The values of these options may be replaced with N1QL query parameters, such as `"analyzer": $analyzer`.
+|===
+
++
+The _options_ argument cannot be replaced by a N1QL query parameter, but it may contain N1QL query parameters.
+
+=== Return Value
+
+A boolean, representing whether the search query is found within the input path.
+
+This returns `true` if the search query is found within the input path, or `false` otherwise.
+
+=== Limitations
+
+The Query service can select a full text index for efficient search in the following cases:
+
+* If the SEARCH() function is used in a WHERE clause or in an ANSI JOIN.
+The SEARCH() function must be on the leftmost (first) JOIN.
+It may be on the outer side of a nested-loop JOIN, or either side of a hash JOIN.
+RIGHT OUTER JOINs are rewritten as LEFT OUTER JOINs.
+
+* If the SEARCH() function is evaluated on the `true` condition in positive cases: for example, `SEARCH(_field_, _query_, _options_)`, `SEARCH(_field_, _query_, _options_) = true`, `SEARCH(_field_, _query_, _options_) IN [true, true, true]`, or a condition including one of these with `AND` or `OR`.
+
+The Query service cannot select a full text index for efficient search in the following cases:
+
+* If a USE KEYS hint is present; or if the SEARCH() function is used on the inner side of a nested-loop JOIN, a lookup JOIN or lookup NEST, an index JOIN or index NEST, an UNNEST clause, a subquery expression, a subquery result, or a correlated query.
+
+* If the SEARCH() function is evaluated on the `false` condition, or in negative cases: for example, `NOT SEARCH(_field_, _query_, _options_)`, `SEARCH(_field_, _query_, _options_) = false`, `SEARCH(_field_, _query_, _options_) != false`, `SEARCH(_field_, _query_, _options_) IN [false, true, 1, "a"]`, or in a condition using the relation operators `<`, `{lt}=`, `>`, `>=`, `BETWEEN`, `NOT`, `LIKE`, or `NOT LIKE`.
+
+In these cases, the Query service must fetch the documents, and the Search service creates a temporary index in memory to perform the search.
+This may affect performance.
+
+If the SEARCH() function is present for a keyspace, no GSI covering scan is possible on that keyspace.
+If more than one FTS or GSI index are used in the plan, IntersectScan or Ordered IntersectScan is performed.
+To avoid this, use a USE INDEX hint.
+
+Order pushdown is possible only if query ORDER BY has only <<search_score>> on the leftmost keyspace.
+Offset and Limit pushdown is possible if the query only has a SEARCH() predicate, using a single search index -- no IntersectScan or OrderIntersectScan.
+Group aggregates and projection are not pushed.
+
+=== Examples
+
+.Search using a query string
+====
+The following queries are equivalent:
+
+[source,n1ql]
+----
+SELECT META(t1).id
+FROM `travel-sample`.inventory.airline AS t1
+WHERE SEARCH(t1.country, "+United +States");
+----
+
+[source,n1ql]
+----
+SELECT META(t1).id
+FROM `travel-sample`.inventory.airline AS t1
+WHERE SEARCH(t1, "country:\"United States\"");
+----
+
+.Results
+[source,json]
+----
+[
+ 
+  {
+    "id": "airline_10"
+  },
+  {
+    "id": "airline_10123"
+  },
+  {
+    "id": "airline_10226"
+  },
+  {
+    "id": "airline_10748"
+  },
+...
+]
+----
+
+The results are unordered, so they may be returned in a different order each time.
+====
+
+.Search using a query object
+====
+[source,n1ql]
+----
+SELECT t1.name
+FROM `travel-sample`.inventory.hotel AS t1
+WHERE SEARCH(t1, {
+  "match": "bathrobes",
+  "field": "reviews.content",
+  "analyzer": "standard"
+});
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "name": "Typoeth Cottage"
+  },
+  {
+    "name": "Great Orme Lighthouse"
+  },
+  {
+    "name": "New Road Guest House (B&B)"
+  },
+...
+]
+----
+
+The results are unordered, so they may be returned in a different order each time.
+====
+
+.Search using a complete full text search request
+====
+[source,n1ql]
+----
+SELECT t1.name
+FROM `travel-sample`.inventory.hotel AS t1
+WHERE SEARCH(t1, {
+  "explain": false,
+  "fields": [
+     "*"
+   ],
+   "highlight": {},
+   "query": {
+     "match": "bathrobes",
+     "field": "reviews.content",
+     "analyzer": "standard"
+   },
+   "size" : 5,
+   "sort": [
+      {
+       "by" : "field",
+       "field" : "reviews.ratings.Overall",
+       "mode" : "max",
+       "missing" : "last"
+      }
+   ]
+});
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "name": "Waunifor"
+  },
+  {
+    "name": "Bistro Prego With Rooms"
+  },
+  {
+    "name": "Thornehill Broome Beach Campground"
+  },
+...
+]
+----
+
+This query returns 5 results, and the results are ordered, as specified by the search options.
+As an alternative, you could limit the number of results and order them using the N1QL xref:n1ql-language-reference/limit.adoc[LIMIT] and xref:n1ql-language-reference/orderby.adoc[ORDER BY] clauses.
+====
+
+.Search against a full text search index that carries a custom type mapping
+====
+[source,n1ql]
+----
+SELECT META(t1).id
+FROM `travel-sample`.inventory.hotel AS t1
+WHERE t1.type = "hotel" AND SEARCH(t1.description, "amazing");
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "id": "hotel_20422"
+  },
+  {
+    "id": "hotel_22096"
+  },
+  {
+    "id": "hotel_25243"
+  },
+  {
+    "id": "hotel_27741"
+  }
+]
+----
+
+If the full text search index being queried has its default mapping disabled and has a custom type mapping defined, the query needs to specify the type explicitly.
+
+//The above query uses the demonstration index xref:fts:fts-demonstration-indexes.adoc#travel-sample-index-hotel-description[travel-sample-index-hotel-description], which has the custom type mapping "hotel".
+
+For more information on defining custom type mappings within the full text search index, refer to xref:fts:fts-type-mappings.adoc[Type Mappings].
+Note that for N1QL queries, only full text search indexes with one type mapping are searchable.
+Also the supported type identifiers at the moment are "type_field" and "docid_prefix"; "docid_regexp" isn't supported yet for SEARCH queries via N1QL.
+====
+
+[[search_meta,SEARCH_META()]]
+== SEARCH_META([`identifier`])
+
+=== Description
+
+This function is intended to be used in a query which contains a <<search>> function.
+It returns the metadata given by the Search engine for each document found by the <<search>> function.
+If there is no <<search>> function in the query, or if a full text index was not used to evaluate the search, the function returns MISSING.
+
+=== Arguments
+
+identifier::
+[Optional] An expression in the form `{startsb}__keyspaceAlias__.{endsb}__outname__`, consisting of the keyspace or keyspace alias in which the full text search operation was performed, followed by the outname of the full text search operation, using dot notation.
+
+[NOTE]
+--
+* The identifier must contain the keyspace or keyspace alias if there is more than one input source in the FROM clause.
+If there is only one input source in the FROM clause, the keyspace or keyspace alias may be omitted.
+
+* The identifier must contain the outname if there is more than one <<search>> function in the query.
+If there is only one <<search>> function in the query, the identifier may be omitted altogether.
+
+* The outname is specified by the `out` field within the <<search>> function's _options_ argument.
+If an outname was not specified by the <<search>> function, the outname defaults to `"out"`.
+
+* If the keyspace or keyspace alias contains any characters such as `-`, you must surround that part of the identifier with backticks `{backtick}{backtick}`.
+--
+
+=== Return Value
+
+A JSON object containing the metadata returned by the Search engine.
+By default, the metadata includes the score and ID of the search result.
+It may also include other metadata requested by advanced search options, such as the location of the search terms or an explanation of the search results.
+
+=== Examples
+
+.Select search metadata
+====
+[source,n1ql]
+----
+SELECT SEARCH_META() AS meta -- <1>
+FROM `travel-sample`.inventory.hotel AS t1
+WHERE SEARCH(t1, {
+  "query": {
+    "match": "bathrobes",
+    "field": "reviews.content",
+    "analyzer": "standard"
+  }, 
+  "includeLocations": true -- <2>
+})
+LIMIT 3;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "meta": {
+      "id": "hotel_12068", // <3>
+      "locations": { // <4>
+        "reviews.content": {
+          "bathrobes": [
+            {
+              "array_positions": [
+                8
+              ],
+              "end": 664,
+              "pos": 122,
+              "start": 655
+            }
+          ]
+        }
+      },
+      "score": 0.3471730605306995 // <5>
+    }
+  },
+  {
+    "meta": {
+      "id": "hotel_18819",
+      "locations": {
+        "reviews.content": {
+          "bathrobes": [
+            {
+              "array_positions": [
+                6
+              ],
+              "end": 110,
+              "pos": 19,
+              "start": 101
+            }
+          ]
+        }
+      },
+      "score": 0.3778486940124847
+    }
+  },
+  {
+    "meta": {
+      "id": "hotel_5841",
+      "locations": {
+        "reviews.content": {
+          "bathrobes": [
+            {
+              "array_positions": [
+                0
+              ],
+              "end": 1248,
+              "pos": 242,
+              "start": 1239
+            }
+          ]
+        }
+      },
+      "score": 0.3696905918027607
+    }
+  }
+]
+----
+====
+
+<1> There is only one <<search>> function in this query, so the SEARCH_META() function does not need to specify the outname.
+<2> The full text search specifies that locations should be included in the search result metadata.
+<3> The id is included in the search result metadata by default.
+<4> The location of the search term is included in the search result metadata as requested.
+<5> The score is included in the search result metadata by default.
+
+.Select the search metadata by outname
+====
+[source,n1ql]
+----
+SELECT t1.name, SEARCH_META(s1) AS meta -- <1>
+FROM `travel-sample`.inventory.hotel AS t1
+WHERE SEARCH(t1.description, "mountain", {"out": "s1"}) -- <2>
+AND SEARCH(t1, {
+  "query": {
+    "match": "bathrobes",
+    "field": "reviews.content",
+    "analyzer": "standard"
+  }
+});
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "name": "Marina del Rey Marriott"
+  }
+]
+----
+====
+
+<1> This query contains two <<search>> functions.
+The outname indicates which metadata we want.
+<2> The outname is set by the _options_ argument in this <<search>> function.
+This query only uses one data source, so there is no need to specify the keyspace.
+
+[[search_score,SEARCH_SCORE()]]
+== SEARCH_SCORE([`identifier`])
+
+=== Description
+
+This function is intended to be used in a query which contains a <<search>> function.
+It returns the score given by the Search engine for each document found by the <<search>> function.
+If there is no <<search>> function in the query, or if a full text index was not used to evaluate the search, the function returns MISSING.
+
+This function is the same as <<search_meta,SEARCH_META().score>>.
+
+=== Arguments
+
+identifier::
+[Optional] An expression in the form `{startsb}__keyspaceAlias__.{endsb}__outname__`, consisting of the keyspace or keyspace alias in which the full text search operation was performed, followed by the outname of the full text search operation, using dot notation.
+
+[NOTE]
+--
+* The identifier must contain the keyspace or keyspace alias if there is more than one input source in the FROM clause.
+If there is only one input source in the FROM clause, the keyspace or keyspace alias may be omitted.
+
+* The identifier must contain the outname if there is more than one <<search>> function in the query.
+If there is only one <<search>> function in the query, the identifier may be omitted altogether.
+
+* The outname is specified by the `out` field within the <<search>> function's _options_ argument.
+If an outname was not specified by the <<search>> function, the outname defaults to `"out"`.
+
+* If the keyspace or keyspace alias contains any characters such as `-`, you must surround that part of the identifier with backticks `{backtick}{backtick}`.
+--
+
+=== Return Value
+A number reflecting the score of the result.
+
+=== Examples
+
+.Select the search score
+====
+
+[source,n1ql]
+----
+SELECT name, description, SEARCH_SCORE() AS score -- <1>
+FROM `travel-sample`.inventory.hotel AS t1
+WHERE SEARCH(t1.description, "mountain")
+ORDER BY score DESC
+LIMIT 3;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "description": "3 Star Hotel next to the Mountain Railway terminus and set in 30 acres of grounds which include Dolbadarn Castle",
+    "name": "The Royal Victoria Hotel"
+  },
+  {
+    "description": "370 guest rooms offering both water and mountain view.",
+    "name": "Marina del Rey Marriott"
+  },
+  {
+    "description": "This small family run hotel captures the spirit of Mull and is a perfect rural holiday retreat. The mountain and sea blend together to give fantastic, panoramic views from the hotel which is in an elevated position on the shoreline. Panoramic views are also available from the bar and restaurant which serves local produce 7 days a week.",
+    "name": "The Glenforsa Hotel"
+  }
+]
+----
+====
+
+<1> There is only one <<search>> function in this query, so the SEARCH_SCORE() function does not need to specify the outname.
+
+== FTS FLEX (FTS + N1QL Extended Support For Collections)
+
+FTS is capable of supporting multiple collections within a single index definition. 
+
+Pre Couchbase Server 7.0 index definitions will continue to be supported with 7.0 FTS.
+
+If the user wants to set up an index definition to subscribe to just a few collections within a single scope, they will be able to do so by toggling the "doc_config.mode" to either of ["scope.collection.type_field", "scope.collection.docid_prefix"]. 
+
+The type mappings will now take the form of either "scope_name.collection_name" (to index all documents within that scope.collection) or "scope_name.collection_name.type_name" (to index only those documents within that scope.collection that match "type" = "type_name") . We will refer to FTS index definitions in this mode as collection-aware FTS indexes.
+
+NOTE: The type expression check within N1QL queries becomes unnecessary with collection-aware FTS indexes.
+
+== Example
+
+When you set up an FTS index definition to stream from 2 collections: landmark, hotel such as: 
+
+----
+{
+  "type": "fulltext-index",
+  "name": "travel",
+  "sourceType": "gocbcore",
+  "sourceName": "travel-sample",
+  "params": {
+    "doc_config": {
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "standard",
+      "default_mapping": {
+        "dynamic": true,
+        "enabled": false
+      },
+      "types": {
+        "inventory.hotel": {
+          "enabled": true,
+          "properties": {
+            "reviews": {
+              "enabled": true,
+              "properties": {
+                "content": {
+                  "enabled": true,
+                  "fields": [
+                    {
+                      "analyzer": "keyword",
+                      "index": true,
+                      "name": "content",
+                      "type": "text"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "inventory.landmark": {
+          "enabled": true,
+          "properties": {
+            "content": {
+              "enabled": true,
+              "fields": [
+                {
+                  "analyzer": "keyword",
+                  "index": true,
+                  "name": "content",
+                  "type": "text"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+----
+
+Below are some N1QL queries targeting the above index definition. 
+
+----
+SELECT META().id
+FROM `travel-sample`.`inventory`.`landmark` t USE INDEX(USING FTS)
+WHERE content LIKE "%travel%";
+----
+
+----
+SELECT META().id
+FROM `travel-sample`.`inventory`.`hotel` t USE INDEX(USING FTS)
+WHERE reviews.content LIKE "%travel%";
+----
+
+----
+SELECT META().id
+FROM `travel-sample`.`inventory`.`hotel` t USE INDEX(USING FTS)
+WHERE content LIKE "%travel%";
+----
