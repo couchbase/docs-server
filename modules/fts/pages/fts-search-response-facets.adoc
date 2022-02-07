@@ -1,3 +1,4 @@
+[#Facets]
 = Facets
 
 [abstract]
@@ -5,26 +6,88 @@ Facets are aggregate information collected on a particular result set.
 
 In Facets, you already have a search in mind, and you want to collect additional facet information along with it.
 
+Facet-query results may not equal the total number of documents across all buckets if: 
+
+1. There is more than one pindex. 
+2. Facets_size is less than the possible values for the field.
+
+== Facets Results
+
+For each facet that you build, a `FacetResult` is returned containing the following:
+
+* *Field*: The name of the field the facet was built on.
+
+* *Total*: The total number of values encountered (if each document had one term, this should match the total number of documents in the search result)
+
+* *Missing*: The number of documents which do not have any value for this field
+
+* *Other*: The number of documents for which a value exists, but it was not in the top N number of facet buckets requested
+
+* *Array of Facets*: Each Facet contains the count indicating the number of items in this facet range/bucket:
+
+** *Term*: Terms Facets include the name of the term.
+
+** *Numeric Range*: Numeric Range Facets include the range for this bucket.
+
+** *DateTime Range*: DateTime Range Facets include the datetime range for this bucket.
+
 All of the facet examples given in this topic are for the query "[.code]``water``" on the beer-sample dataset.
 
 FTS supports the following types of facets:
 
 * *Term Facet* - A term facet counts up how many of the matching documents have a particular term in a particular field.
++
 Most of the time, this only makes sense for relatively low cardinality fields, like a type or tags.
++
 It would not make sense to use it on a unique field like an ID.
 
-* *Numeric Range Facet* - A numeric range facet works by the user defining their own buckets (numeric ranges).
-The facet then counts how many of the matching documents fall into a particular bucket for a particular field.
+* *Field*: The field over which you want to gather the facet information.
 
-* *Date Range Facet* - same as numeric, but on dates instead of numbers.
+* *Size*: The number of top categories per partition to be considered for the facet results.
++
+For example, size - 3 => facets results returns the top 3 categories across all partitions and merges them as the final result.
++
+Varying size value varies the count value of each facet and the “others” value as well. This is due to the fact that when the size is varied, some of the categories fall out of the top “n” and into the “others” category.
++
+NOTE: It is recommended to keep the size reasonably large, close to the number of unique terms to get consistent results.
+
+* *Numeric Range Facet*: A numeric range facet works by the user defining their own buckets (numeric ranges).
++
+The facet then counts how many of the matching documents fall into a particular bucket for a particular field.
++
+Along with the two fields from term facet, “numeric_ranges” field has to include all the numeric ranges for the faceted field.
++
+“Numeric_ranges” could possibly be an array of ranges and each entry of it must specify either min, max or both for the range.
+
+** *Name*: Name for the facet.
+
+** *Min*: The lower bound value of this range.
+
+** *Max*: The upper bound value of this range.
+
+* *Date Range Facet*: The Date Range facet is same as numeric facet, but on dates instead of numbers.
 Full text search and Bleve expect dates to be in the format specified by https://www.ietf.org/rfc/rfc3339.txt[RFC-3339^], which is a specific profile of ISO-8601 that is more restrictive.
++
+Along with the two fields from term facet, “date_ranges” field has to include all the numeric ranges for the faceted field.
++
+The facet ranges go under a field named “date_ranges”. 
++
+“date_ranges” could possibly be an array of ranges and each entry of it must specify either start, end or both for the range.
+
+** *Name*: Name for the facet.
+
+** *Start*: Start date for this range.
+
+** *End*: End date for this range.
 
 NOTE: Most of the time, when building a term facet, you must use the keyword analyzer. Otherwise, multi-term values are tokenized, which might cause unexpected results.
 
 == Example
 
-* Term Facet - computes facet on the type field which has 2 values: `beer` and `brewery`.
-+
+=== Term Facet
+Computes facet on the type field which has 2 values: `beer` and `brewery`.
+
+[source, console]
 ----
 curl -X POST -H "Content-Type: application/json" \
 http://localhost:8094/api/index/bix/query -d \
@@ -42,10 +105,12 @@ http://localhost:8094/api/index/bix/query -d \
     }
 }'
 ----
-+
+
+Result:
+
 The result snippet below, only shows the facet section for clarity.
 Run the curl command to see the HTTP response containing the full results.
-+
+
 [source,json]
 ----
 "facets": {
@@ -67,9 +132,10 @@ Run the curl command to see the HTTP response containing the full results.
     }
 }
 ----
+=== Numeric Range Facet
+Computes facet on the `abv` field with two buckets describing `high` (greater than 7) and `low` (less than 7).
 
-* Numeric Range Facet - computes facet on the `abv` field with two buckets describing `high` (greater than 7) and `low` (less than 7).
-+
+[source, console]
 ----
 curl -X POST -H "Content-Type: application/json" \
 http://localhost:8094/api/index/bix/query -d \
@@ -97,9 +163,9 @@ http://localhost:8094/api/index/bix/query -d \
     }
 }'
 ----
-+
+
 Results:
-+
+
 [source,json]
 ----
 facets": {
@@ -124,3 +190,60 @@ facets": {
 }
 ----
 
+=== Date Range Facet
+Computes facet on the ‘updated’ field that has 2 values old and new
+
+[source, consle]
+----
+curl -XPOST -H "Content-Type: application/json" -u username:password http://<node>:8094/api/index/bix/query -d '{
+    "ctl": {"timeout": 0},
+    "from": 0,
+    "size": 0,
+    "query": {
+        "field": "country",
+        "term": "united"
+    },
+    "facets": {
+        "types": {
+            "size": 10,
+            "field": "updated",
+            "date_ranges": [
+                {
+                "name": "old",
+                "end": "2010-08-01"
+                },
+                {
+                "name": "new",
+                "start": "2010-08-01"
+                }
+            ]
+        }
+    }
+}'
+----
+
+Results:
+
+[source,json]
+----
+"facets": {
+    "types": {
+        "field": "updated",
+        "total": 954,
+        "missing": 0,
+        "other": 0,
+        "date_ranges": [
+            {
+            "name": "old",
+            "end": "2010-08-01T00:00:00Z",
+            "count": 934
+            },
+            {
+            "name": "new",
+            "start": "2010-08-01T00:00:00Z",
+            "count": 20
+            }
+        ]
+    }
+}
+----
