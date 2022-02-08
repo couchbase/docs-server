@@ -1,9 +1,9 @@
-= What's New in Version 7.0?
-:description: Couchbase is the modern database for enterprise applications. Couchbase Server 7.0 combines the strengths of relational databases with the flexibility, performance, and scale of Couchbase. 
+= What's New in Version 7.1?
+:description: Couchbase is the modern database for enterprise applications. Couchbase Server 7.1 combines the strengths of relational databases with the flexibility, performance, and scale of Couchbase.
 :page-aliases: security:security-watsnew
 
-{description} 
-This release adds new relational model support including a dynamic data containment model with schema-like structure layers called scopes and collections, extended support for transactional workloads, and performance and operational improvements.
+[abstract]
+{description}
 
 For information about platform support changes, deprecation notifications, notable improvements, and fixed and known issues, refer to the xref:release-notes:relnotes.adoc[Release Notes].
 
@@ -12,229 +12,34 @@ For information about platform support changes, deprecation notifications, notab
 
 This section describes the new features and enhancements in this release.
 
-_Quick Links_: <<whats-new-server-700>> | <<whats-new-services-query-700>> | <<whats-new-services-analytics-700>> | <<whats-new-tools-700>> | <<whats-new-metadata-700>> | <<whats-new-other-700>>
+=== Multiple Root Certificates
 
-[#whats-new-server-700]
-=== Scopes and Collections
+Prior to Couchbase Server Version 7.1, a Couchbase-Server cluster could maintain at most _one_ root certificate: all nodes and all clients were obliged to rely on this certificate's authority.
+From version 7.1, Couchbase Server permits multiple root certificates to maintained in a _trust store_ for the cluster.
+This allows an individual node either to use a CA that is also used by one or more other nodes; or to use a CA that is used by no other node.
+This may be used during CA certificate rotation: a new CA is uploaded, node certificates are changed one by one, and finally, the old CA is removed.
 
-_Scopes_ and _collections_ provide a dynamic data containment model by allowing you to categorize and organize documents within a bucket. 
+Couchbase Server additionally uses its list of trusted certificates to verify:
 
-These data organization layers between Couchbase buckets and JSON documents map easily to RDBMS schema models, yet maintain the JSON flexibility to add new structures on demand.
+* Client certificates (when client certificate authentication is enabled).
 
-image::collections-based-data-model.png[]
+* The identities of cluster nodes (when node-to-node encryption is enabled).
 
-A _collection_ is a data container, defined on Couchbase Server, within a bucket whose type is either _Couchbase_ or _Ephemeral_.
-Bucket-items can optionally be assigned to different collections according to content-type.
-For example, within a bucket that contains travel information, documents that relate specifically to _airports_ might be assigned to an _airports_ collection, while documents that relate to _hotels_ might be assigned to a _hotels_ collection, and so on.
+* The identities of nodes that join the cluster (when the server has been provisioned with certificates).
 
-A _scope_ is a mechanism for the grouping of multiple collections.
-Collections might be assigned to different scopes according to content-type, or to deployment-phase (ie, test versus production).
-Applications can be assigned per-scope access-rights; allowing each application to access only those collections it requires.
+* The identity of LDAP servers (when TLS has been turned on, in the LDAP settings).
 
-The benefits of scopes and collections include:
+For more information, see xref:learn:security/using-multiple-cas.adoc[Using Multiple Root Certificates].
 
-* The logical grouping of similar documents; potentially simplifying operations such as query, XDCR, and backup and restore.
+=== Private Key Formats
 
-* The increased efficiency of indexing, due to the Data Service being able to provide documents from specific collections to the Index Service.
+In version 7.1, Couchbase Server supports _PKCS #1_ and _PKCS #8_ &#8212; in each case, only for use with private keys:
 
-* Simplified querying, since query statements are able more easily to specify particular subsets of documents.
+* _PKCS #1_ can be used for _unencrypted_ private keys only.
 
-* Easier migration from relational databases to Couchbase Server, since collections can be designed to correspond to pre-existing relational tables.
+* _PKCS #8_ can be used for both _unencrypted_ and _encrypted_ private keys: note that the user-specified `EncryptedPrivateKeyInfo` must use _PKCS #5 v2_ algorithms.
 
-* Secure isolation of different document-types, within a bucket; allowing applications to be specifically authorized to use only their appropriate subsets of data.
+=== JSON Passphrase Registration
 
-A complete overview of scopes and collections is provided in xref:learn:data/scopes-and-collections.adoc[Scopes and Collections].
-
-==== Creating Scopes and Collections
-
-Scopes and collections can be created by means of the Couchbase Web Console UI, the Couchbase CLI, the Couchbase REST API, and the N1QL query language.
-See xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc[Manage Scopes and Collections] for instructions.
-
-==== Assigning Roles with Reference to Scopes and Collections
-
-Roles can be assigned to users with reference to specific scopes and collections, as well as to buckets.
-To see how this can be performed by means of the Couchbase Web Console UI, see xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users, Groups, and Roles].
-
-==== Importing Documents into Scopes and Collections
-
-Couchbase Server Version 7.0 allows documents to be imported into specific collections.
-For a step-by-step guide, see xref:manage:import-documents/import-documents.adoc[Import Documents].
-
-==== Getting Information on Scopes and Collections
-
-Information on currently defined scopes and collections can be returned by means of the `cbstats` xref:cli:cbstats/cbstats-collections.adoc[collections], xref:cli:cbstats/cbstats-collections-details.adoc[collections-details], xref:cli:cbstats/cbstats-scopes.adoc[scopes], and xref:cli:cbstats/cbstats-scopes-details.adoc[scopes-details] commands.
-Additionally, collection-specific information on _keys_ and _vkeys_ can be returned, by means of the `cbstats` xref:cli:cbstats/cbstats-key.adoc[key] and xref:cli:cbstats/cbstats-vkey.adoc[vkey] commands, respectively.
-
-==== Using XDCR with Scopes and Collections
-
-XDCR can replicate to a specific scope or collection.
-Examples are provided in xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc[Replicate Using Scopes and Collections].
-
-[#transactions-with-n1ql]
-=== Extended Support for Couchbase Transactions
-
-Couchbase Server 7.0 extends the support of transactions to the N1QL query language.
-The support for multi-document ACID transactions was introduced in an earlier version (v6.5) and the feature is available to application developers through Couchbase SDK and APIs. See xref:learn:data/transactions.adoc[Transactions] to learn about transactions.
-
-With this release, application developers and RDBMS users can use familiar transactional constructs such as START TRANSACTION, SAVEPOINT, ROLLBACK and COMMIT.  And, similar to RDBMS transactions, all N1QL DML statements support transactions.
-
-To learn more about the transactional constructs in N1QL, see xref:n1ql:n1ql-language-reference/transactions.adoc[].
-
-[#whats-new-services-analytics-700]
-=== Analytics Enhancements
-
-==== Support for Scopes and Collections in Analytics
-
-In the Analytics data world, the top-level organizing concept is the Analytics scope, previously known as a dataverse. An Analytics scope (dataverse) is a namespace that gives you a place to create and manage Analytics collections and other artifacts for a given Analytics application. An Analytics scope is similar to a database or a schema in a relational DBMS. 
-
-Analytics collections, previously known as datasets, are containers that hold collections of JSON objects. These collections are similar to tables in a relational RDBMS or keyspaces in the Couchbase Query service. 
-
-Take a look at the xref:analytics:primer-beer.adoc[Analytics Tutorial] which walks you through the data model and main features in the Analytics world through examples.
-
-==== User Defined Functions (N1QL UDFs)
-
-User-defined functions are generally available in Couchbase Server 7.0.
-
-In N1QL for Analytics, user-defined functions enable you to name and reuse complex or repetitive expressions, including subqueries, in order to simplify your queries. For more information, see xref:analytics:9_udf.adoc[].
-
-==== ROLLUP and CUBE extensions to GROUP BY
-
-The ROLLUP and CUBE extensions to GROUP BY enable the compact formulation of powerful hierarchical aggregation queries.
-
-The ROLLUP aggregate function enables you to generate subtotals along with the grand total row.
-
-image::analytics-rollup-sample.png[]
-
-Take a look at the following https://blog.couchbase.com/amp-up-your-data-analysis-with-the-new-rollup-aggregation-in-couchbase-analytics/[blog] for a ROLLUP aggregation example.
-
-The CUBE aggregate function enables you to generate subtotals like the ROLLUP extension. In addition, the CUBE extension will generate subtotals for all combinations of grouping columns specified in the GROUP BY clause.
-
-image::analytics-cube-sample.png[]
-
-
-==== Support for Python Machine Learning Models (Python UDFs) [Developer Preview]
-
-Python User-Defined Functions (UDFs) enable the evaluation of Python functions in the context of a N1QL query. The complexity of these UDFs can range from simple Python code snippets to trained models that are based on machine-learning frameworks like scikit-learn or PyTorch.
-
-==== External data support: Azure Blobstore [Developer Preview]
-
-External collections on Azure Blob Storage can be queried using the same user model and the same powerful query engine that was introduced for external collection on AWS S3 in Couchbase Server 6.6.
-
-[#whats-new-services-query-700]
-=== Query Enhancements
-
-This release adds the following capabilities to the Query Service:
-
-[#support-for-scopes-and-collectons-with-n1ql]
-==== Support for Scopes and Collections with N1QL
-
-In Couchbase Server 7.0, the N1QL query language supports a dotted path syntax for keyspace references to be able to access scopes and collections.
-In addition, a default query context can be specified through the Query Workbench or a request-level parameter, so that queries may refer to a collection directly without having to specify the path.
-
-The N1QL language also contains new statements for scope and collection management.
-Refer to xref:n1ql:n1ql-language-reference/createscope.adoc[CREATE SCOPE], xref:n1ql:n1ql-language-reference/createcollection.adoc[CREATE COLLECTION], xref:n1ql:n1ql-language-reference/dropscope.adoc[DROP SCOPE], and xref:n1ql:n1ql-language-reference/dropcollection.adoc[DROP COLLECTION].
-
-[#user-defined-functions]
-==== User Defined Functions
-
-User-defined functions are generally available in Couchbase Server 7.0.
-These enable you to create functions for repetitive tasks.
-User-defined functions may be written in N1QL or in an external language -- currently JavaScript is supported.
-
-User-defined functions may be stored at the bucket level or the scope level.
-This determines the context for keyspace references within the function definition.
-
-The N1QL language includes new statements to create, replace, execute, and drop user-defined functions.
-Refer to xref:n1ql:n1ql-language-reference/createfunction.adoc[CREATE FUNCTION], xref:n1ql:n1ql-language-reference/execfunction.adoc[EXECUTE FUNCTION], xref:n1ql:n1ql-language-reference/dropfunction.adoc[DROP FUNCTION], and xref:n1ql:n1ql-language-reference/userfun.adoc[User-Defined Functions].
-
-[#cost-based-optimizer]
-==== Cost-based Optimizer
-
-The cost-based optimizer (CBO) is generally available in Couchbase Server 7.0.
-It takes into account the cost of memory, CPU, network transport, and disk usage when choosing the optimal plan to execute a query.
-
-The cost-based optimizer uses metadata and statistics to estimate amount of processing (memory, CPU, and I/O) for each operation.
-It compares the cost of alternative routes, and then selects the query-execution plan with the least cost.
-
-To learn more about the cost-based optimizer, see xref:n1ql:n1ql-language-reference/cost-based-optimizer.adoc[].
-
-[#memory-usage-quota-setting]
-==== Memory Usage Quota Setting
-
-The Query Service supports several new node-level settings and request-level parameters to support transactions and collections.
-The Query Service also supports a new node-level and request-level Memory Quota setting, which enables users to specify the maximum document memory consumption for a query.
-Refer to xref:settings:query-settings.adoc[Settings and Parameters] for details.
-
-[#index-advisor]
-==== Index Advisor is Generally Available
-
-The index advisor is generally available in Couchbase Server 7.0.
-As well as the xref:n1ql:n1ql-language-reference/advise.adoc[ADVISE] statement, the index advisor also supports the xref:n1ql:n1ql-language-reference/advisor.adoc[ADVISOR Function] which enables users to generate index advice for every request in a session.
-
-The index advisor leverages the cost-based optimizer in the first instance, to generate advice using a cost-based approach.
-If the cost-based optimizer is unable to recommend an index, the index advisor falls back on a rules-based approach.
-
-
-[#whats-new-tools-700]
-=== The Backup Service
-
-The Backup Service supports the scheduling of full and incremental data backups, either for specific individual buckets, or for all buckets on the cluster.
-It also allows the scheduling of _merges_ of previously made backups.
-Data to be backed up can also be selected by _service_: for example, the data for the _Data_ and _Index_ Services alone might be selected for backup, with no other service's data included.
-
-The service &#8212; which is also referred to as _cbbs_ (Couchbase Backup Service) &#8212; can be configured and administered by means of the Couchbase Web Console UI, the CLI, or the REST API.
-
-A complete overview of the Backup Service is provided in xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
-Step-by-step instructions for using the service by means of Couchbase Web Console are provided in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Manage Backup and Restore].
-A complete list of commands provided with the Couchbase REST API for the Backup Service is provided in xref:rest-api:backup-rest-api.adoc[Backup Service API].
-
-[#whats-new-metadata-700]
-=== Metadata Management
-
-In Couchbase Server 7.0, metadata is managed by means of _Chronicle_; which is a _consensus-based_ system, based on the https://raft.github.io/[Raft^] algorithm.
-Chronicle manages:
-
-* The _node-list_ for the cluster.
-* The _status_ of each node.
-* The _service-map_ for the cluster, which indicates on which nodes particular services have been installed.
-* _Bucket definitions_, including the placement of scopes and collections.
-* The _vBucket maps_ for the cluster.
-
-Chronicle is:
-
-* Strongly consistent.
-* Supportive of full linearizability.
-* Fully tested with https://jepsen.io/[Jepsen^].
-
-Due to the strong consistency with which topology-related metadata is now managed, in the event of a _quorum failure_ (meaning, the unresponsiveness of at least half of the cluster's nodes), no modification of nodes, buckets, scopes, and collections can take place until the quorum failure is resolved.
-
-Note that optionally, the quorum failure can be resolved by means of _unsafe failover_.
-However, that the consequences of unsafe failover in 7.0 are different from those in previous versions; and the new consequences should be fully understood before unsafe failover is attempted.
-
-For a complete overview of how all metadata is managed by Couchbase Server, see xref:learn:clusters-and-availability/metadata-management.adoc[Metadata Management].
-For information on _unsafe failover_ and its consequences, see xref:learn:clusters-and-availability/hard-failover.adoc#performing-an-unsafe-failover[Performing an Unsafe Failover].
-
-[#whats-new-other-700]
-=== More Enhancements
-
-==== Per-Service On-the-Wire Security Settings
-
-Cluster-settings for on-the-wire security &#8212; including specifying TLS version and cipher-suite list &#8212; can now be set _per service_, as well as globally.
-For information, see xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
-
-[#consistent-meta-data]
-==== Consistent Metadata
-
-In Couchbase Server 7.0+, metadata is managed by means of _Chronicle_; which is a _consensus-based_ system, based on the https://raft.github.io/[Raft^] algorithm.
-For information, see xref:learn:clusters-and-availability/metadata-management.adoc[Metadata Management].
-
-[#scalable-statistics]
-==== Scalable Statistics
-
-Scalable, Prometheus-based statistics for collections. For details, see xref:rest-api:rest-statistics.adoc[Getting Cluster Statistics].
-
-[#non-root-install]
-==== Non-Root Install and Upgrade
-
-_Non-root install and upgrade_ are now provided for all Linux platforms.
-See xref:install:non-root.adoc[Non-Root Install and Upgrade].
+If a node-certificate to be loaded is associated with an encrypted private key, a procedure can be defined to allow Couchbase Server to access and use the key’s passphrase, when use of the key is required: the passphrase can be registered by means of a JSON object.
+For information, see xref:rest-api:upload-retrieve-node-cert.adoc#json-passphrase-registration[JSON Passphrase Registration].

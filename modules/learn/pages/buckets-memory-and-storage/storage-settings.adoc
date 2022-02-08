@@ -1,0 +1,148 @@
+= Storage Settings
+:description: Couchbase Server provides persistence, whereby certain items are stored on disk as well as in memory; and reliability is thereby enhanced.
+:page-aliases: understanding-couchbase:buckets-memory-and-storage/storage,architecture:storage-architecture,learn:buckets-memory-and-storage/storage.adoc
+
+[abstract]
+{description}
+
+[#understanding-couchbase-storage]
+== Understanding Couchbase Storage
+
+Couchbase Server stores certain items in compressed form on disk; and, whenever required, removes them.
+This allows data-sets to exceed the size permitted by existing memory-resources; since undeleted items not currently in memory can be restored to memory from disk, as needed.
+It also facilitates backup-and-restore procedures.
+
+Generally, a client's interactions with the server are not blocked during disk-access procedures.
+However, if a specific item is being restored from disk to memory, the item is not made available to the client until the item's restoration is complete.
+
+Not all items are written to disk: _Ephemeral_ buckets and their items are maintained in memory only.
+See xref:buckets-memory-and-storage/buckets.adoc[Buckets] for information.
+
+Items written to disk are always written in compressed form.
+Based on bucket configuration, items may be maintained in compressed form in memory also.
+See xref:buckets-memory-and-storage/compression.adoc[Compression] for information.
+
+Items can be removed from disk based on a configured point of expiration, referred to as _Time-To-Live_.
+See xref:data/expiration.adoc[Expiration] for information.
+
+For illustrations of how Couchbase Server saves new and updates existing Couchbase-bucket items, thereby employing both memory and storage resources, see xref:buckets-memory-and-storage/memory-and-storage.adoc[Memory and Storage].
+
+[#threading]
+== Threading
+
+Synchronized, multi-threaded _readers_ and _writers_ provide simultaneous, high-performance operations for data on disk.
+Conflicts are avoided by assigning each thread (reader or writer) a specific subset of the 1024 vBuckets for each Couchbase bucket.
+
+Couchbase Server allows the number of threads allocated per node for reading and writing to be configured by the administrator.
+The maximum thread-allocation for each is _64_, the minimum _4_.
+
+A high thread-allocation may improve performance on systems whose hardware-resources are commensurately supportive (for example, where the number of CPU cores is high).
+In particular, a high number of _writer_ threads on such systems may significantly optimize the performance of _durable writes_: see xref:learn:data/durability.adoc[Durability], for information.
+
+Note, however, that a high thread-allocation might _impair_ some aspects of performance on less appropriately resourced nodes.
+Consequently, changes to the default thread-allocation should not be made to production systems without prior testing.
+A starting-point for experimentation is to establish the numbers for reader threads and writer threads as each equal to the _queue depth_ of the underlying I/O subsystem.
+
+See the _General-Settings_ information on xref:manage:manage-settings/general-settings.adoc#data-settings[Data Settings], for details on how to establish appropriate numbers of reader and writer threads.
+
+Thread-status can be viewed, by means of the [.cmd]`cbstats` command, specified with the [.param]`raw workload` option.
+See xref:cli:cbstats-intro.adoc[cbstats] for information.
+
+[#deletion]
+== Deletion
+
+Items can be deleted by a client application: either by immediate action, or by setting a _Time-To-Live_ (TTL) value: this value is established through accessing the `TTL` metadata field of the item, which establishes a future point-in-time for the item's _expiration_.
+When the point-in-time is reached, Couchbase Server deletes the item.
+
+Following deletion by either method, a _tombstone_ is maintained by Couchbase Server, as a record (see below).
+
+An item's TTL can be established either directly on the item itself, or via the bucket that contains the item.
+For information, see xref:data/expiration.adoc[Expiration].
+
+== Tombstones
+
+A _tombstone_ is a record of an item that has been removed.
+Tombstones are maintained in order to provide eventual consistency, between nodes and between clusters.
+
+Tombstones are created for the following:
+
+* _Individual documents_.
+The tombstone is created when the document is _deleted_; and contains the former document's key and metadata.
+
+* _Collections_.
+The tombstone is created when the collection is _dropped_; and contains information that includes the collection-id, the collection’s scope-id, and a manifest-id that records the dropping of the collection.
++
+All documents that were in the dropped collection are deleted when the collection is dropped.
+No tombstones are maintained for such documents: moreover, any tombstones for deleted documents that existed in the collection prior to its dropping are themselves removed when the collection is dropped; and consequently, only a collection-tombstone remains, when a collection is dropped.
+The collection-tombstone is replicated via DCP as a single message (ordered with respect to mutations occurring in the vBucket), to replicas and other DCP clients, to notify such recipients that the collection has indeed been dropped.
+It is then the responsibility of each recipient to purge anything it still contains that belonged to the dropped collection.
+
+The _Metadata Purge Interval_ establishes the frequency with which Couchbase Server _purges_ itself of tombstones of both kinds: which means, removes them fully and finally.
+The Metadata Purge Interval setting runs as part of auto-compaction (see xref:learn:buckets-memory-and-storage/storage.adoc#append-only-writes-and-auto-compaction[Append-Only Writes and Auto-Compaction], below).
+
+For more information, see xref:data/expiration.adoc#post-expiration-purging[Post-Expiration Purging], in xref:data/expiration.adoc[Expiration].
+
+[#disk-paths]
+== Disk Paths
+
+At node-initialization, Couchbase Server allows up to four custom paths to be established, for the saving of data to the filesystem: these are for the Data Service, the Index Service, the Analytics Service, and the Eventing Service. Note that the paths are node-specific: consequently, the data for any of these services may occupy a different filesystem-location, on each node.
+
+For information on setting data-paths, see xref:manage:manage-nodes/initialize-node.adoc[Initialize a Node].
+
+[#append-only-writes-and-auto-compaction]
+== Append-Only Writes and Auto-Compaction
+
+Couchbase Server uses an _append-only_ file-write format; which helps to ensure files' internal consistency, and reduces the risk of corruption.
+Necessarily, this means that every change made to a file &#8212; whether an addition, a modification, or a deletion &#8212; results in a new entry being created at the end of the file: therefore, a file whose user-data is diminished by deletion actually grows in size.
+
+File-sizes should be periodically reduced by means of _compaction_.
+This operation can be performed either manually, on a specified bucket; or on an automated, scheduled basis, either for specified buckets, or for all buckets.
+
+For information on performing manual compaction with the CLI, see xref:cli:cbcli/couchbase-cli-bucket-compact.adoc[bucket-compact].
+For information on configuring auto-compaction with the CLI, see xref:cli:cbcli/couchbase-cli-setting-compaction.adoc[setting-compaction].
+
+For all information on using the REST API for compaction, see the xref:rest-api:compaction-rest-api.adoc[Compaction API].
+
+For information on configuring auto-compaction with Couchbase Web Console, see xref:manage:manage-settings/configure-compact-settings.adoc[Auto-Compaction].
+
+
+== Disk I/O Priority
+
+_Disk I/O_ — reading items from and writing them to disk — does not block client-interactions: disk I/O is thus considered a _background task_.
+The priority of disk I/O (along with that of other background tasks, such as item-paging and DCP stream-processing) is configurable _per bucket_.
+This means, for example, that one bucket's disk I/O can be granted priority over another's.
+For further information, see
+xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
+
+[#storage-settings-eviction-policy]
+== Eviction Policy
+
+Eviction is the policy which Couchbase will adopt to prevent data loss due to memory exhaustion. The policies available depend on the type of bucket being created:
+
+.Eviction policies
+|===
+|Policy |Bucket type |Description
+
+|No Eviction
+|_Ephemeral_ 
+|If memory is exhausted then the buckets are set to read-only to prevent data loss. This is the default setting.
+
+|NRU{empty}footnote:[Not Recently Used] Eviction
+|_Ephemeral_
+|The documents that have not been recently used are ejected from memory.
+
+|Value Only Eviction
+|_Couchbase_
+|In low memory situations, this policy wll eject values and data from memory, but keys and metadata will be retained. This is the default policy for _Couchbase_ buckets.
+
+|Full Eviction
+|_Couchbase_
+|Under this policy, data, keys and metadata are ejected from memory.
+
+
+|===
+
+The policy can be set using the xref:rest-api:rest-bucket-create.adoc#evictionpolicy[REST API] when the bucket is created.
+For more information on eviction policies, read https://blog.couchbase.com/a-tale-of-two-ejection-methods-value-only-vs-full/
+
+include::partial$full-eviction-note.adoc[]
