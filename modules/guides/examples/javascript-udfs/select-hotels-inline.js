@@ -1,6 +1,6 @@
 function selectHotels() {
     
-    var q = SELECT * FROM `travel-sample`.`inventory`.`hotel` LIMIT 1;    // <.>
+    var q = SELECT * FROM `travel-sample`.`inventory`.`hotel`;    // <.>
     var res = [];
 
     for (const doc of q) {   // <.>
