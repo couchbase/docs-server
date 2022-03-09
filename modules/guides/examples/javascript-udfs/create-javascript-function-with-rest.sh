@@ -1,4 +1,4 @@
-curl -v POST http://node1-neo-testing-ubuntu18.vagrants:8093/evaluator/v1/libraries/my-library  \   # <.>
+curl -v POST http://localhost:8093/evaluator/v1/libraries/my-library  \   # <.>
  -u Administrator:password \    # <.>
  -d ' function getBusinessDays(startDate, endDate) {    # <.>
           let count = 0;
