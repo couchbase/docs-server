@@ -7,5 +7,5 @@ function getBusinessDays(startDate, endDate) {
             count++;
         curDate.setDate(curDate.getDate() + 1);
     }
-    return count;
+    return count;    // <.>
 }
