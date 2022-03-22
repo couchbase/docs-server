@@ -1,0 +1,180 @@
+= Calling {sqlpp} from Javascript
+:description: Executing N1QL statements from Javascript user-defined functions.
+:page-pagination: 
+:page-edition: Enterprise Edition
+:page-toclevels: 2
+:stem:
+
+[abstract]
+{description}
+
+== Introduction
+
+As well as being able to call Javascript functions from N1QL, you can also call N1QL statements from inside your Javascript functions.
+
+[#calling-statements-inline]
+== Calling {sqlpp} statements inline
+
+You can embed an {sqlpp} statement directly in your Javascript code:
+
+[source,javascript]
+----
+include::example$add-airline-inline-call.js[]
+----
+
+== Executing {sqlpp} statements  using the N1QL() call
+
+In addition to the inline call, you can also execute an {sqlpp} statement by calling it from the `N1QL(…)` function.
+[source, javascript]
+----
+include::example$add-airline-n1sql-call.js[]
+----
+
+NOTE: Behind the scenes, the inline call method will generate the equivalent `N1QL` call, so whichever you choose to use will come down to personal preference.
+
+
+== Side Effects
+
+Functions executed as part of expressions cannot have side effects that will change data stored by the Couchbase engine.
+For example, this statement:
+
+[source, n1ql]
+----
+include::example$add-airline-with-side-effect.n1ql[]
+----
+
+will generate an error because the `AddAirline()` function will attempt to alter data, which the caller may unaware of.
+
+Functions that change data must be called using the `EXECUTE FUNCTION` statement.
+
+
+== Returning values from {sqlpp} statements
+
+As shown in the <<calling-statements-inline, examples above>>, embedded {sqlpp} statements  return values which can be used later on in your code.
+
+The values returned from the statement calls are Javascript https://www.w3schools.com/js/js_object_iterables.asp[iterators^]: lists of values or documents returned from the database. 
+In the next example, we're going to retrieve a list of the hotels stored in the `travel-sample` database:
+
+[source, javascript]
+----
+include::example$select-hotels-inline.js[]
+----
+
+<.> The {sqlpp} statement returns an iterator containing the items retrieved by the query.
+<.> Using the standard Javascript iterator pattern to loop through the items returned in `q`.
+<.> Add the current document from the iterator to the result array `res`.
+<.> Once all the items have been retrieved, return the result array.
+
+[IMPORTANT]
+====
+If an inline statement/N1QL call does not return a value, then the associated {sqlpp} statement is executed as part of a synchronous operation. i.e. the runtime will wait until the statement completes before moving on to the next line of Javascript.
+
+If the inline statement/N1QL call returns a value then it is executed _asynchronously_: execution continues before the iterator is returned.
+Each document is fetched from the bucket as it requested by the iterator.
+
+include::partial$diagrams.adoc[tags="inline-call-sequence"]
+====
+
+== Passing Parameters to {sqlpp} statements
+
+You can pass parameters from your Javascript to your {sqlpp} statements.
+Parameters can either be `positional` or `named`.
+
+Positional:: The parameters are applied to the statement in the order they appear in the list.
++
+[source, javascript]
+----
+include::example$add-airline-positional-pararamers.js[]
+----
+
+Named:: The parameters are given a mnemonic name attached to the value, so they can be included directly in the {sqlpp} statement.
++
+[source, javascript]
+----
+include::example$add-airline-named-parameters.js[]
+----
++
+Note that the names of the parameters passed into the Javascript function are used in the {sqlpp} statement without any need to assign the parameters in a separate step.
+
+[NOTE]
+====
+N1QL calls support both `named` and `positional` parameters.
+Inline calls only support `named` parameters.
+
+[cols="^,^,^"]
+
+|===
+|Call |Named Parameters |Positional Parameters
+
+|N1QL calls
+| ✔️
+| ✔
+
+|Inline Calls
+| ✔️
+| ❌
+|===
+
+====
+
+== Transactions
+
+Transactions are supported from {sqlpp} statements called from Javascript functions.
+
+* The function can run statements in a transaction that started before the function was executed. 
+* The function can run a statement that starts the transaction.
+* The function can run a statement that rolls back a transaction.
+
+[NOTE]
+====
+An {sqlpp} statement and its corresponding iterator must live entirely within the scope of a transaction. 
+If a transaction is started during the iteration process, then the transaction cannot be rolled entirely.
+
+include::partial$diagrams.adoc[tags="transactions-and-iterators"]
+====
+
+== Role-base Access Control
+
+In order to execute {sqlpp} statements as part of a Javascript function, the user executing the function must have the appropriate privileges to perform the action on any objects referenced in the {sqlpp} statement.
+
+== Executing {sqlpp} statements that call functions
+
+It is often the case that Javascript UDF will call an {sqlpp} statement that may itself call another Javascript UDF. 
+However, it is important to be aware that each Javascript function call executed from a parent call will use a new Javascript worker process to run. 
+The deeper the calls are nested, the fewer Javascript workers are available to run, so the calling chain will eventually fail and throw an error.
+This can be demonstrated using a recursive call sequence as shown below:
+
+[source, javascript]
+----
+include::example$do-recursion.js[]
+----
+
+Then executing the function:
+ 
+[source, n1ql]
+----
+include::example$execute-do-recursion.n1ql[]
+----
+
+returns the following result:
+
+:number-of-calls: 10
+[source, json, subs="+attributes"]
+----
+include::example$do-recursion-response.json5[]
+----
+<.> The call failed after {number-of-calls} nested call, which exhausted the number of Javascript workers available during the call sequence. 
+
+[NOTE]
+====
+The JavaScript workers are created when the Couchbase server is started up.
+
+latexmath:[Number\:of\:JavaScript\:workers = 4 \times number\:of\:CPUs]
+
+The service will automatically prevent recursive calls if there are less than 50% javascript workers available
+
+====
+
+== Further Reading
+
+include::guides:partial$javascript-udfs/further-reading.adoc[tags="query-workbench;select;execute-function;transactions;rbac"]

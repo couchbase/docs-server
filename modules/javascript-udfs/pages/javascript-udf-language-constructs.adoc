@@ -1,0 +1,345 @@
+= JavaScript User-Defined Functions
+:description: Writing Couchbase Server extension functions in the JavaScript Language.
+:page-edition: Enterprise Edition
+:page-toclevels: 2
+:page-pagination: next
+
+[abstract]
+{description}
+
+== Introduction
+
+Using JavaScript, you can write your custom Functions.
+Couchbase Functions inherit support for most ECMAScript constructs by using Google v8 as the execution container.
+However, to support the ability to shard and scale Function-execution automatically, some capabilities have been removed.
+Additionally, to optimize language-utilization of the server environment, some new constructs have been added:
+
+[#added-lang-features]
+== Added Language Features
+
+The following constructs have been added:
+
+* <<bucket_accessors,Basic Keyspace Accessors>>
+* <<advanced_bucket_accessors,Advanced Keyspace Accessors>>
+* <<logging,Logging>>
+* <<n1ql_statements,N1QL Statements>>
+
+[#bucket_accessors]
+=== Basic Keyspace Accessors
+
+Couchbase buckets, when bound to a Function, appear as a global JavaScript map.
+The map operations such as get, set and delete are exposed to the Data Service providers get, set, and delete operations respectively.
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  // Assuming 'dest' is a bucket alias or binding to a keyspace
+  var val = dest[meta.id];         // this is a bucket GET operation.
+  dest[meta.id] = {"status":3};    // this is a bucket SET operation.
+  delete dest[meta.id];            // this is a bucket DEL operation.
+}
+----
+
+* *The GET operation* _(operator [] applied on a bucket binding and used as a value expression)_
++
+This fetches the corresponding object from the KV bucket the variable is bound to, and returns the parsed JSON value as a JavaScript object. Fetching a non-existent object from a bucket will return JavaScript undefined value. This operation throws an exception if the underlying bucket GET operation fails with an unexpected error.
+
+* *The SET operation* _(operator [] appearing on left of = assignment statement)_
++
+This sets the provided JavaScript value into the KV bucket the variable is bound to, replacing any existing value with the specified key. This operation throws an exception if the underlying bucket SET operation fails with an unexpected error.
+
+* *The DELETE operation* _(operator [] appearing after JavaScript delete keyword)_
++
+This deletes the provided key from the KV bucket the variable is bound to. If the object does not exist, this call is treated as a no-op. This operation throws an exception if the underlying bucket DELETE operation fails with an unexpected error.
+
+
+[#advanced_bucket_accessors]
+=== Advanced Keyspace Accessors
+
+The following advanced bucket accessors have been added to expose a richer set of options and operators.  
+Unlike the basic bucket accessors these operations have non-trivial argument sets and return values for complete details refer to xref:eventing-advanced-keyspace-accessors.adoc[Advanced Keyspace Accessors Details].
+
+[#advanced-get-op]
+* *The Advanced GET operation*: _result = couchbase.get(binding, meta)_
++
+This operation allows reading a document from the bucket with an ability to specify the CAS value to be matched during the read.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-get-op[advanced GET operation].
+
+[#advanced-insert-op]
+
+* *The Advanced INSERT operation*: _result = couchbase.insert(binding, meta, doc)_
++
+This operation allows creating a fresh document in the bucket.
+This operation will fail if the document with the specified key already exists. 
+It allows specifying an expiration time (or TTL) to be set on the document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-insert-op[advanced INSERT operation].
+
+[#advanced-upsert-op]
+
+* *The Advanced UPSERT operation*: _result = couchbase.upsert(binding, meta, doc)_
++
+This operation allows updating an existing document in the bucket, or if absent, creating a fresh document with the specified key.
+The operation does not allow specifying CAS (it will silently ignore it).
+It also allows specifying an expiration time (or TTL) to be set on the document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-upsert-op[advanced UPSERT operation].
+
+[#advanced-replace-op]
+
+* *The Advanced REPLACE operation*: _result = couchbase.replace(binding, meta, doc)_
++
+This operation replaces an existing document in the bucket
+This operation will fail if the document with the specified key does not exist. 
+This operation allows specifying a CAS value that must be matched as a pre-condition before proceeding with the operation. 
+It also allows specifying an expiration time (or TTL) to be set on the document. 
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-replace-op[advanced REPLACE operation].
+
+[#advanced-delete-op]
+
+* *The Advanced DELETE operation*: _result = couchbase.delete(binding, meta)_
++
+This operation allows deleting a document in the bucket specified by key.
+Optionally, a CAS value may be specified which will be matched as a pre-condition to proceed with the operation.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-delete-op[advanced DELETE operation].
+
+[#advanced-increment-op]
+
+* *The Advanced INCREMENT operation*: _result = couchbase.incrment(binding, meta)_
++
+This operation atomically increments the field _"count"_ in the specified document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-increment-op[advanced INCREMENT operation].
++
+The document must have the below structure:
++
+[source,json5]
+----
+{"count": 23} // 23 is the current counter value
+----
++
+The _increment_ operation returns the post-increment value. 
++
+If the specified counter document does not exist, one is created with _count_ value as 0 and the structure noted above. And so, the first returned value will be 1.
++
+Due to limitations in KV engine API, this operation cannot currently manipulate full document counters.
+
+[#advanced-decrement-op]
+
+* *The Advanced DECREMENT operation*: _result = couchbase.decrement(binding, meta)_
++
+This operation atomically decrements the field _"count"_ in the specified document.
+For more information see xref:eventing-advanced-keyspace-accessors.adoc#advanced-decrement-op[advanced DECREMENT operation].
++
+The document must have the below structure:
++
+[source,json5]
+----
+{"count": 23} // 23 is the current counter value
+----
++
+The _decrement_ operation returns the post-decrement value. 
++
+If the specified counter document does not exist, one is created with _count_ value as 0 and the structure noted above. And so, the first returned value will be -1.
++
+Due to limitations in KV engine API, this operation cannot currently manipulate full document counters.
+
+
+//****
+
+[#logging]
+=== Logging
+
+An additional function, log() has been introduced to the language, which allows Eventing Functions to log user defined messages. These log() statements will go the specific Eventing Function's log file also known as the application log.  
+The messages go files located in the Eventing data directory and do not contain any system log messages. 
+The function takes a string to write to the file. If non-string types are passed, a best effort string representation will be logged, but the format of these may change over time. 
+This function does not throw exceptions.
+For more information see xref:eventing-debugging-and-diagnosability.adoc#application-logs[application logs].
+
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+  log("Now processing: " + meta.id);
+}
+----
+
+The Eventing Service also creates a system log file named *eventing.log* common across all Eventing Functions to capture management and lifecycle information, however the end-user cannot write to this file. 
+For more information see xref:eventing-debugging-and-diagnosability.adoc#system-log[system log].
+
+[#n1ql_statements]
+=== N1QL Statements
+
+Top level N1QL keywords, such as SELECT, UPDATE, INSERT and DELETE, are available as inline keywords in Eventing Functions. Operations that return values such as SELECT are accessible through a returned iterable handle. N1QL Query results, via a SELECT, are streamed in batches to the iterable handle as the iteration progresses through the result set.
+
+NOTE: N1QL DML statements cannot manipulate documents in the same bucket as the Eventing Function is listening for mutations on to avoid recursion. Workaround: use the exposed data service KV map in your Eventing function.
+
+JavaScript variables can be referred by N1QL statements using *$<variable>* syntax. Such parameters will be substituted with the corresponding JavaScript variable's runtime value using N1QL named parameters substitution facility.
+
+When deploying the below Function with a feed boundary of "Everything" the same N1QL statement will execute 7,303 times. If the feed boundary is configured to "From now" and you then mutate just one (1) document in the keyspace `beer-sample`.`_default`.`_default` only one (1) query will be executed.  Also keep in mind that adding an optimal index can speed up the query performance by 24X.
+
+[source,javascript]
+----
+function OnUpdate(doc, meta) {
+    var strong = 70;
+    var results =
+        SELECT *                               /* N1QL queries are embedded directly.    */
+        FROM `beer-sample`._default._default   /* Token escaping is standard N1QL style. */
+        WHERE abv > $strong;                   // Local variable reference using $ syntax.
+    for (var beer of results) {                // Stream results using 'for' iterator.
+        log(beer);
+        break;
+    }
+    results.close();                           // End the query and free resources held
+}
+----
+
+The embedded N1QL call starts the query and returns a JavaScript Iterable object representing the result set of the query. The query is streamed in batches as the iteration proceeds. The returned handle can be iterated using any standard JavaScript mechanism including _for...of_ loops.
+
+In multiline N1QL statements (as above) you cannot use single line [.var]`// end of line comments like this` +
+prior to the terminating semicolon as it will cause a syntax error in the transpilation of the N1QL statement, however multiline [.var]`/* comments like this */` are allowed.
+
+The iterator is an input iterator (elements are read-only). The keyword _this_ cannot be used in the body of the iterator. The variables created inside the iterator are local to the iterator.
+
+The returned handle must be closed using the [.var]`close()` method defined on it, which stops the underlying N1QL query and releases associated resources.
+
+NOTE: When an Eventing Function completes for a given mutation and exits all resources will be freed even if you omit the [.var]`close()` statement for your result set(s). However in some complex use cases such as nested N1QL lookups a failure to explicitly call [.var]`close()` after each result set is no longer needed can tie up an excessive amount of N1QL resources and lead to poor performance.
+
+All three operations, i.e., the N1QL statement, iterating over the result set, and closing the Iterable handle can throw exceptions if unexpected error arises from the underlying N1QL query.
+
+As N1QL is not syntactically part of the JavaScript language, the Eventing Function code is transpiled to identify valid N1QL statements which are then converted to a standard JavaScript function call that returns an Iterable object with addition of a [.var]`close()` method.
+
+You must use [.var]`$<variable>`, as per N1QL specification, to use a JavaScript variable in the query statement.
+The object expressions for substitution are not supported and therefore you cannot use the [.param]`meta.id` expression in the query statement.
+
+Instead of [.param]`meta.id` expression, you can use `var id = meta.id` in an N1QL query.
+
+* Invalid N1QL Statement
++
+[source, N1QL]
+----
+DELETE FROM mybucket.myscope.transactions WHERE username = $meta.id;
+----
+
+* Valid N1QL Statement
++
+[source, N1QL]
+----
+var id = meta.id;
+DELETE FROM mybucket.myscope.transactions WHERE username = $id;
+----
+ 
+When you use a N1QL query inside a Eventing Function, remember to use an escaped identifier for keyspaces (bucket.scope.collection) with special characters
+(+++`+++[.param]`bucket-name`+++`+++).
+Escaped identifiers are surrounded by back ticks and support all identifiers in JSON
+
+For example:
+
+* If the bucket name is [.param]`beer-sample` and the scope and collection are both _default, then only the bucket in the N1QL needs to be escaped:
++
+[source, N1QL]
+----
+SELECT * FROM `beer-sample`._default._default WHERE type ...
+----
+
+* However if the bucket name was [.param]`beersample`, then the keyspace of the N1QL query needs no escaping:
++
+[source, N1QL]
+----
+SELECT * FROM beersample._default._default WHERE type ...
+----
+
+[#build-in-functions]
+== Built-in Functions
+
+The following built in functions have been added:
+
+* xref:built-in-functions.adoc#n1ql-function[N1QL() Function Call]
+* xref:built-in-functions.adoc#crc64-function-call[crc64() Function Call]
+* xref:built-in-functions.adoc#create-timer-cancel-timer[createTimer() and cancelTimer() Functions]
+* xref:built-in-functions.adoc#curl-function-call[curl() Function Call]
+
+[#handler-signatures]
+== Handler Signatures
+
+The Eventing Service calls the following entry points or JavaScript functions on events (mutations or fired timers).
+
+* OnUpdate Handler
+* OnDelete Handler
+* Timer Callback Handler
+
+The Eventing Service calls are covered in xref:eventing:eventing-language-constructs.adoc#handler-signatures[Eventing: handler signatures].
+
+
+== Reserved Words
+
+Reserved words are words that cannot be used in a Eventing Function as a variable name, function name, or as a property in the Eventing Function's JavaScript code. The following table lists the reserved words that you must refrain from using as they are used by the transpiler to integrate with Couchbase's query language, N1QL with Eventing.
+
+|===
+4+| N1QL Keywords
+
+| ALTER
+| EXECUTE
+| MERGE
+| UPDATE
+
+| BUILD
+| EXPLAIN
+| PREPARE
+| UPSERT
+
+| CREATE
+| GRANT
+| RENAME
+|
+
+| DELETE
+| INFER
+| REVOKE
+|
+
+| DROP
+| INSERT
+| SELECT
+|
+|===
+
+*What Happens If You Use a Reserved Word?*
+
+Let's say you try to create a new Eventing Function with JavaScript code using a reserved word for variable names, for function names, and as a property binding value. All three cases generate a deployment error.
+
+Reserved words as a variable name:
+
+[source,javascript]
+----
+function get_numip_first_3_octets(ip) {
+    var grant = 0;
+    if (ip) {
+        var parts = ip.split('.');
+    }
+}
+----
+
+Reserved words as a function name:
+
+[source,javascript]
+----
+function grant(ip) {
+    var return_val = 0;
+    if (ip) {
+        var parts = ip.split('.');
+    }
+}
+----
+
+During the Function deployment step, when the system validates the Eventing Function's JavaScript code, it displays an error message such as the following:
++
+[source, console, subs="quotes"]
+----
+Deployment failed: Syntax error *[line and column numbers]* - grant is a reserved name in N1QLJs`
+----
+
+
+Reserved words as a property bindings value
+
+image::reserved-words-7_0.png[,642]
+
+
+
