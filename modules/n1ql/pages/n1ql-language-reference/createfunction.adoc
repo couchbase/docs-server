@@ -1,19 +1,13 @@
 = CREATE FUNCTION
 :description: pass:q[The `CREATE FUNCTION` statement enables you to create a user-defined function.]
-:page-topic-type: concept
-:page-status: Couchbase Server 7.0
+:page-topic-type: reference
 :page-edition: Enterprise Edition
 :imagesdir: ../../assets/images
 :page-partial:
+:page-toclevels: 2
 
 [abstract]
 {description}
-
-// == RBAC Privileges
-// 
-// TODO: Waiting for new RBAC roles to be implemented for user-defined functions.
-// For more details about user roles, see
-// xref:learn:security/authorization-overview.adoc[Authorization].
 
 == Purpose
 
@@ -27,7 +21,7 @@ They enable you to create functions that may be difficult or impossible to defin
 The only supported language is JavaScript.
 
 [[context]]
-=== Global Functions and Scope Functions
+=== Global Functions and Scoped Functions
 
 You can create user-defined functions at two different levels of the N1QL xref:n1ql-intro/sysinfo.adoc#logical-hierarchy[logical hierarchy].
 
@@ -36,18 +30,51 @@ When you call a global function, any partial keyspace references within the func
 +
 For example, when you call a global function `default:global()` which contains the keyspace reference `{backtick}travel-sample{backtick}`, the keyspace reference is always resolved within the context of the function to the `default:{backtick}travel-sample{backtick}` bucket.
 
-* A [def]_scope function_ is created within a scope, at the same level as the collections within the scope.
-When you call a scope function, any partial keyspace references within the function definition are resolved against the function's scope, regardless of the current xref:n1ql:n1ql-intro/sysinfo.adoc#query-context[query context].
+* A [def]_scoped function_ is created within a scope, at the same level as the collections within the scope.
+When you call a scoped function, any partial keyspace references within the function definition are resolved against the function's scope, regardless of the current xref:n1ql:n1ql-intro/sysinfo.adoc#query-context[query context].
 +
-For example, when you call a scope function `default:{backtick}travel-sample{backtick}.inventory.scope()` which contains the keyspace reference `route`, the keyspace reference is always resolved within the context of the function to `default:{backtick}travel-sample{backtick}.inventory.route`.
+For example, when you call a scoped function `default:{backtick}travel-sample{backtick}.inventory.scope()` which contains the keyspace reference `route`, the keyspace reference is always resolved within the context of the function to `default:{backtick}travel-sample{backtick}.inventory.route`.
 
-When you create a user-defined function, the current query context determines whether it is created as a global function or a scope function.
+When you create a user-defined function, the current query context determines whether it is created as a global function or a scoped function.
 If you want to create a user-defined function outside of the current query context, you must include the full path to the function when you specify the function name.
 
 Similarly, when you call a user-defined function, the current query context determines the path to the function.
 If you want to call a user-defined function outside of the current query context, you must include the full path to the function when you specify the function name.
 
-Finally, it is important to note that a global function is _not_ the same as a scope function stored in the default scope in a bucket.
+Finally, it is important to note that a global function is _not_ the same as a scoped function stored in the default scope in a bucket.
+
+=== External Libraries
+
+(((library namespacing)))
+External functions are stored in _libraries_.
+Like user-defined functions, these libraries may also be scoped or global.
+This enables you to keep the code for external functions separate where required.
+
+Code which is stored in a _scoped library_ is private to users of that scope, and is not visible or available to users of another scope.
+Code which is stored in a _global library_ is available to users of all scopes.
+
+A global library may have the same name as a scoped library, and scoped libraries may have the same name as each other.
+For example, you may have a global `math` library, and a `math` library in each scope.
+
+== RBAC Privileges
+
+To manage global internal functions, you must have the *Manage Global Functions* role.
+To manage scoped internal functions, you must have the *Manage Scope Functions* role, with permissions on the specified bucket and scope.
+
+To manage global external functions, you must have the *Manage Global External Functions* role.
+To manage scoped external functions, you must have the *Manage Scope External Functions* role, with permissions on the specified bucket and scope.
+
+Users with the *Manage Scope External Functions* role also have read-only access to any global external library.
+
+To execute global internal functions, you must have the *Execute Global Functions* role.
+To execute scoped internal functions, you must have the *Execute Scope Functions* role, with permissions on the specified bucket and scope.
+
+To execute global external functions, you must have the *Execute Global External Functions* role.
+To execute scoped external functions, you must have the *Execute Scope External Functions* role, with permissions on the specified bucket and scope.
+
+For more details about user roles, see
+xref:learn:security/authorization-overview.adoc[Authorization].
+
 
 == Syntax
 
@@ -69,41 +96,57 @@ The two syntaxes are synonymous.
 
 [subs="normal"]
 ----
-create-function-inline ::= CREATE [ OR REPLACE ] FUNCTION <<{section}-name,name>>
-                          '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')'
-                           ( '{' <<inline-expression,expression>> '}' | LANGUAGE INLINE AS <<inline-expression,expression>> )
+create-function-inline ::= CREATE [ OR REPLACE ] FUNCTION <<{section}-name,function>> '(' <<{section}-parameter,params>> ')'
+                         [ IF NOT EXISTS ] ( '{' <<inline-expression,body>> '}' | LANGUAGE INLINE AS <<inline-expression,body>> )
 ----
 
-image::n1ql-language-reference/create-function-inline.png["'CREATE' ( 'OR' 'REPLACE' )? 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' ( '{' expression '}' | 'LANGUAGE' 'INLINE' 'AS' expression )"]
+image::n1ql-language-reference/create-function-inline.png["'CREATE' ( 'OR' 'REPLACE' )? 'FUNCTION' function '(' params? ')' ( 'IF' 'NOT' 'EXISTS' )? ( '{' body '}' | 'LANGUAGE' 'INLINE' 'AS' body )"]
 
 // tag::arguments[]
 [id='{section}-name']
-name::
-The name of the function.
+==== Function Name
+
+[subs="normal"]
+----
+function ::= [ __namespace__ ':' [ __bucket__ '.' __scope__ '.' ] ] __identifier__
+----
+
+image::n1ql-language-reference/function.png["( namespace ':' ( bucket '.' scope '.' )? )? identifier"]
+
+The function name specifies the name of the function to create.
 It is recommended to use an unqualified identifier for the function name, such as `func1` or `{backtick}func-1{backtick}`.
-In this case, the function is created as a global function or a scope function, depending on the current query context.
-+
+In this case, the function is created as a global function or a scoped function, depending on the current query context.
+
 To create a global function in a particular namespace, the function name must be a qualified identifier with a namespace, such as `default:func1`.
-Similarly, to create a scope function in a particular scope, the function name must be a qualified identifier with the full path to a scope, such as `default:{backtick}travel-sample{backtick}.inventory.func1`.
-+
+Similarly, to create a scoped function in a particular scope, the function name must be a qualified identifier with the full path to a scope, such as `default:{backtick}travel-sample{backtick}.inventory.func1`.
+
 If the function name is an unqualified identifier, it may not be the same as a reserved keyword.
 A function name with a specified namespace or scope may have the same name as a reserved keyword.
 
 [id='{section}-parameter']
-parameter::
-[Optional] The name of a function argument.
+==== Function Parameters
+
+[subs="normal"]
+----
+params ::= __identifier__ [ ',' __identifier__ ]* | '...'
+----
+
+image::n1ql-language-reference/params.png["identifier ( ',' identifier )* | '...'"]
+
+[Optional] The function parameter list specifies parameters for the function.
 If you specify named parameters for the function, then you must call the function with exactly the same number of arguments at execution time.
 If you specify no parameters, then you must call the function with no arguments.
 To create a variadic function, that is, a function which you can call with any number of arguments or none, specify `\...` as the only parameter.
 // end::arguments[]
 
 [[inline-expression]]
-expression::
-The N1QL expression that defines the function.
-You can use any valid expression.
+==== Function Body
+
+The function body defines the function.
+You can use any valid N1QL expression.
 If you specified named parameters for the function, you can use these in the expression to represent arguments passed to the function at execution time.
 If you specified that the function is variadic, any arguments passed to the function at execution time are held in an array named `args`.
-+
+
 [NOTE]
 ====
 * If the expression contains a parameter that has the same name as a field in the document, it will always refer to the parameter.
@@ -117,12 +160,22 @@ If you need to return multiple values, construct an array.
 
 // tag::replace[]
 [id='{section}-replace']
-==== Replacing a Function
+==== Checking for an Existing Function and Replacing a Function
 
-The optional `OR REPLACE` keywords enable you to redefine a function.
-If these keywords are present, and a function with the same name already exists, the existing function is replaced.
+The optional `IF NOT EXISTS` phrase enables you to check whether a user-defined function exists before creating it, and the optional `OR REPLACE` phrase enables you to redefine the function.
 
-If these keywords are not present, and a function with the same name already exists, an error is generated.
+When a function with the same name already exists within the same context:
+footnote:context[That is, you are creating a global function, and a function with the same name already exists within the same namespace; or, you are creating a scoped function, and a function with the same name already exists within the same scope.]
+
+* If the `OR REPLACE` phrase is present, the existing function is replaced.
+
+* If the `IF NOT EXISTS` phrase is present, the statement does nothing and completes without error.
+
+* If neither of these two phrases is present, an error is generated.
+
+NOTE: These phrases are exclusive.
+If the statement contains both the `OR REPLACE` phrase and the `IF NOT EXISTS` phrase, an error is generated.
+
 // end::replace[]
 
 [[create-function-external]]
@@ -131,27 +184,32 @@ If these keywords are not present, and a function with the same name already exi
 
 [subs="normal"]
 ----
-create-function-external ::= CREATE [ OR REPLACE ] FUNCTION <<{section}-name,name>> 
-                             '(' [ <<{section}-parameter,parameter>> ( ',' <<{section}-parameter,parameter>> )* ] ')'
-                             LANGUAGE JAVASCRIPT AS <<external-object,object>> AT <<external-library,library>>
+create-function-external ::= CREATE [ OR REPLACE ] FUNCTION <<{section}-name,function>> '(' <<{section}-parameter,params>> ')'
+                           [ IF NOT EXISTS ] LANGUAGE JAVASCRIPT AS <<external-object,obj>> AT <<external-library,library>>
 ----
 
-image::n1ql-language-reference/create-function-external.png["'CREATE' ( 'OR' 'REPLACE' )? 'FUNCTION' name '(' (parameter (',' parameter)* )? ')' 'LANGUAGE' 'JAVASCRIPT' 'AS' object 'AT' library"]
+image::n1ql-language-reference/create-function-external.png["'CREATE' ( 'OR' 'REPLACE' )? 'FUNCTION' function '(' params? ')' ( 'IF' 'NOT' 'EXISTS' )? 'LANGUAGE' 'JAVASCRIPT' 'AS' obj 'AT' library"]
 
 include::createfunction.adoc[tag=arguments]
 
 [[external-object]]
-object::
+==== External Object
+
 The name of the JavaScript function that you want to use for the user-defined function.
 This parameter is a string and must be wrapped in quotes.
+// FIXME:
 External functions in N1QL _only_ support plain JavaScript, without any of the xref:eventing:eventing-language-constructs.adoc#added-lang-features[added language features] supported by functions in the Eventing Service.
 
 [[external-library]]
-library::
+==== External Library
+
 The name of the JavaScript library that contains the function you want to use.
 This parameter is a string and must be wrapped in quotes.
 You must create the JavaScript library and the JavaScript function using the N1QL Functions REST API.
 For details, refer to xref:n1ql-rest-api/functions.adoc[Functions REST API].
+
+The name of a scoped external library must include the bucket name, the scope name, and the library name, separated by slashes.
+For example, to refer to a scoped library called `my-library` located in the `inventory` scope within the `travel-sample` bucket, you would specify the library name as `travel-sample/inventory/my-library`.
 
 include::createfunction.adoc[tag=replace]
 
@@ -360,7 +418,7 @@ footnote:[Credit: https://github.com/davetroy/geohash-js]
 * The function `encodeGeoHash` takes two arguments, a latitude and a longitude, and returns the 12-character https://en.wikipedia.org/wiki/Geohash[geohash^] for the specified location.
 * The function `calculateAdjacent` takes two arguments, a geohash and a direction -- `"top"`, `"bottom"`, `"left"`, or `"right"` -- and returns the geohash of the location next to the original geohash in the specified direction.
 
-[source,console]
+[source,sh]
 ----
 curl -v -X POST \
 http://localhost:8093/evaluator/v1/libraries/geohash-js \
@@ -498,6 +556,7 @@ At this level of precision, the geohash should appear to be in almost exactly th
 
 == Related Links
 
+* To manage external libraries of user-defined functions, refer to xref:n1ql-rest-api/functions.adoc[Functions REST API].
 * To execute user-defined functions, refer to xref:n1ql-language-reference/execfunction.adoc[EXECUTE FUNCTION].
 * To include user-defined functions in an expression, refer to xref:n1ql-language-reference/userfun.adoc[User-Defined Functions].
 * To view user-defined functions, refer to xref:manage:monitor/monitoring-n1ql-query.adoc#sys-functions[Monitor Queries].
