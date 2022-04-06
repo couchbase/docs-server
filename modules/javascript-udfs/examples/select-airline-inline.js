@@ -1,6 +1,8 @@
 function selectAirline(country) {
 
-    var q = SELECT name as airline_name, callsign as airline_callsign FROM `travel-sample`.`inventory`.`airline` WHERE country = $country;  //<1>
+    var q = SELECT name as airline_name, callsign as airline_callsign 
+    FROM `travel-sample`.`inventory`.`airline` 
+    WHERE country = $country;  //<1>
 
     var res = [];
 
