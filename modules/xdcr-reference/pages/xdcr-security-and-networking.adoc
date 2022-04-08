@@ -7,17 +7,77 @@
 == Security and Networking Contexts
 
 This page considers a number of specific contexts in which XDCR replications must be established.
-These respectively involve use of:
+These respectively involve:
 
-* _DNS SRV_
+* Handling _Couchbase Schemes_ with _DNS SRV_
 
-* _Alternate Addresses_ (with Kubernetes and AWS)
+* Using _Alternate Addresses_ (with Kubernetes and AWS)
 
-* _Third Party CAs_
+* Using _Third Party CAs_
 
 Each context is explained below.
 
-== DNS SRV
+== Handling Couchbase Schemes with DNS SRV
+
+Targets for XDCR replication can be specified using the schemes _http://_ or _https://_, and with the standard port number `8091` or `18091`, as applicable.
+Targets _cannot_ be specified with the Couchbase schemes _couchbase://_ and _couchbases://_, which are used to support the memcached protocol on ports `11210` and `11207`, respectively.
+
+Targets _can_, however, be specified with a _Fully Qualified Domain Name_ (_FQDN_), which is not tagged with either of the standard port numbers.
+In such cases, XDCR performs a https://go.dev/src/net/lookup.go[LookupSRV^] on the FQDN, using the local machine’s _DNS resolver_.
+LookupSRV obtains the appropriate name from a local DNS https://en.wikipedia.org/wiki/SRV_record[SRV record^]: which is a specification of data in the Domain Name System that defines the _location_ (the hostname and port number) of a server for a particular service.
+When LookupSRV has returned the name, XDCR concatenates a standard port number to the name, and uses the resulting concatenation as the target-reference.
+
+Consequently, resources named by means of the Couchbase schemes can be resolved to appropriate XDCR-target names: by first removing the _couchbase_ or _couchbases_ prefix, and then specifying the resulting FQDN -- so that LookupSRV resolves the FQDN to a name that XDCR can include in the ultimate target-reference.
+Note, however, that this does assume the target's use of one of the standard port numbers -- `8091` or `18091` -- for XDCR access.
+
+=== Example
+
+Suppose a resource is provided with the Couchbase scheme as follows: `couchbases://7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com`.
+The scheme's prefix `couchbases://` can be removed, so as to leave an FQDN as follows: `7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com`.
+This FQDN can be specified by the administrator as the _hostname_ of the target cluster for XDCR replication.
+
+The command `nslookup -type=srv` can be used manually to determine whether this hostname corresponds to one or more true, DNS SVR records.
+The form of an SRV record is as follows:
+
+----
+_service._proto.name. ttl IN SRV priority weight port target
+----
+
+See https://en.wikipedia.org/wiki/SRV_record[SRV record^], for a full explanation of this syntax.
+
+To perform the manual lookup, we provide values for the `_service._proto.name.` arguments.
+Thus, we use `couchbases` for the `service` argument; `tcp` for the `proto` argument; and the hostname `7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com` for the `name` argument.
+Our command is therefore executed as follows:
+
+----
+nslookup -type=srv _couchbases._tcp.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com
+----
+
+If successful, the command returns output similar to the following:
+
+----
+Server:		176.103.130.130
+Address:	176.103.130.130#53
+
+Non-authoritative answer:
+_couchbases._tcp.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com	service = 0 0 11207 cb-0001.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com.
+_couchbases._tcp.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com	service = 0 0 11207 cb-0002.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com.
+_couchbases._tcp.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com	service = 0 0 11207 cb-0000.7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com.
+----
+
+This output shows that three SRV records have been found to correspond with the values we specified.
+The final value of each displayed record is the `target` for the record: each is a name beginning with `cb-`; and each name corresponds to an individual, server node.
+Any of these `target` names can now be used as an XDCR target-reference, if either `:8091` or `18091` is appended to it.
+
+The process shown manually above is essentially that followed programmatically by LookupSRV.
+Note that XDCR ignores the value of the `port` argument returned in the record (which is in each case the secure memcached port, `11207`).
+
+Using the final, _derived FQDN_, XDCR then performs its usual _cluster add_ procedure, to contact the other server nodes.
+
+
+
+
+
 
 == Alternate Addresses
 
