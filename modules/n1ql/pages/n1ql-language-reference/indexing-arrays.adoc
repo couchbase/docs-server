@@ -243,12 +243,20 @@ ANY x WITHIN expr2 SATISFIES g(x) END -- <4>
 The following dependencies must be satisfied for the Query service to consider the array index:
 
 * The index keys used in CREATE INDEX must be used in the WHERE clause.
+
 * [.var]`expr2` in ➂ and ➃ must be equivalent to [.var]`expr1` in ➀ and ➁.
 This is a formal notion of equivalence.
 For example, if they are the same expressions, or equivalent arithmetic expressions such as `(x+y)` and `(y+x)`.
+
+* If there is a need to index one or more expressions from the ARRAY (the maximum being 32), the [.var]`fx()` expression can be specified as `FLATTEN_KEYS(f1(x) [ASC|DESC], f2(x) [ASC|DESC], . . . )`.
+When `FLATTEN_KEYS()` is present, it flattens arguments within the array, as if they were separate index keys; and all subsequent index keys are accordingly moved to the right.
+Queries will be sargable and will generate spans.
+
 * [.var]`g(x)` in ➂ and ➃ must be sargable for [.var]`f(x)` in ➀ and ➁.
 In other words, if there were a scalar index with key [.var]`f(x)`, then that index would be applicable to the predicate [.var]`g(x)`.
 For example, the index key `UPPER(x)` is sargable for the predicate `UPPER(x) LIKE "John%"`.
+[.var]`g(x)` in ➂ and ➃ must be sargable for `f(x)`; or, if f(x) is `FLATTEN_KEYS()`, for one of its arguments in ➀ and ➁.
+
 * IN vs. WITHIN: Index key ➀ can be used for query predicate ➂.
 Index key ➁ can be used for both query predicates ➂ and ➃.
 
@@ -311,6 +319,73 @@ In this example, the <<C2>> qualifies for the <<Q2>> because:
 <2> The ANY operator uses the index key `v.flight` on which the <<C2>> is defined.
 <3> The ANY-SATISFIES condition `v.day=1` in the <<Q2>> is sargable to that in the index definition WHEN clause `v.day < 4`.
 ====
+
+[[example-2a]]
+.Indexing composite elements from the array
+====
+.Index: Create an index on day, flight from schedule array
+[[C2a,Index]]
+[source,N1QL]
+----
+CREATE INDEX ixf_sched ON `travel-sample`.inventory.route (ALL ARRAY FLATTEN_KEYS(s.day DESC, s.flight)
+                                                             FOR s IN schedule
+                                                             END,
+                                                         sourceairport, destinationairport, stops);
+----
+
+.Query: Find the week day delta flights FROM SFO TO ATL.
+[[Q2a,Query]]
+[source,N1QL]
+----
+SELECT META(r).id
+           FROM `travel-sample`.inventory.route AS r
+           WHERE r.sourceairport = "SFO" -- <3>
+                 AND r.destinationairport = "ATL" -- <4>
+                 AND ANY s IN r.schedule SATISFIES s.day BETWEEN 1 AND 5 -- <1>
+                 AND s.flight LIKE "DL%" END; -- <2>
+
+                 Partial Explain :
+
+                                             "spans": [
+                                             {
+                                                 "exact": true,
+                                                 "range": [
+                                                     {
+                                                         "high": "5",
+                                                         "inclusion": 3,
+                                                         "index_key": "(`s`.`day`)",
+                                                         "low": "1"
+                                                     },
+                                                     {
+                                                         "high": "\"DM\"",
+                                                         "inclusion": 1,
+                                                         "index_key": "(`s`.`flight`)",
+                                                         "low": "\"DL\""
+                                                     },
+                                                     {
+                                                         "high": "\"SFO\"",
+                                                         "inclusion": 3,
+                                                         "index_key": "`sourceairport`",
+                                                         "low": "\"SFO\""
+                                                     },
+                                                     {
+                                                         "high": "\"ATL\"",
+                                                         "inclusion": 3,
+                                                         "index_key": "`destinationairport`",
+                                                         "low": "\"ATL\""
+                                                     }
+
+                                                 ]
+                                             }
+                                         ]
+----
+
+In this example, the Query is able to use `ixf_sched` Index and pass all the predicate information to index scan and cover the query.
+
+<1> ARRAY predicate `s.day BETWEEN 1 AND 5` is able to match and pass to indexScan.
+<2> ARRAY predicate `s.flight LIKE "DL%"` is able to match and pass to indexScan.
+<2> `r.sourceairport = "SFO"` able to match and pass to indexScan.
+<4> `r.destinationairport = "ATL"` able to match and pass to indexScan.
 
 [[example-3]]
 .Compound array index with individual elements of an array and other non-array fields
