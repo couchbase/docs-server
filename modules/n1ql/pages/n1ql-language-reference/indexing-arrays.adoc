@@ -320,78 +320,102 @@ In this example, the <<C2>> qualifies for the <<Q2>> because:
 <3> The ANY-SATISFIES condition `v.day=1` in the <<Q2>> is sargable to that in the index definition WHEN clause `v.day < 4`.
 ====
 
-[[example-2a]]
+[[example-3]]
 .Indexing composite elements from the array
 ====
-.Index: Create an index on day, flight from schedule array
-[[C2a,Index]]
+.Index: Create an index on day and flight from schedule array
+[[C3,Index]]
 [source,N1QL]
 ----
-CREATE INDEX ixf_sched ON `travel-sample`.inventory.route (ALL ARRAY FLATTEN_KEYS(s.day DESC, s.flight)
-                                                             FOR s IN schedule
-                                                             END,
-                                                         sourceairport, destinationairport, stops);
+CREATE INDEX ixf_sched
+  ON `travel-sample`.inventory.route (ALL ARRAY FLATTEN_KEYS(s.day DESC, s.flight)
+  FOR s IN schedule
+  END,
+  sourceairport, destinationairport, stops);
 ----
 
-.Query: Find the week day delta flights FROM SFO TO ATL.
-[[Q2a,Query]]
+.Query A: Find the weekday Delta flights FROM SFO to ATL
+[[Q3,Query A]]
 [source,N1QL]
 ----
 SELECT META(r).id
-           FROM `travel-sample`.inventory.route AS r
-           WHERE r.sourceairport = "SFO" -- <3>
-                 AND r.destinationairport = "ATL" -- <4>
-                 AND ANY s IN r.schedule SATISFIES s.day BETWEEN 1 AND 5 -- <1>
-                 AND s.flight LIKE "DL%" END; -- <2>
+  FROM `travel-sample`.inventory.route AS r
+  WHERE r.sourceairport = "SFO" -- <3>
+    AND r.destinationairport = "ATL" -- <4>
+    AND ANY s IN r.schedule SATISFIES s.day BETWEEN 1 AND 5 -- <1>
+    AND s.flight LIKE "DL%" END; -- <2>
 
-                 Partial Explain :
+Partial Explain :
 
-                                             "spans": [
-                                             {
-                                                 "exact": true,
-                                                 "range": [
-                                                     {
-                                                         "high": "5",
-                                                         "inclusion": 3,
-                                                         "index_key": "(`s`.`day`)",
-                                                         "low": "1"
-                                                     },
-                                                     {
-                                                         "high": "\"DM\"",
-                                                         "inclusion": 1,
-                                                         "index_key": "(`s`.`flight`)",
-                                                         "low": "\"DL\""
-                                                     },
-                                                     {
-                                                         "high": "\"SFO\"",
-                                                         "inclusion": 3,
-                                                         "index_key": "`sourceairport`",
-                                                         "low": "\"SFO\""
-                                                     },
-                                                     {
-                                                         "high": "\"ATL\"",
-                                                         "inclusion": 3,
-                                                         "index_key": "`destinationairport`",
-                                                         "low": "\"ATL\""
-                                                     }
+"spans": [
+             {
+                 "exact": true,
+                 "range": [
+                     {
+                         "high": "5",
+                         "inclusion": 3,
+                         "index_key": "(`s`.`day`)",
+                         "low": "1"
+                     },
+                     {
+                         "high": "\"DM\"",
+                         "inclusion": 1,
+                         "index_key": "(`s`.`flight`)",
+                         "low": "\"DL\""
+                     },
+                     {
+                         "high": "\"SFO\"",
+                         "inclusion": 3,
+                         "index_key": "`sourceairport`",
+                         "low": "\"SFO\""
+                     },
+                     {
+                         "high": "\"ATL\"",
+                         "inclusion": 3,
+                         "index_key": "`destinationairport`",
+                         "low": "\"ATL\""
+                     }
 
-                                                 ]
-                                             }
-                                         ]
+                 ]
+             }
+         ]
 ----
 
-In this example, the Query is able to use `ixf_sched` Index and pass all the predicate information to index scan and cover the query.
+In this example, the query is able to use `ixf_sched` index, pass all the predicate information to index scan, and cover the query.
 
-<1> ARRAY predicate `s.day BETWEEN 1 AND 5` is able to match and pass to indexScan.
-<2> ARRAY predicate `s.flight LIKE "DL%"` is able to match and pass to indexScan.
-<2> `r.sourceairport = "SFO"` able to match and pass to indexScan.
-<4> `r.destinationairport = "ATL"` able to match and pass to indexScan.
+<1> `r.sourceairport = "SFO"` able to match and pass to indexScan.
+<2> `r.destinationairport = "ATL"` able to match and pass to indexScan.
+<3> ARRAY predicate `s.day BETWEEN 1 AND 5` is able to match and pass to indexScan.
+<4> ARRAY predicate `s.flight LIKE "DL%"` is able to match and pass to indexScan.
 
-[[example-3]]
+.Query B: Find the week day delta flights FROM SFO TO ATL
+[[Q3,Query B]]
+[source,N1QL]
+----
+SELECT  s.day, s.flight,r.sourceairport, r.destinationairport, r.stops
+FROM `travel-sample`.inventory.route AS r
+UNNEST r.schedule AS s
+WHERE r.sourceairport = "SFO" AND r.destinationairport = "ATL"
+      AND s.day BETWEEN 1 AND 5 AND s.flight LIKE "DL%"
+ORDER BY s.day DESC
+OFFSET 2
+LIMIT 3;
+----
+
+In this example, the query again uses `ixf_sched`.
+It uses the UNNEST indexScan.
+All 4 predicates are pushed to the indexer
+The query is covered.
+The query uses ORDER, even though it references an array index-key.
+It pushes OFFSET and LIMIT to the indexer.
+
+====
+
+[[example-4]]
 .Compound array index with individual elements of an array and other non-array fields
 ====
 .Index: Create an index on scheduled flight IDs and number of stops
-[[C3,Index]]
+[[C4,Index]]
 [source,N1QL]
 ----
 CREATE INDEX idx_flight_stops
@@ -400,7 +424,7 @@ ON `travel-sample`.inventory.route
 ----
 
 .Query: Find the list of scheduled 'FL' flights that have one or more stops
-[[Q3,Query]]
+[[Q4,Query]]
 [source,N1QL]
 ----
 SELECT * FROM `travel-sample`.inventory.route
@@ -409,8 +433,8 @@ AND ANY v IN schedule SATISFIES v.flight LIKE 'FL%' END;
 ----
 ====
 
-[[example-4]]
-.Indexing the individual elements of nest arrays
+[[example-5]]
+.Indexing nested arrays multiple fields from different levels.
 ====
 Use the DISTINCT ARRAY clause in a nested fashion to index specific attributes of a document when the array contains other arrays or documents that contain arrays.
 For example,
@@ -427,68 +451,79 @@ WHERE destinationairport = "CDG" AND sourceairport = "TLV";
 ----
 
 .Index: Create a partial index on a nested array [.var]`special_flights`
-[[C4,Index]]
+[[C5,Index]]
 [source,N1QL]
 ----
-CREATE INDEX idx_nested ON `travel-sample`.inventory.route
-    (DISTINCT ARRAY
-        (DISTINCT ARRAY y.flight -- <1>
-        FOR y IN x.special_flights END)
-    FOR x IN schedule END);
+CREATE INDEX ixf_sched_nested ON `travel-sample`.inventory.route
+    (ALL ARRAY
+        (ALL ARRAY FLATTEN_KEYS(s.day, sf.flight)
+         FOR sf IN s.special_flights END)
+    FOR s IN schedule END);
 ----
 
 <1> In this case, the inner ARRAY construct is used as the [.var]`var_expr` for the outer ARRAY construct in the N1QL Syntax above.
 
 .Query A: Use nested ANY operator to use the index
-[[Q4,Query A]]
+[[Q5,Query A]]
 [source,N1QL]
 ----
-SELECT count(*) FROM `travel-sample`.inventory.route
-WHERE ANY x in schedule SATISFIES
-    (ANY y in x.special_flights SATISFIES y.flight IS NOT NULL END)
-END;
+SELECT RAW count(1)
+FROM `travel-sample`.inventory.route AS r
+WHERE ANY s IN schedule
+      SATISFIES (ANY sf IN s.special_flights
+                 SATISFIES sf.flight IS NOT NULL AND s.day = 7
+                 END)
+      END;
 ----
 
-This query returns 3 results, as there are 3 routes with special flights.
+This query uses `ixf_sched_nested`.
+Both predicates are pushed to the indexer.
+The query uses nested arrays and predicates from both levels.
+The query is covered.
 
 .Query B: Use UNNEST operators to use the index
-[[Q4A,Query B]]
+[[Q5,Query B]]
 [source,N1QL]
 ----
-SELECT count(*) FROM `travel-sample`.inventory.route
-UNNEST schedule AS x
-UNNEST x.special_flights AS y
-WHERE y.flight IS NOT NULL;
+SELECT RAW count(1)
+FROM `travel-sample`.inventory.route AS r
+UNNEST r.schedule AS s
+UNNEST s.special_flights AS sf
+WHERE sf.flight IS NOT NULL AND s.day = 7;
 ----
 
-This query returns 6 results, as there are 3 routes with 2 special flights each.
-====
+This query uses `ixf_sched_nested`.
+Both predicates are pushed to the indexer.
+The query uses nested arrays and predicates from both levels.
+The query is covered.
+The query uses index aggregation.
 
-[[example-5]]
-.Array Index with multiple elements of an array
-====
-.Index: Create an index on [.var]`flight` and [.var]`day` fields in [.var]`schedule`
-[[C5,Index]]
-[source,N1QL]
-----
-CREATE INDEX idx_flight_day ON `travel-sample`.inventory.route
-    (DISTINCT ARRAY [v.flight, v.day] FOR v IN schedule END);
-----
-
-.Query: Find the list of scheduled 'US681' flights on day 2
-[[Q5,Query]]
-[source,N1QL]
-----
-SELECT meta().id FROM `travel-sample`.inventory.route
-WHERE ANY v in schedule SATISFIES [v.flight, v.day] = ["US681", 2] END;
-----
 ====
 
 [[example-6]]
+.Alternative with FLATTEN_KEYS of index `ixf_sched`
+====
+.Query: Find the list of scheduled 'US681' flights on day 2
+[[Q6,Query]]
+[source,N1QL]
+----
+SELECT META(r).id
+FROM `travel-sample`.inventory.route AS r
+WHERE ANY v IN r.schedule SATISFIES v.day = 2 AND v.flight = "US681" END;
+----
+
+This query uses `ixf_sched`.
+Both predicates are pushed to the indexer.
+The query is covered.
+The query-syntax is intuitive, since the multiple fields within the array have not required complex indexing.
+
+====
+
+[[example-7]]
 .Indexing all elements in an array using simplified syntax
 ====
 .Index: Create an index on all schedules using simplified array index syntax
-[[C6,Index]]
+[[C7,Index]]
 [source,N1QL]
 ----
 CREATE INDEX idx_sched_simple
@@ -496,7 +531,7 @@ ON `travel-sample`.inventory.route (ALL schedule);
 ----
 
 .Query A: Find details of all route documents matching a specific schedule
-[[Q6,Query A]]
+[[Q7,Query A]]
 [source,N1QL]
 ----
 SELECT * FROM `travel-sample`.inventory.route
@@ -507,7 +542,7 @@ SATISFIES v = {"day":2, "flight": "US681", "utc": "19:20:00"} END; -- <1>
 <1> Elements of the schedule array are objects, and hence the right side value of the predicate condition should be a similarly structured object.
 
 .Query B: Find details of all route documents matching a specific schedule
-[[Q6A,Query B]]
+[[Q7,Query B]]
 [source,N1QL]
 ----
 SELECT * FROM `travel-sample`.inventory.route t
@@ -515,7 +550,7 @@ UNNEST schedule sch
 WHERE sch = {"day":2, "flight": "US681", "utc": "19:20:00"};
 ----
 
-This is a variant of <<Q6>> using UNNEST in the SELECT statement.
+This is a variant of <<Q7>> using UNNEST in the SELECT statement.
 ====
 
 == Covering Array Index
