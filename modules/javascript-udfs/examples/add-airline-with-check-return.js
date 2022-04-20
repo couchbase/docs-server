@@ -1,4 +1,4 @@
-function addAirlineWithCheck(id, name, callsign, country) {
+function addAirlineWithCheckReturn(id, name, callsign, country) {
 
     const full_id = "airline_" + id   
     const d = new Date().toJSON();    
