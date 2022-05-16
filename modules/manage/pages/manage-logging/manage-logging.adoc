@@ -187,7 +187,7 @@ For example:
 $ cblogredaction /Users/username/testlog.log -g -o /Users/username -vv
 2018/07/17T11:27:06 WARNING: Automatically generating salt. This will make it difficult to cross reference logs
 2018/07/17T11:27:07 DEBUG: /Users/username/testlog.log - Starting redaction file size is 19034284 bytes
-2018/07/17T11:27:07 DEBUG: /Users/usernae/testlog.log - Log redacted using salt: <ud>COeAtexHB69hGEf3</ud>
+2018/07/17T11:27:07 DEBUG: /Users/username/testlog.log - Log redacted using salt: <ud>COeAtexHB69hGEf3</ud>
 2018/07/17T11:27:07 INFO: /Users/username/testlog.log - Finished redacting, 50373 lines processed, 740 tags redacted, 0 lines with unmatched tags
 ----
 
@@ -277,7 +277,9 @@ It is output in common log format and contains several important fields such as 
 | JavaScript and other view-processing errors are reported in this file.
 
 | `memcached`
-| Contains information relating to the core memcached component, including DCP stream requests and slow operations.
+| Contains information relating to the core memcached component, including DCP stream requests and slow operations. +
+It is possible to adjust the logging for slow operations. 
+See <<adjust-threshold-slow-op-logging>> for details.
 
 | `metakv`
 | Troubleshooting log for the `metakv` store, a cluster-wide metadata store.
@@ -444,3 +446,138 @@ The Logging REST API provides the endpoints for retrieving log and diagnostic in
 
 To retrieve log information use the `/diag` and `/sasl_logs`
 xref:rest-api:logs-rest-api.adoc[REST endpoints].
+
+[#adjust-threshold-slow-op-logging]
+== Adjusting Threshold for Logging Slow Operations
+
+It is possible to examine and/or alter the logging threshold for slow-running operations.
+This is done using the `mcctl` command that comes packaged with the Couchbase server installation.
+The command only gets or sets information for the node it's run on.
+
+=== Getting Threshold Details
+The current settings are retrieved by using the `mcctl` cli to execute the `get sla` command:
+
+.Getting threshold details
+[source, bash]
+----
+/opt/couchbase/bin/mcctl --host localhost -u Administrator -P password \
+get sla
+----
+
+.Result
+[source, json]
+----
+{"comment":"Current MCBP SLA configuration",
+"version":1,
+"default":{"slow":"500 ms"}},
+"COMPACT_DB":{"slow":"1800 s"},
+"DELETE_BUCKET":{"slow":"10 s"},
+"SEQNO_PERSISTENCE":{"slow":"30 s"}
+}
+----
+
+The JSON message returned gives details of the operation being logged and the threshold time that will cause a timing message to be logged.
+
+=== Setting the Threshold
+
+The `mcctl` command line interface is also used to set the thresholds for the memcahe operations:
+
+.Set logging threshold example
+[source, bash]
+----
+/opt/couchbase/bin/mcctl --host localhost -u Administrator -P password \
+set sla '{"version":1, "DELETE_BUCKET":{"slow":"100 ms"}}'
+----
+
+In this example, the threshold for the `DELETE_BUCKET` operation is being set to 100ms. If a bucket deletion operation takes longer than this, then an message will be logged. 
+
+[TIP]
+====
+As an added minor convenience, the time interval can also be specified without a space:
+
+[source, bash, subs=quotes]
+----
+/opt/couchbase/bin/mcctl --host localhost -u Administrator -P password \
+set sla '{"version":1, "DELETE_BUCKET":{"slow":"#100ms#"}}'
+----
+====
+
+It is also possible to set the threshold for all the op-codes in a single command by using the `default` code:
+
+.Set all thresholds to 100 ms.
+[source, bash]
+----
+/opt/couchbase/bin/mcctl --host localhost -u Administrator -P password \
+set sla '{"version":1, "default":{"slow":"100 ms"}}'
+----
+
+[sidebar]
+.Time units in threshold settings
+****
+A number of different time units can be used when setting the thresholds:
+
+[horizontal]
+*ns*:: nanoseconds
+*us*:: microseconds
+*ms*:: milliseconds
+*s*:: seconds
+*m*:: minutes
+*h*:: hours
+
+.Setting the `DELETE_BUCKET` threshold to 1 minute.
+[source, bash]
+----
+/opt/couchbase/bin/mcctl --host localhost -u Administrator -P password \
+set sla '{"version":1, "DELETE_BUCKET":{"slow":"1 m"}}'
+----
+****
+
+Setting the threshold values is non-persistent: when the node is restarted, the thresholds are reset to their default values.
+
+=== Setting Threshold Defaults
+
+The default values are loaded from the file: `/opt/couchbase/etc/couchbase/kv/opcode-attributes.json` when the node is started.
+
+[source,json]
+----
+{
+  "comment": "Default configuration file. Do not edit, but override the settings in opcode-attributes.d/",
+  "version": 1,
+  "default": {
+    "slow": "500 ms"
+  },
+  "compact_db": {
+    "slow": "30 m"
+  },
+  "create_bucket": {
+    "slow": "70 ms"
+  },
+  "select_bucket": {
+    "slow": "10 ms"
+  },
+  "delete_bucket": {
+    "slow": "10 s"
+  },
+  "seqno_persistence": {
+    "slow": "30 s"
+  }
+}
+----
+
+These values can be overriden by creating another file in the `/opt/couchbase/etc/couchbase/kv/opcode-attributes.d` directory. 
+The easiest way to do this is to copy the existing settings file into the directory, making sure that there isn't an existing file in the directory:
+
+[source, bash]
+----
+cd /opt/couchbase/etc/couchbase/kv/
+
+cp opcode-attributes.json opcode-attributes.d
+----
+
+
+Edit `/opt/couchbase/etc/couchbase/kv/opcode-attributes.d/opcode-attributes.json` with the new settings.
+
+NOTE: These settings only apply to the node where the changes are made.
+To change the threshold across the cluster, then all the configurations must be applied to each node.
+
+
