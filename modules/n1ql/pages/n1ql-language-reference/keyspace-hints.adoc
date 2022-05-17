@@ -3,11 +3,14 @@
 :page-status: Couchbase Server 7.1
 :imagesdir: ../../assets/images
 :description: Keyspace hints apply to a specific keyspace.
+:cbo-preamble: For the examples in this section, it is assumed that the cost-based optimizer is active, and all optimizer statistics are up-to-date.
 :page-partial:
+:!example-caption:
 
 [abstract]
 {description}
 
+A keyspace hint is a type of xref:n1ql-language-reference/optimizer-hints.adoc[optimizer hint].
 Keyspace hints include _index_ hints, which enable you to specify indexes, and _join_ hints, which enable you to specify join methods.
 
 For each keyspace hint, you must specify the keyspace or keyspaces that the hint applies to.
@@ -22,6 +25,7 @@ Note that you cannot mix simple syntax and JSON syntax in the same hint comment.
 == INDEX
 
 This hint directs the optimizer to consider one or more specified secondary indexes.
+If not specified, the optimizer selects the optimal available index.
 
 === Simple Syntax
 
@@ -126,27 +130,52 @@ An array of secondary indexes that the optimizer should consider for the given k
 
 === Examples
 
-====
-This example hints that the optimizer should select the index `idx_destinations` for the keyspace `pass:c[`travel-sample`.inventory.route]`.
+{cbo-preamble}
 
-.Index
-[source,n1ql]
-----
-include::example$n1ql-language-reference/create-idx-hints.n1ql[]
-----
+[#ex-index-hint]
+.INDEX hint
+====
+This example uses the index `def_inventory_route_route_src_dst_day`, which is installed with the `travel-sample` bucket.
+
+The following query hints that the optimizer should select the specified index for the keyspace `pass:c[`travel-sample`.inventory.route]`.
 
 .Query
 [source,n1ql]
 ----
-SELECT /*+ INDEX (route idx_destinations) */ -- <.>
-  airlineid, airline, sourceairport, destinationairport
-FROM `travel-sample`.inventory.route -- <.>
-WHERE sourceairport = "SFO";
+include::example$select/index-hint.n1ql[tag=query]
 ----
 
 <.> The keyspace is not given an explicit alias in the query.
 You must therefore refer to the keyspace using the keyspace name or implicit alias.
 <.> The implicit alias is the last element in the keyspace path -- in this case, `route`.
+
+If you examine the plan for this query, you can see that the query uses the suggested index.
+
+.Explain plan
+[source,json,indent=0]
+----
+include::example$select/index-hint.jsonc[tag=index]
+----
+====
+
+[#ex-index-opt]
+.Optimized index selection
+====
+For comparison, the following query is equivalent to the one in the <<ex-index-hint>> example, but without the index hint.
+
+.Query
+[source,n1ql]
+----
+include::example$select/index-opt.n1ql[tag=query]
+----
+
+If you examine the plan for this query, you can see that the optimizer has selected a different index: `def_inventory_route_sourceairport`.
+
+.Explain plan
+[source,json,indent=0]
+----
+include::example$select/index-opt.jsonc[tag=index]
+----
 ====
 
 === Legacy Equivalent
@@ -160,6 +189,7 @@ If you do this, the hint comment and the `USE` clause are marked as erroneous an
 == INDEX_FTS
 
 This hint directs the optimizer to consider one or more specified full-text indexes.
+If not specified, the optimizer selects the optimal available index.
 
 === Simple Syntax
 
@@ -260,6 +290,8 @@ An array of full-text indexes that the optimizer should consider for the given k
 
 === Examples
 
+[#ex-index-fts-hint]
+.INDEX_FTS hint
 ====
 This example specifies that the optimizer should prefer any suitable FTS index, without specifying an index by name.
 To qualify for this query, there must be an FTS index on `state` and `type`, using the keyword analyzer.
@@ -291,6 +323,7 @@ If you do this, the hint comment and the `USE` clause are marked as erroneous an
 
 This hint directs the optimizer to consider a nested-loop join for the specified keyspace.
 This hint must be specified on the keyspace on the right-hand side of the join.
+If not specified, the optimizer selects the optimal join method.
 
 === Simple Syntax
 
@@ -348,7 +381,6 @@ image::n1ql-language-reference/keyspace-object.png[align=left]
 Use this object to apply the hint to a single keyspace.
 It must contain a <<keyspace-property-nl>>.
 
-
 [#keyspace-property-nl]
 ==== Keyspace Property
 
@@ -365,20 +397,48 @@ include::keyspace-hints.adoc[tag=keyspace-property]
 
 === Examples
 
-====
+{cbo-preamble}
+
+[#ex-use-nl-hint]
 .USE_NL Hint
+====
+.Query
 [source,n1ql]
 ----
-SELECT /*+ USE_NL (aline) */ -- <.>
-       COUNT(1) AS Total_Count
-FROM `travel-sample`.inventory.route rte
-INNER JOIN `travel-sample`.inventory.airline aline -- <.>
-ON (rte.airlineid = META(aline).id);
+include::example$select/use-nl-hint.n1ql[tag=query]
 ----
 
 <.> The keyspace is given an explicit alias in the query.
 You must therefore refer to the keyspace using the explicit alias.
-<.> In this case, the explicit alias is `aline`.
+<.> In this case, the explicit alias is `a`.
+
+If you examine the plan text for this query, you can see that the query uses the suggested join method.
+
+.Explain plan
+[source,json,indent=0]
+----
+include::example$select/use-nl-hint.jsonc[tag=method]
+----
+====
+
+[#ex-use-nl-opt]
+.Optimized join method selection
+====
+For comparison, the following query is equivalent to the one in the <<ex-use-nl-hint>> example, but without the join hint.
+
+.Query
+[source,n1ql]
+----
+include::example$select/use-nl-opt.n1ql[tag=query]
+----
+
+If you examine the plan for this query, you can see that the optimizer has selected a different join method.
+
+.Explain plan
+[source,json,indent=0]
+----
+include::example$select/use-nl-opt.jsonc[tag=method]
+----
 ====
 
 === Legacy Equivalent
@@ -395,6 +455,7 @@ If you do this, the optimizer hints and `USE` clause are both marked as erroneou
 
 This hint directs the optimizer to consider a hash join for the specified keyspace.
 This hint must be specified on the keyspace on the right-hand side of the join.
+If not specified, the optimizer selects the optimal join method.
 
 A hash join has two sides: a *build* side and a *probe* side.
 The build side of the join is used to create an in-memory hash table.
@@ -518,58 +579,87 @@ Similarly, if you omit this property entirely, the optimizer determines whether 
 
 === Examples
 
+{cbo-preamble}
+
+[#ex-use-hash-probe-hint]
+.USE_HASH with PROBE
 ====
 The keyspace `aline` is to be joined (with `rte`) using hash join, and `aline` is used as the probe side of the hash join.
 
-.USE_HASH with PROBE
+.Query -- simple syntax
 [source,n1ql]
 ----
-SELECT /*+ USE_HASH (aline/PROBE) */ -- <.>
-       COUNT(1) AS Total_Count
-FROM `travel-sample`.inventory.route rte
-INNER JOIN `travel-sample`.inventory.airline aline
-ON (rte.airlineid = META(aline).id);
+include::example$select/use-hash-probe-hint.n1ql[tag=query]
 ----
 
-<.> Simple syntax
+If you examine the explain plan for this query, you can see that the query uses the hash join method as suggested, with the `aline` keyspace on the probe side.
 
-.Results
-[source,JSON]
+.Explain plan
+[source,json,indent=0]
 ----
-[
-  {
-    "Total_Count": 17629
-  }
-]
+include::example$select/use-hash-probe-hint.jsonc[tags=method;ellipsis]
 ----
 ====
 
-====
-This is effectively the same query as the previous example, except the two keyspaces are switched, and here the `BUILD` option is used, indicating the hash join should use `rte` as the build side.
-
+[#ex-use-hash-build-hint]
 .USE_HASH with BUILD
+====
+This is effectively the same query as the <<ex-use-hash-probe-hint>> example, except the two keyspaces are switched, and here the `BUILD` option is used, indicating the hash join should use `rte` as the build side.
+
+.Query
 [source,n1ql]
 ----
-SELECT /*+ { "use_hash": { "keyspace": "rte", "option": "build" } } */ -- <.>
-       COUNT(1) AS Total_Count
-FROM `travel-sample`.inventory.airline aline
-INNER JOIN `travel-sample`.inventory.route rte
-ON (rte.airlineid = META(aline).id);
+include::example$select/use-hash-build-hint.n1ql[tag=query]
 ----
 
-<.> JSON syntax
+If you examine the explain plan for this query, you can see that the query uses the hash join method as suggested, with the `rte` keyspace on the build side.
 
-.Results
-[source,JSON]
+.Explain plan
+[source,json,indent=0]
 ----
-[
-  {
-    "Total_Count": 17629
-  }
-]
+include::example$select/use-hash-probe-hint.jsonc[tags=method;ellipsis]
 ----
 ====
 
+[#ex-use-hash-null-hint]
+.USE_HASH with optimizer
+====
+This is the same query as the <<ex-use-hash-probe-hint>> example, but the hint does not specify whether the `aline` keyspace should be on the probe side or the build side of the join.
+
+.Query -- JSON syntax
+[source,n1ql]
+----
+include::example$select/use-hash-null-hint.n1ql[tag=query]
+----
+
+If you examine the explain plan for this query, you can see that the query uses the hash join method as suggested, but the optimizer has selected to put the `aline` keyspace on the build side of the join.
+
+.Explain plan
+[source,json,indent=0]
+----
+include::example$select/use-hash-null-hint.jsonc[tags=method;ellipsis]
+----
+====
+
+[#ex-use-hash-opt]
+.Optimized join method selection
+====
+For comparison, the following query is equivalent to the one in the <<ex-use-hash-probe-hint>> example, but without the join hint.
+
+.Query
+[source,n1ql]
+----
+include::example$select/use-hash-opt.n1ql[tag=query]
+----
+
+If you examine the plan for this query, you can see that the optimizer has selected to use the hash join method as before, and to put the `aline` keyspace on the build side of the join.
+
+.Explain plan
+[source,json,indent=0]
+----
+include::example$select/use-hash-opt.jsonc[tags=method;ellipsis]
+----
+====
 
 === Legacy Equivalent
 
