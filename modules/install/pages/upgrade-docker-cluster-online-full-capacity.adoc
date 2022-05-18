@@ -1,0 +1,146 @@
+= Upgrade an Online Docker Cluster, Full Capacity
+
+:description: A Docker cluster with multiple nodes can be upgraded live, while maintaining full capacity.
+
+:sectnumlevels: 2
+
+[abstract]
+{description}
+
+== Understanding the Full Capacity Upgrade
+
+The context and overall requirements for upgrading a live cluster without the introduction of one or more additional nodes are described in xref:install:upgrade-procedure-selection.adoc[Upgrade-Procedure Selection]: this  explains the node-by-node upgrade of the cluster, using the _swap rebalance_ process to minimize overhead.
+
+include::partial$cannot-upgrade-docker-single-node.adoc[tag=cannot-upgrade-single-docker-node-note]
+
+
+The precise steps for this procedure are detailed on this page, below.
+A full understanding of the information in xref:install:upgrade-procedure-selection.adoc[Upgrade-Procedure Selection] should be acquired, before proceeding.
+Yous should also be familiar with using xref:getting-started-docker.adoc[Docker commands to create nodes].
+The procedure assumes that:
+
+* The cluster to be upgraded must continue to serve data throughout the cluster-upgrade process.
+
+* A single, additional node can be created to act as a _swap_ node.
+
+* During the cluster-upgrade process, _swap_ nodes and _upgraded_ nodes will be introduced to the cluster by the _node-addition_ procedure; while _failed over spare nodes_ and _nodes to be upgraded_ will be withdrawn from the cluster by means of the _node removal_ and _swap rebalance_ procedures.
++
+For information on node-addition, see xref:learn:clusters-and-availability/nodes.adoc#clusters[Clusters].
+For information on node-removal, see xref:learn:clusters-and-availability/removal.adoc[Removal].
+For information on _swap rebalance_, see xref:install:upgrade-procedure-selection.adoc#swap-rebalance[Swap Rebalance].
+
+* Nodes will be upgraded _one at a time_.
+
+:sectnums:
+
+== Prepare the Cluster
+
+Carry out a _full_ backup of the cluster's data. 
+This can be done using the xref:rest-api:backup-trigger-backup.adoc[REST-API] or the xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Backup Service].
+
+== Create the Spare Node
+
+Use the standard Docker tools to create your node. (For more information read xref:getting-started-docker.adoc[]).
+In this case, you will create a node that can act as cluster manager. For example:
+
+[source, console]
+[#docker-create-sparenode]
+----
+docker run -d --name sparenode -p 28091-28096:8091-8096 -p 11310-11311:11210-11211 couchbase:latest
+----
+
+will create a new node (`sparenode`) using the latest Couchbase server image. 
+Note that the port mappings have been set so as not to clash with the external port settings of the existing node that is managing the cluster.
+
+IMPORTANT: The node must be created as managing cluster. 
+Later on, the existing managing node will be removed and upgraded, so the new node will be needed to communicate with the cluster.
+
+== Add the Spare Node to the Cluster and Rebalance the Cluster
+
+The new node must be added to the cluster, then the cluster must be rebalanced. This can be done through the administration console, or the REST-API. 
+(For information on adding nodes and rebalancing, read xref:manage:manage-nodes/add-node-and-rebalance.adoc[]).
+
+NOTE: Ensure that the `sparenode` can be used to access the cluster through the administration console.
+It will use the same IP address, but a different port number.
+(In the xref:docker-create-sparenode[example above], this is defined as `28091`).
+
+[#remove-node-for-upgrading]
+== Remove a Node For Upgrading
+
+Using the `sparenode`, remove one of the nodes for upgrading from the cluster and rebalance the cluster.
+
+== Delete the Node Container
+
+The `docker` command is used to delete the node and its associated volume.
+For example:
+
+[source, console]
+----
+docker rm -f nodename 
+docker volume prune
+----
+
+include::partial$cannot-upgrade-docker-single-node.adoc[tag=cannot-upgrade-single-docker-node-sidebar]
+
+
+
+== Upgrade the Node Container
+
+The command used to upgrade the node depends on whether it is a standard node, or the node that used to administer the cluster. When recreating the container for the administration node, the `docker` command must set up the ports to match the settings of the node that has been removed.
+
+[tabs]
+====
+Standard Node::
++
+--
+The following command will create a new container for the standard node.
+
+[source, console]
+----
+docker run -d --name nodename couchbase:latest
+----
+--
+
+Administration Node::
++
+--
+The following command will create a new container for the administration node.
+
+[source, console]
+----
+docker run -d --name nodename -p 8091-8096:8091-8096 -p 11210-11211:11210-11211 couchbase:latest
+----
+Note that the external port addresses match those of the administration node that has been removed.
+--
+====
+
+[#add-new-node-and-rebalance]
+== Add the New Node to the Cluster and Rebalance
+
+Use the `sparenode` to add the new node to the cluster, then rebalance the cluster.
+This can be done through the administration console, or the REST-API. 
+(For information on adding nodes and rebalancing, read xref:manage:manage-nodes/add-node-and-rebalance.adoc[]).
+
+== Repeat for all nodes in cluster
+Now repeat steps from [xref:remove-node-for-upgrading[]] to [xref:add-new-node-and-rebalance[]] to remove and upgrade each node in the cluster, except the spare node used for administration.
+
+CAUTION: Care should be taken not to remove the spare node by mistake; this is the node that is used for adding the other nodes and rebalancing.
+
+== Remove the Spare Node
+The upgraded administration node can be used to remove the spare node from the cluster and rebalance the cluster.
+Once this has been done, then the `docker` command can be used to remove the spare node's container and volume.
+
+[source, console]
+----
+docker rm -f sparenode 
+docker volume prune
+----
+
+The cluster is now fully upgraded.
+
+
+
+
+
+
+
