@@ -4,6 +4,7 @@
 :imagesdir: ../../assets/images
 
 :expression: xref:n1ql-language-reference/index.adoc#N1QL_Expressions
+:hints: xref:n1ql-language-reference/optimizer-hints.adoc
 :conventions: xref:n1ql-language-reference/conventions.adoc
 :number: xref:n1ql-language-reference/literals.adoc#numbers
 :identifier: xref:n1ql-language-reference/identifiers.adoc
@@ -12,16 +13,9 @@
 [abstract]
 {description}
 
-[#select-query,reftext="select-query",subs="normal"]
-----
-select-query ::= [ <<with-clause>> ] <<select>>
-----
-
-image::n1ql-language-reference/select-query.png[]
-
 [#select,reftext="select",subs="normal"]
 ----
-select ::= <<select-term>> [ <<set-op>> [ ALL ] <<select-term>> ]* [ <<order-by-clause>> | <<limit-clause>> | <<offset-clause>> ]
+select ::= <<select-term>> [ <<set-op>> <<select-term>> ]* [ <<order-by-clause>> ] [ <<limit-clause>> ] [ <<offset-clause>> ]
 ----
 
 image::n1ql-language-reference/select.png[]
@@ -42,23 +36,23 @@ image::n1ql-language-reference/subselect.png[]
 
 [#select-from,reftext="select-from",subs="normal"]
 ----
-select-from ::= <<select-clause>> [ <<from-clause>> ] [ <<let-clause>> ] [ <<where-clause>> ] [ <<group-by-clause>> ]
-              [ <<window-clause>> ]
+select-from ::= [ <<with-clause>> ] <<select-clause>> [ <<from-clause>> ] [ <<let-clause>> ] [ <<where-clause>> ]
+                [ <<group-by-clause>> ] [ <<window-clause>> ]
 ----
 
 image::n1ql-language-reference/select-from.png[]
 
 [#from-select,reftext="from-select",subs="normal"]
 ----
-from-select ::= <<from-clause>> [ <<let-clause>> ] [ <<where-clause>> ] [ <<group-by-clause>> ] [ <<window-clause>> ]
-                <<select-clause>>
+from-select ::= [ <<with-clause>> ] <<from-clause>> [ <<let-clause>> ] [ <<where-clause>> ] [ <<group-by-clause>> ]
+                [ <<window-clause>> ] <<select-clause>>
 ----
 
 image::n1ql-language-reference/from-select.png[]
 
 [#set-op,reftext="set-op",subs="normal"]
 ----
-set-op ::= UNION | INTERSECT | EXCEPT
+set-op ::= ( UNION | INTERSECT | EXCEPT ) [ ALL ]
 ----
 
 image::n1ql-language-reference/set-op.png[]
@@ -79,11 +73,32 @@ image::n1ql-language-reference/with-clause.png[]
 
 [subs="normal"]
 ----
-select-clause ::= SELECT [ ALL | DISTINCT ]
-                ( {expression}[result-expr] [ , {expression}[result-expr] ]* | ( RAW | ELEMENT | VALUE ) {expression}[expr] [ [ AS ] {alias}[alias] ] )
+select-clause ::= SELECT [ {hints}[hint-comment] ] <<projection>>
 ----
 
-image::n1ql-language-reference/select-clause.png[]
+image::n1ql-language-reference/select-clause.png["'SELECT' hint-comment? projection"]
+
+[#projection,reftext="projection",subs="normal"]
+----
+projection ::= [ ALL | DISTINCT ]
+               ( <<result-expr>> [ , <<result-expr>> ]* | ( RAW | ELEMENT | VALUE ) {expression}[expr] [ [ AS ] {alias}[alias] ] )
+----
+
+image::n1ql-language-reference/projection.png["( 'ALL' | 'DISTINCT' )? ( result-expr ( ',' result-expr )* | ( 'RAW' | 'ELEMENT' | 'VALUE' ) expr ( 'AS'? alias )? )"]
+
+[#result-expr,reftext="result-expr",subs="normal"]
+----
+result-expr ::= ( [ <<path>> "." ] "*" | {expression}[expr] [ [ AS ] {alias}[alias] ] )
+----
+
+image::n1ql-language-reference/result-expr.png["( path '.' )? '*' | expr ( 'AS'? alias )?"]
+
+[#path,reftext="path",subs="normal"]
+----
+path ::= {identifier}[identifier] [ '[' {expression}[expr] ']' ]* [ '.' <<path>> ]
+----
+
+image::n1ql-language-reference/path.png["identifier ( '[' expr ']' )* ( '.' path )?"]
 
 [[from-clause,from-clause]]
 == FROM Clause
@@ -95,12 +110,13 @@ from-clause ::= FROM <<from-term>>
 
 image::n1ql-language-reference/from-clause.png[]
 
-[#from-term,reftext="from-term",subs="normal"]
+[#from-term,reftext="from-terms",subs="normal"]
 ----
-from-term ::= <<from-keyspace>> | <<from-subquery>> | <<from-generic>> | <<join-clause>> | <<nest-clause>> | <<unnest-clause>>
+from-terms ::= ( <<from-keyspace>> | <<from-subquery>> | <<from-generic>> )
+               ( <<join-clause>> | <<nest-clause>> | <<unnest-clause>> )*  <<comma-separated-join>>*
 ----
 
-image::n1ql-language-reference/from-term.png["from-keyspace | from-subquery | from-generic | join-clause | nest-clause | unnest-clause"]
+image::n1ql-language-reference/from-terms.png["( from-keyspace | from-subquery | from-generic ) ( join-clause | nest-clause | unnest-clause )* comma-separated-join*"]
 
 [#from-keyspace,reftext="from-keyspace",subs="normal"]
 ----
@@ -184,7 +200,7 @@ image::n1ql-language-reference/generic-expr.png[]
 
 [subs="normal"]
 ----
-join-clause ::= <<from-term>> ( <<ansi-join-clause>> | <<lookup-join-clause>> | <<index-join-clause>> )
+join-clause ::= <<ansi-join-clause>> | <<lookup-join-clause>> | <<index-join-clause>>
 ----
 
 image::n1ql-language-reference/join-clause.png[]
@@ -194,10 +210,10 @@ image::n1ql-language-reference/join-clause.png[]
 
 [subs="normal"]
 ----
-ansi-join-clause ::= [ <<ansi-join-type>> ] JOIN <<ansi-join-rhs>> [ <<ansi-join-hints>> ] <<ansi-join-predicate>>
+ansi-join-clause ::= [ <<ansi-join-type>> ] JOIN <<ansi-join-rhs>> <<ansi-join-predicate>>
 ----
 
-image::n1ql-language-reference/ansi-join-clause.png["ansi-join-type? 'JOIN' ansi-join-rhs ansi-join-hints? ansi-join-predicate"]
+image::n1ql-language-reference/ansi-join-clause.png["ansi-join-type? 'JOIN' ansi-join-rhs ansi-join-predicate"]
 
 [#ansi-join-type,reftext="ansi-join-type",subs="normal"]
 ----
@@ -215,10 +231,10 @@ image::n1ql-language-reference/ansi-join-rhs.png["rhs-keyspace | rhs-subquery | 
 
 [#rhs-keyspace,reftext="rhs-keyspace",subs="normal"]
 ----
-rhs-keyspace ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ]
+rhs-keyspace ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ] [ <<ansi-join-hints>> ]
 ----
 
-image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )? ansi-join-hints?"]
 
 [#rhs-subquery,reftext="rhs-subquery",subs="normal"]
 ----
@@ -229,10 +245,10 @@ image::n1ql-language-reference/rhs-subquery.png["subquery-expr 'AS'? alias"]
 
 [#rhs-generic,reftext="rhs-generic",subs="normal"]
 ----
-rhs-generic ::= {expression}[expr] [ AS {alias}[alias] ]
+rhs-generic ::= {expression}[expr] [ [ AS ] {alias}[alias] ]
 ----
 
-image::n1ql-language-reference/rhs-generic.png["expr 'AS'? alias"]
+image::n1ql-language-reference/rhs-generic.png["expr ( 'AS'? alias )?"]
 
 [#ansi-join-hints,reftext="ansi-join-hints",subs="normal"]
 ----
@@ -319,7 +335,7 @@ image::n1ql-language-reference/lookup-join-type.png[]
 lookup-join-rhs ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ]
 ----
 
-image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+image::n1ql-language-reference/lookup-join-rhs.png["keyspace-ref ( 'AS'? alias )?"]
 
 [#lookup-join-predicate,reftext="lookup-join-predicate",subs="normal"]
 ----
@@ -350,7 +366,7 @@ image::n1ql-language-reference/index-join-type.png[]
 index-join-rhs ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ]
 ----
 
-image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+image::n1ql-language-reference/index-join-rhs.png["keyspace-ref ( 'AS'? alias )?"]
 
 [#index-join-predicate,reftext="index-join-predicate",subs="normal"]
 ----
@@ -364,7 +380,7 @@ image::n1ql-language-reference/index-join-predicate.png[]
 
 [subs="normal"]
 ----
-nest-clause ::= <<from-term>> ( <<ansi-nest-clause>> | <<lookup-nest-clause>> | <<index-nest-clause>> )
+nest-clause ::= <<ansi-nest-clause>> | <<lookup-nest-clause>> | <<index-nest-clause>>
 ----
 
 image::n1ql-language-reference/nest-clause.png[]
@@ -391,7 +407,7 @@ image::n1ql-language-reference/ansi-nest-type.png[]
 ansi-nest-rhs ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ]
 ----
 
-image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+image::n1ql-language-reference/ansi-nest-rhs.png["keyspace-ref ( 'AS'? alias )?"]
 
 [#ansi-nest-predicate,reftext="ansi-nest-predicate",subs="normal"]
 ----
@@ -422,7 +438,7 @@ image::n1ql-language-reference/lookup-nest-type.png[]
 lookup-nest-rhs ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ]
 ----
 
-image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+image::n1ql-language-reference/lookup-nest-rhs.png["keyspace-ref ( 'AS'? alias )?"]
 
 [#lookup-nest-predicate,reftext="lookup-nest-predicate",subs="normal"]
 ----
@@ -453,7 +469,7 @@ image::n1ql-language-reference/index-nest-type.png[]
 index-nest-rhs ::= <<keyspace-ref>> [ [ AS ] {alias}[alias] ]
 ----
 
-image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+image::n1ql-language-reference/index-nest-rhs.png["keyspace-ref ( 'AS'? alias )?"]
 
 [#index-nest-predicate,reftext="index-nest-predicate",subs="normal"]
 ----
@@ -467,7 +483,7 @@ image::n1ql-language-reference/index-nest-predicate.png[]
 
 [subs="normal"]
 ----
-unnest-clause ::= <<from-term>> [ <<unnest-type>> ] ( UNNEST | FLATTEN ) {expression}[expr] [ [ AS ] {alias}[alias] ]
+unnest-clause ::= [ <<unnest-type>> ] ( UNNEST | FLATTEN ) {expression}[expr] [ [ AS ] {alias}[alias] ]
 ----
 
 image::n1ql-language-reference/unnest-clause.png[]
@@ -478,6 +494,16 @@ unnest-type ::= INNER | ( LEFT [ OUTER ] )
 ----
 
 image::n1ql-language-reference/unnest-type.png[]
+
+[[comma-separated-join,comma-separated-join]]
+== Comma-Separated Join
+
+[subs="normal"]
+----
+comma-separated-join ::= ',' ( <<rhs-keyspace>> | <<rhs-subquery>> | <<rhs-generic>> )
+----
+
+image::n1ql-language-reference/comma-separated-join.png["',' ( from-keyspace | from-subquery | from-generic )"]
 
 [[use-clause,use-clause]]
 == USE Clause

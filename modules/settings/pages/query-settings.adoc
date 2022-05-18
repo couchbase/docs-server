@@ -1,6 +1,7 @@
 = Settings and Parameters
 :description: You can configure the Query service using cluster-level query settings, node-level query settings, and request-level query parameters.
 :page-aliases: manage:manage-settings/query-settings
+:tabs:
 
 // Cluster-level settings from node-level
 :queryCleanupClientAttempts: xref:queryCleanupClientAttempts
@@ -73,6 +74,10 @@
 // Request-level parameters (internal)
 :txid: xref:txid
 
+// Settings (internal)
+:section_srh_tlm_n1b: xref:section_srh_tlm_n1b
+:transactional-scan-consistency: xref:transactional-scan-consistency
+
 // External cross-references
 :rest-cluster-query-settings: xref:rest-api:rest-cluster-query-settings.adoc
 :general-settings-query-settings: xref:manage:manage-settings/general-settings.adoc#query-settings
@@ -80,11 +85,13 @@
 :n1ql-rest-api-admin: xref:n1ql:n1ql-rest-api/admin.adoc
 :n1ql-rest-api-index: xref:n1ql:n1ql-rest-api/index.adoc
 :cbq-shell: xref:tools:cbq-shell.adoc
-:transactions-understanding-transactions: xref:learn:data/transactions.adoc#additional-storage-use
+:transactions-understanding-transactions: xref:learn:data/transactions.adoc#active-transaction-record-entries
 :durability: xref:learn:data/durability.adoc
 :prepare-auto-execute: xref:n1ql:n1ql-language-reference/prepare.adoc#auto-execute
 :flex-indexes: xref:n1ql:n1ql-language-reference/flex-indexes.adoc
 :rest-intro: xref:rest-api:rest-intro.adoc
+:execute: xref:n1ql:n1ql-language-reference/execute.adoc
+:query-preferences: xref:tools:query-workbench.adoc#query-preferences
 
 // Pass through HTML table styles for this page
 
@@ -151,7 +158,7 @@ Cluster-level query settings, node-level query settings, and request-level param
 | Request (statement)
 | Each user
 | Client side
-| `cbq` command-line parameters, cURL statements, or client programming
+| `cbq` command-line parameters, cURL statements, client programming, or the UI
 |===
 
 NOTE: Cluster-level settings and node-level settings are collectively referred to as [def]_service-level settings_.
@@ -214,10 +221,6 @@ a| <<args,args>>
 
 <<auto_execute,auto_execute>>
 
-<<batch_args,batch_args>>
-
-<<batch_named_args,batch_named_args>>
-
 <<client_context_id,client_context_id>>
 
 <<compression,compression>>
@@ -239,6 +242,8 @@ a| <<args,args>>
 <<namespace,namespace>>
 
 <<prepared,prepared>>
+
+<<preserve_expiry,preserve_expiry>>
 
 <<query_context,query_context>>
 
@@ -397,7 +402,7 @@ a| <<max_parallelism_req,max_parallelism>>
 == Cluster-Level Query Settings
 
 To set a cluster-level query setting, use the {rest-cluster-query-settings}[Query Settings REST API] (`/settings/querySettings` endpoint) with a cURL statement, or the {general-settings-query-settings}[Advanced Query Settings] in the Couchbase Web Console.
-You can also set all of the cluster-level query settings, except for the CURL() access list settings, using the {couchbase-cli-setting-query}[setting-query] command.
+You can also set all of the cluster-level query settings using the {couchbase-cli-setting-query}[setting-query] command.
 
 The table below contains details of all cluster-level query settings.
 
@@ -412,8 +417,7 @@ include::rest-api:partial$query-settings/definitions.adoc[tag=access]
 == Node-Level Query Settings
 
 To set a node-level query setting, use the {n1ql-rest-api-admin}[Admin REST API] (`/admin/settings` endpoint) with a cURL statement.
-
-NOTE: These settings cannot be set by `cbq`.
+These settings cannot be set by `cbq`.
 
 ====
 To see a list of the current Query Settings, while the Query Service is running, enter:
@@ -449,937 +453,51 @@ include::n1ql:partial$n1ql-rest-api/admin/definitions.adoc[tag=settings]
 == Request-Level Parameters
 
 To set a request-level parameter, use the {n1ql-rest-api-index}[N1QL REST API] (`/query/service` endpoint) with a cURL statement, or the {cbq-shell}[cbq] command, or a client program.
+You can also set request-level parameters using the {query-preferences}[Run-Time Preferences] window in the Query Workbench.
 
 While `cbq` is a sandbox to test code on your local machine, your production query settings are set with the cURL commands on your server.
+
+[tabs]
+====
+CBQ Shell::
++
+--
+To set request-level parameters in `cbq`, use the `\SET` command.
+The parameter name must be prefixed by a hyphen.
+
+[source,n1ql]
+----
+\SET -timeout "30m";
+\SET -pretty true;
+\SET -max_parallelism 3;
+SELECT * FROM "world" AS hello;
+----
+--
+
+REST API::
++
+--
+To set request-level parameters with the REST API, specify the parameters in the request body or the query URI.
+
+[source,sh]
+----
+curl http://localhost:8093/admin/settings -u Administrator:password \
+  -d 'statement=SELECT * FROM "world" AS hello;
+    & timeout=30m
+    & pretty=true
+    & max_parallelism=3'
+----
+--
+====
 
 The table below contains details of all request-level parameters, along with examples.
 
 .Request-Level Parameters
-[options="header", cols=".^3a,.^11a,.^4a"]
-|===
-|Name|Description|Schema
-
-| [[args]]
-**args** +
-__Optional__
-| If the statement has 1 or more positional parameters, this parameter needs to be in the request; this is an array of JSON values, one for each positional parameter in the statement.
-
-NOTE: Positional parameters apply to `prepared` also.
-
-Refer to <<section_srh_tlm_n1b,Named Parameters VS. Positional Parameters>> for details.
-
-.Example
-[source,shell]
-----
-cbq> \set -args ["LAX", 6];
-----
-| array
-
-| [[atrcollection_req]]
-**atrcollection** +
-__Optional__
-| Specifies the collection where the {transactions-understanding-transactions}[active transaction record] (ATR) is stored.
-The collection must be present.
-If not specified, the ATR is stored in the default collection in the default scope in the bucket containing the first mutated document within the transaction.
-
-The value must be a string in the form `"bucket.scope.collection"` or `"namespace:bucket.scope.collection"`.
-If any part of the path contains a special character, that part of the path must be delimited in backticks `pass:c[``]`.
-
-The {atrcollection-srv}[node-level] `atrcollection` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-
-.Example
-[source,shell]
-----
-cbq> \set -atrcollection "default:`travel-sample`.transaction.test";
-----
-| string
-
-| [[auto_execute]]
-**auto_execute** +
-__Optional__
-| Specifies that prepared statements should be executed automatically as soon as they are created.
-This saves you from having to make two separate requests in cases where you want to prepare a statement and execute it immediately.
-
-Refer to {prepare-auto-execute}[Auto-Execute] for more information.
-
-.Default
-`false`
-
-.Example
-[source,shell]
-----
-cbq> \set -auto_execute true;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=prepare select * from default&auto_execute=true'
-----
-| boolean
-
-| [[batch_args]]
-**batch_args** +
-__Optional__
-| Applies to POST requests only, containing UPDATE, INSERT, DELETE statements (DML statements) with _positional_ parameters.
-
-.Example
-[source,n1ql]
-----
-INSERT INTO location (id, name) VALUES ($1, $2)
-----
-
-These require the values to be given in `batch_args`, which contains an array of arrays.
-
-NOTE: The inner arrays need to match the positional parameters in the `statement`.
-| array of arrays
-
-| [[batch_named_args]]
-**batch_named_args** +
-__Optional__
-| Applies to POST requests only, containing UPDATE, INSERT, DELETE statements (DML statements) with _named_ parameters.
-
-.Example
-[source,n1ql]
-----
-INSERT INTO location (id, name) VALUES ($id, $n)
-----
-
-These require the values to be given in `batch_named_args`, which contains an array of objects.
-
-NOTE: The keys in each object need to match the named parameters in the `statement`.
-| array of objects
-
-| [[client_context_id]]
-**client_context_id** +
-__Optional__
-| A piece of data supplied by the client that is echoed in the response, if present.
-N1QL is agnostic about the content of this parameter; it is just echoed in the response.
-
-[NOTE]
---
-* Maximum allowed size is 64 characters; all others will be cut.
-* If it contains an escape character (‘/’) or quote ("), it will be rejected as Error code 1110.
---
-| string
-
-| [[compression]]
-**compression** +
-__Optional__
-| Compression format to use for response data on the wire.
-
-Values are case-insensitive.
-
-.Default
-`"NONE"`
-
-.Example
-[source,shell]
-----
-cbq> \set -compression "zip";
-----
-| enum (ZIP, RLE, LZMA, LZO, NONE)
-
-| [[controls_req]]
-**controls** +
-__Optional__
-| Specifies if there should be a controls section returned with the request results.
-
-When set to `true`, the query response document includes a controls section with runtime information provided along with the request, such as positional and named parameters or settings.
-
-NOTE: If the request qualifies for caching, these values will also be cached in the `completed_requests` system keyspace.
-
-The {controls-srv}[node-level] `controls` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-
-.Example
-[source,shell]
-----
-cbq> \set -controls true;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&controls=true'
-----
-| boolean
-
-| [[creds]]
-**creds** +
-__Optional__
-| Specify the login credentials in the form of `user:password`.
-
-You can specify credentials for different keyspaces by separating them with a comma.
-
-If credentials are supplied in the request header, then `creds` is ignored since HTTP Basic Authentication takes precedence and overrides `creds`.
-
-.Example
-[source,shell]
-----
-cbq> \set -creds travel-sample user:pword, beer-sample user:pword;
-----
-| array
-
-// To be added after confirming the latest info
-// <p>See Authentication Parameters
-// section <?oxy_custom_start type="oxy_content_highlight" color="255,255,0"?>at GD:
-// N1QL Query API<?oxy_custom_end?> for full spec.</p>
-
-| [[durability_level]]
-**durability_level** +
-__Optional__
-| The level of {durability}[durability] for mutations produced by the request.
-
-If the request contains a `BEGIN TRANSACTION` statement, or a DML statement with the {tximplicit}[tximplicit] parameter set to `true`, the durability level is specified for all mutations within that transaction.
-For all other statements it is ignored.
-
-If not specified, the default durability level is `"majority"`.
-Set the durability level to `"none"` or `""` to specify no durability.
-
-.Default
-`"majority"`
-
-.Example
-[source,shell]
-----
-cbq> \set -durability_level "none";
-
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "START TRANSACTION",
-  "durability_level": "none"
-}'
-----
-| enum ("", none, majority, majorityAndPersistActive, persistToMajority)
-
-| [[encoded_plan]]
-**encoded_plan** +
-__Optional__
-| In Couchbase Server 6.5 and later, this parameter is ignored and has no effect.
-It is included for compatibility with previous versions of Couchbase Server.
-| string
-
-| [[encoding]]
-**encoding** +
-__Optional__
-| Desired character encoding for the query results.
-
-Only possible value is `UTF-8` and is case-insensitive.
-
-.Default
-`"UTF-8"`
-
-| string
-
-| [[format]]
-**format** +
-__Optional__
-| Desired format for the query results.
-
-Values are case-insensitive.
-
-.Default
-`"JSON"`
-
-.Example
-[source,shell]
-----
-cbq> \set -format "XML";
-----
-| enum (JSON, XML, CSV, TSV)
-
-| [[max_parallelism_req]]
-**max_parallelism** +
-__Optional__
-| Specifies the maximum parallelism for the query.
-
-The {max-parallelism-srv}[node-level] `max-parallelism` setting specifies the ceiling for this parameter for a single node.
-If the request-level parameter is zero or negative, the parallelism for the query is set to the node-level setting.
-If the request-level parameter is greater than zero and less than the node-level setting, the request-level parameter overrides the node-level setting.
-If the request-level parameter is greater than the node-level setting, the parallelism for the query is set to the node-level setting.
-
-In addition, the {queryMaxParallelism}[cluster-level] `queryMaxParallelism` setting specifies the ceiling for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-[NOTE]
-To enable queries to run in parallel, you must specify the cluster-level `queryMaxParallelism` parameter, or specify the node-level `max-parallelism` parameter on all Query nodes.
-
-.Default
-The same as the number of partitions of the index selected for the query.
-
-.Example
-[source,shell]
-----
-cbq> \set -max_parallelism 3;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&max_parallelism=3'
-----
-| integer (int32)
-
-| [[memory_quota_req]]
-**memory_quota** +
-__Optional__
-| Specifies the maximum amount of memory the request may use, in MB.
-
-Specify `0` (the default value) to disable.
-When disabled, there is no quota.
-
-Within a transaction, this parameter enforces the memory quota for the transaction.
-The transaction memory quota tracks only the delta table and the transaction log (approximately).
-
-The {memory-quota-srv}[node-level] `memory-quota` setting specifies the ceiling for this parameter for a single node.
-If the node-level setting is zero (the default), the request-level parameter overrides the node-level setting.
-If the node-level setting is greater than zero, the request-level parameter is capped by the node-level setting.
-
-In addition, the {queryMemoryQuota}[cluster-level] `queryMemoryQuota` setting specifies the ceiling for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Default
-`0`
-
-.Example
-[source,shell]
-----
-cbq> \set -memory_quota 4;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&memory_quota=4'
-----
-| integer (int32)
-
-| [[kvtimeout]]
-**kvtimeout** +
-__Optional__
-| The maximum time to wait for a KV operation before timing out.
-Only applies to statements within a transaction.
-
-The value for this parameter is a string.
-Its format includes an amount and a mandatory unit, e.g. `10ms` (10 milliseconds) or `0.5s` (half a second).
-Valid units are:
-
-* `ns` (nanoseconds)
-* `us` (microseconds)
-* `ms` (milliseconds)
-* `s` (seconds)
-* `m` (minutes)
-* `h` (hours)
-
-Specify a duration of `0` or a negative duration to disable.
-When disabled, no timeout is applied and the KV operation runs for however long it takes.
-
-.Default
-`"2.5s"`
-
-.Example
-[source,shell]
-----
-cbq> \set -kvtimeout "10ms";
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&kvtimeout=10ms'
-----
-| string
-
-| [[metrics]]
-**metrics** +
-__Optional__
-| Specifies that metrics should be returned with query results.
-
-.Default
-`true`
-
-.Example
-[source,shell]
-----
-cbq> \set -metrics false;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&metrics=false'
-----
-| boolean
-
-| [[namespace]]
-**namespace** +
-__Optional__
-| Specifies the namespace to use.
-
-.Example
-[source,shell]
-----
-cbq> \set -namespace default;
-----
-| string
-
-| [[numatrs_req]]
-**numatrs** +
-__Optional__
-| Specifies the total number of {transactions-understanding-transactions}[active transaction records].
-Must be a positive integer.
-
-The {numatrs-srv}[node-level] `numatrs` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-
-In addition, the {queryNumAtrs}[cluster-level] `queryNumAtrs` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Default
-`1024`
-
-.Example
-[source,shell]
-----
-cbq> \set -numatrs 512;
-----
-| integer (int32)
-
-| [[pipeline_batch_req]]
-**pipeline_batch** +
-__Optional__
-| Controls the number of items execution operators can batch for Fetch from the KV.
-
-The {pipeline-batch-srv}[node-level] `pipeline-batch` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting, but only if it is lower than the node-level setting.
-
-In addition, the {queryPipelineBatch}[cluster-level] `queryPipelineBatch` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Example
-[source,shell]
-----
-cbq> \set -pipeline_batch 64;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&pipeline_batch=64'
-----
-| integer (int32)
-
-| [[pipeline_cap_req]]
-**pipeline_cap** +
-__Optional__
-| Maximum number of items each execution operator can buffer between various operators.
-
-The {pipeline-cap-srv}[node-level] `pipeline-cap` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting, but only if it is lower than the node-level setting.
-
-In addition, the {queryPipelineCap}[cluster-level] `queryPipelineCap` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Example
-[source,shell]
-----
-cbq> \set -pipeline_cap 1024;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&pipeline_cap=1024'
-----
-| integer (int32)
-
-| **prepared** +
-__Required if__ `statement` __not provided__
-| [[prepared]]
-The prepared form of the N1QL statement to be executed.
-
-NOTE: If both `prepared` and `statement` are present and non-empty, an error is returned.
-
-.Example
-Prepare the query result of the most expensive hotel:
-[source,shell]
-$ curl -v http://localhost:8093/query/service -d 'statement=PREPARE pricy_hotel FROM SELECT MAX(price) FROM `travel-sample`.inventory.hotel;'
-
-Response:
-[source,json]
-----
-{
-  "requestID": "b7f03c4e-06f6-4d23-bd14-b5c8ecfe0e2e",
-  "signature": "json",
-  "results": [
-    {"encoded_plan":"H4sIAAAAAAAA/wEAAP//AAAAAAAAAAA=",
-    "featureControls":12,
-    "indexApiVersion":3,
-    "name":"[127.0.0.1:8091]pricy_hotel",
-...
-    }
-  ]
-}
-----
-
-Execute the prepared statement:
-
-[source,shell]
-$ curl -v http://localhost:8093/query/service -H "Content-Type: application/json" -d '{ "prepared":"[127.0.0.1:8091]pricy_hotel" }'
-| string
-
-| [[pretty_req]]
-**pretty** +
-__Optional__
-| Specifies the query results returned in pretty format.
-
-The {pretty-srv}[node-level] `pretty` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-
-.Example
-[source,shell]
-----
-cbq> \set -pretty false;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&pretty=false'
-----
-| boolean
-
-| [[profile_req]]
-**profile** +
-__Optional__
-| Specifies if there should be a profile section returned with the request results.
-The valid values are:
-
-`off`:: No profiling information is added to the query response.
-
-`phases`::
-The query response includes a profile section with stats and details about various phases of the query plan and execution.
-Three phase times will be included in the `system:active_requests` and `system:completed_requests` monitoring keyspaces.
-
-`timings`::
-Besides the phase times, the profile section of the query response document will include a full query plan with timing and information about the number of processed documents at each phase.
-This information will be included in the `system:active_requests` and `system:completed_requests` keyspaces.
-
-NOTE: If `profile` is not set as one of the above values, then the profile setting does not change.
-
-The {profile-srv}[node-level] `profile` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-
-.Example
-[source,shell]
-----
-cbq> \set -profile "phases";
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&profile=phases'
-----
-| enum (off, phases, timings)
-
-| [[query_context]]
-**query_context** +
-__Optional__
-| Specifies the namespace, bucket, and scope used to resolve partial keyspace references within the request.
-
-The query context may be a _full path_, containing namespace, bucket, and scope; or a _relative path_, containing just the bucket and scope.
-Currently, only the `default` namespace is available.
-If the namespace name is omitted, the default namespace in the current session is used.
-
-.Default
-`default:`
-
-.Example
-[source,shell]
-----
-cbq> \set -query_context "default:travel-sample.inventory";
-
-cbq> \set -query_context "travel-sample.inventory";
-----
-| string
-
-| [[readonly]]
-**readonly** +
-__Optional__
-| Controls whether a query can change a resulting recordset.
-
-If `readonly` is `true`, then the following statements are not allowed:
-
-* CREATE INDEX
-* DROP INDEX
-* INSERT
-* MERGE
-* UPDATE
-* UPSERT
-
-NOTE: When using GET requests, it's best to set `readonly` to `true`.
-
-.Default
-`false`
-
-.Example
-[source,shell]
-----
-cbq> \set -readonly true;
-----
-| boolean
-
-| [[scan_cap_req]]
-**scan_cap** +
-__Optional__
-| Maximum buffered channel size between the indexer client and the query service for index scans.
-This parameter controls when to use scan backfill.
-
-Use `0` or a negative number to disable.
-Smaller values reduce GC, while larger values reduce indexer backfill.
-
-The {scan-cap-srv}[node-level] `scan-cap` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting, but only if it is lower than the node-level setting.
-
-In addition, the {queryScanCap}[cluster-level] `queryScanCap` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Example
-[source,shell]
-----
-cbq> \set -scan_cap 1024;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&scan_cap=1024'
-----
-| integer (int32)
-
-| [[scan_consistency]]
-**scan_consistency** +
-__Optional__
-| Specify the consistency guarantee/constraint for index scanning.
-The valid values are:
-
-`not_bounded`::
-No timestamp vector is used in the index scan.
-This is the fastest mode, because it avoids the costs of obtaining the vector and waiting for the index to catch up to the vector.
-
-`at_plus`::
-This implements bounded consistency.
-The request includes a scan_vector parameter and value, which is used as a lower bound.
-This can be used to implement read-your-own-writes (RYOW).
-
-`request_plus`::
-This implements strong consistency per request.
-Before processing the request, a current vector is obtained.
-The vector is used as a lower bound for the statements in the request.
-If there are DML statements in the request, RYOW is also applied within the request.
-
-`statement_plus`::
-This implements strong consistency per statement.
-Before processing each statement, a current vector is obtained and used as a lower bound for that statement.
-
-Values are case-insensitive.
-
-NOTE: The default behavior is RYOW within the request, however, if you want to disable RYOW within a request, add a separate `request_consistency` parameter that can be set to `not_bounded`.
-
-If the request contains a `BEGIN TRANSACTION` statement, or a DML statement with the {tximplicit}[tximplicit] parameter set to `true`, then this parameter sets the transactional scan consistency.
-Refer to <<transactional-scan-consistency,Transactional Scan Consistency>> for details.
-
-.Default
-`"not_bounded"`
-
-.Example
-[source,shell]
-----
-cbq> \set -scan_consistency "at_plus";
-----
-| enum (not_bounded, at_plus, request_plus, statement_plus)
-
-| [[scan_vector]]
-**scan_vector** +
-__Required if__ `scan_consistency` __is__ `at_plus` __and__ `scan_vectors` __not provided__
-| Specify the lower bound vector timestamp for one keyspace when using `at_plus` scan consistency.
-
-Scan vectors are built of two-element +[+[.var]`value`, [.var]`guard`] entries:
-
-* [.var]`value`: a vBucket's sequence number (a JSON number)
-* [.var]`guard`: a vBucket's UUID (a string)
-
-Scan vectors have two forms:
-
-. *Full scan vector*: an array of +[+[.var]`value`, [.var]`guard`] entries, giving an entry for every vBucket in the system.
-. *Sparse scan vectors*: an object providing entries for specific vBuckets, mapping a vBucket number (a string) to each +[+[.var]`value`, [.var]`guard`] entry.
-
-NOTE: `scan_vector` can only be used if the query uses at most one keyspace; if it is used for a query referencing more than one keyspace, the query will fail with an error.
-
-For queries referencing multiple keyspaces, use `scan_vectors`.
-
-.Example
-[source,shell]
-----
-scan_vector={ "5 ": [5409393,"VB5ID"], "19": [47574574, "VB19ID"] }
-----
-| array, object
-
-| [[scan_vectors]]
-**scan_vectors** +
-__Required if__ `scan_consistency` __is__ `at_plus` __and__ `scan_vector` __not provided__
-| A map from keyspace names to scan vectors.
-See `scan_vector`.
-
-The scan vectors can be Full or Sparse.
-| object
-
-| [[scan_wait]]
-**scan_wait** +
-__Optional__
-| Can be supplied with `scan_consistency` values of `request_plus`, `statement_plus` and `at_plus`.
-
-Specifies the maximum time the client is willing to wait for an index to catch up to the vector timestamp in the request.
-
-NOTE: If an index has to catch up, and the `scan_wait` time is exceeded while waiting, an error is returned.
-
-Its format includes an amount and a mandatory unit, e.g. `10ms` (10 milliseconds) or `0.5s` (half a second).
-Valid units are:
-
-* `ns` (nanoseconds)
-* `us` (microseconds)
-* `ms` (milliseconds)
-* `s` (seconds)
-* `m` (minutes)
-* `h` (hours)
-
-NOTE: Specify `0` or a negative integer to disable.
-
-.Default
-`""`
-
-.Example
-[source,shell]
-----
-cbq> \set -scan_wait "30m";
-----
-| string (duration)
-
-| [[signature]]
-**signature** +
-__Optional__
-| Include a header for the results schema in the response.
-
-.Default
-`true`
-
-.Example
-[source,shell]
-----
-cbq> \set -signature false;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&signature=false'
-----
-| boolean
-
-| [[statement]]
-**statement** +
-__Required if__ `prepared` __not provided__
-| Any valid N1QL statement for a POST request, or a read-only N1QL statement (SELECT, EXPLAIN) for a GET request.
-
-NOTE: If both `prepared` and `statement` are present and non-empty, an error is returned.
-| string
-
-| [[timeout_req]]
-**timeout** +
-__Optional__
-| Maximum time to spend on the request before timing out.
-
-The value for this parameter is a string.
-Its format includes an amount and a mandatory unit, e.g. `10ms` (10 milliseconds) or `0.5s` (half a second).
-Valid units are:
-
-* `ns` (nanoseconds)
-* `us` (microseconds)
-* `ms` (milliseconds)
-* `s` (seconds)
-* `m` (minutes)
-* `h` (hours)
-
-Specify a duration of `0` or a negative duration to disable.
-When disabled, no timeout is applied and the request runs for however long it takes.
-
-If {txid}[txid] or {tximplicit}[tximplicit] is set, this parameter is ignored.
-The request inherits the remaining time of the transaction as timeout.
-
-The {timeout-srv}[node-level] `timeout` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-However, if the node-level setting is greater than 0, the timeout for the query is limited to the node-level setting.
-
-In addition, the {queryTimeout}[cluster-level] `queryTimeout` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Example
-[source,shell]
-----
-cbq> \set -timeout "30m";
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&timeout=30m'
-----
-| string (duration)
-
-| [[txdata]]
-**txdata** +
-__Optional__
-| Transaction data.
-For internal use only.
-| object
-
-| [[txid]]
-**txid** +
-__Required__ for statements within a transaction
-| Transaction ID.
-Specifies the transaction to which a statement belongs.
-For use with DML statements within a transaction, rollbacks, and commits.
-
-The transaction ID should be the same as the transaction ID generated by the `BEGIN TRANSACTION` statement.
-The transaction must be active and non-expired.
-
-.Example
-[source,shell]
-----
-cbq> \set -txid d81d9b4a-b758-4f98-b007-87ba262d3a51;
-
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "select * from default;",
-  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
-}'
-----
-| string (UUID)
-
-| [[tximplicit]]
-**tximplicit** +
-__Optional__
-| Specifies that a DML statement is a singleton transaction.
-
-When this parameter is true, the Query service starts a transaction and executes the statement.
-If execution is successful, the Query service commits the transaction; otherwise the transaction is rolled back.
-
-The statement may not be part of an ongoing transaction.
-If the {txid}[txid] request-level parameter is set, the `tximplicit` parameter is ignored.
-
-.Default
-`false`
-
-.Example
-[source,shell]
-----
-cbq> \set -tximplicit true;
-
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "select * from default;",
-  "tximplicit": true
-}'
-----
-| boolean
-
-| [[txstmtnum]]
-**txstmtnum** +
-__Optional__
-| Transaction statement number.
-The transaction statement number must be a positive integer, and must be higher than any previous transaction statement numbers in the transaction.
-If the transaction statement number is lower than the transaction statement number for any previous statement, an error is generated.
-
-.Example
-[source,shell]
-----
-cbq> \set -txstmtnum 10;
-
-$ curl http://localhost:8093/query/service \
--u Administrator:password \
--H 'Content-Type: application/json' \
--d '{
-  "statement": "select * from default;",
-  "txstmtnum": 10,
-  "txid": "d81d9b4a-b758-4f98-b007-87ba262d3a51"
-}'
-----
-| integer (int32)
-
-| [[txtimeout_req]]
-**txtimeout** +
-__Optional__
-| Maximum time to spend on a transaction before timing out.
-Only applies to `BEGIN TRANSACTION` statements, or DML statements for which {tximplicit}[tximplicit] is set.
-For other statements, it is ignored.
-
-Within a transaction, the request-level {timeout_req}[timeout] parameter is ignored.
-The transaction timeout clock starts when the `BEGIN WORK` statement is successful.
-Once the transaction timeout is reached, no statement is allowed to continue in the transaction.
-
-The value for this parameter is a string.
-Its format includes an amount and a mandatory unit, e.g. `10ms` (10 milliseconds) or `0.5s` (half a second).
-Valid units are:
-
-* `ns` (nanoseconds)
-* `us` (microseconds)
-* `ms` (milliseconds)
-* `s` (seconds)
-* `m` (minutes)
-* `h` (hours)
-
-Specify a duration of `0` to disable.
-When disabled, the request-level timeout is set to the default.
-
-The {txtimeout-srv}[node-level] `txtimeout` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-However, if the node-level setting is greater than 0, the transaction timeout for the query is limited to the node-level setting.
-
-In addition, the {queryTxTimeout}[cluster-level] `queryTxTimeout` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Default
-`"15s"` for cbq files or scripts +
-`"2m"` for interactive cbq sessions or redirected input
-
-.Example
-[source,shell]
-----
-cbq> \set -txtimeout "30m";
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=BEGIN TRANSACTION&txtimeout=30m'
-----
-| string (duration)
-
-| [[use_cbo_req]]
-**use_cbo** +
-__Optional__
-| Specifies whether the cost-based optimizer is enabled.
-
-The {use-cbo-srv}[node-level] `use-cbo` setting specifies the default for this parameter for a single node.
-The request-level parameter overrides the node-level setting.
-
-In addition, the {queryUseCBO}[cluster-level] `queryUseCBO` setting specifies the default for this parameter for the whole cluster.
-When you change the cluster-level setting, the node-level setting is overwritten for all nodes in the cluster.
-
-.Example
-[source,shell]
-----
-cbq> \set -use_cbo true;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&use_cbo=true'
-----
-| boolean
-
-| [[use_fts]]
-**use_fts** +
-__Optional__
-| [.edition]#{enterprise}#
-
-Specifies that the query should use a full-text index.
-
-If the query contains a `USING FTS` hint, that takes priority over this parameter.
-
-If the query does not contain a `USING FTS` hint, and this parameter is set to true, all full-text indexes are considered for the query.
-If a qualified full-text index is available, it is selected for the query.
-If none of the available full-text indexes are qualified, the available GSI indexes are considered instead.
-
-Refer to {flex-indexes}[Flex Indexes] for more information.
-
-.Default
-`false`
-
-.Example
-[source,shell]
-----
-cbq> \set -use_fts true;
-
-$ curl http://localhost:8093/query/service -u user:pword -d 'statement=select * from default&use_fts=true'
-----
-| boolean
-
-| [[identifier]]
-**$<identifier>** +
-__Optional__
-| If the `statement` has 1 or more named parameters, there should be 1 or more named parameters in the request.
-
-A named parameter consists of two parts:
-
-. The $ character
-. An identifier that starts with an alpha character followed by one or more alphanumeric characters.
-
-Named parameters apply to `prepared` also.
-
-Refer to <<section_srh_tlm_n1b,Named Parameters VS. Positional Parameters>> for examples.
-| JSON value
-|===
+include::n1ql:partial$n1ql-rest-api/query/definitions.adoc[tag=settings]
+
+[[_credentials]]
+**Credentials**
+include::n1ql:partial$n1ql-rest-api/query/definitions.adoc[tag=credentials]
 
 [discrete,#transactional-scan-consistency]
 ===== Transactional Scan Consistency

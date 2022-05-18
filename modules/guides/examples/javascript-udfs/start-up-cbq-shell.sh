@@ -1,0 +1,1 @@
+/opt/couchbase/bin/cbq -u Administrator

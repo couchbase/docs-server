@@ -1,0 +1,441 @@
+= Comma-Separated Join
+:description: A comma-separated join enables you to produce new input objects by creating a Cartesian product of all the source objects.
+:imagesdir: ../../assets/images
+:page-status: Couchbase Server 7.1
+:from-term: comma-separated join
+
+// Cross-references
+:from: xref:n1ql-language-reference/from.adoc
+:from-keyspace: {from}#from-keyspace-ref
+:as-alias: {from}#section_ax5_2nx_1db
+:from-subquery: {from}#select-expr-clause
+:join: xref:n1ql-language-reference/join.adoc
+:use-clause: {join}#ansi-join-hints
+:where: xref:n1ql-language-reference/where.adoc
+:hints: xref:n1ql-language-reference/optimizer-hints.adoc
+:expr: xref:n1ql-language-reference/index.adoc#N1QL_Expressions
+:authorization: xref:learn:security/authorization-overview.adoc
+
+[abstract]
+{description}
+
+== Purpose
+
+A comma-separated join is used within the {from}[FROM] clause.
+Like the {join}[JOIN] clause, it creates an input object by combining two or more source objects.
+A comma-separated join can combine arbitrary fields from the source documents, and you can chain several comma-separated joins together.
+
+(((join predicate,comma-separated join)))
+The comma-separated join, by itself, does not specify a join predicate.
+This means that, in its basic form, the comma-separated join would produce all the possible combinations of the combined source objects -- this is known as the _Cartesian product_.
+
+In practice, it is common to use the query's {where}[WHERE] clause to specify a condition for the comma-separated join.
+Refer to the examples below for further details.
+
+== Prerequisites
+
+For you to select data from keyspace or expression, you must have the [.param]`query_select` privilege on that keyspace.
+For more details about user roles, see {authorization}[Authorization].
+
+== Syntax
+
+[subs="normal"]
+----
+comma-separated-join ::= ',' ( <<rhs-keyspace>> | <<rhs-subquery>> | <<rhs-generic>> )
+----
+
+image::n1ql-language-reference/comma-separated-join.png["',' ( rhs-keyspace | rhs-subquery | rhs-generic )"]
+
+[#from-term]
+include::partial$n1ql-language-reference/from-term.adoc[]
+
+(((join type,comma-separated join)))
+The comma-separated join is a type of inner join.
+For each joined object produced, both the left-hand side and right-hand side source objects must be non-MISSING and non-NULL.
+
+(((right-hand side,comma-separated join)))
+The _right-hand side_ of a comma-separated join may be a keyspace reference, a subquery, or a generic expression term.
+
+[[rhs-keyspace,rhs-keyspace]]
+=== Right-Hand Side Keyspace
+
+[subs="normal"]
+----
+rhs-keyspace ::= <<rhs-keyspace-ref,keyspace-ref>> [ [ AS ] <<rhs-keyspace-alias,alias>> ] [ <<rhs-keyspace-hints,ansi-join-hints>> ]
+----
+
+image::n1ql-language-reference/rhs-keyspace.png["keyspace-ref ( 'AS'? alias )?"]
+
+[#rhs-keyspace-ref]
+==== Keyspace Reference
+
+Keyspace reference for the right-hand side of the comma-separated join.
+For details, see {from-keyspace}[Keyspace Reference].
+
+[#rhs-keyspace-alias]
+==== AS Alias
+
+Assigns another name to the keyspace reference.
+For details, see {as-alias}[AS Clause].
+
+Assigning an alias to the keyspace reference is optional.
+If you assign an alias to the keyspace reference, the `AS` keyword may be omitted.
+
+[#rhs-keyspace-hints]
+==== USE Clause
+
+Enables you to specify that the join should use particular keys, a particular index, or a particular join method.
+For details, see {use-clause}[ANSI JOIN Hints].
+
+TIP: You can also supply a join hint within a specially-formatted {hints}[hint comment].
+Note that you cannot specify a join hint for the same keyspace using both the `USE` clause and a hint comment.
+If you do this, the `USE` clause and the hint comment are both marked as erroneous and ignored by the optimizer.
+
+[[rhs-subquery,rhs-subquery]]
+=== Right-Hand Side Subquery
+
+[subs="normal"]
+----
+rhs-subquery ::= <<ansi-subquery-expr,subquery-expr>> [ AS ] <<ansi-subquery-alias,alias>>
+----
+
+image::n1ql-language-reference/rhs-subquery.png["subquery-expr 'AS'? alias"]
+
+[#ansi-subquery-expr]
+==== Subquery Expression
+
+Use parentheses to specify a subquery for the right-hand side of the comma-separated join.
+For details, see {from-subquery}[Subquery Expression].
+
+NOTE: A subquery on the right-hand side of the comma-separated join cannot be *correlated*, i.e. it cannot refer to a keyspace in the outer query block.
+This will lead to an error.
+
+[#ansi-subquery-alias]
+==== AS Alias
+
+Assigns another name to the subquery.
+For details, see {as-alias}[AS Clause].
+
+You must assign an alias to a subquery on the right-hand side of the join.
+However, when you assign an alias to the subquery, the `AS` keyword may be omitted.
+
+[[rhs-generic,rhs-generic]]
+=== Right-Hand Side Generic Expression
+
+[subs="normal"]
+----
+rhs-generic ::= <<ansi-generic-expr,expr>> [ [ AS ] <<ansi-generic-alias,alias>> ]
+----
+
+image::n1ql-language-reference/rhs-generic.png["expr ( 'AS'? alias )?"]
+
+[#ansi-generic-expr]
+==== Expression Term
+
+A N1QL {expr}[expression] generating JSON documents or objects for the right-hand side of the comma-separated join.
+
+NOTE: An expression on the right-hand side of the comma-separated join may be *correlated*, i.e. it may refer to a keyspace on the left-hand side of the join.
+In this case, only a <<ansi-join-hints,nested-loop join>> may be used.
+
+[#ansi-generic-alias]
+==== AS Alias
+
+Assigns another name to the generic expression.
+For details, see {as-alias}[AS Clause].
+
+You must assign an alias to the generic expression if it is not an identifier; otherwise, assigning an alias is optional.
+However, when you assign an alias to the generic expression, the `AS` keyword may be omitted.
+
+== Limitations
+
+* You can chain comma-separated joins with ANSI `JOIN` clauses, ANSI `NEST` clauses, and `UNNEST` clauses.
+However, you cannot chain comma-separated joins with lookup `JOIN` and `NEST` clauses, or index `JOIN` and `NEST` clauses.
+
+* The right-hand side of a comma-separated join can only be a keyspace identifier, a subquery, or a generic expression.
+This means that comma-separated joins must come _after_ any `JOIN`, `NEST`, or `UNNEST` clauses.
+
+== Examples
+
+[#example-cartesian]
+.Cartesian product
+====
+The following query lists every possible combination of the two input objects.
+
+.Comma-separated join
+[source,n1ql]
+----
+SELECT * FROM [{"abc": 1}, {"abc": 2}, {"abc": 3}] AS a,
+              [{"xyz": 1}, {"xyz": 2}] AS b;
+----
+
+Compare the query above with the following query using an ANSI join.
+
+.ANSI join
+[source,n1ql]
+----
+SELECT * FROM [{"abc": 1}, {"abc": 2}, {"abc": 3}] AS a
+         JOIN [{"xyz": 1}, {"xyz": 2}] AS b ON true;
+----
+
+The results of the two queries are the same.
+
+.Results
+[source,json]
+----
+[
+  {
+    "a": {
+      "abc": 1
+    },
+    "b": {
+      "xyz": 1
+    }
+  },
+  {
+    "a": {
+      "abc": 1
+    },
+    "b": {
+      "xyz": 2
+    }
+  },
+  {
+    "a": {
+      "abc": 2
+    },
+    "b": {
+      "xyz": 1
+    }
+  },
+  {
+    "a": {
+      "abc": 2
+    },
+    "b": {
+      "xyz": 2
+    }
+  },
+  {
+    "a": {
+      "abc": 3
+    },
+    "b": {
+      "xyz": 1
+    }
+  },
+  {
+    "a": {
+      "abc": 3
+    },
+    "b": {
+      "xyz": 2
+    }
+  }
+]
+----
+====
+
+[#example-condition]
+.Comma-separated join condition
+====
+The following query uses the WHERE clause to define the condition for a comma-separated join.
+
+.Comma-separated join
+[source,n1ql]
+----
+SELECT a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.route AS r,
+     `travel-sample`.inventory.airport AS a
+WHERE a.faa = r.sourceairport
+LIMIT 4;
+----
+
+Compare the query above with the following query using an ANSI join.
+
+.ANSI join
+[source,n1ql]
+----
+SELECT a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.route AS r
+JOIN `travel-sample`.inventory.airport AS a
+  ON a.faa = r.sourceairport
+LIMIT 4;
+----
+
+The results of the two queries are the same.
+
+.Results
+[source,json]
+----
+[
+  {
+    "airport": "Lehigh Valley Intl",
+    "route": 20010
+  },
+  {
+    "airport": "Lehigh Valley Intl",
+    "route": 20011
+  },
+  {
+    "airport": "Lehigh Valley Intl",
+    "route": 28856
+  },
+  {
+    "airport": "Lehigh Valley Intl",
+    "route": 28857
+  }
+]
+----
+====
+
+[#example-filters]
+.Comma-separated join with filters
+====
+The following query uses the WHERE clause to define a condition for a comma-separated join and to filter the query.
+
+.Comma-separated join
+[source,n1ql]
+----
+SELECT a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.route AS r,
+     `travel-sample`.inventory.airport AS a
+WHERE a.faa = r.sourceairport
+  AND r.sourceairport = "SFO"
+LIMIT 4;
+----
+
+Compare the query above with the following query using an ANSI join.
+
+.ANSI join
+[source,n1ql]
+----
+SELECT a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.route AS r
+JOIN `travel-sample`.inventory.airport AS a
+  ON a.faa = r.sourceairport
+WHERE r.sourceairport = "SFO"
+LIMIT 4;
+----
+
+The results of the two queries are the same.
+
+.Results
+[source,json]
+----
+[
+  {
+    "airport": "San Francisco Intl",
+    "route": 10624
+  },
+  {
+    "airport": "San Francisco Intl",
+    "route": 10625
+  },
+  {
+    "airport": "San Francisco Intl",
+    "route": 11212
+  },
+  {
+    "airport": "San Francisco Intl",
+    "route": 11213
+  }
+]
+----
+====
+
+[#example-hints]
+.Comma-separated join with hints
+====
+The following query uses the USE clause to specify hints for a comma-separated join.
+
+.Comma-separated join
+[source,n1ql]
+----
+EXPLAIN SELECT a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.route AS r,
+     `travel-sample`.inventory.airport AS a
+     USE INDEX(def_inventory_airport_faa) NL
+WHERE a.faa = r.sourceairport
+  AND r.sourceairport = "SFO"
+LIMIT 4;
+----
+
+Compare the query above with the following query using an ANSI join.
+
+.ANSI join
+[source,n1ql]
+----
+EXPLAIN SELECT a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.route AS r
+JOIN `travel-sample`.inventory.airport AS a
+ USE INDEX(def_inventory_airport_faa) NL
+  ON a.faa = r.sourceairport
+WHERE r.sourceairport = "SFO"
+LIMIT 4;
+----
+
+The results of the two queries are the same.
+
+.Results
+[source,json]
+----
+[
+  {
+    "optimizer_hints": {
+      "hints_followed": [
+        "USE_NL(a)",
+        "INDEX(a def_inventory_airport_faa)"
+      ]
+    },
+    // ...
+  }
+]
+----
+====
+
+
+[#example-chain]
+.Chaining ANSI joins with comma-separated joins
+====
+The following query chains an ANSI join with a comma-separated join.
+
+.Query
+[source,n1ql]
+----
+SELECT l.name AS airline, a.airportname AS airport, r.id AS route
+FROM `travel-sample`.inventory.airline AS l
+JOIN `travel-sample`.inventory.route AS r
+  ON META(l).id = r.airlineid,
+     `travel-sample`.inventory.airport AS a
+WHERE a.faa = r.sourceairport
+  AND r.sourceairport = "SFO"
+LIMIT 4;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "airline": "AirTran Airways",
+    "airport": "San Francisco Intl",
+    "route": 25480
+  },
+  {
+    "airline": "AirTran Airways",
+    "airport": "San Francisco Intl",
+    "route": 25481
+  },
+  {
+    "airline": "AirTran Airways",
+    "airport": "San Francisco Intl",
+    "route": 25482
+  },
+  {
+    "airline": "AirTran Airways",
+    "airport": "San Francisco Intl",
+    "route": 25483
+  }
+]
+----
+====
