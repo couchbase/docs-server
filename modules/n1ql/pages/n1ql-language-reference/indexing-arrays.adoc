@@ -7,6 +7,8 @@
 :install-sample-buckets: xref:manage:manage-settings/install-sample-buckets.adoc
 :covering-indexes: xref:indexes:covering-indexes.adoc
 :use-index-clause: xref:n1ql-language-reference/hints.adoc#use-index-clause
+:index-selection: xref:n1ql-language-reference/selectintro.adoc#index-selection
+:flatten-keys: xref:n1ql-language-reference/metafun.adoc#flatten_keys
 
 {description}
 
@@ -30,8 +32,9 @@ include::partial$grammar/ddl.ebnf[tag=index-key]
 
 image::n1ql-language-reference/index-key.png[align=left]
 
-Refers to an attribute name or a scalar function or an ARRAY expression on the attribute.
-This constitutes an index-key for the index.
+To create an array index, one index key must be an array expression.
+The index key containing the array expression is referred to as the _array index key_.
+The index definition may also contain other index keys which are not array expressions.
 
 [[index-key-args]]
 expr::
@@ -39,7 +42,21 @@ A {expression}[N1QL expression] over any fields in the document.
 This cannot use constant expressions, aggregate functions, or sub-queries.
 
 array-expr::
+An array expression.
 Refer to <<array-expr>> below.
+
+[IMPORTANT]
+.Array Index Key
+====
+Currently, the index definition for an array index may only contain one array index key.
+However, the array index key may index more than one field or expression within the array, as described below.
+
+For an UNNEST scan to use an array index, the array index key containing the appropriate array expression must be the _leading key_ of the index definition.
+The UNNEST scan can generate index spans on other non-leading index keys when appropriate predicates exist.
+
+In order for the optimizer to select the correct array index for a SELECT, UPDATE, or DELETE statement, the query predicate which appears in the WHERE clause must be constructed to match the format of the array index key.
+See <<query-predicate-format>> for details.
+====
 
 [[array-expr]]
 === Array Expression
@@ -51,26 +68,7 @@ include::partial$grammar/ddl.ebnf[tag=array-expr]
 
 image::n1ql-language-reference/array-expr.png[align=left]
 
-The array expression can be either a <<full-array-expr>>, which includes an `ARRAY` operator, or a <<simple-array-expr>>, which does not.
-
-[IMPORTANT]
-====
-The query predicate which appears in the WHERE clause of a SELECT, UPDATE, or DELETE statement must have exactly the same format as the variable in the array index key.
-See <<query-predicate-format>> for details.
-====
-
-[NOTE]
-====
-Currently, array indexing is limited to using only one index-key with the array expression.
-
-* To create an array index involving multiple array elements or multiple arrays, use a full array expression whose <<full-array-expr-args,variable expression>> is constructed as a compound object constituted with different elements of the same array or multiple arrays.
-
-* Subsequent SELECT or DML statements must use similar compound objects in the WHERE clause to use the array index.
-See <<examples>> below.
-
-* For an UNNEST scan to use an index, the leading key of the index definition must be an appropriate ARRAY index key.
-In Couchbase Server 6.0.1 and later, the UNNEST scan can generate index spans on other non-leading index keys when appropriate predicates exist.
-====
+The array expression can be either a <<full-array-expr>>, which uses the `ARRAY` operator to index specified fields and elements within the array; or a <<simple-array-expr>>, which indexes all fields and elements in the array.
 
 [[full-array-expr,full array expression]]
 ==== Full Array Expression
@@ -82,25 +80,37 @@ include::partial$grammar/ddl.ebnf[tag=full-array-expr]
 
 image::n1ql-language-reference/full-array-expr.png[align=left]
 
-The [.cmd]`ARRAY` operator lets you map and filter the elements or attributes of a collection, object, or objects.
+The `ARRAY` operator lets you map and filter the elements or attributes of a collection, object, or objects.
 It evaluates to an array of the operand expression that satisfies the WHEN clause, if specified.
 
 [[full-array-expr-args]]
 var-expr::
-A function of the [.var]`var` variable used in the FOR clause.
+A function of the `var` variable used in the FOR clause.
 
 var::
-Represents elements in the array specified by [.var]`expr`.
+Represents elements in the array specified by `expr`.
 
 expr::
-Evaluates to an array of objects, elements of which are represented by the [.var]`var` variable.
+Evaluates to an array of objects, elements of which are represented by the `var` variable.
 
 cond::
 Specifies predicates to qualify the subset of documents to include in the index array.
 
-NOTE: The [.var]`var-expr` itself can be a nested <<array-expr,array expression>>.
+[NOTE]
+.Variable Expression
+====
+In Couchbase Server 7.1 and later, you can index one or more expressions _within_ the array (up to maximum of 32) by using the {flatten-keys}[FLATTEN_KEYS()] function in the `var-expr`.
+This function flattens expressions within the array, as if they were separate index keys; and all subsequent index keys are accordingly moved to the right.
+Queries will be {index-selection}[sargable] and will generate spans.
+Refer to <<query-predicate-format>> below.
+
+The `var-expr` itself may be a nested <<array-expr,array expression>>.
 This enables creating array indexes on nested array fields.
-See <<examples>> below.
+Refer to <<example-5>> below.
+
+To create an array index involving multiple array elements or multiple arrays, you may construct the `var-expr` as a compound object constituted with different elements of the same array or multiple arrays.
+Refer to <<example-6>> below.
+====
 
 [[simple-array-expr,simple array expression]]
 ==== Simple Array Expression
@@ -117,53 +127,100 @@ Couchbase Server 5.0 and later provides a simpler syntax for array indexing when
 [[simple-array-expr-args]]
 expr::
 An array field name, or an expression that can evaluate to an array.
-In this case, all elements of the array are indexed.
+In this case, all fields and elements of the array are indexed.
 
 [#query-predicate-format]
 == Format of Query Predicate
 
-The query predicate which appears in the WHERE clause of a SELECT, UPDATE, or DELETE statement must have exactly the same format as the variable in the array index key.
-
-A SELECT query or DML statement that needs to use the array index can use different variable names in the query from those used in the array index definition.
+In order for the optimizer to select the correct array index for a SELECT, UPDATE, or DELETE statement, the query predicate which appears in the WHERE clause must be constructed to match the format of the array index key.
 
 Consider the following expressions used in a CREATE INDEX statement:
 
-[source,n1ql]
+[cols=2*a,frame=none,grid=none]
+|===
+|
+.C1
+[source#c1,n1ql]
 ----
-DISTINCT ARRAY f(x) FOR x IN expr1 END; -- <1>
-DISTINCT ARRAY f(x) FOR x WITHIN expr1 END; -- <2>
+DISTINCT ARRAY f(x) FOR x IN expr1 END;
 ----
+|
+.C2
+[source#c2,n1ql]
+----
+DISTINCT ARRAY f(x) FOR x WITHIN expr1 END;
+----
+|===
 
 And the following expressions used in the SELECT statement WHERE clause:
 
-[source,n1ql]
+[cols=2*a,frame=none,grid=none]
+|===
+|
+.Q1
+[source#q1,n1ql]
 ----
-ANY x IN expr2 SATISFIES g(x) END; -- <3>
-ANY x WITHIN expr2 SATISFIES g(x) END -- <4>
+ANY x IN expr2 SATISFIES g(x) END;
 ----
+|
+.Q2
+[source#q2,n1ql]
+----
+ANY x WITHIN expr2 SATISFIES g(x) END;
+----
+|===
 
 The following dependencies must be satisfied for the Query service to consider the array index:
 
 * The index keys used in CREATE INDEX must be used in the WHERE clause.
+(The query can use different variable names from those used in the array index definition.)
 
-* [.var]`expr2` in ➂ and ➃ must be equivalent to [.var]`expr1` in ➀ and ➁.
+* The `expr2` in <<q1>> and <<q2>> must be equivalent to the `expr1` in <<c1>> and <<c2>>.
 This is a formal notion of equivalence.
-For example, if they are the same expressions, or equivalent arithmetic expressions such as `(x+y)` and `(y+x)`.
+For example, they must be the same expressions, or equivalent arithmetic expressions such as `(x+y)` and `(y+x)`.
 
-* If there is a need to index one or more expressions from the ARRAY (the maximum being 32), the [.var]`fx()` expression can be specified as `FLATTEN_KEYS(f1(x) [ASC|DESC], f2(x) [ASC|DESC], . . . )`.
-When `FLATTEN_KEYS()` is present, it flattens arguments within the array, as if they were separate index keys; and all subsequent index keys are accordingly moved to the right.
+* Usually, `g(x)` in <<q1>> and <<q2>> must be sargable for `f(x)` in <<c1>> and <<c2>>.
+In other words, if there were a scalar index with key `f(x)`, then that index would be applicable to the predicate `g(x)`.
+For example, the predicate `UPPER(x) LIKE "John%"` is sargable for the index key `UPPER(x)`.
+
+[discrete]
+===== Flatten Keys
+
+Now consider the following variants of <<c1>> and <<c2>>, in which the index key `f(x)` uses the {flatten-keys}[FLATTEN_KEYS()] function to flatten expressions within the array:
+
+[cols=2*a,frame=none,grid=none]
+|===
+|
+.C3
+[source#c3,n1ql]
+----
+DISTINCT ARRAY
+  FLATTEN_KEYS(f1(x) ASC, f2(x) DESC)
+  FOR x IN expr1 END;
+----
+|
+.C4
+[source#c4,n1ql]
+----
+DISTINCT ARRAY
+  FLATTEN_KEYS(f1(x) ASC, f2(x) DESC)
+  FOR x WITHIN expr1 END;
+----
+|===
+
+* The index keys <<c3>> and <<c4>> flatten expressions within the array, as if they were separate index keys; and all subsequent index keys are accordingly moved to the right.
 Queries will be sargable and will generate spans.
 
-* [.var]`g(x)` in ➂ and ➃ must be sargable for [.var]`f(x)` in ➀ and ➁.
-In other words, if there were a scalar index with key [.var]`f(x)`, then that index would be applicable to the predicate [.var]`g(x)`.
-For example, the index key `UPPER(x)` is sargable for the predicate `UPPER(x) LIKE "John%"`.
-[.var]`g(x)` in ➂ and ➃ must be sargable for `f(x)`; or, if f(x) is `FLATTEN_KEYS()`, for one of its arguments in ➀ and ➁.
+* In order to select an array index defined using <<c3>> or <<c4>>, the predicate `g(x)` in <<q1>> and <<q2>> must be sargable for one of the _arguments_ of the {flatten-keys}[FLATTEN_KEYS()] function -- `f1(x)` or `f2(x)`.
 
-* IN vs. WITHIN: Index key ➀ can be used for query predicate ➂.
-Index key ➁ can be used for both query predicates ➂ and ➃.
+[discrete]
+===== IN vs. WITHIN
 
-NOTE: Index key ➁ is strictly more expensive than index key ➀, for both index maintenance and query processing.
-Index key ➁ and query predicate ➃ are very powerful.
+* Index key <<c1>> can be used for query predicate <<q1>>.
+Index key <<c2>> can be used for both query predicates <<q1>> and <<q2>>.
+
+* Index key <<c2>> is strictly more expensive than index key <<c1>>, for both index maintenance and query processing.
+Index key <<c2>> and query predicate <<q2>> are very powerful.
 They can efficiently index and query recursive trees of arbitrary depth.
 
 [#examples]
@@ -172,7 +229,7 @@ They can efficiently index and query recursive trees of arbitrary depth.
 The following examples use the {install-sample-buckets}[travel-sample] bucket that is shipped with Couchbase Server.
 
 [[example-1]]
-.Indexing all DISTINCT elements in an array
+.Array index of distinct elements
 ====
 .Index: Create an index on all schedules
 [[C1,Index]]
@@ -193,8 +250,10 @@ WHERE ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 ====
 
 [[example-2]]
-.Partial index (with WHERE clause) of individual attributes from selected elements (using WHEN clause) of an array
+.Partial array index
 ====
+Create a partial index (with WHERE clause) of individual attributes from selected elements (using WHEN clause) of an array.
+
 .Index: Create an index on flights from San Francisco scheduled in the first 4 days of the week
 [[C2,Index]]
 [source,N1QL]
@@ -222,18 +281,16 @@ In this example, the <<C2>> qualifies for the <<Q2>> because:
 <3> The ANY-SATISFIES condition `v.day=1` in the <<Q2>> is sargable to that in the index definition WHEN clause `v.day < 4`.
 ====
 
-
 [[example-3]]
-.Indexing composite elements from the array
+.Flattened array index
 ====
 .Index: Create an index on day and flight from schedule array
 [[C3,Index]]
 [source,N1QL]
 ----
 CREATE INDEX ixf_sched
-  ON `travel-sample`.inventory.route (ALL ARRAY FLATTEN_KEYS(s.day DESC, s.flight)
-  FOR s IN schedule
-  END,
+  ON `travel-sample`.inventory.route
+  (ALL ARRAY FLATTEN_KEYS(s.day DESC, s.flight) FOR s IN schedule END,
   sourceairport, destinationairport, stops);
 ----
 
@@ -248,6 +305,8 @@ SELECT META(r).id
     AND ANY s IN r.schedule SATISFIES s.day BETWEEN 1 AND 5 -- <3>
     AND s.flight LIKE "DL%" END; -- <4>
 ----
+
+In this example, <<Q3A>> is able to use the `ixf_sched` index defined by the <<C3>>, pass all the predicate information to index scan, and cover the query.
 
 .Partial Explain Plan
 [source,JSON]
@@ -286,8 +345,6 @@ SELECT META(r).id
          ]
 ----
 
-In this example, <<Q3A>> is able to use the `ixf_sched` index defined by the <<C3>>, pass all the predicate information to index scan, and cover the query.
-
 <1> `r.sourceairport = "SFO"` is able to match and pass to IndexScan.
 <2> `r.destinationairport = "ATL"` is able to match and pass to IndexScan.
 <3> ARRAY predicate `s.day BETWEEN 1 AND 5` is able to match and pass to IndexScan.
@@ -312,9 +369,9 @@ Even though the ORDER BY key uses an array index key, it can use index order, an
 ====
 
 [[example-4]]
-.Compound array index with individual elements of an array and other non-array fields
+.Composite array index
 ====
-.Index: Create an index on scheduled flight IDs and number of stops
+.Index: Create an index on individual elements of an array and other non-array fields
 [[C4,Index]]
 [source,N1QL]
 ----
@@ -334,12 +391,13 @@ AND ANY v IN schedule SATISFIES v.flight LIKE 'FL%' END;
 ====
 
 [[example-5]]
-.Indexing the individual elements of nest arrays
+.Nested array index
 ====
-Use the DISTINCT ARRAY clause in a nested fashion to index specific attributes of a document when the array contains other arrays or documents that contain arrays.
-For example,
+WARNING: Please note that the example below will alter the data in your sample buckets.
+To restore your sample data, remove and reinstall the `travel-sample` bucket.
+Refer to xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for details.
 
-.Update: Create a nested array [.var]`special_flights`
+.Update: Create a nested array
 [source,N1QL]
 ----
 UPDATE `travel-sample`.inventory.route
@@ -350,7 +408,9 @@ SET schedule[0] = {"day" : 7, "special_flights" :
 WHERE destinationairport = "CDG" AND sourceairport = "TLV";
 ----
 
-.Index I: Create a partial index on a nested array [.var]`special_flights`
+Use the DISTINCT ARRAY clause in a nested fashion to index specific attributes of a document when the array contains other arrays or documents that contain arrays.
+
+.Index I: Create a partial index on a nested array
 [[C5i,Index I]]
 [source,N1QL]
 ----
@@ -361,7 +421,7 @@ CREATE INDEX idx_nested ON `travel-sample`.inventory.route
     FOR x IN schedule END);
 ----
 
-<1> In this case, the inner ARRAY construct is used as the [.var]`var_expr` for the outer ARRAY construct in the N1QL Syntax above.
+<1> In this case, the inner ARRAY construct is used as the `var_expr` for the outer ARRAY construct in the N1QL Syntax above.
 
 .Query A: Use nested ANY operator to use the index
 [[Q5A,Query A]]
@@ -389,7 +449,7 @@ WHERE y.flight IS NOT NULL;
 This query uses the index `idx_nested` defined by <<C5i>>.
 It returns 6 results, as there are 3 routes with 2 special flights each.
 
-.Index II: Create a partial index on a nested array [.var]`special_flights`
+.Index II: Create a flattened index on a nested array
 [[C5ii,Index II]]
 [source,N1QL]
 ----
@@ -430,9 +490,9 @@ This query performs a covering UNNEST IndexScan, by applying the predicates on b
 ====
 
 [[example-6]]
-.Array Index with multiple elements of an array
+.Array index on compound object
 ====
-.Index: Create an index on [.var]`flight` and [.var]`day` fields in [.var]`schedule`
+.Index: Create an index on multiple elements of an array
 [[C6,Index]]
 [source,N1QL]
 ----
@@ -450,7 +510,7 @@ WHERE ANY v in schedule SATISFIES [v.flight, v.day] = ["US681", 2] END;
 ====
 
 [[example-7]]
-.Indexing all elements in an array using simplified syntax
+.Simplified array index
 ====
 .Index: Create an index on all schedules using simplified array index syntax
 [[C7,Index]]
@@ -460,7 +520,9 @@ CREATE INDEX idx_sched_simple
 ON `travel-sample`.inventory.route (ALL schedule);
 ----
 
-.Query A: Find details of all route documents matching a specific schedule
+The following queries find details of all route documents matching a specific schedule.
+
+.Query A: Use ANY operator to use the index
 [[Q7A,Query A]]
 [source,N1QL]
 ----
@@ -471,7 +533,7 @@ SATISFIES v = {"day":2, "flight": "US681", "utc": "19:20:00"} END; -- <1>
 
 <1> Elements of the schedule array are objects, and hence the right side value of the predicate condition should be a similarly structured object.
 
-.Query B: Find details of all route documents matching a specific schedule
+.Query B: Use UNNEST operator to use the index
 [[Q7B,Query B]]
 [source,N1QL]
 ----
@@ -482,7 +544,7 @@ WHERE sch = {"day":2, "flight": "US681", "utc": "19:20:00"};
 
 This is a variant of <<Q7A>> using UNNEST in the SELECT statement.
 
-.Query C: Alternative using an index with FLATTEN_KEYS
+.Query C: Alternative using a flattened array index
 [[Q7C,Query C]]
 [source,N1QL]
 ----
@@ -491,8 +553,8 @@ FROM `travel-sample`.inventory.route AS r
 WHERE ANY v IN r.schedule SATISFIES v.day = 2 AND v.flight = "US681" END;
 ----
 
-This query performs a covering IndexScan, by applying all the predicates, using `ixf_sched` defined by the <<C3>> in <<example-3>>.
-The query-syntax is intuitive, since the multiple fields within the array have not required complex indexing.
+For comparison, this query performs a covering index scan, by applying all the predicates, using `ixf_sched` defined by the <<C3>> in <<example-3>>.
+The query syntax is more intuitive than <<Q7A>> and <<Q7B>>, since the multiple fields within the array have not required complex indexing.
 ====
 
 == Covering Array Index
@@ -762,7 +824,7 @@ WHERE ANY v IN schedule SATISFIES v.flight LIKE 'UA%' END;
 This applies to only ALL array indexes because, for such index, all array elements are indexed in the array index, and the UNNEST operation needs all the elements to reconstruct the array.
 Note that the array cannot be reconstructed if on DISTINCT elements of the array are indexed.
 
-In this example, <<Q10A>> can be covered with the ALL index [.var]`idx_sched_cover_simple_all` defined by the <<C10>>, but <<Q10B>> is not covered when using the DISTINCT index [.var]`idx_sched_cover_simple` defined by the <<C9>> in <<example-9>>.
+In this example, <<Q10A>> can be covered with the ALL index `idx_sched_cover_simple_all` defined by the <<C10>>, but <<Q10B>> is not covered when using the DISTINCT index `idx_sched_cover_simple` defined by the <<C9>> in <<example-9>>.
 
 .Index: UNNEST covered with the ALL index
 [[C10,Index]]
