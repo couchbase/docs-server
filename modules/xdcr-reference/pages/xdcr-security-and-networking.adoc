@@ -6,28 +6,29 @@
 
 == Security and Networking Contexts
 
-This page considers a number of specific contexts in which XDCR replications must sometimes be established.
+This page considers three specific contexts in which XDCR replications must sometimes be established.
 These respectively involve:
 
-* Handling _Couchbase Schemes_ with _DNS SRV_
+* Handling _Couchbase Schemes_, using _DNS SRV_
 
 * Using _Alternate Addresses_
 
 * Using _Third Party CAs_
 
-Each context is explained below.
+Each is explained below.
 
-== Handling Couchbase Schemes with DNS SRV
+[#dnssrv]
+== Handling Couchbase Schemes, using DNS SRV
 
-Targets for XDCR replication can be specified using the schemes _http://_ or _https://_, and with the standard port number `8091` or `18091`, as applicable.
-Targets _cannot_ be specified with the Couchbase schemes _couchbase://_ and _couchbases://_, which are used to support the memcached protocol on ports `11210` and `11207`, respectively.
+Targets for XDCR replication can be specified using the schemes _http://_ and _https://_, and with the standard port number `8091` or `18091`, as applicable.
+Targets _cannot_ be specified with the _Couchbase_ schemes _couchbase://_ and _couchbases://_, which are, instead, used to support the memcached protocol on ports `11210` and `11207`, respectively.
 
-Targets _can_, however, be specified with a _Fully Qualified Domain Name_ (_FQDN_), which is not tagged with either of the standard port numbers.
+Targets _can_, however, be specified with a _Fully Qualified Domain Name_ (_FQDN_) that is either tagged with one of the standard port numbers, or is untagged.
 In such cases, XDCR performs a https://go.dev/src/net/lookup.go[LookupSRV^] on the FQDN, using the local machine’s _DNS resolver_.
 LookupSRV obtains the appropriate name from a local DNS https://en.wikipedia.org/wiki/SRV_record[SRV record^]: which is a specification of data in the Domain Name System that defines the _location_ (the hostname and port number) of a server for a particular service.
 When LookupSRV has returned the name, XDCR concatenates a standard port number to the name, and uses the resulting concatenation as the target-reference.
 
-Consequently, resources named by means of the Couchbase schemes can be resolved to appropriate XDCR-target names: by first removing the _couchbase_ or _couchbases_ prefix, and then specifying the resulting FQDN -- so that LookupSRV resolves the FQDN to a name that XDCR can include in the ultimate target-reference.
+Consequently, resources named by means of the Couchbase schemes can be resolved to appropriate XDCR-target names: by first removing the _couchbase_ or _couchbases_ prefix, and then specifying the remaining symbol, which is the FQDN -- so that LookupSRV resolves the FQDN to a name that XDCR can include in the ultimate target-reference.
 Note, however, that this does assume the target's use of one of the standard port numbers -- `8091` or `18091` -- for XDCR access.
 
 === Example
@@ -36,7 +37,7 @@ Suppose a resource is provided with the Couchbase scheme as follows: `couchbases
 The scheme's prefix `couchbases://` can be removed, so as to leave an FQDN as follows: `7cb51b5b-d9cd-410d-9cc7-1be93e2f31d9.dp.cloud.couchbase.com`.
 This FQDN can be specified by the administrator as the _hostname_ of the target cluster for XDCR replication.
 
-The command `nslookup -type=srv` can be used manually to determine whether this hostname corresponds to one or more true, DNS SVR records.
+Note that the command `nslookup -type=srv` can be used manually to determine whether this hostname corresponds to one or more true, DNS SVR records.
 The form of an SRV record is as follows:
 
 ----
@@ -82,7 +83,7 @@ Instances of _Kubernetes_ and _AWS_ frequently use alternate addresses for their
 Alternate addresses used in this way are said to constitute an _external network_.
 Any cluster that is established within an external network must have its nodes configured to use the corresponding alternate addresses for external communications; and if the cluster is to be used as an XDCR target, these addresses must be referenced by the XDCR source.
 This involves, on the target, _port forwarding_, which is described in xref:learn:clusters-and-availability/connectivity.adoc#alternate-addresses[Alternate Addresses].
-It also involves, on the source, specification of the external network interface, either as a fully qualified domain name, or an IP address.
+It also involves, on the source, specification of the external network interface, either as an FQDN, or an IP address.
 
 When a cluster has been configured in this way for external networking, and status on the cluster is returned by means of Couchbase Web Console, the CLI, or the REST API, both the internal and the external addresses are represented.
 
@@ -98,7 +99,35 @@ A diagram of dual-network setup is provided in xref:learn:clusters-and-availabil
 
 === AWS and Cloud
 
-If a cluster is established on a public cloud such as AWS, or is a K8 cluster, and is intended to become the target for XDCR, the cluster must be configured with alternate addresses, to support the source cluster's access.
+If a cluster is established on a public cloud such as AWS, or is a Kubernetes cluster, and is intended to become the target for XDCR, the cluster must be configured with alternate addresses, to support the source cluster's access.
 A diagram is provided in xref:learn:clusters-and-availability/connectivity.adoc#internal-network-or-cloud-access[Internal Network or Cloud Access].
+
+== Specifying Addresses
+
+If a target cluster is configured with alternate addresses, the particular address to which a connection should be made can be specified on the source cluster.
+The following options are available for specifying the target-cluster address:
+
+* When using Couchbase Web Console, from the *XDCR Replications* screen, left-clicking the *ADD REMOTE* tab brings up the *Add Remote Cluster* dialog, which provides an *IP/Hostname* interactive field.
+(See xref:manage:manage-xdcr/create-xdcr-reference.adoc[Create a Reference].)
+
+* When using the CLI, the xdcr-setup command provides the `--xdcr-hostname` field.
+(See xref:cli:cbcli/couchbase-cli-xdcr-setup.adoc[xdcr-setup].)
+
+* When using the REST API, the `POST /pools/default/remoteClusters` method and URI provide the `hostname` field.
+(See xref:rest-api:rest-xdcr-create-ref.adoc[Setting a Target-Cluster Reference].)
+
+In each case:
+
+* An IP address or a qualified domain name can be specified.
+The name can optionally be tagged with the port number `8091` or `18091`.
+
+* If the specified name corresponds to the external address of the target cluster, the external address is used for the connection.
+If the specified name corresponds to the internal address of the target cluster, the internal address is used for the connection.
+If the name is not tagged with a port number, the connection defaults to `8091`; unless a secure connection is specified in another field, in which case `18091` is used.
+
+* If the specified name corresponds to a DNS SRV entry, this entry is located by LookupSRV.
+If at least one of the underlying names points to the external FQDN for the target cluster, then the external address is used for the connection.
+Otherwise, an internal address is used.
+(See xref:xdcr-reference:xdcr-security-and-networking.adoc#dnssrv[Handling Couchbase Schemes, using DNS SRV], above.)
 
 == Third Party CAs
