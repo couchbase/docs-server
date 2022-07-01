@@ -2,6 +2,7 @@
 :description: You can use the UPDATE STATISTICS statement to gather statistics for an index key expression.
 :page-topic-type: concept
 :page-edition: Enterprise Edition
+:page-partial:
 :imagesdir: ../../assets/images
 
 // Cross-references
@@ -22,6 +23,9 @@
 :statistics-indexes: {n1ql}/statistics-indexes.adoc
 :statistics-delete: {n1ql}/statistics-delete.adoc
 
+// TODO: Links in EBNF files
+include::partial$n1ql-language-reference/horizontal-style.adoc[]
+
 [abstract]
 {description}
 
@@ -29,23 +33,23 @@
 
 The `UPDATE STATISTICS` statement provides a syntax which enables you to gather statistics for an index key expression.
 
+// tag::overview[]
 When you use an index with a query, you typically create the index on the fields which the query uses to filter.
 To use the cost-based optimizer with that query, you must collect statistics on the same fields that you used to create the index.
 
 A query may have predicates on non-indexed fields, and you can collect statistics on those fields also to help the optimizer.
 
 For a query which filters on an array or array of objects, you must collect the statistics using exactly the same expression that you used to create the index.
+// end::overview[]
 
 == Syntax
 
-[subs="normal"]
+[source,ebnf]
 ----
-update-statistics-expressions ::=
-  ( UPDATE STATISTICS [ FOR ] | ANALYZE [ KEYSPACE | COLLECTION ] )
-    <<keyspace-ref>> '(' <<index-expr>> [ ',' <<index-expr>> ]* ')' [ <<index-with>> ]
+include::partial$grammar/utility.ebnf[tag=update-statistics-expr]
 ----
 
-image::n1ql-language-reference/update-statistics-expressions.png["( 'UPDATE' 'STATISTICS' 'FOR'? | 'ANALYZE' ( 'KEYSPACE' | 'COLLECTION')? ) keyspace-ref '(' index-expr ( ',' index-expr )* ')' index-with?"]
+image::n1ql-language-reference/update-statistics-expr.png[align=left]
 
 For this syntax, `UPDATE STATISTICS` and `ANALYZE` are synonyms.
 The statement must begin with one of these alternatives.
@@ -56,34 +60,39 @@ Including this keyword makes no difference to the operation of the statement.
 When using the `ANALYZE` keyword, the `COLLECTION` or `KEYSPACE` keywords are optional.
 Including either of these keywords makes no difference to the operation of the statement.
 
-[[keyspace-ref,keyspace-ref]]
+[horizontal.compact]
+keyspace-ref:: <<keyspace-ref>> icon:caret-down[]
+index-key:: <<index-expr>> icon:caret-down[]
+index-with:: <<index-with>> icon:caret-down[]
+
+[[keyspace-ref]]
 === Keyspace Reference
 
-[subs="normal"]
+[source,ebnf]
 ----
-keyspace-ref ::= <<keyspace-path>> | <<keyspace-partial>>
-----
-
-image::n1ql-language-reference/keyspace-ref.png["keyspace-path | keyspace-partial"]
-
-[#keyspace-path,reftext="keyspace-path",subs="normal"]
-----
-keyspace-path ::= [ {logical-hierarchy}[namespace] ':' ] {logical-hierarchy}[bucket] [ '.' {logical-hierarchy}[scope] '.' {logical-hierarchy}[collection] ]
+include::partial$grammar/dql.ebnf[tag=keyspace-ref]
 ----
 
-image::n1ql-language-reference/keyspace-path.png["( namespace ':' )? bucket ( '.' scope '.' collection )?"]
+image::n1ql-language-reference/keyspace-ref.png[align=left]
 
-[#keyspace-partial,reftext="keyspace-partial",subs="normal"]
+[source#keyspace-path,ebnf,reftext="keyspace-path"]
 ----
-keyspace-partial ::= {logical-hierarchy}[collection]
+include::partial$grammar/dql.ebnf[tag=keyspace-path]
 ----
 
-image::n1ql-language-reference/keyspace-partial.png["collection"]
+image::n1ql-language-reference/keyspace-path.png[align=left]
+
+[source#keyspace-partial,ebnf,reftext="keyspace-partial"]
+----
+include::partial$grammar/dql.ebnf[tag=keyspace-partial]
+----
+
+image::n1ql-language-reference/keyspace-partial.png[align=left]
 
 The simple name or fully-qualified name of the keyspace for which you want to gather statistics.
 Refer to the {keyspace-ref}[CREATE INDEX] statement for details of the syntax.
 
-[[index-expr,index-expr]]
+[[index-expr]]
 === Index Expression
 
 The expression for which you want to gather statistics.
@@ -95,7 +104,7 @@ This may be any expression that is supported as an index key, including, but not
 
 * An {meta-info-expr}[expression with the META() function], as used in a metadata index.
 
-[[index-with,index-with]]
+[[index-with,WITH Clause]]
 include::partial$n1ql-language-reference/statistics-options.adoc[]
 
 == Result
@@ -110,108 +119,25 @@ The statement returns an empty array.
 .Create indexes
 [source,N1QL]
 ----
-CREATE INDEX idx_country_city ON `travel-sample`.inventory.hotel(country, city);
-CREATE INDEX idx_city_country ON `travel-sample`.inventory.hotel(city, country);
+include::example$utility/statistics-expr.n1ql[tag=indexes]
 ----
 
 .Update statistics
 [source,N1QL]
 ----
-UPDATE STATISTICS FOR `travel-sample`.inventory.hotel(city, country);
+include::example$utility/statistics-expr.n1ql[tag=update]
 ----
 
 .Query
 [source,N1QL]
 ----
-EXPLAIN SELECT COUNT(*) FROM `travel-sample`.inventory.hotel WHERE country = 'France';
+include::example$utility/statistics-expr.n1ql[tag=explain]
 ----
 
 .Result
 [source,JSON]
 ----
-[
-  {
-    "cardinality": 1, // <1>
-    "cost": 36.39093947963759, // <2>
-    "plan": {
-      "#operator": "Sequence",
-      "~children": [
-        {
-          "#operator": "IndexScan3",
-          "bucket": "travel-sample",
-          "covers": [
-            "cover ((`hotel`.`country`))",
-            "cover ((`hotel`.`city`))",
-            "cover ((meta(`hotel`).`id`))",
-            "cover (count(*))"
-          ],
-          "index": "idx_country_city",
-          "index_group_aggs": {
-            "aggregates": [
-              {
-                "aggregate": "COUNT",
-                "expr": "1",
-                "id": 3,
-                "keypos": -1
-              }
-            ]
-          },
-          "index_id": "9071bf247db9d656",
-          "index_projection": {
-            "entry_keys": [
-              3
-            ]
-          },
-          "keyspace": "hotel",
-          "namespace": "default",
-          "optimizer_estimates": { // <3>
-            "cardinality": 1,
-            "cost": 36.386580580694044,
-            "fr_cost": 12.314601064983428,
-            "size": 19
-          },
-          "scope": "inventory",
-          "spans": [
-            {
-              "exact": true,
-              "range": [
-                {
-                  "high": "\"France\"",
-                  "inclusion": 3,
-                  "low": "\"France\""
-                }
-              ]
-            }
-          ],
-          "using": "gsi"
-        },
-        {
-          "#operator": "Parallel",
-          "~child": {
-            "#operator": "Sequence",
-            "~children": [
-              {
-                "#operator": "InitialProject",
-                "optimizer_estimates": { // <4>
-                  "cardinality": 1,
-                  "cost": 36.39093947963759,
-                  "fr_cost": 12.318959963926968,
-                  "size": 19
-                },
-                "result_terms": [
-                  {
-                    "expr": "cover (count(*))"
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "text": "SELECT COUNT(*) FROM `travel-sample`.inventory.hotel WHERE country = 'France';"
-  }
-]
+include::example$utility/statistics-expr.jsonc[]
 ----
 ====
 
@@ -228,7 +154,7 @@ This example uses the same indexes as <<ex1>>.
 .Update statistics
 [source,N1QL]
 ----
-UPDATE STATISTICS FOR `travel-sample`.inventory.hotel(city, country, free_breakfast);
+include::example$utility/statistics-expr-predicate.n1ql[tag=update]
 ----
 
 There is no index on the `free_breakfast` field.
@@ -237,148 +163,13 @@ However, the query below refers to this field as a predicate, so we collect stat
 .Query
 [source,N1QL]
 ----
-EXPLAIN SELECT COUNT(*) FROM `travel-sample`.inventory.hotel
-WHERE country = 'United States' AND free_breakfast = true;
+include::example$utility/statistics-expr-predicate.n1ql[tag=explain]
 ----
 
 .Result
 [source,JSON]
 ----
-[
-  {
-    "cardinality": 1, // <1>
-    "cost": 1319.7883498503274,
-    "plan": {
-      "#operator": "Sequence",
-      "~children": [
-        {
-          "#operator": "IndexScan3",
-          "bucket": "travel-sample",
-          "index": "idx_country_city",
-          "index_id": "9071bf247db9d656",
-          "index_projection": {
-            "primary_key": true
-          },
-          "keyspace": "hotel",
-          "namespace": "default",
-          "optimizer_estimates": { // <2>
-            "cardinality": 361.00000000000006,
-            "cost": 74.51787485734917,
-            "fr_cost": 12.173179708746119,
-            "size": 11
-          },
-          "scope": "inventory",
-          "spans": [
-            {
-              "exact": true,
-              "range": [
-                {
-                  "high": "\"United States\"",
-                  "inclusion": 3,
-                  "low": "\"United States\""
-                }
-              ]
-            }
-          ],
-          "using": "gsi"
-        },
-        {
-          "#operator": "Fetch",
-          "bucket": "travel-sample",
-          "keyspace": "hotel",
-          "namespace": "default",
-          "optimizer_estimates": { // <3>
-            "cardinality": 361.00000000000006,
-            "cost": 1292.900802248151,
-            "fr_cost": 27.514960671047508,
-            "size": 4467
-          },
-          "scope": "inventory"
-        },
-        {
-          "#operator": "Parallel",
-          "~child": {
-            "#operator": "Sequence",
-            "~children": [
-              {
-                "#operator": "Filter",
-                "condition": "(((`hotel`.`country`) = \"United States\") and ((`hotel`.`free_breakfast`) = true))",
-                "optimizer_estimates": { // <4>
-                  "cardinality": 267.3053435114504,
-                  "cost": 1317.028460795967,
-                  "fr_cost": 27.605223208379773,
-                  "size": 4467
-                }
-              },
-              {
-                "#operator": "InitialGroup",
-                "aggregates": [
-                  "count(*)"
-                ],
-                "group_keys": [],
-                "optimizer_estimates": { // <5>
-                  "cardinality": 1,
-                  "cost": 1319.7015142310815,
-                  "fr_cost": 1319.7015142310815,
-                  "size": 4467
-                }
-              }
-            ]
-          }
-        },
-        {
-          "#operator": "IntermediateGroup",
-          "aggregates": [
-            "count(*)"
-          ],
-          "group_keys": [],
-          "optimizer_estimates": { // <6>
-            "cardinality": 1,
-            "cost": 1319.7115142310815,
-            "fr_cost": 1319.7115142310815,
-            "size": 4467
-          }
-        },
-        {
-          "#operator": "FinalGroup",
-          "aggregates": [
-            "count(*)"
-          ],
-          "group_keys": [],
-          "optimizer_estimates": { // <7>
-            "cardinality": 1,
-            "cost": 1319.7215142310815,
-            "fr_cost": 1319.7215142310815,
-            "size": 4467
-          }
-        },
-        {
-          "#operator": "Parallel",
-          "~child": {
-            "#operator": "Sequence",
-            "~children": [
-              {
-                "#operator": "InitialProject",
-                "optimizer_estimates": { // <8>
-                  "cardinality": 1,
-                  "cost": 1319.7883498503274,
-                  "fr_cost": 1319.7883498503274,
-                  "size": 4467
-                },
-                "result_terms": [
-                  {
-                    "expr": "count(*)"
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "text": "SELECT COUNT(*) FROM `travel-sample`.inventory.hotel\nWHERE country = 'United States' AND free_breakfast = true;"
-  }
-]
+include::example$utility/statistics-expr-predicate.jsonc[]
 ----
 ====
 
@@ -397,85 +188,25 @@ WHERE country = 'United States' AND free_breakfast = true;
 .Create index
 [source,N1QL]
 ----
-CREATE INDEX idx_public_likes
-ON `travel-sample`.inventory.hotel((DISTINCT (`public_likes`)));
+include::example$utility/statistics-expr-array.n1ql[tag=indexes]
 ----
 
 .Update statistics
 [source,N1Ql]
 ----
-UPDATE STATISTICS FOR `travel-sample`.inventory.hotel((DISTINCT (`public_likes`)));
+include::example$utility/statistics-expr-array.n1ql[tag=update]
 ----
 
 .Query
 [source,N1Ql]
 ----
-EXPLAIN SELECT COUNT(1)
-FROM `travel-sample`.inventory.hotel
-WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
+include::example$utility/statistics-expr-array.n1ql[tag=explain]
 ----
 
 .Results
 [source,JSON]
 ----
-[
-  {
-    "cardinality": 1,
-    "cost": 39.80787755862344,
-    "plan": {
-      "#operator": "Sequence",
-      "~children": [
-        {
-          "#operator": "DistinctScan",
-          "optimizer_estimates": {
-            "cardinality": 105.64354562889939,
-            "cost": 39.44754768187852,
-            "fr_cost": 39.44754768187852,
-            "size": 11
-          },
-          "scan": {
-            "#operator": "IndexScan3",
-            "bucket": "travel-sample",
-            "covers": [
-              "cover ((distinct ((`hotel`.`public_likes`))))",
-              "cover ((meta(`hotel`).`id`))"
-            ],
-            "filter": "cover (any `p` in (`hotel`.`public_likes`) satisfies (`p` like \"A%\") end)",
-            "filter_covers": {
-              "cover (any `p` in (`hotel`.`public_likes`) satisfies ((\"A\" <= `p`) and (`p` < \"B\")) end)": true,
-              "cover (any `p` in (`hotel`.`public_likes`) satisfies (`p` like \"A%\") end)": true
-            },
-            "index": "idx_public_likes",
-            ...
-          }
-        },
-        {
-          "#operator": "Parallel",
-          "~child": {
-            "#operator": "Sequence",
-            "~children": [
-              {
-                "#operator": "InitialGroup",
-                "aggregates": [
-                  "count(1)"
-                ],
-                "group_keys": [],
-                "optimizer_estimates": {
-                  "cardinality": 1,
-                  "cost": 39.797927684252365,
-                  "fr_cost": 39.797927684252365,
-                  "size": 11
-                }
-              }
-            ]
-          }
-        },
-        ...
-      ]
-    },
-    "text": "SELECT COUNT(1)\nFROM `travel-sample`.inventory.hotel\nWHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;"
-  }
-]
+include::example$utility/statistics-expr-array.jsonc[]
 ----
 ====
 
@@ -485,64 +216,25 @@ WHERE ANY p IN public_likes SATISFIES p LIKE 'A%' END;
 .Create index
 [source,N1QL]
 ----
-CREATE INDEX idx_reviews_ratings_overall
-ON `travel-sample`.inventory.hotel(DISTINCT ARRAY r.ratings.Overall
-FOR r IN reviews END);
+include::example$utility/statistics-expr-nested.n1ql[tag=indexes]
 ----
 
 .Update statistics
 [source,N1Ql]
 ----
-UPDATE STATISTICS
-FOR `travel-sample`.inventory.hotel(DISTINCT ARRAY r.ratings.Overall
-FOR r IN reviews END);
+include::example$utility/statistics-expr-nested.n1ql[tag=update]
 ----
 
 .Query
 [source,N1Ql]
 ----
-EXPLAIN SELECT COUNT(1)
-FROM `travel-sample`.inventory.hotel
-WHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END;
+include::example$utility/statistics-expr-nested.n1ql[tag=explain]
 ----
 
 .Results
 [source,JSON]
 ----
-[
-  {
-    "cardinality": 1,
-    "cost": 118.0080501905589,
-    "plan": {
-      "#operator": "Sequence",
-      "~children": [
-        {
-          "#operator": "IndexScan3",
-          "bucket": "travel-sample",
-          "covers": [
-            "cover ((distinct (array ((`r`.`ratings`).`Overall`) for `r` in (`hotel`.`reviews`) end)))",
-            "cover ((meta(`hotel`).`id`))",
-            "cover (count(1))"
-          ],
-          "filter_covers": {
-            "cover (any `r` in (`hotel`.`reviews`) satisfies (((`r`.`ratings`).`Overall`) = 4) end)": true
-          },
-          "index": "idx_reviews_ratings_overall",
-          ...
-          "optimizer_estimates": {
-            "cardinality": 1,
-            "cost": 118.00369129161537,
-            "fr_cost": 12.312997158401616,
-            "size": 19
-          },
-          ...
-        },
-        ...
-      ]
-    },
-    "text": "SELECT COUNT(1)\nFROM `travel-sample`.inventory.hotel\nWHERE ANY r IN reviews SATISFIES r.ratings.Overall = 4 END;"
-  }
-]
+include::example$utility/statistics-expr-nested.jsonc[]
 ----
 ====
 
