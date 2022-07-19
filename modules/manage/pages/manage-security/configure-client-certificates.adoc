@@ -165,7 +165,7 @@ cd servercertfiles2/root
 . Create an encrypted private key and a certificate signing request, for an intermediate certificate that is to be used for signing client certificates.
 +
 ----
-openssl req -new -sha256 -newkey rsa:2048 -keyout ../clients/ca.key \
+openssl req -new -sha256 -newkey rsa:2048 -keyout ../clients/ca-i.key \
 -out reqs/client-signing.csr \
 -subj '/C=UA/O=MyCompany/OU=People/CN=ClientSigningCA'
 ----
@@ -173,7 +173,7 @@ openssl req -new -sha256 -newkey rsa:2048 -keyout ../clients/ca.key \
 Since this specifies that an encrypted private key be created, prompts appear requesting entry of an appropriate _pass phrase_.
 Enter an appropriate phrase against the prompts.
 +
-This new private key is named `../clients/ca.key`.
+This new private key is named `../clients/ca-i.key`.
 The signing-request file is saved as `reqs/client-signing.csr`.
 
 . Create the intermediate certificate to be used for client-certificate signing.
@@ -181,7 +181,7 @@ The signing-request file is saved as `reqs/client-signing.csr`.
 ----
 openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial -CAserial serial.srl \
 -days 3650 -req -in reqs/client-signing.csr -out issued/client-signing.pem \
--extfile ca.ext
+-extfile ca-i.ext
 ----
 +
 The root certificate and key for the cluster, `ca.pem` and `ca.key`, are specified as the authority for the intermediate certificate.
@@ -192,7 +192,7 @@ Note that the extension file used here to constrain the capabilities of the inte
 . Save the intermediate certificate as the certificate-authority for the client certificate that is to be created.
 +
 ----
-cp issued/client-signing.pem ../clients/ca.pem
+cp issued/client-signing.pem ../clients/ca-i.pem
 ----
 
 . Within the `../clients` directory, create an extension file for the client certificate:
@@ -231,20 +231,20 @@ The username associated with the certificate is specified as `clientuser`: this 
 . Create the client certificate.
 +
 ----
-openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial -CAserial serial.srl \
+openssl x509 -CA ca-i.pem -CAkey ca-i.key -CAcreateserial -CAserial serial.srl \
 -days 365 -req -in reqs/clientuser.csr \
 -out issued/clientuser.pem -extfile client.ext
 ----
 +
-This creates the client certificate `clientuser.pem`, based on the signing request `clientuser.csr`, and signed with the authority of the intermediate certificate and key, `ca.pem` and `ca.key`.
-Since `ca.key` is encrypted, a prompt appears, requesting entry of the appropriate pass phrase: enter the appropriate phrase against the prompt.
+This creates the client certificate `clientuser.pem`, based on the signing request `clientuser.csr`, and signed with the authority of the intermediate certificate and key, `ca-i.pem` and `ca-i.key`.
+Since `ca-i.key` is encrypted, a prompt appears, requesting entry of the appropriate pass phrase: enter the appropriate phrase against the prompt.
 The certificate is saved in the `issued` folder.
 
 . Check the validity of the client certificate.
 The following use of the `openssl` command verifies the relationship between the root certificate, the client-intermediate certificate, and the client certificate.
 +
 ----
-openssl verify -trusted ../root/ca.pem -untrusted ca.pem \
+openssl verify -trusted ../root/ca.pem -untrusted ca-i.pem \
 issued/clientuser.pem
 ----
 +
@@ -257,7 +257,7 @@ issued/clientuser.pem: OK
 . Concatenate the issued client certificate with the client-intermediate certificate, to establish the chain of authority.
 +
 ----
-cat issued/clientuser.pem ca.pem > clientuser.pem
+cat issued/clientuser.pem ca-i.pem > clientuser.pem
 ----
 +
 The result of the concatenation, `clientuser.pem` is the completed client certificate.
@@ -406,7 +406,7 @@ export STOREPASS=storepass
 . If necessary, install a package containing the `keytool` utility:
 +
 ----
-sudo apt install openjdk-9-jre-headless
+sudo apt install openjdk-11-jre-headless
 ----
 
 . Generate the keystore.
@@ -432,14 +432,14 @@ keytool -certreq -alias selfsigned -keyalg RSA -file my.csr \
 . Generate the client certificate, signing it with the intermediate private key, and thereby establishing the intermediate certificate’s authority:
 +
 ----
-openssl x509 -req -in my.csr -CA ../servers/ca.pem \
--CAkey ../servers/ca.key -CAcreateserial -out clientcert.pem -days 365
+openssl x509 -req -in my.csr -CA ../servers/ca-i.pem \
+-CAkey ../servers/ca-i.key -CAcreateserial -out clientcert.pem -days 365
 ----
 +
 Since the intermediate private key was encrypted, a prompt now appears, requesting entry of the pass phrase for the key:
 +
 ----
-Enter pass phrase for ../servers/ca.key:
+Enter pass phrase for ../servers/ca-i.key:
 ----
 +
 Enter the pass phrase against the prompt.
@@ -454,7 +454,7 @@ keytool -import -trustcacerts -file ../root/ca.pem \
 . Add the intermediate certificate to the keystore:
 +
 ----
-keytool -import -trustcacerts -file ../servers/ca.pem \
+keytool -import -trustcacerts -file ../servers/ca-i.pem \
 -alias root2 -keystore ${KEYSTORE_FILE} -storepass ${STOREPASS} -noprompt
 ----
 
@@ -473,7 +473,7 @@ A sample Java program, which accesses a keystore from a local filesystem, is pro
 == Securing Client Access with TLS
 
 For an application to communicate securely with Couchbase Server, SSL/TLS must be enabled on the client side.
-Enablement requires a copy of the certificate used by Couchbase Server: this can be accessed from the Couchbase Web Console, as described in
+Enablement requires a copy of the root certificate used by Couchbase Server: this can be accessed from the Couchbase Web Console, as described in
 xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Root Certificate].
 
-Note that if, at some point, this certificate gets regenerated on the server-side, a copy of the new version must be obtained, and the client re-enabled.
+Note that if, at some point, the root certificate gets regenerated on the server-side, a copy of the new version must be obtained, and the client re-enabled.
