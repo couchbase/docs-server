@@ -1,4 +1,6 @@
 = SELECT Clause
+:description: pass:q[The `SELECT` clause determines the result set.]
+:imagesdir: ../../assets/images
 
 [abstract]
 The `SELECT` clause determines the result set.
@@ -18,52 +20,20 @@ xref:learn:security/authorization-overview.adoc[Authorization].
 [#section_Syntax]
 == Syntax
 
-In the below `SELECT` statement, the `SELECT` clause is boldfaced:
-
+[subs="normal"]
 ----
-SELECT select_clause
-[FROM from_clause] [JOIN join_clause]
-[USE INDEX useindex_clause]
-[LET let_clause]
-[WHERE where_clause ( [AND where_clause2] )* ]
-[GROUP BY groupby_clause] [LETTING|HAVING letting_clause]
-[UNION|INTERSECT|EXCEPT union_clause]
-[ORDER BY orderby_clause]
-[LIMIT limit_int]
-[OFFSET offset_clause]
-;
+select-clause ::= SELECT [ ALL | DISTINCT ] ( <<result-expr,result-expr>> [ ',' <<result-expr,result-expr>> ]* | ( RAW | ELEMENT | VALUE ) _expr_ [ [ AS ] <<alias,alias>> ] )
 ----
-
-*Syntax of the select_clause*
-
-----
-SELECT [ALL|DISTINCT] ( result-expr [ , result-expr2 ]*
-| (RAW|ELEMENT|VALUE) expr [ [AS] alias ] )
-----
-
-*Railroad Diagrams for SELECT clause:*
 
 image::n1ql-language-reference/select-clause.png[]
 
-result-expr:
-
-image::n1ql-language-reference/select-clause_RR_result-expr.png[,50%]
-
-path:
-
-image::n1ql-language-reference/select-clause_RR_path.png[,50%]
-
-alias:
-
-image::n1ql-language-reference/select-clause_RR_alias.png[,50%]
-
 [#sec_Arguments]
-== Arguments
+=== ALL / DISTINCT
 
-ALL | DISTINCT:: [Optional; default is ALL]
-+
+(Optional; default is ALL.)
+
 SELECT ALL retrieves all of the data specified and will result in all of the specified columns, including all duplicates.
-+
+
 SELECT DISTINCT removes duplicate result objects from the query's result set.
 
 NOTE: Since Couchbase Server 4.5.1, the DISTINCT clause is no longer blocking in nature since it streams the input and produces the output in-parallel, while consuming less memory.
@@ -73,28 +43,45 @@ Since `DISTINCT` is purely run in memory, it executes quickly, making the overhe
 
 In the below table,
 
-* Q1's `SELECT DISTINCT` reduces the recordset to a small fraction of its original size; and while removing so many of the documents takes time, projecting the remaining small fraction is actually slightly faster than the overhead of removing duplicates.
-* On the other extreme, Q2's `SELECT DISTINCT` does not reduce the recordset at all since `META().id` is already unique, and thus projects the entire original recordset and shows the maximum overhead of about twice as long to execute than `SELECT ALL`.
+* <<q1>>'s `SELECT DISTINCT` reduces the recordset to a small fraction of its original size; and while removing so many of the documents takes time, projecting the remaining small fraction is actually slightly faster than the overhead of removing duplicates.
+* On the other extreme, <<q2>>'s `SELECT DISTINCT` does not reduce the recordset at all since `META().id` is already unique, and thus projects the entire original recordset and shows the maximum overhead of about twice as long to execute than `SELECT ALL`.
 
-[cols="4,^1,1,^1,1"]
+[cols="4a,^1,^1"]
 |===
-| N1QL Query 2+| SELECT ALL 2+| SELECT DISTINCT
+| N1QL Query| SELECT ALL | SELECT DISTINCT
 
-| Q1: `pass:c[SELECT city FROM `travel-sample`;]`
-2+| slightly slower
-2+| slightly faster
-
-| Q2: `pass:c[SELECT META().id FROM `travel-sample`;]`
-2+| much faster
-2+| much slower
-|===
-
-In the below `EXPLAIN` example of using `DISTINCT`, the lines using the `DISTINCT` operator are boldfaced:
-
+|
+[[q1]]
+.Q{counter:seq1}
+[source,n1ql]
 ----
-EXPLAIN SELECT DISTINCT city FROM `travel-sample`;
+SELECT city FROM `travel-sample`;
+----
+.^| slightly slower
+.^| slightly faster
 
-Results:
+|
+[[q2]]
+.Q{counter:seq1}
+[source,n1ql]
+----
+SELECT META().id FROM `travel-sample`;
+----
+.^| much faster
+.^| much slower
+|===
+
+.Query plan using the `DISTINCT` operator
+====
+.Query
+[source,n1ql]
+----
+EXPLAIN SELECT DISTINCT city FROM `travel-sample`; -- <1>
+----
+
+.Results
+[source,json]
+----
 {
   "plan": {
     "#operator": "Sequence",
@@ -126,7 +113,7 @@ Results:
               ]
             },
             {
-              "#operator": "Distinct"
+              "#operator": "Distinct" // <1>
             },
             {
               "#operator": "FinalProject"
@@ -135,110 +122,243 @@ Results:
         }
       },
       {
-        "#operator": "Distinct"
+        "#operator": "Distinct" // <1>
       }
     ]
   },
   "text": "SELECT DISTINCT city\nFROM `travel-sample`;"
 }
 ----
+<1> Lines using the `DISTINCT` operator
+====
 
-result-expr::
-One or more expressions that evaluate to one or more field names to be in the ResultSet.
-+
+[[result-expr]]
+=== Result Expression
+
+[subs="normal"]
+----
+result-expr ::= ( [ <<path,path>> "." ] "*" | _expr_ [ [ AS ] <<alias,alias>> ] )
+----
+
+image::n1ql-language-reference/result-expr.png["( path '.' )? '*' | expr ( 'AS'? alias )?"]
+
+[#path,subs="normal"]
+----
+path ::= _identifier_ [ '[' _expr_ ']' ]* [ '.' <<path,path>> ]
+----
+
+image::n1ql-language-reference/path.png["'identifier ('[' expr ']')* ( '.' path )?"]
+
+One or more expressions that evaluate to one or more field names to be in the result set.
+
 If no field name is specified, the input for the query is a single empty object that allows you to perform calculations with the `SELECT` statement, such as `SELECT 10+20 AS Total;` or other N1QL expression.
-+
+
 For details with examples, see xref:n1ql-language-reference/index.adoc#N1QL_Expressions[N1QL Expressions].
 
-RAW | ELEMENT | VALUE:: [Optional; RAW and ELEMENT and VALUE are synonyms]
-+
+=== RAW / ELEMENT / VALUE
+
+(Optional; RAW and ELEMENT and VALUE are synonyms.)
+
 SELECT RAW reduces the amount of data returned by eliminating the field attribute.
-+
-*Example 1*: Comparing SELECT and SELECT RAW on a basic query:
-+
-[cols=2*]
+
+.Comparing SELECT and SELECT RAW on a basic query
+====
+[cols=2*a]
 |===
-| `SELECT {"a":1, "b":2};`
-| `SELECT RAW {"a":1, "b":2};`
+|
+.Query
+[source,n1ql]
+----
+SELECT {"a":1, "b":2};
+----
+|
+.Query
+[source,n1ql]
+----
+SELECT RAW {"a":1, "b":2};
+----
+
+|
+.Results
+[source,json]
+----
+[
+  {
+    "$1": { // <1>
+      "a": 1,
+      "b": 2
+    }
+  }
+]
+----
+|
+.Results
+[source,json]
+----
+[
+  { // <2>
+    "a": 1,
+    "b": 2
+  }
+]
+----
 |===
-+
-image::n1ql-language-reference/select-clause_ex1.png[]
-+
+
+<1> Added alias
+<2> No added alias
+====
+
 There are times in which this extra layer might not be desirable since it requires extra output parsing.
 So the RAW qualifier specifies that the expression that follows not to be qualified, as shown in the next example.
-+
-*Example 2*: Comparing SELECT and SELECT RAW listing 5 airport cities alphabetically:
-+
-[cols="5,5,6"]
+
+.Comparing SELECT and SELECT RAW listing 5 airport cities alphabetically
+====
+[cols="5a,5a,5a"]
 |===
-| `SELECT city`
+|
+.Query
+[source,n1ql]
+----
+SELECT city
+FROM `travel-sample`
+WHERE type="airport"
+ORDER BY city LIMIT 5;
+----
+|
+.Query
+[source,n1ql]
+----
+SELECT RAW city
+FROM `travel-sample`
+WHERE type="airport"
+ORDER BY city LIMIT 5;
+----
+|
+.Query
+[source,n1ql]
+----
+SELECT DISTINCT RAW city
+FROM `travel-sample`
+WHERE type="airport"
+ORDER BY city LIMIT 5;
+----
 
-`pass:c[FROM `travel-sample`]`
-
-`WHERE type="airport"`
-
-`ORDER BY city LIMIT 5;`
-| `SELECT RAW city`
-
-`pass:c[FROM `travel-sample`]`
-
-`WHERE type="airport"`
-
-`ORDER BY city LIMIT 5;`
-| `SELECT DISTINCT RAW city`
-
-`pass:c[FROM `travel-sample`]`
-
-`WHERE type="airport"`
-
-`ORDER BY city LIMIT 5;`
+|
+.Results
+[source,json]
+----
+[
+  {
+    "city": "Abbeville"
+  },
+  {
+    "city": "Aberdeen"
+  },
+  {
+    "city": "Aberdeen"
+  },
+  {
+    "city": "Aberdeen"
+  },
+  {
+    "city": "Abilene"
+  }
+]
+----
+|
+.Results
+[source,json]
+----
+[
+  "Abbeville",
+  "Aberdeen",
+  "Aberdeen",
+  "Aberdeen",
+  "Abilene"
+]
+----
+|
+.Results
+[source,json]
+----
+[
+  "Abbeville",
+  "Aberdeen",
+  "Abilene",
+  "Adak Island",
+  "Addison"
+]
+----
 |===
-+
-image::n1ql-language-reference/select-clause_ex2.png[]
+====
 
-keyspace_name1, keyspace_name2, \..., keyspace_nameX:: [Optional; if the keyspace is unspecified in the SELECT clause, it will be taken from the xref:n1ql-language-reference/from.adoc[FROM clause]]
-+
+=== Keyspace Name
+
+(Optional; if the keyspace is unspecified in the SELECT clause, it will be taken from the xref:n1ql-language-reference/from.adoc[FROM clause].)
+
 The name of the keyspace or keyspaces used, separated by a comma.
-+
+
 Keyspaces map to buckets in Couchbase Server.
-A keyspace is a set of documents that may vary in structure and are a unit of authorization and resource allocation.
-+
+A keyspace is a set of documents that may vary in structure, and is a unit of authorization and resource allocation.
+
 [NOTE]
 ====
 When specifying the keyspace name in `SELECT keyspace_name.*` for all fields, the keyspace name will not appear in the result set; whereas not specifying the keyspace name in `SELECT * FROM keyspace_name` adds the keyspace name to the result set.
+====
 
+====
+.Query {counter:seq2:A}
+[source,n1ql]
 ----
 SELECT * FROM `travel-sample` WHERE type="hotel";
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
-    "travel-sample": {                          / added line with keyspace
+    "travel-sample": { // <1>
       "address": "Capstone Road, ME7 3JE",
       "alias": null,
       "checkin": null,
 ...
+    }
+  }
+]
 ----
 
+.Query {counter:seq2}
+[source,n1ql]
 ----
 SELECT `travel-sample`.* FROM `travel-sample` WHERE type="hotel";
+----
 
-Results:
+.Results
+[source,json]
+----
 [
-  {                                             / no added line with keyspace
+  { // <2>
     "address": "Capstone Road, ME7 3JE",
     "alias": null,
     "checkin": null,
 ...
+  }
+]
 ----
 
+.Query {counter:seq2}
+[source,n1ql]
 ----
-SELECT meta().id,email,city,phone,`travel-sample`.reviews[0].ratings
+SELECT meta().id, email, city, phone, `travel-sample`.reviews[0].ratings
 FROM `travel-sample` WHERE type="hotel" LIMIT 5;
+----
 
-Results:
+.Results
+[source,json]
+----
 [
-  {                                             / no added line with keyspace
+  { // <3>
     "city": "Medway",
     "email": null,
     "id": "hotel_10025",
@@ -253,43 +373,76 @@ Results:
     }
   },
 ...
+]
 ----
+
+<1> Added line with keyspace
+<2> No added line with keyspace
+<3> No added line with keyspace
 ====
 
-field_expr::
-The name of the field or fields, separated by a comma, to be in the query's ResultSet, such as:
-+
+=== Field Expression
+
+The name of the field or fields, separated by a comma, to be in the query's result set, such as:
+
+====
+.Query
+[source,n1ql]
 ----
 SELECT id, airline, stops FROM `travel-sample` WHERE type="route";
 ----
-+
+====
+
 To use a field within an array, use `[0]` after the array name, followed by a period and the field name, such as:
-+
+
+====
+.Query
+[source,n1ql]
 ----
 SELECT schedule[0].day FROM `travel-sample` WHERE type="route";
 ----
+====
 
-AS alias_name::
-A temporary name of a bucket name or field name to make names more readable or unique, such as:
-+
+[[alias]]
+=== AS Alias
+
+[subs="normal"]
+----
+alias ::= _identifier_
+----
+
+image::n1ql-language-reference/alias.png["identifier"]
+
+A temporary name of a keyspace name or field name to make names more readable or unique, such as:
+
+====
+.Query
+[source,n1ql]
 ----
 SELECT schedule[0].day AS Weekday
 ----
+====
 
 [#sec_BestPractices]
 == Best Practices
 
-When possible, explicitly list all fields you want in your ResultSet instead of the "\*" to select all fields, since the "*" requires an extra trip over your network (one to get the list of field names and one to select the field names).
+When possible, explicitly list all fields you want in your result set instead of the `{asterisk}` to select all fields, since the `{asterisk}` requires an extra trip over your network (one to get the list of field names and one to select the field names).
 
 [#sec_Examples]
 == Examples
 
-*Example 1*: Select all the fields of 1 document of type `airline` from the `travel-sample` keyspace.
-
+[[ex1]]
+.Select all the fields of 1 document of type `airline` from the `travel-sample` keyspace
+====
+.Query
+[source,n1ql]
 ----
 SELECT * FROM `travel-sample` WHERE type="airline" LIMIT 1;
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
     "travel-sample": {
@@ -304,13 +457,20 @@ Results:
   }
 ]
 ----
+====
 
-*Example 2*: Select all the fields of 1 document of type `landmark` from the `travel-sample` keyspace.
-
+[[ex2]]
+.Select all the fields of 1 document of type `landmark` from the `travel-sample` keyspace
+====
+.Query
+[source,n1ql]
 ----
 SELECT * FROM `travel-sample` WHERE type="landmark" LIMIT 1;
+----
 
-Results:
+.Results
+[source,json]
+----
 [
   {
     "travel-sample": {
@@ -342,6 +502,7 @@ Results:
   }
 ]
 ----
+====
 
 [#sec_RelatedLinks]
 == Related Links
