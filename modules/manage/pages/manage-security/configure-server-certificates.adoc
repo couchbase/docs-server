@@ -340,6 +340,8 @@ The new, _uploaded_ root certificate appears below.
 The text of each certificate appears in the panel to the right.
 Details on the certificate, and button for certificate-deletion, appear at the left.
 Note that a certificate cannot be deleted once it has provided its authority to one or more node certificates on the cluster.
++
+For further information on the *Certificates* tab on the *Security* screen, see xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Certificates].
 
 . _Load_ the node certificate that was copied into the `inbox`, with its private key:
 +
@@ -368,15 +370,28 @@ Note that access by means of a client certificate must be specifically enabled, 
 == Cluster Protection with Root, Intermediate, and Node Certificates
 
 Optionally, a root certificate can be used to sign an _intermediate_ certificate, which is then itself used to sign node certificates.
-This increases security, since it minimizes use of the private key associated with the root certificate, when many node or client-certificates are to be signed.
+This increases security, since it minimizes use of the private key associated with the root certificate, when many node or client certificates are to be signed.
 
-The steps and descriptions below assume that the previous procedure, xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Cluster Protection with Root and Node Certificates], has already been successfully completed; and that familiarity with the basic certificate-related concepts explained there has been attained.
+When a client attempts to access the cluster securely, it must be able to build the certificate chain used to convey the authority of the cluster's root CA (see xref:learn:security/certificates.adoc#intermediate-certificates[Intermediate Certificates]).
+In Couchbase Server Version 7.1+, the certificates can be prepared for client inspection in either of two ways, which are:
+
+* Concatenation of all intermediate and node certificates into a single _chain.pem_ file, which is uploaded from the node's _inbox_.
+
+* Upload, from the node's inbox, of a _chain.pem_ file containing only the unconcatenated node certificate; with the expectation that each intermediate certificate resides in the client's _trust store_.
+
+Both procedures are shown below.
+For more information, see xref:learn:security/using-multiple-cas.adoc#adding-intermediate-certificates-to-the-trust-store[Adding Intermediate Certificates to the Trust Store].
+
+The steps and descriptions in the procedures below assume that the previous procedure, xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Cluster Protection with Root and Node Certificates], has already been successfully completed; and that familiarity with the basic certificate-related concepts explained there has been attained.
 
 Note that corresponding, subsequent procedures that create certificates for _client_-authentication are provided in xref:manage:manage-security/configure-client-certificates.adoc#client-certificate-authorized-by-an-intermediate-certificate[Client Access: Intermediate Certificate Authorization] and xref:manage:manage-security/configure-client-certificates.adoc#java-client-access-intermediate-certificate-authorization[Java Client Access: Intermediate Certificate Authorization]
 
+[#intermediate-concatenation]
+=== Deploying an Intermediate Certificate as Part of the Node's Chain
+
 Proceed as follows:
 
-. On the server to be certificate-protected, create working directories:
+. On the node to be certificate-protected, create working directories:
 +
 ----
 mkdir servercertfiles2
@@ -450,7 +465,7 @@ The output file, `ca.pem` is the root certificate for the cluster, and is saved 
 Enter the following:
 +
 ----
-cat > ca.ext <<EOF
+cat > int.ext <<EOF
 basicConstraints = CA:TRUE
 subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always,issuer:always
@@ -464,7 +479,7 @@ The specified `keyUsage` includes the value `keyCertSign`, meaning that the inte
 . Create a private key and corresponding certificate signing request for the intermediate certificate.
 +
 ----
-openssl req -new -sha256 -newkey rsa:2048 -keyout ../servers/ca.key \
+openssl req -new -sha256 -newkey rsa:2048 -keyout ../servers/int.key \
 -out reqs/server-signing.csr \
 -subj '/C=UA/O=MyCompany/OU=Servers/CN=ServerSigningCA'
 ----
@@ -473,26 +488,26 @@ Again, the key is specified to be encrypted.
 Therefore, prompts appear, asking for a pass phrase for the certificate.
 Enter an appropriate phrase in response to the prompts.
 +
-The output from the request consists of the encrypted private key `../servers/ca.key` and the signing-request `req/server-signing.csr`.
+The output from the request consists of the encrypted private key `../servers/int.key` and the signing-request `req/server-signing.csr`.
 
 . Create the intermediate certificate, specifying the root certificate `ca.pem` and its key `ca.key`, to establish the root certificate's authority.
 +
 ----
 openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial \
 -CAserial serial.srl -days 3650 -req -in reqs/server-signing.csr \
--out issued/server-signing.pem -extfile ca.ext
+-out issued/server-signing.pem -extfile int.ext
 ----
 +
 Since this specifies that the encrypted key `ca.key` be used to sign the intermediate certificate, the user is prompted for the appropriate pass phrase.
 Enter the phrase against the prompt.
 +
-The extension file `ca.ext` is thus applied to the certificate, so as to limit the certificate's capabilities.
+The extension file `int.ext` is thus applied to the certificate, so as to limit the certificate's capabilities.
 The certificate is generated and saved in the `reqs` folder as `server-signing.pem`.
 
 . Save the intermediate certificate as the authority for the node certificates that are to be created.
 +
 ----
-cp issued/server-signing.pem ../servers/ca.pem
+cp issued/server-signing.pem ../servers/int.pem
 ----
 
 . Within the `../servers` directory, create an extension file containing the information that will be generic across all the individual nodes of the cluster.
@@ -545,22 +560,22 @@ The file specifies the IP address specific to the node.
 . Create the node certificate for an individual node, specifying the unique extension file for the node, and specifying the intermediate certificate and key as the signing authority.
 +
 ----
-openssl x509 -CA ca.pem -CAkey ca.key -CAcreateserial \
+openssl x509 -CA int.pem -CAkey int.key -CAcreateserial \
 -CAserial serial.srl -days 365 -req -in reqs/couchbase.node.svc.csr \
 -out issued/couchbase.node.svc.pem -extfile temp.ext
 ----
 +
-Since this specifies that the certificate should be signed by the encrypted intermediate key, `ca.key`, a prompt appears, requesting the appropriate pass phrase.
+Since this specifies that the certificate should be signed by the encrypted intermediate key, `int.key`, a prompt appears, requesting the appropriate pass phrase.
 Enter the phrase against the prompt.
 +
 The node-certificate file `couchbase.node.svc.pem` is hereby saved in the `issued` folder.
-The certificate bears the constraints specified in `temp.ext`, and is granted the authority of the intermediate certificate and key, which are `ca.pem` and `ca.key` respectively.
+The certificate bears the constraints specified in `temp.ext`, and is granted the authority of the intermediate certificate and key, which are `int.pem` and `int.key` respectively.
 
-. Check that the node certificate is valid.
+. [[check-validity]]Check that the node certificate is valid.
 The following use of the `openssl` command verifies the relationship between the root certificate, the intermediate certificate, and the node certificate.
 +
 ----
-openssl verify -trusted ../root/ca.pem -untrusted ca.pem \
+openssl verify -trusted ../root/ca.pem -untrusted int.pem \
 issued/couchbase.node.svc.pem
 ----
 +
@@ -575,7 +590,7 @@ First, concatenate the node certificate and the intermediate certificate, to est
 Then, rename the private key for the node.
 +
 ----
-cat issued/couchbase.node.svc.pem ca.pem > chain.pem
+cat issued/couchbase.node.svc.pem int.pem > chain.pem
 
 cp private/couchbase.node.svc.key pkey.key
 ----
@@ -584,7 +599,6 @@ cp private/couchbase.node.svc.key pkey.key
 +
 ----
 sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/  # if needed
-
 
 sudo cp ./chain.pem /opt/couchbase/var/lib/couchbase/inbox/chain.pem
 sudo cp ./pkey.key /opt/couchbase/var/lib/couchbase/inbox/pkey.key
@@ -604,25 +618,82 @@ sudo cp ca.pem /opt/couchbase/var/lib/couchbase/inbox/CA/.
 . Upload the root certificate, thereby activating it for the entire cluster.
 +
 ----
-curl -X POST http://10.144.220.103:8091/node/controller/loadTrustedCAs -u Administrator:password
+curl -X POST http://10.143.192.102:8091/node/controller/loadTrustedCAs -u Administrator:password
 ----
 
 . Upload the node certificate, specifying the established password for the private key.
 +
 ----
-curl -X POST http://10.144.220.103:8091/node/controller/reloadCertificate -u Administrator:password -d '{"privateKeyPassphrase": {"type": "plain",  "password": "1234"}}'
+curl -X POST http://10.143.192.102:8091/node/controller/reloadCertificate -u Administrator:password
 ----
 +
-Couchbase Server's access to the private key is thus specified as a JSON document, with `plain` as the mode of access.
-This option is effective for pre-production use, but should not be used in production.
-For a full description of passphrase registration, with alternatives to be used in production environments, see the reference page xref:rest-api/upload-retrieve-node-cert.adoc[Upload and Retrive a Node Certificate].
-+
 Note that when, as is typical, the cluster contains more than one node, the `/node/controller/reloadCertificate` command must be executed on each node, specifying the IP address of the node on which execution is occurring.
-+
+
 This concludes the certificate-deployment process.
-The root certificate can be examined by means of Couchbase Web Console, as shown in xref:manage:manage-security/configure-server-certificates.adoc#see-root-certificate-with-couchbase-web-console[Step 11] of the previous example on this page.
+The root certificate can be examined by means of Couchbase Web Console, as shown in xref:manage:manage-security/configure-server-certificates.adoc#see-root-certificate-with-couchbase-web-console[Step 13] of the previous example on this page.
 
 For more information using the REST API to manage certificates, see xref:rest-api:rest-certificate-management.adoc[Certificate Management API].
+
+[#intermediate-upload]
+=== Deploying an Intermediate Certificate via Trust Store
+
+Proceed as follows:
+
+. Perform all steps listed in the section xref:manage:manage-security/configure-server-certificates.adoc#intermediate-concatenation[Representing Intermediate Certificates through Concatenation], above; up to and including the step xref:#check-validity[Check that the node certificate is valid].
+
+. Prepare to deploy the certificate and private key for the node, by renaming both:
++
+----
+cp issued/couchbase.node.svc.pem chain.pem
+
+cp private/couchbase.node.svc.key pkey.key
+----
+
+. Move the renamed node certificate and private key into the `inbox` for the current node.
++
+----
+sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/  # if needed
+
+sudo cp ./chain.pem /opt/couchbase/var/lib/couchbase/inbox/chain.pem
+sudo cp ./pkey.key /opt/couchbase/var/lib/couchbase/inbox/pkey.key
+----
+
+. Ensure that all certificate and private key files in the `inbox` directory can be read by user `couchbase`.
+This can be achieved by changing ownership of the files to `couchbase`, and setting `0600` permissions.
+
+. Move the root certificate and the intermediate certificate into the `inbox/CA` directory for the current node.
++
+----
+sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/CA/  # if needed
+sudo cp int.pem /opt/couchbase/var/lib/couchbase/inbox/CA/.
+cd ../root
+sudo cp ca.pem /opt/couchbase/var/lib/couchbase/inbox/CA/.
+----
+
+. Upload the root and intermediate certificates.
++
+----
+curl -X POST http://10.143.192.102:8091/node/controller/loadTrustedCAs -u Administrator:password
+----
+
+. Upload the node certificate, specifying the established password for the private key.
++
+----
+curl -X POST http://10.143.192.102:8091/node/controller/reloadCertificate -u Administrator:password
+----
+
+Note that when, as is typical, the cluster contains more than one node, the `/node/controller/reloadCertificate` command must be executed on each node, specifying the IP address of the node on which execution is occurring.
+
+This concludes the certificate-deployment process.
+The root certificate can be examined by means of Couchbase Web Console, as shown in xref:#see-root-certificate-with-couchbase-web-console[Step 13] of the previous example on this page.
+
+For more information using the REST API to manage certificates, see xref:rest-api:rest-certificate-management.adoc[Certificate Management API].
+
+=== Using an Encrypted, Private Node-Key
+
+The above examples use an _unencrypted_ private key, for the node.
+If an _encrypted_ private node-key is used, a passphrase must be registered for it, so that the key can be securely retrieved and used when required.
+See the reference page xref:rest-api/upload-retrieve-node-cert.adoc[Upload and Retrieve a Node Certificate].
 
 [#configure-client-access-advanced]
 === Configuring Client Access
