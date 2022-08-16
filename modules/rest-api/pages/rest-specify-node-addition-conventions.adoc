@@ -1,0 +1,235 @@
+= Specify Naming Conventions for Node-Addition
+:description: The REST API allows node-naming conventions to be configured such that only nodes whose names conform to those conventions can be added to the cluster.
+
+[abstract]
+{description}
+
+[#http-methods-and-uris]
+== HTTP Method and URI
+
+----
+POST /settings/security
+
+GET /settings/Security
+
+POST /clusterInit
+----
+
+[#description]
+== Description
+
+When specified with the `POST` method, the `/clusterInit` URI (which is used to initialize a cluster, based on a single node), and the `/settings/security` URI (which is used in general configuration of cluster-security parameters) can be used to specify the naming conventions for _allowed hosts_.
+And allowed host is a host that can be _added_ or _joined_ to the cluster, based on its conformance to the specified naming conventions.
+
+For a complete description of `POST /clusterInit`, see xref:rest-api:rest-initialize-cluster.adoc[Initialize a Cluster].
+For a description of other parameters configurable by `POST /settings/security`, see xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
+
+[#curl-syntax]
+== Curl Syntax
+
+----
+curl -X POST http://<ip-address-or-domain-name>:8091/settings/security
+  -u <username>:<password>
+  -d allowedHosts=<list-of-naming-conventions>
+
+curl -X GET http://<ip-address-or-domain-name>:8091/settings/security/
+    -u <administrator>:<password>
+
+POST /clusterInit
+    -u <administrator>:<password>
+    -d allowedHosts=<list-of-naming-conventions>
+----
+
+The `list-of-naming-conventions` argument to the optional `allowedHosts` parameter must be a JSON array, each of whose members is a string, surrounded by double-quotes, with each member separated from the next by a comma.
+If the parameter and its argument are not specified, the default is a wildcard character (`"*"`), which indicates that any name is acceptable.
+
+=== Permitted Naming Conventions
+
+The following lists all naming conventions that are permitted, and points out some that are not.
+
+* _Wildcard_.
+This indicates that any IP address or _FQDN_ (Fully Qualified Domain Name) is acceptable.
+This is the default.
++
+For example, `"*"`.
+
+* _FQDN_.
+A single wildcard is permitted within the FQDN.
+Matching rules are identical to those described in https://www.rfc-editor.org/rfc/rfc6125[RFC6125^].
+Note that matching is case-insensitive, and that no wildcard should be used within an _A-label_ or _U-label_.
++
+For example, `*.example.com` matches with `host.example.com`.
+
+* _IP address_.
+This can be any IPv4 or IPv6 address.
+No wildcard is allowed.
++
+For example, `192.168.12.156`, `::1`, or `fe80::aede:48ff:fe00:1122`.
+
+* _Subnet_.
+This is expressed as a set of IP addresses, in _CIDR_ (https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing[Classless Inter-Domain Routing]) notation.
++
+For example, `192.168.0.0/16` or `2001:db8:85a3::/64`.
+
+=== Matching and Adding Nodes
+
+If the name of the node to be added matches at least one of the elements of the listed conventions, the node can be added.
+After cluster-initialization, modification of the convention-list can be performed only by the Full Admin or the Local Security Admin for the cluster, and can only be performed on the _localhost_ machine.
+Note that setting or modifying the list is permitted only if all current nodes can already be matched successfully with the new list.
+
+[#responses]
+== Responses
+
+Successful establishment of a list of naming conventions returns `200 OK` and an empty array.
+
+Failure to authenticate returns `401 Unauthorized`.
+An incorrectly expressed URI returns `404 Object Not Found`.
+
+An attempt to establish a naming convention to which at least one existing node fails to conform returns `400 Bad Request`, and a JSON object containing an message such as: `{"errors":["allowedHosts - At least one cluster node (final.com.ubuntu) doesn't match the allowed hosts"]}`.
+
+[#examples]
+== Examples
+
+The following examples assume the existence of three, configure Couchbase-Server nodes, which have the IP addresses `10.144.231.101`, `10.144.231.102`, and `10.144.231.103`.
+The node `10.144.231.101` has the following `/etc/hosts` file:
+
+----
+127.0.0.1	localhost
+127.0.0.1	com.test.ubuntu
+
+10.144.231.102	dev.test.ubuntu
+10.144.231.103	com.prod.ubuntu
+----
+
+Thus, `10.144.231.101` recognizes itself by the FQDN `com.test.ubuntu`; and recognizes the other machines as `dev.test.ubuntu` and `com.prod.ubuntu` respectively.
+
+The node `10.144.231.102` has the following `/etc/hosts` file:
+
+----
+127.0.0.1	localhost
+127.0.0.1	dev.test.ubuntu
+
+10.144.231.101	com.test.ubuntu
+----
+
+It thus recognizes itself as `dev.test.ubuntu`, and recognizes `10.144.231.101` as `com.test.ubuntu`.
+
+The node `10.144.231.103` has the following `/etc/hosts` file:
+
+----
+127.0.0.1	localhost
+127.0.0.1	com.prod.ubuntu
+
+10.144.231.101 	com.test.ubuntu
+----
+
+It thus recognizes itself as `com.prod.ubuntu`, and recognizes `10.144.231.101` as `com.test.ubuntu`.
+
+=== Retrieving the Current Setting
+
+Executed with `10.144.231.101` as _localhost_, the following command retrieves the current security settings for the one-node cluster.
+The output is piped to https:stedolan.github.io[jq] command, to improve readability.
+
+----
+curl -X GET http://localhost:8091/settings/security -u Administrator:password | jq '.'
+----
+
+The relevant exerpt from the output is as follows:
+
+----
+      .
+      .
+  "allowedHosts": [
+    "*"
+  ],
+      .
+      .
+----
+
+This shows that the default setting, the wildcard, is currently enforced.
+
+The following command changes the setting:
+
+----
+curl -X POST http://com.test.ubuntu:8091/settings/security \
+-d 'allowedHosts=["*.test.ubuntu", "127.0.0.1"]' \
+-u securityAdmin:securityAdmin
+----
+
+This specifies that only nodes whose name matches either `*.test.ubuntu` or `127.0.0.1` can be added to the cluster.
+
+With the required convention thus established, the following statement adds `10.144.231.101` to the cluster:
+
+----
+curl -v POST -u Administrator:password http://com.test.ubuntu:8091/controller/addNode \
+-d 'hostname=dev.test.ubuntu' \
+-d 'user=Administrator' \
+-d 'password=password' \
+-d 'services=kv'
+----
+
+Addition succeeds, because the name of the new node, `dev.test.ubuntu`, matches the convention `*.test.ubuntu`.
+The following confirmation is provided:
+
+----
+{"otpNode":"ns_1@dev.test.ubuntu"}
+----
+
+Next, the node `10.144.231.103` is attemptedly added to the cluster:
+
+----
+curl -v POST http://com.test.ubuntu:8091/controller/addNode
+-u Administrator:password \
+-d 'hostname=com.prod.ubuntu' \
+-d 'user=Administrator' \
+-d 'password=password'\
+-d 'services=kv'
+----
+
+The operation _fails_ with the following message:
+
+----
+Error is : ["Host com.prod.ubuntu is not allowed to join. Check allowedHosts setting."]
+----
+
+This error has occurred because the name of the node, `com.prod.ubuntu`, does not match the convention `*.test.ubuntu`.
+
+However, the established convention can now be changed, on _localhost_, to permit the addition of `10.144.231.103`:
+
+----
+curl -X POST http://com.test.ubuntu:8091/settings/security \
+-d 'allowedHosts=["10.144.231.101/9", "127.0.0.1"]' \
+-u securityAdmin:securityAdmin
+----
+
+The new convention can be validated by means of the `GET` operation, which returns the following:
+
+----
+"allowedHosts": [
+    "10.144.231.101/9",
+    "127.0.0.1"
+  ],
+----
+
+This indicates that a node can now be added if its IP address falls within the specified range.
+Accordingly, the addition of `101.44.231.103` can again be attempted:
+
+----
+curl -v POST http://com.test.ubuntu:8091/controller/addNode \
+-u Administrator:password \
+-d 'hostname=com.prod.ubuntu' \
+-d 'user=Administrator' \
+-d 'password=password' \
+-d 'services=kv'
+----
+
+Note that the node to be added did not need to be referred to by its IP address.
+Success is indicated by the following response:
+
+----
+{"otpNode":"ns_1@com.prod.ubuntu"}
+----
+
+Following node-addition, rebalance must be performed.
+
+== See Also
