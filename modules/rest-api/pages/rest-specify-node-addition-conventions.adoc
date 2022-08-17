@@ -1,4 +1,4 @@
-= Specify Naming Conventions for Node-Addition
+= Restrict Node-Addition
 :description: The REST API allows node-naming conventions to be configured such that only nodes whose names conform to those conventions can be added to the cluster.
 
 [abstract]
@@ -45,10 +45,10 @@ If the parameter and its argument are not specified, the default is a wildcard c
 
 === Permitted Naming Conventions
 
-The following lists all naming conventions that are permitted, and points out some that are not.
+The following list describes the permitted naming conventions.
 
 * _Wildcard_.
-This indicates that any IP address or _FQDN_ (Fully Qualified Domain Name) is acceptable.
+A single wildcard, in isolation, indicates that any IP address or _FQDN_ (Fully Qualified Domain Name) is acceptable.
 This is the default.
 +
 For example, `"*"`.
@@ -90,7 +90,7 @@ An attempt to establish a naming convention to which at least one existing node 
 [#examples]
 == Examples
 
-The following examples assume the existence of three, configure Couchbase-Server nodes, which have the IP addresses `10.144.231.101`, `10.144.231.102`, and `10.144.231.103`.
+The following examples assume the existence of three, fully provisioned Couchbase-Server nodes, which have the IP addresses `10.144.231.101`, `10.144.231.102`, and `10.144.231.103`.
 The node `10.144.231.101` has the following `/etc/hosts` file:
 
 ----
@@ -101,7 +101,7 @@ The node `10.144.231.101` has the following `/etc/hosts` file:
 10.144.231.103	com.prod.ubuntu
 ----
 
-Thus, `10.144.231.101` recognizes itself by the FQDN `com.test.ubuntu`; and recognizes the other machines as `dev.test.ubuntu` and `com.prod.ubuntu` respectively.
+Thus, `10.144.231.101` recognizes itself by the FQDN `com.test.ubuntu`; and recognizes the other two machines as `dev.test.ubuntu` and `com.prod.ubuntu` respectively.
 
 The node `10.144.231.102` has the following `/etc/hosts` file:
 
@@ -125,16 +125,19 @@ The node `10.144.231.103` has the following `/etc/hosts` file:
 
 It thus recognizes itself as `com.prod.ubuntu`, and recognizes `10.144.231.101` as `com.test.ubuntu`.
 
+Note that on each of these nodes, when Couchbase Server is initialized and provisioned, the node's FQDN (such as `com.test.ubuntu`) must be specified as the node-name.
+This can be accomplished by means of the UI (see xref:manage:manage-nodes/create-cluster.adoc#configure-couchbase-server[Configure Couchbase Server]), the REST API (see xref:rest-api:rest-initialize-cluster.adoc[Initialize a Cluster]), or the CLI (see xref:cli:cbcli/couchbase-cli-cluster-init.adoc[cluster-init]).
+
 === Retrieving the Current Setting
 
-Executed with `10.144.231.101` as _localhost_, the following command retrieves the current security settings for the one-node cluster.
-The output is piped to https:stedolan.github.io[jq] command, to improve readability.
+Executed on the one-node cluster `10.144.231.101`, the following command retrieves the cluster's current security settings.
+Here, the output is piped to the https://stedolan.github.io/jq/[jq^] command, to improve readability.
 
 ----
 curl -X GET http://localhost:8091/settings/security -u Administrator:password | jq '.'
 ----
 
-The relevant exerpt from the output is as follows:
+The relevant excerpt from the output is as follows:
 
 ----
       .
@@ -147,18 +150,37 @@ The relevant exerpt from the output is as follows:
 ----
 
 This shows that the default setting, the wildcard, is currently enforced.
+This means that any name allows a node potentially to be added to the cluster.
 
-The following command changes the setting:
+=== Changing the Setting, Specifying an FQDN
+
+Executed on `10.144.231.101`, the following command changes the cluster's setting:
 
 ----
 curl -X POST http://com.test.ubuntu:8091/settings/security \
 -d 'allowedHosts=["*.test.ubuntu", "127.0.0.1"]' \
--u securityAdmin:securityAdmin
+-u Administrator:password
 ----
 
 This specifies that only nodes whose name matches either `*.test.ubuntu` or `127.0.0.1` can be added to the cluster.
+Thus, when the `GET` is run again, the relevant excerpt from the output is as follows:
 
-With the required convention thus established, the following statement adds `10.144.231.101` to the cluster:
+----
+    .
+    .
+"allowedHosts": [
+    "*.test.ubuntu",
+    "127.0.0.1"
+  ],
+    .
+    .
+----
+
+This indicates that the convention has been successfully reconfigured.
+
+=== Adding a Conformantly Named Node
+
+Following this reconfiguration, the following statement adds `10.144.231.102` to the cluster:
 
 ----
 curl -v POST -u Administrator:password http://com.test.ubuntu:8091/controller/addNode \
@@ -173,46 +195,12 @@ The following confirmation is provided:
 
 ----
 {"otpNode":"ns_1@dev.test.ubuntu"}
+
 ----
+
+=== Attempting to Add a Non-Conformantly Named Node
 
 Next, the node `10.144.231.103` is attemptedly added to the cluster:
-
-----
-curl -v POST http://com.test.ubuntu:8091/controller/addNode
--u Administrator:password \
--d 'hostname=com.prod.ubuntu' \
--d 'user=Administrator' \
--d 'password=password'\
--d 'services=kv'
-----
-
-The operation _fails_ with the following message:
-
-----
-Error is : ["Host com.prod.ubuntu is not allowed to join. Check allowedHosts setting."]
-----
-
-This error has occurred because the name of the node, `com.prod.ubuntu`, does not match the convention `*.test.ubuntu`.
-
-However, the established convention can now be changed, on _localhost_, to permit the addition of `10.144.231.103`:
-
-----
-curl -X POST http://com.test.ubuntu:8091/settings/security \
--d 'allowedHosts=["10.144.231.101/9", "127.0.0.1"]' \
--u securityAdmin:securityAdmin
-----
-
-The new convention can be validated by means of the `GET` operation, which returns the following:
-
-----
-"allowedHosts": [
-    "10.144.231.101/9",
-    "127.0.0.1"
-  ],
-----
-
-This indicates that a node can now be added if its IP address falls within the specified range.
-Accordingly, the addition of `101.44.231.103` can again be attempted:
 
 ----
 curl -v POST http://com.test.ubuntu:8091/controller/addNode \
@@ -223,13 +211,64 @@ curl -v POST http://com.test.ubuntu:8091/controller/addNode \
 -d 'services=kv'
 ----
 
-Note that the node to be added did not need to be referred to by its IP address.
-Success is indicated by the following response:
+The operation predictably _fails_, with the following message:
+
+----
+Error is : ["Host com.prod.ubuntu is not allowed to join. Check allowedHosts setting."]
+----
+
+The failure has occurred because the name of the node, `com.prod.ubuntu`, does not match the convention `*.test.ubuntu`.
+
+=== Changing the Setting, Specifying a Subnet
+
+The established convention can now be changed, on `10.144.231.101`, to permit the addition of `10.144.231.103`.
+The following operation specifies a _subnet_, within the range of which IP addresses must fall for addition to succeed:
+
+----
+curl -X POST http://com.test.ubuntu:8091/settings/security \
+-d 'allowedHosts=["10.144.231.101/9", "127.0.0.1"]' \
+-u Administrator:password
+----
+
+The new convention can again be validated by means of the `GET` operation, which now returns the following:
+
+----
+"allowedHosts": [
+    "10.144.231.101/9",
+    "127.0.0.1"
+  ],
+----
+
+This indicates that a node can now be added if its IP address falls within the specified range.
+Accordingly, the addition of `101.44.231.103` can now be re-attempted:
+
+----
+curl -v POST http://com.test.ubuntu:8091/controller/addNode \
+-u Administrator:password \
+-d 'hostname=com.prod.ubuntu' \
+-d 'user=Administrator' \
+-d 'password=password' \
+-d 'services=kv'
+----
+
+Note that in this statement, the node to be added did not need to be referred to by its IP address.
+However, since its IP address falls within the specified range, addition is successful; and is confirmed by the following response:
 
 ----
 {"otpNode":"ns_1@com.prod.ubuntu"}
 ----
 
-Following node-addition, rebalance must be performed.
+Following node-addition, _rebalance_ can now be performed, so that the added nodes fully become part of the cluster.
+
+== Joining a Cluster
+
+The examples on this page all feature the _adding_ of a node to a cluster.
+A node can also be _joined_ to a cluster.
+Note that _joining_ and _adding_ are identically affected by the cluster's established naming convention: therefore, if the node to be joined is not conformantly named, the operation fails with the message: `Host <name> is not allowed to join. Check allowedHosts setting.`
 
 == See Also
+
+A general overview of nodes, including adding and joining, is provided in xref:learn:clusters-and-availability/nodes.adoc[Nodes].
+An overview of managing on-the-wire security is provided in xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
+For more examples of adding nodes and rebalancing, see xref:manage:manage-nodes/add-node-and-rebalance.adoc[Add a Node and Rebalance].
+For examples of joinging nodes and rebalancing, see xref:manage:manage-nodes/join-cluster-and-rebalance.adoc[Join a Cluster and Rebalance].
