@@ -1,0 +1,502 @@
+= Early Filters, Order, and Pagination
+:page-topic-type: concept
+:page-status: Couchbase Server 7.1.2
+:description: When covering indexes and index pushdowns are not available, the Query Service may use early filtering, early order, and early pagination to improve the query response time.
+
+[abstract]
+{description}
+
+== Overview
+
+If a query has a xref:n1ql:n1ql-language-reference/covering-indexes.adoc[covering index], then the index contains all the data needed to perform the query.
+The Query service does not need to fetch data from the Data service.
+Any filters, order, or pagination (offset and limit) are performed by the Index service.
+
+.Covering index
+[plantuml#cover,covered-query,svg]
+....
+@startuml
+
+skinparam defaultTextAlignment center
+skinparam linetype ortho
+
+() " " as start
+() " " as end
+
+rectangle "Index\nService"{
+  rectangle "Index Scan" as IndexScan
+  rectangle Filter
+  rectangle Order
+  rectangle Offset
+  rectangle Limit
+}
+
+note bottom of Filter
+  Filter, order, and pagination
+  performed by the Index Service
+end note
+
+start ..r..> IndexScan
+IndexScan -> Filter
+Filter -> Order
+Order -> Offset
+Offset -> Limit
+Limit ..r..> end
+
+@enduml
+....
+
+If a query is _not_ covered by an index, then the query needs to fetch data from the Data service after performing the index scan, in order to return the requested results.
+By default, any filters, order, or pagination are performed by the Query service after the fetch.
+
+.Default filters, order, and pagination
+[plantuml#fig-uncovered,uncovered-query,svg]
+....
+@startuml
+
+skinparam defaultTextAlignment center
+
+() " " as start
+() " " as end
+
+rectangle "Index\nService"{
+  rectangle "Index Scan" as IndexScan
+}
+
+rectangle "Query\nService"{
+  rectangle Fetch
+  rectangle Filter
+  rectangle Order
+  rectangle Offset
+  rectangle Limit
+}
+
+note bottom of Filter
+  Filter, order, and pagination
+  performed after fetch
+end note
+
+database "Data\nService" as Data
+
+start ..r..> IndexScan
+IndexScan -> Fetch
+Fetch -> Filter
+Filter -> Order
+Order -> Offset
+Offset -> Limit
+Fetch --> Data
+Fetch <-- Data
+Limit ..r..> end
+
+@enduml
+....
+
+Fetching data from the Data service can be expensive.
+Any feature that can reduce the amount of data to be fetched will improve the query response time.
+It would obviously be inefficient to fetch an entire dataset, and then discard a large portion of it by applying filters and pagination.
+Couchbase Server therefore attempts to apply filters, order, and pagination before fetching data, wherever possible.
+
+Index xref:learn:services-and-indexes/indexes/index_pushdowns.adoc[pushdowns] provide one way to reduce the amount of data to be fetched.
+Some filters, ordering, and pagination may be pushed down to the Index service, along with grouping and aggregates.
+The Index service applies these operations to the result of the index scan.
+The Query service then only needs to fetch the remaining data.
+
+.Filter, order, and pagination pushdown
+[plantuml#fig-pushdown,index-pushdown,svg]
+....
+@startuml
+
+skinparam defaultTextAlignment center
+skinparam linetype ortho
+
+() " " as start
+() " " as end
+
+rectangle "Index\nService"{
+  rectangle "Index Scan" as IndexScan
+  rectangle Filter
+  rectangle Order
+  rectangle Offset
+  rectangle Limit
+}
+
+note bottom of Filter
+  Filter, order, and pagination
+  pushed down to the Index Service
+end note
+
+rectangle "Query\nService"{
+  rectangle Fetch
+}
+
+database "Data\nService" as Data
+
+start ..r..> IndexScan
+IndexScan -> Filter
+Filter -> Order
+Order -> Offset
+Offset -> Limit
+Limit -r-> Fetch
+Fetch --> Data
+Fetch <-- Data
+Fetch ..r..> end
+
+@enduml
+....
+
+However, there are some operations that cannot be pushed down to the Index service: for example, a filter that uses a function or a LIKE operator on top of an index term.
+These operations must be performed by the Query service.
+In versions prior to Couchbase Server 7.1.2, the Query Service first performs a fetch from the Data service, and then applies any operations that could not be pushed down to the Index service.
+This still leads to some inefficient queries.
+
+In Couchbase Server 7.1.2 and later, [def]_early filtering_, [def]_early ordering_, and [def]_early pagination_ provide another line of defense, in cases where covering indexes and index pushdowns are not available.
+With this feature, the Query service may apply filtering, order, and pagination directly to the results returned by the Index service, before performing the fetch.
+
+.Early filters, order, and pagination
+[plantuml#fig-early,early-filter-pagination,svg]
+....
+@startuml
+
+skinparam defaultTextAlignment center
+
+() " " as start
+() " " as end
+
+rectangle "Index\nService"{
+  rectangle "Index Scan" as IndexScan
+}
+
+rectangle "Query\nService"{
+  rectangle Fetch
+  rectangle Filter
+  rectangle Order
+  rectangle Offset
+  rectangle Limit
+}
+
+note bottom of Filter
+  Early filter, order, and pagination
+  performed by Query service
+end note
+
+database "Data\nService" as Data
+
+start ..r..> IndexScan
+IndexScan -> Filter
+Filter -> Order
+Order -> Offset
+Offset -> Limit
+Limit -> Fetch
+Fetch --> Data
+Fetch <-- Data
+Fetch ..r..> end
+
+@enduml
+....
+
+Note that in practice, an uncovered query may use a mixture of the methods illustrated by <<fig-uncovered>>, <<fig-pushdown>>, and <<fig-early>>.
+In addition, early filtering may be performed independently of early order and pagination, and vice versa.
+
+== Early Filtering
+
+Early filtering may be applied independently of early ordering and pagination.
+For an illustration of early filtering, consider the following index.
+
+====
+[[early-filter-idx]]
+.Index I
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-filter-idx.n1ql[]
+----
+====
+
+This index contains all the data needed to perform <<early-filter-1>>; it therefore acts as a covering index to this query.
+
+[[early-filter-1]]
+.Covered query
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-filter-1.n1ql[]
+----
+
+The query plan shows that the query is covered.
+In addition, the predicate `city = "Paris"` is applied as a span by the Index service.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-filter-1.jsonc[tags=extract;ellipsis]
+----
+
+<.> The `covers` section shows that the query is covered.
+<.> The `range` section shows that this predicate is applied as a span by the Index service.
+====
+
+<<early-filter-2>> adds an extra field to the projection.
+Now the query is no longer covered, and the Query service needs to fetch documents based on keys returned from the index.
+
+[[early-filter-2]]
+.Predicate pushdown
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-filter-2.n1ql[]
+----
+
+This query does not run too slowly, since the predicate `city = "Paris"` is pushed down to the Index service.
+The index only returns document keys for documents matching the predicate.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-filter-2.jsonc[tags=extract;ellipsis]
+----
+
+<.> The `range` section shows that this predicate is pushed down to the Index service.
+<.> After the pushdown, the Query service fetches documents from the Data service.
+====
+
+Now let's consider the case when the filter is not on the index key exactly, but applies a function on top of the index key.
+
+[[early-filter-3]]
+.Early filtering
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-filter-3.n1ql[]
+----
+
+In this case, the filter cannot be pushed down to the Index service.
+This is where early filtering comes into play.
+The Query service can apply the specified filter to the results of the index scan, before fetching the matching documents from the Data service.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-filter-3.jsonc[tags=extract;ellipsis]
+----
+
+<.> The early index filters, including all the filters that can be evaluated on the index keys.
+Inside the filter, `pass:c[_index_key ((`landmark`.`city`))]` is analogous to `pass:c[cover ((`landmark`.`city`))]` for a covering index scan.
+<.> The `index_conditions` section is analogous to the `filter_covers` section in the plan for a covered query.
+<.> The `index_keys` section is analogous to the `covers` section in the plan for a covered query.
+<.> The `index_projection` section contains the `index_key` needed for evaluating the early index filters -- in this case position `0` for `"city"`.
+====
+
+If necessary, the Query service may use a mixture of index pushdowns and early filtering, as shown in the following example.
+
+[[early-filter-4]]
+.Predicate pushdown and early filter
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-filter-4.n1ql[]
+----
+
+The Index service evaluates the filters used to generate the index spans first, before returning to the Query service.
+As a result, the early filters only contain the predicates that were not pushed down to the Index service.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-filter-4.jsonc[tags=extract;ellipsis]
+----
+
+<.> The filter `name LIKE "%Paris%"` does not generate an exact index span, and needs to be evaluated as an early index filter.
+<.> The filter `city = "Paris"` generates an exact span, and thus can be pushed down to the Index service.
+====
+
+== Early Ordering and Pagination
+
+Early ordering and pagination may be applied independently of early filtering.
+As an illustration, consider the following index.
+
+====
+[[early-paginate-idx]]
+.Index II
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-paginate-idx.n1ql[]
+----
+====
+
+This index acts as a covering index to <<early-paginate-1>>.
+
+[[early-paginate-1]]
+.Covered query
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-paginate-1.n1ql[]
+----
+
+The `covers` section of the query plan shows that the query is covered.
+In addition, the ordering, offset, and limit are performed by the Index service.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-paginate-1.jsonc[tags=extract;ellipsis]
+----
+
+<.> Index order
+<.> Limit
+<.> Offset
+====
+
+<<early-paginate-2>> adds an extra field to the projection.
+Now the query is no longer covered.
+
+[[early-paginate-2]]
+.Order and pagination pushdown
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-paginate-2.n1ql[]
+----
+
+However the query runs pretty quickly, since the ordering, offset, and limit can still be pushed down to the Index service.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-paginate-2.jsonc[tags=extract;ellipsis]
+----
+
+<.> Index order pushdown
+<.> Limit pushdown
+<.> Offset pushdown
+====
+
+However, if we change the order of the ordering terms so that they no longer match the index key order, ordering cannot be pushed down to the Index service.
+
+[[early-paginate-3]]
+.Early order and pagination
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-paginate-3.n1ql[]
+----
+
+So in this case, early ordering, limit, and offset are done by the Query service before fetch.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-paginate-3.jsonc[tags=extract;ellipsis]
+----
+
+<.> Early ordering
+<.> Early limit
+<.> Early offset
+====
+
+Similarly, if we change the direction of the sort from descending to ascending, the ordering cannot be pushed down to the Index service, since it does not support reverse index scan.
+
+[[early-paginate-4]]
+.Early reverse order and pagination
+====
+.Query
+[source,n1ql]
+----
+include::example$services-and-indexes/indexes/early-paginate-4.n1ql[]
+----
+
+In this case also, early ordering, limit, and offset are done by the Query service before fetch.
+
+[source,json]
+----
+include::example$services-and-indexes/indexes/early-paginate-4.jsonc[tags=extract;ellipsis]
+----
+
+<.> The `sort_terms` section uses `_index_key` expressions to sort the results using the index keys.
+====
+
+=== Limitations
+
+The optimizer only selects early ordering and pagination when the following conditions are met.
+Many of these conditions are similar to the conditions for index order pushdowns.
+
+* The query must be simple, referencing a single keyspace with no joins.
+
+* There can be no `GROUP BY` or aggregates in the query.
+
+* Index pushdown for `ORDER`, `LIMIT` and `OFFSET` must not be possible.
+
+* The `ORDER BY` clause and `LIMIT` clause must be present.
+The `OFFSET` clause is optional.
+
+* All expression references in the `ORDER BY` clause must be present in the index -- similar to the covering requirement for index pushdown.
+However there is no requirement for exact index spans.
+
+* Projection alias can be used in the `ORDER BY` clause, if all the references in the aliased expression are available from the index.
+
+* Only simple `IndexScan` is supported for early ordering.
+More complex index scans such as `IntersectScan`, `OrderedIntersectScan`, `UnionScan` and `DistinctScan` are not supported.
+
+* When early order is in effect, parallelism is turned off.
+
+=== Caveats
+
+Early ordering is performed on the index keys.
+It is possible for the document to be updated while the query is running, so that the early order may no longer be correct.
+Note that this caveat applies to index order pushdowns also.
+
+A similar caveat applies to early pagination.
+It is possible for the document to be updated while the query is running, so that it no longer satisfies the index span; in which case, it may be discarded by the filter step _after_ the fetch.
+In such situations, the query may return fewer documents than the limit specifies.
+Note this caveat applies to index pagination pushdowns also.
+
+== Summary
+
+The following table summarizes the different methods of performing filtering, order, or pagination, from most efficient to least.
+
+[%header,cols="5*"]
+|====
+|
+| Covering index
+| Index pushdown ^<<note>>^
+| Early filter, order, or pagination ^<<note>>^
+| Default filter, order, or pagination ^<<note>>^
+
+| Fetch required?
+| icon:times-circle[red] No
+| icon:check-circle[green] Yes
+| icon:check-circle[green] Yes
+| icon:check-circle[green] Yes
+
+| Supports grouping and aggregates?
+| icon:question-circle[orange] Some
+| icon:question-circle[orange] Some
+| icon:times-circle[red] No
+| icon:check-circle[green] Yes
+
+| Filter, order, and pagination performed...
+| After scan
+| After scan, +
+before fetch
+| After scan, +
+before fetch
+| After fetch
+
+| by...
+| Index service
+| Index service
+| Query service
+| Query service
+|====
+
+[[note]]
+NOTE: An uncovered query may use a mixture of these methods.
+
+== Related Links
+
+* xref:learn:services-and-indexes/indexes/index-scans.adoc#query-execution-details[Query Execution: Details]
+* xref:n1ql:n1ql-language-reference/covering-indexes.adoc[Covering Indexes]
+* xref:learn:services-and-indexes/indexes/index_pushdowns.adoc[Index Pushdown Optimizations]
+* xref:n1ql:n1ql-language-reference/groupby-aggregate-performance.adoc[Grouping and Aggregate Pushdown]
+* xref:n1ql:n1ql-language-reference/where.adoc[WHERE Clause] -- to apply a filter
+* xref:n1ql:n1ql-language-reference/orderby.adoc[ORDER BY Clause] -- to apply a sort
+* xref:n1ql:n1ql-language-reference/offset.adoc[OFFSET Clause] and xref:n1ql:n1ql-language-reference/limit.adoc[LIMIT Clause] -- to apply pagination
