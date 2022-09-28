@@ -171,7 +171,7 @@ To set query settings using the cbq shell, use the `\SET` command:
 \set;
 ----
 
-[source,text]
+[source,none]
 ----
  Query Parameters :
  Parameter name : profile
@@ -894,7 +894,7 @@ The root operator is a Sequence, which itself has a collection of child operator
 [#sys-prepared]
 == system:prepareds
 
-This catalog provides data about the known prepared statements and their state in a query engine’s prepared statement cache.
+This catalog provides data about the known prepared statements and their state in a query engine's prepared statement cache.
 For each prepared statement, this catalog provides information such as name, statement, query plan, last use time, number of uses, and so on.
 
 For field names and meanings, refer to xref:n1ql:n1ql-rest-api/admin.adoc#_statements[Statements].
@@ -905,8 +905,21 @@ In addition, the `system:prepareds` catalog also returns the following property.
 |===
 |Name|Description|Schema
 |**node** +
-__required__|The node on which the prepared statement is stored.|string
+__required__
+|The node on which the prepared statement is stored.
+|string
+
+|**namespace** +
+__required__
+|The namespace in which the prepared statement is stored.
+Currently, only the `default` namespace is available.
+|string
 |===
+
+A prepared statement is created and stored relative to the current _query context_.
+This enables you to create multiple prepared statements with the same name, each stored relative to a different query context.
+
+When this is the case, the name of the prepared statement in the `system:prepareds` catalog includes the associated query context in brackets, to distinguish between prepared statements with the same name.
 
 [[sys-prepared-get]]
 === Get Prepared Statements
@@ -962,15 +975,17 @@ DELETE FROM system:prepareds;
 
 .Get Prepared
 ====
+.Prepared statement with default query context -- using cbq
 [source,n1ql]
 ----
+\UNSET -query_context;
 PREPARE p1 AS SELECT * FROM `travel-sample`.inventory.airline WHERE iata = "U2";
 ----
 
 [source,json]
 ----
 {
-  "requestID": "06819475-e1f6-48a6-8b78-41a6fbac7810",
+  "requestID": "64069886-eb17-4fa6-8cc8-e60ebe93d97c",
   "signature": "json",
   "results": [
     {
@@ -1058,45 +1073,38 @@ PREPARE p1 AS SELECT * FROM `travel-sample`.inventory.airline WHERE iata = "U2";
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "60.560801ms",
-    "executionTime": "60.291394ms",
+    "elapsedTime": "105.814848ms",
+    "executionTime": "105.648798ms",
     "resultCount": 1,
     "resultSize": 3301,
     "serviceLoad": 12
-  },
-  "profile": {
-    "phaseTimes": {
-      "authorize": "21.597µs",
-      "instantiate": "14.64µs",
-      "parse": "1.718303ms",
-      "plan": "1.658632ms",
-      "run": "56.817557ms"
-    },
-    "phaseOperators": {
-      "authorize": 1
-    },
-    "requestTime": "2021-04-30T21:46:33.972Z",
-    "servicingHost": "127.0.0.1:8091"
   }
 }
 ----
 
+.Prepared statement with specified query context -- using cbq
 [source,n1ql]
 ----
-SELECT *, meta().plan FROM system:prepareds;
+\SET -query_context travel-sample.inventory;
+PREPARE p1 AS SELECT * FROM airline WHERE iata = "U2";
 ----
 
 [source,json]
 ----
 {
-  "requestID": "42adcc5e-3d7f-4228-8da1-035093a93406",
-  "signature": {
-    "*": "*",
-    "plan": "json"
-  },
+  "requestID": "1c90603e-5e42-42b4-9362-4fc96bf895ac",
+  "signature": "json",
   "results": [
     {
-      "plan": {
+      "encoded_plan": "H4sIAAAAAAAA/wEAAP//AAAAAAAAAAA=",
+      "featureControls": 76,
+      "indexApiVersion": 4,
+      "indexScanKeyspaces": {
+        "default:travel-sample.inventory.airline": false
+      },
+      "name": "[127.0.0.1:8091]p1",
+      "namespace": "default",
+      "operator": {
         "#operator": "Authorize",
         "privileges": {
           "List": [
@@ -1161,53 +1169,93 @@ SELECT *, meta().plan FROM system:prepareds;
           ]
         }
       },
+      "queryContext": "travel-sample.inventory",
+      "reqType": "SELECT",
+      "signature": {
+        "*": "*"
+      },
+      "text": "PREPARE p1 AS SELECT * FROM airline WHERE iata = \"U2\";",
+      "useCBO": true
+    }
+  ],
+  "status": "success",
+  "metrics": {
+    "elapsedTime": "17.476424ms",
+    "executionTime": "17.187836ms",
+    "resultCount": 1,
+    "resultSize": 3298,
+    "serviceLoad": 12
+  }
+}
+----
+
+.List prepared statements
+[source,n1ql]
+----
+SELECT *, meta().plan FROM system:prepareds;
+----
+
+[source,json]
+----
+{
+  "requestID": "d976e59a-d74e-4350-b0df-fa137099d594",
+  "signature": {
+    "*": "*",
+    "plan": "json"
+  },
+  "results": [
+    {
+      "plan": {
+        // ...
+      },
       "prepareds": {
-        "encoded_plan": "H4sIAAAAAAAA/6RT3W7UPBB9leh8N23lr6KAqGTExVJtBaKo0W6BC1olJpndmnptd+ysGlbh2ZGTtFW3CIR6l9gzZ86PZwOylaupLrxRFhIQWJCKDdORs5GdCZCHrwS0relm4vVn4qCdhXw5ns0rZT9QG7yqKEBuUNNCNSbKyGpN5v+gVt7QvrZrstFxu680G20JcqFMoE7AqhVBwh9g+O6hIG+BIOA8sYqOE/x/9z+YNPHSsf5BEPCs19rQciBxokOE/LrBmeIlxXu0v9ISyFmvIQ/Th/MB8ll30Qn8rC61qbcZzOm6IVultqGAyfZz/7koZ71S3CY7X0DgW1Nd9bwf8MVo+qCnuGNfjOwLP6Dc1hWe3XeqYp/YBuNtcUUtZOQmuX81ZgeJewt+H0OonE8nd2Mh0ARtl5BYBo1OPJR0TLG6/JOWJ83enpYrVsaQwZOyOtYmEkOgcrbWg3HY2SlHfuV+qVVU5W72JjvHp+fn2H1E5L3VUSuTD9ZDgCk0JhaReBX6gXTjU2Egs0jSouIxjovuokuvbYt4ZFIrpDuB64a4TbtJN3HYV6brs7Y3Zz49mR6dJUi9tP0SJw/2ILGHTmBsyWfTfDKbZv4gm8yzoSfby45npx+z8kFE5eP9yL68m86mWTLhzoLX/Tugo7eno4xfAQAA//83PgrgVgQAAA==",
+        "encoded_plan": "H4sIAAAAAAAA/6RTUW/TPBT9K9H5XrbJ30QBMcmIhzJ1AjG0qh3wwKbEJLedmWt71061UIXfjpxkndYhENpbYt97z7nn+GxAtnQVVbk3ykICAgtSsWY6djayMwHy6JWAthXdjr3+TBy0s5Avh7N5qewHaoJXJQXIDSpaqNpEGVmtyfwf1MobOtR2TTY6bg6VZqMtQS6UCdQKWLUiSPgR+u9uFOTdIAg4T6yi4zT+v/sfjOt45Vj/IAh41mttaNmTONUhQn7d4FzxkuL9tL/SEpiyXkMepQ/nA+Sz9rIV+FleaVPtMpjTTU22TG19AZPtcP+5aMp6pbhJcr6AwLe6vO54P+CLQfR+n3zLPh/Y576fcleXe3bfqYydYxsMt/k1NZCR66T+9eAdJO4l+L0NoXQ+nWxhIVAHbZeQWAaNVjxc6YRiefWnXZ6EvYs2VayMIYMneXWiTSSGQOlspXvhsLdXDPyKw0KrqIr97E12gU/PL7D/iMh7q6NWZtpLDwGmUJuYR+JV6ADp1qfCQGaRVouKBzsu28s2vbYd4pFJrZDuBFJOtyE8Go0EbmriJqWVbmOfYKab86aTaz45nRyfJxC9tF2skyoHkDhAKzC0TGeT6Xg2yfwoG8+zvic7yE5mZx+z4oFpxePEZF/eTWaTLMmyFeV19zLo+O3ZsNivAAAA//+q+jhuaAQAAA==",
         "featuresControl": 76,
         "indexApiVersion": 4,
         "indexScanKeyspaces": {
           "default:travel-sample.inventory.airline": false
         },
-        "name": "p1",
+        "name": "p1", // <1>
         "namespace": "default",
         "node": "127.0.0.1:8091",
         "statement": "PREPARE p1 AS SELECT * FROM `travel-sample`.inventory.airline WHERE iata = \"U2\";",
+        "uses": 0
+      }
+    },
+    {
+      "plan": {
+        // ...
+      },
+      "prepareds": {
+        "encoded_plan": "H4sIAAAAAAAA/6STT28TMRDFv8rqcWkrExFAVDLiEKpUIIoaJQUOtNqY3Ulq6tju2Bt1iZbPjry7TWmKQKg3/xnPvPk9zwZkC1dSmXujLCQgsCAVK6YjZyM7EyAPXwloW9LNyOvPxEE7C/myP5sVyn6gOnhVUIDcoKSFqkyUkdWazNOgVt7QQNs12ei4HijNRluCXCgTqBGwakWQ8EN06zYV5G0iCDhPrKLjlP7J3QajKl461j8IAp71WhtadiJOdIiQXzc4U7ykeJftn7IEJqzXkIdp4XyAfNZcNAI/i0ttyl0FM7quyBbpWRfAZNu6/x00Yb1SXCecLyDwrSquWt339KKH3vWTb9Xnvfrcd1lu43LP7jsVsXVsg/42v6IaMnKV6F/13kHiDsGfbQiF8+lkWxYCVdB2CYll0GjE/ZaOKRaXf+vlUbV3q00UK2PI4FFeHWsTiSFQOFvqDhz29ua9vvlgrlVU8/3sTXaOT8/Psf9AyHuro1Zm0qGHAFOoTMwj8Sq0BenGp8BAZpFai4p7Oy6aiyb9th3hkUmtkO4E0pxuh/BwOBS4rojrNK108wDy4HevmK7P6pbibHwyPjpLtfXSttOeYB1A4gCNQJ9pMh1PRtNx5ofZaJZ1b7KD7Hh6+jHreWRf3o2n4ywx2RJ53X4LOnp72nf1KwAA////9+bsZQQAAA==",
+        "featuresControl": 76,
+        "indexApiVersion": 4,
+        "indexScanKeyspaces": {
+          "default:travel-sample.inventory.airline": false
+        },
+        "name": "p1(travel-sample.inventory)", // <2>
+        "namespace": "default",
+        "node": "127.0.0.1:8091",
+        "statement": "PREPARE p1 AS SELECT * FROM airline WHERE iata = \"U2\";",
         "uses": 0
       }
     }
   ],
   "status": "success",
   "metrics": {
-    "elapsedTime": "74.38189ms",
-    "executionTime": "74.238983ms",
-    "resultCount": 1,
-    "resultSize": 3936,
+    "elapsedTime": "25.323496ms",
+    "executionTime": "25.173646ms",
+    "resultCount": 2,
+    "resultSize": 7891,
     "serviceLoad": 12
-  },
-  "profile": {
-    "phaseTimes": {
-      "authorize": "18.115µs",
-      "fetch": "17.331889ms",
-      "instantiate": "18.856µs",
-      "parse": "673.255µs",
-      "plan": "99.23µs",
-      "primaryScan": "55.468539ms",
-      "run": "73.429071ms"
-    },
-    "phaseCounts": {
-      "fetch": 1,
-      "primaryScan": 1
-    },
-    "phaseOperators": {
-      "authorize": 1,
-      "fetch": 1,
-      "primaryScan": 1
-    },
-    "requestTime": "2021-04-30T21:47:56.814Z",
-    "servicingHost": "127.0.0.1:8091"
   }
 }
 ----
+
+Note that the names of the prepared statements are identical, but they are associated with different query contexts.
+
+<.> The name of the prepared statement for the default query context
+<.> The name of the prepared statement showing the associated query context
 ====
 
 [#sys-completed-req]
