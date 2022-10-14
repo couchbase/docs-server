@@ -1,186 +1,3 @@
-= Geospatial GeoJSON Queries 
-
-[abstract]
-
-_Geospatial_ geojson queries both search with and return GeoJSON higher dimensional spatial structures.
-
-== GeoJSON (type geojson) [.status]#Couchbase Server 7.1.2# 
-
-PLACEHOLDER
-
-
-
-CONVERT travel-sample.inventory.landmark to GeoJSON
-
-[source, n1ql]
-----
-UPDATE `travel-sample`.inventory.landmark SET geo.type = "Point", geo.coordinates = [geo.lon, geo.lat] WHERE geo is not null;
-UPDATE `travel-sample`.inventory.landmark UNSET geo.lat, geo.lon WHERE geo is not null;
-----
-
-CONVERT travel-sample.airport.landmark to GeoJSONand add a 10 mile object called area Raidus/Circle for noise
-
-[source, n1ql]
-----
-UPDATE `travel-sample`.inventory.airport SET geo.type = "Point", geo.coordinates = [geo.lon, geo.lat] WHERE geo is not null;
-UPDATE `travel-sample`.inventory.airport UNSET geo.lat, geo.lon WHERE geo is not null;
-UPDATE `travel-sample`.inventory.airport SET area = { geo.coordinates, "type": "circle", "radius": "10mi"}  WHERE geo IS NOT null AND type="airport";
-----
-
-[source, json]
-----
-{
-  "query": {
-    "field": "geo",
-    "geometry": {
-      "shape": {
-        "type": "envelope",
-        "coordinates": [
-          [
-            1,
-            50
-          ],
-          [
-            2,
-            52
-          ]
-        ]
-      },
-      "relation": "within"
-    }
-  },
-  "size": 10,
-  "from": 0
-}
-----
-
-
-Los Angeles lat 34.05202604763014 lon -118.24370488541248
-
-Query central point of airports within a 26 mile radius of downtown Los Angeles
-
-[source, json]
-----
-{
-  "fields": ["airportname"],
-  "query": {
-    "geometry": {
-      "shape": {
-        "coordinates": [-118.24370488541248, 34.0520260476301],
-        "type": "circle",
-        "radius": "26mi"
-      },
-      "relation": "within"
-    },
-    "field": "airport_loc"
-  },
-  "size": 10,
-  "from": 0
-}
-----
-
-QUery a 10 mile radius around each airport (for noise abatement) within a 26 mile radius of downtown Los Angeles
-
-[source, json]
-----
-{
-  "fields": ["*"],
-  "query": {
-    "geometry": {
-      "shape": {
-        "coordinates": [-118.24370488541248, 34.0520260476301],
-        "type": "circle",
-        "radius": "26mi"
-      },
-      "relation": "within"
-    },
-    "field": "area"
-  },
-  "size": 10,
-  "from": 0
-}
-----
-
-Query a  10 mile radius around each airport (for noise abatement) partially within (intersects) a 26 mile radius of downtown Los Angeles
-
-[source, json]
-----
-{
-  "fields": ["*"],
-  "query": {
-    "geometry": {
-      "shape": {
-        "coordinates": [-118.24370488541248, 34.0520260476301],
-        "type": "circle",
-        "radius": "26mi"
-      },
-      "relation": "intersects"
-    },
-    "field": "area"
-  },
-  "size": 10,
-  "from": 0
-}
-----
-
-Query central point of airports within the State of Maine
-
-[source, json]
-----
-{
-  "fields": ["*"],
-  "query": {
-    "geometry": {
-      "shape": {
-        "coordinates": [
-          [
-            [-70.7080078125,
-              42.94033923363181
-            ],
-            [-66.62109375,
-              44.68427737181225
-            ],
-            [-67.236328125,
-              45.120052841530544
-            ],
-            [-67.412109375,
-              45.521743896993634
-            ],
-            [-67.8076171875,
-              45.767522962149876
-            ],
-            [-67.763671875,
-              47.18971246448421
-            ],
-            [-68.6865234375,
-              47.42808726171425
-            ],
-            [-69.3017578125,
-              47.45780853075031
-            ],
-            [-70.9716796875,
-              45.336701909968134
-            ],
-            [-70.9716796875,
-              43.32517767999296
-            ],
-            [-70.7080078125,
-              42.94033923363181
-            ]
-          ]
-        ],
-        "type": "Polygon"
-      },
-      "relation": "within"
-    },
-    "field": "airport_loc"
-  },
-  "size": 10,
-  "from": 0
-}
-----
-
-
 = Geospatial GeoJSON Queries
 
 [abstract]
@@ -188,44 +5,387 @@ _Geospatial_ queries return documents that contain location in either legacy Geo
 
 include::partial$fts-geojson-intro-common.adoc[]
 
-= Geospatial GeoJSON Queries
+== Prerequisites - Modify the travel-sample dataset
 
-[abstract]
+The `travel-sample` bucket, provided for test and development, DOES NOT contains any GeoJSON constructs in the documentes (only legacy Geopoint information) as such you will need to modify the `travel-sample` data to work with GeoJSON.
 
-_Geospatial_ geojson queries both search with and GeoJSON and return higher dimensional spatial structures.
+A dataset modification can be eaisly accomplished via either "Converting Geopoints" to GeoJSON Point types or "Adding a new GeoJSON object(s)".  To run the examples in this doucmentation the later update method *"Adding a new GeoJSON object(s)"* is needed.
 
-A _geospatial geojson query_ specifies an area and returns each document that contains a reference to a location within the area.
-Areas and locations are represented by  _latitude_-_longitude_ coordinate pairs.
+* Example documents that have a geo field (airports, hotels or landmarks) such as `airport_1254` in `travel-sample._default._default`:
++
+[source, json]
+----
+{
+  "airportname": "Calais Dunkerque",
+  "city": "Calais",
+  "country": "France",
+  "faa": "CQF",
+  "geo": {
+    "alt": 12,
+    "lat": 50.962097,
+    "lon": 1.954764
+  },
+  "icao": "LFAC",
+  "id": 1254,
+  "type": "airport",
+  "tz": "Europe/Paris"
+}
+----
 
-The location data provided by a geospatial geopoint query can be any of the following:
+* Converting Geopoints *_(for reference only)_*
++
+Using SQL++ (or N1QL) in the Query Workbench we can quickly convert all top level "geo" objects in `travel-sample._default._default`
++
+[source, n1ql]
+----
+UPDATE `travel-sample`._default._default 
+    SET geo.type = "Point", geo.coordinates = [geo.lon, geo.lat] WHERE geo IS NOT null;
 
-* A location, is specified as a longitude-latitude coordinate pair; and a distance.
-The location determines the center of a circle whose radius-length is the specified distance.
-Documents are returned if they reference a location within the circle. For details of the units and formats in which distances can be specified, see xref:fts:fts-supported-queries-geo-spatial.adoc#specifying-distances[Specifying Distances].
+UPDATE `travel-sample`._default._default 
+    UNSET geo.lat, geo.lon WHERE geo IS NOT null;
+----
++
+After running the above conversion we would get updated documents like:
++
+[source, json]
+----
+{
+  "airportname": "Calais Dunkerque",
+  "city": "Calais",
+  "country": "France",
+  "faa": "CQF",
+  "geo": {
+    "alt": 12,
+    "coordinates": [
+      1.954764,
+      50.962097
+    ],
+    "type": "Point"
+  },
+  "icao": "LFAC",
+  "id": 1254,
+  "type": "airport",
+  "tz": "Europe/Paris"
+}
+----
 
-* Two latitude-longitude coordinate pairs.
-These are respectively taken to indicate the top left and bottom right corners of a _rectangle_.
-Documents are returned if they reference a location within the area of the rectangle.
+* Adding a new GeoJSON object(s) *_(required for running any examples)_*
++
+Using SQL++ (or N1QL) in the Query Workbench we can quickly read the "geo" objects in `travel-sample._default._default` and generate and add a new geojson object to each document.   In addition the second statement will add a higher level GeoJSON (Couchbase addition to the spec) object representing a 10 mile readius around each airport (only for type=airport).
++
+[source, n1ql]
+----
+UPDATE `travel-sample`._default._default 
+    SET geojson = { "type": "Point", "coordinates": [geo.lon, geo.lat] } 
+    WHERE geo IS NOT null;
+    
+UPDATE  `travel-sample`._default._default  
+    SET geoarea = { "coordinates": [geo.lon, geo.lat], "type": "circle", "radius": "10mi"}  
+    WHERE geo IS NOT null AND type="airport";
+----
++
+After running the above conversion we would get updated documents for airports like (hotels and landmarks will not have a geoarea sub-object):
++
+[source, json]
+----
+{
+  "airportname": "Calais Dunkerque",
+  "city": "Calais",
+  "country": "France",
+  "faa": "CQF",
+  "geo": {
+    "alt": 12,
+    "lat": 50.962097,
+    "lon": 1.954764
+  },
+  "geoarea": {
+    "coordinates": [
+      1.954764,
+      50.962097
+    ],
+    "radius": "10mi",
+    "type": "circle"
+  },
+  "geojson": {
+    "coordinates": [
+      1.954764,
+      50.962097
+    ],
+    "type": "Point"
+  },
+  "icao": "LFAC",
+  "id": 1254,
+  "type": "airport",
+  "tz": "Europe/Paris"
+}
+----
 
-* An array of three or more latitude-longitude coordinate pairs.
-Each of the pairs is taken to indicate one corner of a _polygon_.
-Documents are returned if they reference a location within the area of the polygon.
 
-A geospatial geopoint query must be applied to an index that uses the _geopoint_ type mapping to the document-field that contains the target longitude-latitude coordinate pair.
 
-To be successful, a geospatial geopoint query must reference an index within which the _geopoint_ type mapping has been applied to the field containing the target latitude-longitude coordinate pair.
 
-Geospatial queries return _all_ documents whose locations are within the query-specified area.
-To specify _holes_ within the area so that one or more subsets of returned documents can be omitted from the final results, boolean queries should be applied to the set of documents returned by the geospatial geopoint query.
-See xref:fts-supported-queries.adoc[Supported Queries].
+== GeoJSON Syntax
 
-Latitude-longitude coordinate pairs can be specified in multiple ways, including as _geohashes_; as demonstrated in xref:fts:fts-supported-queries-geo-spatial.adoc#specifying-coordinates[Specifying Coordinates], below.
+As previously disucussed the supported GeoJSON shapes in the Search service are:
+
+* *Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, and GeometryCollection*
+
+The search service follows strict GeoJSON syntax for the above seven (7) standard types:
+
+* GeoJSON position arrays are either [longitude, latitude], or [longitude, latitude, altitude].
+
+* Right-hand rule winding order as per RFC 7946 GeoJSON recommendations
+
+** LineString and Polygon geometries contain coordinates in an order: lines go in a certain direction, and polygon rings do too.
+
+** The direction of LineString often reflects the direction of something in real life: a GPS trace will go in the direction of movement, or a street in the direction of allowed traffic flows.
+
+** Polygon ring order is undefined in GeoJSON, but there’s a useful default to acquire: the right hand rule. Specifically this means that
+
+*** The exterior ring should be counterclockwise.
+
+*** Interior rings should be clockwise.
+
+In addition to the above shapes, Search also supports a two of additional custom shapes (Couchbase specific) to make the spatial approximations easier for users to utilize:
+
+* *Circle, and Envelope*
+
+The search service follows it's own syntax for the above two (2) custom types (see below).
+
+== Supported GeoJSON Data Types
+
+=== Point (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.2[RFC 7946: 3.1.2])
+
+The following specifies a GeoJSON Point field in a document:
+
+[source, json]
+----
+{ 
+ "type": "Point", 
+ "coordinates": [75.05687713623047,22.53539059204079]
+}
+----
+
+A point is a single geographic coordinate, such as the location of a building or the current position given by any Geolocation API.
+Note : The standard only supports a single way of specifying the coordinates like an array format of longitude followed by latitude. ie: [lng, lat].
+
+=== Linestring (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.4[RFC 7946: 3.1.4])
+
+The following specifies a GeoJSON Linestring field in a document:
+
+[source, json]
+----
+{ 
+   "type": "LineString", 
+   "coordinates": [ 
+[ 77.01416015625, 23.0797317624497], 
+[ 78.134765625, 20.385825381874263] 
+    ] 
+}
+----
+
+A linestring defined by an array of two or more positions. By specifying only two points, the linestring will represent a straight line. Specifying more than two points creates an arbitrary path.
+
+===  Polygon (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.6[RFC 7946: 3.1.6])
+
+The following specifies a GeoJSON Polygon field in a document:
+
+[source, json]
+----
+{
+ "type": "Polygon",
+ "coordinates": [ [ [ 85.605, 57.207], 
+                    [ 86.396, 55.998], 
+                    [ 87.033, 56.716], 
+                    [ 85.605, 57.207] 
+                ] ]
+}
+----
+
+A polygon is defined by a list of a list of points. The first and last points in each (outer) list must be the same (ie, the polygon must be closed). And the exterior coordinates have to be in Counter Clockwise Order in a polygon. (CCW)
+Polygons with holes are also supported. The holes has to follow Clockwise Order for the boundary vertices.
+For Polygons with a single ring, the ring cannot self-intersect
+NOTE: The CCW order of vertices is strictly mandated for the geoshapes in the Couchbase Server release 7.1.2 and any violation of this requirement would result in unexpected search results.
+
+=== MultiPoint (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.3[RFC 7946: 3.1.3])
+
+The following specifies a GeoJSON Multipoint field in a document:
+
+[source, json]
+----
+{
+ "type": "MultiPoint",
+ "coordinates": [
+    [ -115.8343505859375, 38.45789034424927],
+    [ -115.81237792968749, 38.19502155795575],
+    [ -120.80017089843749, 36.54053616262899],
+    [ -120.67932128906249, 36.33725319397006]
+ ]
+}
+----
+
+=== MultiLineString (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.5[RFC 7946: 3.1.5])
+
+The following specifies a GeoJSON MultiLineString field in a document:
+
+[source, json]
+----
+{
+ "type": "MultiLineString",
+ "coordinates": [
+    [ [ -118.31726074, 35.250105158],[ -117.509765624, 35.3756141] ],
+    [ [ -118.6962890, 34.624167789],[ -118.317260742, 35.03899204] ],
+    [ [ -117.9492187, 35.146862906], [ -117.6745605, 34.41144164] ]
+]
+}
+----
+
+=== MultiPolygon (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.7[RFC 7946: 3.1.7])
+
+The following specifies a GeoJSON MultiPolygon field in a document:
+
+[source, json]
+----
+{
+ "type": "MultiPolygon",
+ "coordinates": [
+    [ [ [ -73.958, 40.8003 ], [ -73.9498, 40.7968 ], 
+        [ -73.9737, 40.7648 ], [ -73.9814, 40.7681 ], 
+        [ -73.958, 40.8003 ] ] ],
+
+
+    [ [ [ -73.958, 40.8003 ], [ -73.9498, 40.7968 ], 
+        [ -73.9737, 40.7648 ], [ -73.958, 40.8003 ] ] ]
+ ]
+}
+----
+
+=== GeometryCollection (https://www.rfc-editor.org/rfc/rfc7946#section-3.1.8[RFC 7946: 3.1.8])
+
+The following specifies a GeoJSON GeometryCollection field in a document:
+A GeometryCollection has a member with the name "geometries".  The value of "geometries" is an array.  Each element of this array is a GeoJSON Geometry object.    It is possible for this array to be empty.
+
+Unlike the other geometry types described above, a GeometryCollection can be a heterogeneous composition of smaller Geometry objects.  For example, a Geometry object in the shape of a lowercase roman "i" can be composed of one point and one LineString.
+Nested  GeometryCollections are invalid.  
+
+[source, json]
+----
+{
+ "type": "GeometryCollection",
+ "geometries": [
+    {
+      "type": "MultiPoint",
+      "coordinates": [
+         [ -73.9580, 40.8003 ],
+         [ -73.9498, 40.7968 ],
+         [ -73.9737, 40.7648 ],
+         [ -73.9814, 40.7681 ]
+      ]
+    },
+    {
+      "type": "MultiLineString",
+      "coordinates": [
+         [ [ -73.96943, 40.78519 ], [ -73.96082, 40.78095 ] ],
+         [ [ -73.96415, 40.79229 ], [ -73.95544, 40.78854 ] ],
+         [ [ -73.97162, 40.78205 ], [ -73.96374, 40.77715 ] ],
+         [ [ -73.97880, 40.77247 ], [ -73.97036, 40.76811 ] ]
+      ]
+    },
+    {
+      "type" : "Polygon",
+      "coordinates" : [
+    [ [ 0 , 0 ] , [ 3 , 6 ] , [ 6 , 1 ] , [ 0 , 0 ] ],
+    [ [ 2 , 2 ] , [ 3 , 3 ] , [ 4 , 2 ] , [ 2 , 2 ] ]
+    ]
+   }
+]
+}
+----
+
+=== Circle (Couchbase specific extension)
+
+If the user wishes to cover a circular region over earth’s surface, then they could use this shape.
+A  sample circular shape is as below.
+
+[source, json]
+----
+{ 
+ "type": "circle", 
+ "coordinates": [75.05687713623047,22.53539059204079],
+ "radius": "1000m"
+}
+----
+ 
+Circle is specified over the center point coordinates along with the radius (or distance).
+
+Example formats supported for radius are: 
+"5in" , "5inch" , "7yd" , "7yards",  "9ft" , "9feet", "11km", "11kilometers", "3nm" "3nauticalmiles", "13mm" , "13millimeters",  "15cm", "15centimeters", "17mi", "17miles" "19m" or "19meters".
+
+[#specifying-distances]
+
+Multiple unit-types can be used to express the radius (or distance).
+These are listed in the table below, with the strings that specify them in REST queries.
+
+[#geospatial-distance-units,cols="1,2"]
+|===
+| Units | Specify with
+
+| inches
+| `in` or `inch`
+
+| feet
+| `ft` or `feet`
+
+| yards
+| `yd` or `yards`
+
+| miles
+| `mi` or `miles`
+
+| nautical miles
+| `nm` or `nauticalmiles`
+
+| millimeters
+| `mm` or `millimeters`
+
+| centimeters
+| `cm` or `centimeters`
+
+| meters
+| `m` or `meters`
+
+| kilometers
+| `km` or `kilometers`
+
+|===
+
+The integer used to specify the number of units must precede the unit-name, with no space left in-between.
+For example, _five inches_ can be specified either by the string `"5in"`, or by the string `"5inches"`; while _thirteen nautical miles_ can be specified as either `"13nm"` or `"13nauticalmiles"`.
+
+If the unit cannot be determined, the entire string is parsed, and the distance is assumed to be in _meters_.
+
+=== Envelope (Couchbase specific extension)
+
+Envelope type, which consists of coordinates for upper left and lower right points of the shape to represent a bounding rectangle in the format  [[minLon, maxLat], [maxLon, minLat]].
+
+[source, json]
+----
+{
+    "type": "envelope",
+    "coordinates": [
+      [72.83, 18.979],
+      [78.508, 17.4555]
+    ]
+}
+----
+ 
+
+
+
 
 [#recognizing_target_data]
 == Recognizing Target Data
 
-The `travel-sample` bucket, provided for test and development, contains multiple documents that specify locations.
-For example, those that represent airports, such as `airport_1254`:
+
 
 [source, json]
 ----
