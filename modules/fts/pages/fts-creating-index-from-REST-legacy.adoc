@@ -1,0 +1,147 @@
+= Creating a Legacy Index via the REST API
+
+This example quickly creates the same index as xref:fts-creating-index-from-UI-classic-editor-legacy.adoc#main[Creating a Legacy Index via the UI].  
+
+The cURL command below was initially created via the Classic Editor in the UI, however the follwoing modifications were made.
+
+* The curl flag "*-s*" to suppress some runtime output.
+
+* The credentials "*-u <username>:<password>*" were altered to "*-u* $*{CB_USERNAME}*:$*{CB_PASSWORD}*".
+
+* The hostname or IP address was replaced with $*{CB_HOSTNAME}*.
+
+* The commands output is piped  through the utility *http://stedolan.github.io/jq[jq]* to enhance readability.
+
+* The two (2) UUIDs were removed (similar to the below) because we want to make a new index not modify an existing one.
++
+[source, json]
+----
+  "uuid": "273a60635f5248e5",
+  "sourceUUID": "2b421d183cb76aebbffa45424736ec2e",
+----
+
+= The Creation Command
+
+The full command to create the index is below and can be executed verbatim if you have the environment variable $*{CB_USERNAME}*, $*{CB_PASSWORD}* and $*{CB_HOSTNAME}* set.
+
+[source, command]
+----
+curl -s -XPUT -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/travel-sample-index -d \
+'{
+  "type": "fulltext-index",
+  "name": "travel-sample-index",
+  "sourceType": "gocbcore",
+  "sourceName": "travel-sample",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "standard",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": true,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "_default._default": {
+          "dynamic": true,
+          "enabled": true
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}'  | jq .
+----
+
+If you successfully create the index you should a response liekt the follwoing
+
+[source, json]
+----
+{
+  "status": "ok",
+  "uuid": "56304e8bab69bc99"
+}
+----
+
+== Test the Legacy Index with a simple query
+
+Request the first 10 item closet to a longitude of `-2.235143` and a latitude of `53.482358`.
+The target-field `geo` is specified, as is a `distance` of `100` miles: this is the radius within which target-locations must reside for their documents to be returned.  Don't worry about newlines when you paste the text.
+
+[source, command]
+----
+curl -s -XPOST -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/travel-sample-index/query \
+-d '{
+  "query": {
+    "query": "+view +food +beach"
+  },
+  "size": 10,
+  "from": 0
+}' |  jq .
+----
+
+The output of a ten (10) hits (from a total of 121 matching docs) is as follows
+
+[source, json]
+----
+{
+  "status": {
+    "total": 1,
+    "failed": 0,
+    "successful": 1
+  },
+  "request": {
+    "query": {
+      "query": "+view +food +beach"
+    },
+    "size": 10,
+    "from": 0,
+    "highlight": null,
+    "fields": null,
+    "facets": null,
+    "explain": false,
+    "sort": [
+      "-_score"
+    ],
+    "includeLocations": false,
+    "search_after": null,
+    "search_before": null
+  },
+  "hits": [
+    {
+      "index": "travel-sample-index_56304e8bab69bc99_4c1c5584",
+      "id": "landmark_38035",
+      "score": 1.1579735254455,
+      "sort": [
+        "_score"
+      ]
+    }
+  ],
+  "total_hits": 121,
+  "max_score": 1.1579735254455,
+  "took": 916181,
+  "facets": null
+}
+----
