@@ -1,0 +1,301 @@
+= Creating a GeoJSON Index via the REST API
+
+This example quickly creates the same index as xref:fts-creating-index-from-UI-classic-editor-geojson.adoc#main[Creating a GeoJSON Index via the UI].  
+
+The cURL command below was initially created via the Classic Editor in the UI, however the follwoing modifications were made.
+
+* The curl flag "*-s*" to suppress some runtime output.
+
+* The credentials "*-u <username>:<password>*" were altered to "*-u* $*{CB_USERNAME}*:$*{CB_PASSWORD}*".
+
+* The hostname or IP address was replaced with $*{CB_HOSTNAME}*.
+
+* The commands output is piped  through the utility *http://stedolan.github.io/jq[jq]* to enhance readability.
+
+* The two (2) UUIDs were removed (similar to the below) because we want to make a new index not modify an existing one.
++
+[source, json]
+----
+  "uuid": "273a60635f5248e5",
+  "sourceUUID": "2b421d183cb76aebbffa45424736ec2e",
+----
+
+= The Creation Command
+
+The full command to create the index is below and can be executed verbatim if you have the environment variable $*{CB_USERNAME}*, $*{CB_PASSWORD}* and $*{CB_HOSTNAME}* set.
+
+[source, command]
+----
+curl -s -XPUT -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/test_geojson -d \
+'{
+  "type": "fulltext-index",
+  "name": "test_geojson",
+  "sourceType": "gocbcore",
+  "sourceName": "travel-sample",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "standard",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": true,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "_default._default": {
+          "dynamic": true,
+          "enabled": true,
+          "properties": {
+            "geoarea": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "include_in_all": true,
+                  "index": true,
+                  "name": "geoarea",
+                  "type": "geoshape"
+                }
+              ]
+            },
+            "geojson": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "include_in_all": true,
+                  "index": true,
+                  "name": "geojson",
+                  "type": "geoshape"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}'  | jq .
+----
+
+If you successfully create the index you should a response liekt the follwoing
+
+[source, json]
+----
+{
+  "status": "ok",
+  "uuid": "690ac8f8179a4a86"
+}
+----
+
+== Test the GeoJSON Index with a simple query
+
+Request the first 10 items within the state of Utah (note the query body consistes of simple set of hand drawn set of corner points).
+The target-field `geojson` is specified, to be compared to the query Polygon the target-locations must reside for their documents to be returned.  
+Don't worry about newlines when you paste the text.
+
+[source, command]
+----
+curl -s -XPOST -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/test_geojson/query \
+-d '{
+  "query": {
+    "geometry": {
+      "shape": {
+        "coordinates": [
+          [
+            [-114.027099609375, 42.00848901572399],
+            [-114.04907226562499, 36.99377838872517],
+            [-109.05029296875, 36.99377838872517],
+            [-109.05029296875, 40.98819156349393],
+            [-111.060791015625, 40.98819156349393],
+            [-111.02783203125, 42.00848901572399],
+            [-114.027099609375, 42.00848901572399]
+          ]
+        ],
+        "type": "Polygon"
+      },
+      "relation": "within"
+    },
+    "field": "geojson"
+  },
+  "size": 10,
+  "from": 0
+}' |  jq .
+----
+
+The output of a ten (10) hits (from a total of 18 matching docs) is as follows
+
+[source, json]
+----
+{
+  "status": {
+    "total": 1,
+    "failed": 0,
+    "successful": 1
+  },
+  "request": {
+    "query": {
+      "geometry": {
+        "shape": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -114.027099609375,
+                42.00848901572399
+              ],
+              [
+                -114.04907226562499,
+                36.99377838872517
+              ],
+              [
+                -109.05029296875,
+                36.99377838872517
+              ],
+              [
+                -109.05029296875,
+                40.98819156349393
+              ],
+              [
+                -111.060791015625,
+                40.98819156349393
+              ],
+              [
+                -111.02783203125,
+                42.00848901572399
+              ],
+              [
+                -114.027099609375,
+                42.00848901572399
+              ]
+            ]
+          ]
+        },
+        "relation": "within"
+      },
+      "field": "geojson"
+    },
+    "size": 10,
+    "from": 0,
+    "highlight": null,
+    "fields": null,
+    "facets": null,
+    "explain": false,
+    "sort": [
+      "-_score"
+    ],
+    "includeLocations": false,
+    "search_after": null,
+    "search_before": null
+  },
+  "hits": [
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_7857",
+      "score": 0.27669394470240527,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_7727",
+      "score": 0.27669394470240527,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_9279",
+      "score": 0.27669394470240527,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_3451",
+      "score": 0.2591422914480037,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_3824",
+      "score": 0.24860341896785076,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_4064",
+      "score": 0.1544939168705978,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_7581",
+      "score": 0.13231342774148913,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_3614",
+      "score": 0.13231342774148913,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_6998",
+      "score": 0.13231342774148913,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "test_geojson_690ac8f8179a4a86_4c1c5584",
+      "id": "airport_7579",
+      "score": 0.13231342774148913,
+      "sort": [
+        "_score"
+      ]
+    }
+  ],
+  "total_hits": 18,
+  "max_score": 0.27669394470240527,
+  "took": 14396302,
+  "facets": null
+}
+----
