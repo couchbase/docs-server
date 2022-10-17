@@ -37,7 +37,6 @@ convertAdvXMLtoJSON::
 // Version 7.1+
 //   "Function Scope"
 //     *.* (or try bulk.data if non-privileged)
-// Version 7.0+
 //   "Listen to Location"
 //     bulk.data.source
 //   "Eventing Storage"
@@ -54,6 +53,30 @@ convertAdvXMLtoJSON::
 //   Binding(s)
 //    1. "binding type", "alias name...", "bucket",     "Access"
 //       "bucket alias", "src_col",       "source",     "read and write"
+
+// ===============================================================
+// THIS IS AN APPLICATION SPECIFIC CUSTOM TRANSFOMRATION ON NEED
+function customParseFixups(key,tmp) {
+    // typically we would test the key for a name where we want to transform the value
+
+    // Example 1:
+    //     if (key === "resultStr") {
+    //        // makes an array of strings
+    //        // var data_array = tmp.trim().split(' ');
+    //        return data_array;
+    //     }
+
+    // Example 2:
+    //     if (key === "resultNumStr") {
+    //        // makes an array of numbers
+    //        // var data_array = tmp.trim().split(' ').map(str => Number(str));
+    //        return data_array;
+    //     }
+
+    // Do nothing this is a NOOP
+    return tmp;
+}
+// ===============================================================
 
 function OnUpdate(doc, meta) {
     // filter out non XML
@@ -82,48 +105,61 @@ function OnUpdate(doc, meta) {
 }
 
 // 7.0.0 version uses String.matchAll eliminates the need to make our own MatchAll function call as parseXmlToJson(xml)
-function parseAdvXmlToJson(xml,recurs) {
-    const json = {};
-
-    if (!recurs) {
-        // 1st call, Fix bad closures,  Transform Example : '<tagName attrName="attrValue" >'  becomes '<tagName attrName="attrValue" />'
-        xml = xml.replace(/\"\s*>/g, '" />');
-
-        // 1st call, Transform Example : '<tagName attrName="attrValue" />' becomes '<tagName><attrName>attrValue</attrName></tagName>'
-        xml = xml.replace(/<\s*([^\/><\s]+)\s+(\w[^<>]*)(\s*\/>)/gm, '<$1 $2></$1>');
-    }
-
-    for (const res of xml.matchAll(/(?:<([\w:]*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<([\w:]*)(?:\s*)*\/>/gm)) {
-
-        // find all sest of 1..N attributes if any
-        var attrs = {};
-        for (const res1 of res[0].matchAll(/<\s*(\w[^\/><\s]*)\s+(\w[^<]*[^=<]\s*[=]\s*[\'\"][^<]+[\'\"])\s*>([^<>]*)</gm)) {
-            attrs[res1[1]] = {};
-            if (res1[3] !== "") {
-                // illegal XML: <tag1 attr1="aval1">value1</tag1>
-                log('Illegal can not have bare "' + res1[3] + '" value if we have attr(s) input:', res1[0]);
-                return null;
-            } else {
-                for (const res2 of res1[2].matchAll(/(\w+[^=<>]*)\s*[=]\s*[\"]([^\"]+)[\"]|(\w+[^=<>]*)\s*[=]\s*[\']([^\']+)[\']/gm)) {
-                    if (res2[1] !== "") attrs[res1[1]][res2[1]] = res2[2];
-                    if (res2[3] !== "") attrs[res1[1]][res2[3]] = res2[4];
-                }
-            }
-        }
-        const key = res[1] || res[3];
-        var value = res[2] && parseAdvXmlToJson(res[2],true);
-        if (res[2] === "" && Object.keys(attrs).length > 0) {
-            value = {};
-        }
-        if (attrs[key]) {
-            for (const p in attrs[key]) {
-                value[p] = attrs[key][p];
-            }
-        }
-        attrs = {};
-        json[key] = ((value && Object.keys(value).length) ? value : res[2]) || null;
-    }
-    return json;
+function parseAdvXmlToJson(xml, recurs) {
+	const json = {};
+	if (!recurs) {
+		// 1st call, Fix bad closures,  Transform Example : '<tagName attrName="attrValue" >'  becomes '<tagName attrName="attrValue" />'
+		xml = xml.replace(/\"\s*>/g, '" />');
+		// 1st call, Transform Example : '<tagName attrName="attrValue" />' becomes '<tagName><attrName>attrValue</attrName></tagName>'
+		xml = xml.replace(/<\s*([^\/><\s]+)\s+(\w[^<>]*)(\s*\/>)/gm, '<$1 $2></$1>');
+	}
+	for (const res of xml.matchAll(/(?:<([\w:]*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<([\w:]*)(?:\s*)*\/>/gm)) {
+		// find all sest of 1..N attributes if any
+		var attrs = {};
+		for (const res1 of res[0].matchAll(/<\s*(\w[^\/><\s]*)\s+(\w[^<]*[^=<]\s*[=]\s*[\'\"][^<]+[\'\"])\s*>([^<>]*)</gm)) {
+			attrs[res1[1]] = {};
+			if (res1[3] !== "") {
+				// illegal XML: <tag1 attr1="aval1">value1</tag1>
+				log('Illegal can not have bare "' + res1[3] + '" value if we have attr(s) input:', res1[0]);
+				return null;
+			} else {
+				for (const res2 of res1[2].matchAll(/(\w+[^=<>]*)\s*[=]\s*[\"]([^\"]+)[\"]|(\w+[^=<>]*)\s*[=]\s*[\']([^\']+)[\']/gm)) {
+					if (res2[1] !== "") attrs[res1[1]][res2[1]] = res2[2];
+					if (res2[3] !== "") attrs[res1[1]][res2[3]] = res2[4];
+				}
+			}
+		}
+		const key = res[1] || res[3];
+		var value = res[2] && parseAdvXmlToJson(res[2], true);
+		if (res[2] === "" && Object.keys(attrs).length > 0) {
+			value = {};
+		}
+		if (attrs[key]) {
+			for (const p in attrs[key]) {
+				if (attrs[key][p]) {
+					value[p] = attrs[key][p];
+				}
+			}
+		}
+		attrs = {};
+		var tmp = ((value && Object.keys(value).length) ? value : res[2]) || null;
+		if (Array.isArray(json[key]) == false) {
+			if (json[key]) {
+				// we have seen this key before change from object to an array of objects
+                var old = json[key];
+                json[key] = [];
+                json[key].push(old);
+                json[key].push(tmp);
+			} else {
+			    // link to a custom function
+			    tmp = customParseFixups(key,tmp);
+				json[key] = tmp;
+			}
+		} else {
+			json[key].push(tmp);
+		}
+	}
+	return json;
 }
 
 /*
@@ -140,48 +176,61 @@ function* MatchAll(str, regExp) {
 }
 
 // 6.6.0 version no String.matchAll need our own MatchAll function, call as parseXmlToJson(xml)
-function parseAdvXmlToJson(xml,recurs) {
-    const json = {};
-
-    if (!recurs) {
-        // 1st call, Fix bad closures,  Transform Example : '<tagName attrName="attrValue" >'  becomes '<tagName attrName="attrValue" />'
-        xml = xml.replace(/\"\s*>/g, '" />');
-
-        // 1st call, Transform Example : '<tagName attrName="attrValue" />' becomes '<tagName attrName="attrValue"></tagName>'
-        xml = xml.replace(/<\s*([^\/><\s]+)\s+(\w[^<>]*)(\s*\/>)/gm, '<$1 $2></$1>');
-    }
-
-    for (const res of MatchAll(xml, /(?:<([\w:]*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<([\w:]*)(?:\s*)*\/>/gm)) {
-
-        // find all sest of 1..N attributes if any
-        var attrs = {};
-        for (const res1 of MatchAll(res[0], /<\s*(\w[^\/><\s]*)\s+(\w[^<]*[^=<]\s*[=]\s*[\'\"][^<]+[\'\"])\s*>([^<>]*)</gm)) {
-            attrs[res1[1]] = {};
-            if (res1[3] !== "") {
-                // illegal XML: <tag1 attr1="aval1">value1</tag1>
-                log('Illegal can not have bare "' + res1[3] + '" value if we have attr(s) input:', res1[0]);
-                return null;
-            } else {
-                for (const res2 of MatchAll(res1[2], /(\w+[^=<>]*)\s*[=]\s*[\"]([^\"]+)[\"]|(\w+[^=<>]*)\s*[=]\s*[\']([^\']+)[\']/gm)) {
-                    if (res2[1] !== "") attrs[res1[1]][res2[1]] = res2[2];
-                    if (res2[3] !== "") attrs[res1[1]][res2[3]] = res2[4];
-                }
-            }
-        }
-        const key = res[1] || res[3];
-        var value = res[2] && parseAdvXmlToJson(res[2],true);
-        if (res[2] === "" && Object.keys(attrs).length > 0) {
-            value = {};
-        }
-        if (attrs[key]) {
-            for (const p in attrs[key]) {
-                value[p] = attrs[key][p];
-            }
-        }
-        attrs = {};
-        json[key] = ((value && Object.keys(value).length) ? value : res[2]) || null;
-    }
-    return json;
+function parseAdvXmlToJson(xml, recurs) {
+	const json = {};
+	if (!recurs) {
+		// 1st call, Fix bad closures,  Transform Example : '<tagName attrName="attrValue" >'  becomes '<tagName attrName="attrValue" />'
+		xml = xml.replace(/\"\s*>/g, '" />');
+		// 1st call, Transform Example : '<tagName attrName="attrValue" />' becomes '<tagName attrName="attrValue"></tagName>'
+		xml = xml.replace(/<\s*([^\/><\s]+)\s+(\w[^<>]*)(\s*\/>)/gm, '<$1 $2></$1>');
+	}
+	for (const res of MatchAll(xml, /(?:<([\w:]*)(?:\s[^>]*)*>)((?:(?!<\1).)*)(?:<\/\1>)|<([\w:]*)(?:\s*)*\/>/gm)) {
+		// find all sest of 1..N attributes if any
+		var attrs = {};
+		for (const res1 of MatchAll(res[0], /<\s*(\w[^\/><\s]*)\s+(\w[^<]*[^=<]\s*[=]\s*[\'\"][^<]+[\'\"])\s*>([^<>]*)</gm)) {
+			attrs[res1[1]] = {};
+			if (res1[3] !== "") {
+				// illegal XML: <tag1 attr1="aval1">value1</tag1>
+				log('Illegal can not have bare "' + res1[3] + '" value if we have attr(s) input:', res1[0]);
+				return null;
+			} else {
+				for (const res2 of MatchAll(res1[2], /(\w+[^=<>]*)\s*[=]\s*[\"]([^\"]+)[\"]|(\w+[^=<>]*)\s*[=]\s*[\']([^\']+)[\']/gm)) {
+					if (res2[1] !== "") attrs[res1[1]][res2[1]] = res2[2];
+					if (res2[3] !== "") attrs[res1[1]][res2[3]] = res2[4];
+				}
+			}
+		}
+		const key = res[1] || res[3];
+		var value = res[2] && parseAdvXmlToJson(res[2], true);
+		if (res[2] === "" && Object.keys(attrs).length > 0) {
+			value = {};
+		}
+		if (attrs[key]) {
+			for (const p in attrs[key]) {
+				if (attrs[key][p]) {
+					value[p] = attrs[key][p];
+				}
+			}
+		}
+		attrs = {};
+		var tmp = ((value && Object.keys(value).length) ? value : res[2]) || null;
+		if (Array.isArray(json[key]) == false) {
+			if (json[key]) {
+				// we have seen this key before change from object to an array of objects
+                var old = json[key];
+                json[key] = [];
+                json[key].push(old);
+                json[key].push(tmp);
+			} else {
+			    // link to a custom function
+			    tmp = customParseFixups(key,tmp);
+				json[key] = tmp;
+			}
+		} else {
+			json[key].push(tmp);
+		}
+	}
+	return json;
 }
 */
 ----
