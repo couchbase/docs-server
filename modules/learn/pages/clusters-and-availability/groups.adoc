@@ -14,11 +14,14 @@ _Server Group Awareness_ provides enhanced availability.
 Specifically, it protects a cluster from large-scale infrastructure failure, through the definition of _groups_.
 Each group is created by an appropriately authorized administrator, and specified to contain a subset of the nodes within a Couchbase Cluster.
 Following group-definition and rebalance, the active vBuckets for any defined bucket are located on one group, while the corresponding replicas are located on another group: indexes and _index replicas_, maintained by the Index Service, are distributed across groups in a similar way.
-This allows _Group Failover_ to be enabled, so that if an entire group goes offline, and active vBuckets and indexes are thereby inaccessible, the replica vBuckets and replica indexes that remain available on another group can be automatically promoted to active status.
+
+A server group can be automatically _failed over_: thus, if the entire group goes offline, and active vBuckets and indexes are thereby inaccessible, the replica vBuckets and replica indexes that remain available on another group can be automatically promoted to active status.
+In 7.1+, this is achieved by setting the maximum count for auto-failover to a value equal to or greater than the number of nodes in the server group.
+See xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover].
 
 Groups should be defined in accordance with the physical distribution of cluster-nodes.
 For example, a group should only include the nodes that are in a single _server rack_, or in the case of cloud deployments, a single _availability zone_.
-Thus, if the server rack or availability zone becomes unavailable due to a power or network failure, Group Failover, if enabled, allows continued access to the affected data.
+Thus, if the server rack or availability zone becomes unavailable due to a power or network failure, all the nodes in the group can be automatically failed over, to allow continued access to the affected data.
 
 Note the following:
 
@@ -63,8 +66,8 @@ A number of constraints come into play when allocating active and replica vBucke
 
 *replica balance*:: there should be approximately the same number of replica vBuckets on each node in the cluster.
 
-Not all the constraints can be satisfied when the buckets are allocated across uneven groups. 
-In this scenario, the `active balance` and `rack-zone` constraints will take priority: 
+Not all the constraints can be satisfied when the buckets are allocated across uneven groups.
+In this scenario, the `active balance` and `rack-zone` constraints will take priority:
 when the vBucket map is generated, we will ensure that there are approximately the same number of active vBuckets on each cluster and that replicas of a given vBucket must reside in separate groups.
 
 The following illustration shows how vBuckets are distributed across two groups: Group 1 contains four nodes, while Group 2 contains five.
@@ -72,19 +75,19 @@ The following illustration shows how vBuckets are distributed across two groups:
 [#groups_two_unequal]
 image::clusters-and-availability/groups-two-unequal-rack-zone-constraint.png[,720,align=left]
 
-Group 1 contains all the replica vBuckets that correspond to active vBuckets in Group 2.
+Group 1 contains all the replica vBuckets that correspond to active vBuckets in Group 2.
 
-Group 2 contains all the replica vBuckets that correspond to active vBuckets in Group 1.
+Group 2 contains all the replica vBuckets that correspond to active vBuckets in Group 1.
 
-However, in order to ensure that replicas of a VBucket must reside in a separate group, then we may have a situation where there are vBuckets from Server 9 replicated to Group 1, but there are no additional vBuckets in Group 1 to provide balance in Group 2.
+However, in order to ensure that replicas of a VBucket must reside in a separate group, then we may have a situation where there are vBuckets from Server 9 replicated to Group 1, but there are no additional vBuckets in Group 1 to provide balance in Group 2.
 
 [IMPORTANT]
 ====
-Smaller server groups will carry more replica vBuckets, which means there is greater memory pressure on memcached so more fetches go to disk which means higher worst case GET latencies. 
+Smaller server groups will carry more replica vBuckets, which means there is greater memory pressure on memcached so more fetches go to disk which means higher worst case GET latencies.
 
-Additionally, more replicas mean more writes to disk and a greater compaction burden which will also affect latencies. 
+Additionally, more replicas mean more writes to disk and a greater compaction burden which will also affect latencies.
 
-Customers will notice this as the smaller server groups will "perform" worse than the later server groups. 
+Customers will notice this as the smaller server groups will "perform" worse than the later server groups.
 So for reasons of consistency of performance Couchbase strongly recommends that customers endeavor to maintain an equal number of nodes across server groups.
 ====
 
@@ -92,14 +95,14 @@ For more information on optimizing your cluster configuration, consult the xref:
 
 .IMPORTANT - Change in behavior from previous versions
 ****
-If you have fewer server groups than the total number of data copies (where stem:[data\:copies = 1 + number\:of\:replicas]), then the number of copies placed will be restricted to match the number of server groups. 
+If you have fewer server groups than the total number of data copies (where stem:[data\:copies = 1 + number\:of\:replicas]), then the number of copies placed will be restricted to match the number of server groups.
 Essentially, you may not get the number of replicas the cluster has been configured for if you have fewer server groups.
 
 
 .Example:
 [caption=]
 ====
-If you have 2 server groups, and set `replicas = 2`, you will only have one replica for each vBucket. 
+If you have 2 server groups, and set `replicas = 2`, you will only have one replica for each vBucket.
 
 But if you have 3 server groups you will have 2 replicas for each vBucket.
 ====
@@ -202,7 +205,7 @@ For example, given a cluster:
 At a minimum, one instance of the Index Service and one instance of the Search Service should be deployed on each rack.
 
 [#defining-groups-and-enabling-group-failover]
-== Defining Groups and Enabling Group Failover
+== Defining Groups and Enabling Failover of All a Group's Nodes
 
 To define and manage groups:
 
@@ -210,8 +213,12 @@ To define and manage groups:
 * With CLI, see xref:cli:cbcli/couchbase-cli-group-manage.adoc[group-manage].
 * With the REST API, see xref:rest-api:rest-rza.adoc[Server Groups API].
 
-To enable Group Failover:
+To enable the failover of all nodes in a group:
 
 * With Couchbase Web Console, see the information provided for the *General* settings panel, in xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability].
 * With CLI, see xref:cli:cbcli/couchbase-cli-setting-autofailover.adoc[setting-autofailover].
 * With the REST API, see xref:rest-api:rest-cluster-autofailover-enable.adoc[Enabling and Disabling Auto-Failover].
+
+Note that in 7.1+, _automatic failover_ can fail over more than three nodes concurrently: this has permitted the deprecation of pre-7.1 interfaces that were specific to triggering _auto-failover for server groups_.
+Consequently, in order to ensure successful auto-failover of a server group, the maximum count for auto-failover must be established by the administrator as a value equal to or greater than the number of nodes in the server group.
+See xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover].
