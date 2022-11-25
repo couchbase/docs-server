@@ -9,12 +9,6 @@ include::partial$n1ql-language-reference/horizontal-style.adoc[]
 [abstract]
 The `SELECT` clause determines the result set.
 
-.Examples on this page
-[NOTE]
-====
-include::ROOT:partial$query-context.adoc[tag=statement]
-====
-
 [#section_Purpose]
 == Purpose
 
@@ -79,43 +73,226 @@ NOTE: The DISTINCT clause is not blocking in nature, since it streams the input 
 
 In general, `SELECT ALL` results in more returned documents than `SELECT DISTINCT` due to [.code]``DISTINCT``'s extra step of removing duplicates.
 Since `DISTINCT` is purely run in memory, it executes quickly, making the overhead of removing duplicates more noticeable as your recordset gets larger.
+Refer to <<ex-all-distinct>>.
 
-In the below table,
+[[result-expr]]
+==== Result Expression
 
-* <<q1>>'s `SELECT DISTINCT` reduces the recordset to a small fraction of its original size; and while removing so many of the documents takes time, projecting the remaining small fraction is actually slightly faster than the overhead of removing duplicates.
-* On the other extreme, <<q2>>'s `SELECT DISTINCT` does not reduce the recordset at all since `META().id` is already unique, and thus projects the entire original recordset and shows the maximum overhead of about twice as long to execute than `SELECT ALL`.
+[source,ebnf]
+----
+include::partial$grammar/dql.ebnf[tag=result-expr]
+----
 
-[cols="4a,^1,^1"]
+image::n1ql-language-reference/result-expr.png["Syntax diagram", align=left]
+
+[source#path,ebnf]
+----
+include::partial$grammar/dql.ebnf[tag=path]
+----
+
+image::n1ql-language-reference/path.png["Syntax diagram", align=left]
+
+The result expression may contain one of the following alternatives:
+
+* A <<keyspace-name,star expression>>, preceded by an optional path.
+* A <<field-expression,select expression>>, including an optional <<alias,alias>>.
+
+[[raw-element-value]]
+==== RAW / ELEMENT / VALUE
+
+(Optional; RAW and ELEMENT and VALUE are synonyms.)
+
+When you specify one or more <<result-expr,result expressions>> in the query projection, each result is wrapped in an object, and an implicit or explicit <<alias,alias>> is given for each result expression.
+This extra layer might not be desirable, since it requires extra output parsing.
+
+SELECT RAW reduces the amount of data returned by eliminating the field attribute.
+The RAW qualifier specifies that the expression that follows should not be wrapped in an object, and the alias for that expression should be suppressed, as shown in <<ex-raw-expr>> and <<ex-raw-field>>.
+
+The RAW qualifier only enables you to specify a single <<field-expression,select expression>>.
+You cannot use the RAW qualifier with a <<keyspace-name,star expression>> or with multiple select expressions.
+
+[[keyspace-name]]
+==== Star Expression ({asterisk})
+
+The star expression `{asterisk}` enables you to select _all_ the fields from the source specified by the xref:n1ql-language-reference/from.adoc[FROM clause].
+
+The star expression may be preceded by a xref:n1ql:n1ql-language-reference/nestedops.adoc[path], to select all the nested fields from within an array.
+
+[NOTE]
+====
+Omitting the keyspace name before a star expression adds the keyspace name to the result set; whereas if you include the keyspace name before a star expression, the keyspace name will not appear in the result set.
+Refer to <<ex-star>>.
+====
+
+[[field-expression]]
+==== Select Expression
+
+The select expression is any expression that evaluates to a field to be included in the query's result set.
+At its simplest, this may be the name of a field in the data source, such as `id`, `airline`, or `stops`.
+Refer to <<ex-field>>.
+
+The select expression may include a xref:n1ql:n1ql-language-reference/nestedops.adoc[path], to select a nested field from within an array, such as `schedule[0].day`.
+Refer to <<ex-path>>.
+
+If no field name is specified, the select expression allows you to perform calculations, such as `SELECT 10+20 AS Total;` or any other {sqlpp} expression.
+For details with examples, see xref:n1ql-language-reference/index.adoc#N1QL_Expressions[{sqlpp} Expressions].
+
+[[alias]]
+==== AS Alias
+
+[source,ebnf]
+----
+include::partial$grammar/dql.ebnf[tag=alias]
+----
+
+image::n1ql-language-reference/alias.png["Syntax diagram", align=left]
+
+A temporary name of a keyspace name or field name to make names more readable or unique.
+Refer to <<ex-alias>>.
+
+(((implicit alias)))
+If you do not explicitly give a field an alias, it is given an _implicit alias_.
+
+* For a field, the implicit alias is the same as the name of the field in the input.
+* For a nested path, the implicit alias is defined as the last component in the path.
+* For any expression which does not refer to a field, the implicit alias is a dollar sign followed by a number, based on the position of the expression in the projection; for example, `$1`, `$2`, and so on.
+
+An implicit or explicit alias is returned in the result set, unless you suppress it using the <<raw-element-value,RAW keyword>>.
+
+[#sec_BestPractices]
+== Best Practices
+
+When possible, explicitly list all fields you want in your result set instead of using a star expression `{asterisk}` to select all fields, since the `{asterisk}` requires an extra trip over your network -- one to get the list of field names and one to select the fields.
+
+[#sec_Examples]
+== Examples
+
+include::ROOT:partial$query-context.adoc[tag=section]
+
+[[ex-field]]
+.Select fields by name
+====
+.Query
+[source,sqlpp]
+----
+SELECT id, airline, stops FROM route LIMIT 1;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "airline": "AF",
+    "id": 10000,
+    "stops": 0
+  }
+]
+----
+====
+
+[[ex-path]]
+.Select field with path
+====
+.Query
+[source,sqlpp]
+----
+SELECT schedule[0].day FROM route;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "day": 0
+  }
+]
+----
+====
+
+[[ex-alias]]
+.Select field with explicit alias
+====
+.Query
+[source,sqlpp]
+----
+SELECT schedule[0].day AS Weekday FROM route LIMIT 1;
+----
+
+.Result
+[source,json]
+----
+[
+  {
+    "Weekday": 0
+  }
+]
+----
+====
+
+[[ex-all-distinct]]
+.SELECT ALL and SELECT DISTINCT
+====
+Note that the queries in this example may take some time to run.
+
+[cols=2*a]
 |===
-| {sqlpp} Query| SELECT ALL | SELECT DISTINCT
-
 |
 [[q1]]
-.Q{counter:seq1}
+.Query 1
 [source,sqlpp]
 ----
-SELECT city FROM landmark;
+SELECT ALL city FROM landmark;
 ----
-.^| slightly slower
-.^| slightly faster
 
+slightly slower
 |
 [[q2]]
-.Q{counter:seq1}
+.Query 2
 [source,sqlpp]
 ----
-SELECT META().id FROM landmark;
+SELECT DISTINCT city FROM landmark;
 ----
-.^| much faster
-.^| much slower
+
+slightly faster
 |===
 
+When used on a field such as `city`, which contains non-unique values, `SELECT DISTINCT` reduces the recordset to a small fraction of its original size; and while removing so many of the documents takes time, projecting the remaining small fraction is actually slightly faster than the overhead of removing duplicates.
+
+[cols=2*a]
+|===
+|
+[[q3]]
+.Query 3
+[source,sqlpp]
+----
+SELECT ALL META().id FROM landmark;
+----
+
+much faster
+|
+[[q4]]
+.Query 4
+[source,sqlpp]
+----
+SELECT DISTINCT META().id FROM landmark;
+----
+
+much slower
+|===
+
+On the other extreme, when used on a field such as `META().id` which contains only unique values, `SELECT DISTINCT` does not reduce the recordset at all, and the overhead of looking for duplicates is wasted effort.
+In this case, `SELECT DISTINCT` takes about twice as long to execute as `SELECT ALL`.
+====
+
+[[ex-distinct-plan]]
 .Query plan using the `DISTINCT` operator
 ====
 .Query
 [source,sqlpp]
 ----
-EXPLAIN SELECT DISTINCT city FROM landmark; -- <1>
+EXPLAIN SELECT DISTINCT city FROM landmark;
 ----
 
 .Results
@@ -177,36 +354,8 @@ EXPLAIN SELECT DISTINCT city FROM landmark; -- <1>
 <1> Lines using the `DISTINCT` operator
 ====
 
-[[result-expr]]
-==== Result Expression
-
-[source,ebnf]
-----
-include::partial$grammar/dql.ebnf[tag=result-expr]
-----
-
-image::n1ql-language-reference/result-expr.png["Syntax diagram", align=left]
-
-[source#path,ebnf]
-----
-include::partial$grammar/dql.ebnf[tag=path]
-----
-
-image::n1ql-language-reference/path.png["Syntax diagram", align=left]
-
-The result expression may contain one of the following alternatives:
-
-* A <<keyspace-name,star expression>>, preceded by an optional path.
-* A <<field-expression,select expression>>, including an optional <<alias,alias>>.
-
-[[raw-element-value]]
-==== RAW / ELEMENT / VALUE
-
-(Optional; RAW and ELEMENT and VALUE are synonyms.)
-
-SELECT RAW reduces the amount of data returned by eliminating the field attribute.
-
-.Comparing SELECT and SELECT RAW on a basic query
+[[ex-raw-expr]]
+.SELECT and SELECT RAW with a simple expression
 ====
 [cols=2*a]
 |===
@@ -249,14 +398,12 @@ SELECT RAW {"a":1, "b":2};
 ----
 |===
 
-<1> Added alias
-<2> No added alias
+<1> Added implicit alias
+<2> No implicit alias
 ====
 
-There are times in which this extra layer might not be desirable since it requires extra output parsing.
-So the RAW qualifier specifies that the expression that follows not to be qualified, as shown in the next example.
-
-.Comparing SELECT and SELECT RAW listing 5 airport cities alphabetically
+[[ex-raw-field]]
+.SELECT, SELECT RAW, and SELECT DISTINCT RAW with a field
 ====
 [cols="5a,5a,5a"]
 |===
@@ -334,163 +481,6 @@ ORDER BY city LIMIT 5;
 |===
 ====
 
-[[keyspace-name]]
-==== Star Expression ({asterisk})
-
-The star expression `{asterisk}` enables you to select _all_ the fields from the source specified by the xref:n1ql-language-reference/from.adoc[FROM clause].
-
-The star expression may be preceded by a xref:n1ql:n1ql-language-reference/nestedops.adoc[path], to select all the nested fields from within an array.
-
-[NOTE]
-====
-Omitting the keyspace name before a star expression or select expression, as in <<q3>>, adds the keyspace name to the result set; whereas if you include the keyspace name before a star expression or select expression, as in <<q4>> and <<q5>>, the keyspace name will not appear in the result set.
-====
-
-====
-[[q3]]
-.Query {counter:seq2:A}
-[source,sqlpp]
-----
-SELECT * FROM hotel;
-----
-
-.Results
-[source,json]
-----
-[
-  {
-    "hotel": { // <1>
-      "address": "Capstone Road, ME7 3JE",
-      "alias": null,
-      "checkin": null,
-// ...
-    }
-  }
-]
-----
-
-[[q4]]
-.Query {counter:seq2}
-[source,sqlpp]
-----
-SELECT hotel.* FROM hotel;
-----
-
-.Results
-[source,json]
-----
-[
-  { // <2>
-    "address": "Capstone Road, ME7 3JE",
-    "alias": null,
-    "checkin": null,
-// ...
-  }
-]
-----
-
-[[q5]]
-.Query {counter:seq2}
-[source,sqlpp]
-----
-SELECT meta().id, email, city, phone, hotel.reviews[0].ratings
-FROM hotel LIMIT 5;
-----
-
-.Results
-[source,json]
-----
-[
-  { // <3>
-    "city": "Medway",
-    "email": null,
-    "id": "hotel_10025",
-    "phone": "+44 870 770 5964",
-    "ratings": {
-      "Cleanliness": 5,
-      "Location": 4,
-      "Overall": 4,
-      "Rooms": 3,
-      "Service": 5,
-      "Value": 4
-    }
-  },
-// ...
-]
-----
-
-<1> Added line with keyspace
-<2> No added line with keyspace
-<3> No added line with keyspace
-====
-
-[[field-expression]]
-==== Select Expression
-
-The select expression is any expression that evaluates to a field to be included in the query's result set.
-At its simplest, this may be the name of a field in the data source.
-For example:
-
-====
-.Query
-[source,sqlpp]
-----
-SELECT id, airline, stops FROM route;
-----
-====
-
-The select expression may include a xref:n1ql:n1ql-language-reference/nestedops.adoc[path], to select a nested field from within an array.
-For example:
-
-====
-.Query
-[source,sqlpp]
-----
-SELECT schedule[0].day FROM route;
-----
-====
-
-If no field name is specified, the select expression allows you to perform calculations, such as `SELECT 10+20 AS Total;` or any other {sqlpp} expression.
-
-For details with examples, see xref:n1ql-language-reference/index.adoc#N1QL_Expressions[{sqlpp} Expressions].
-
-[[alias]]
-==== AS Alias
-
-[source,ebnf]
-----
-include::partial$grammar/dql.ebnf[tag=alias]
-----
-
-image::n1ql-language-reference/alias.png["Syntax diagram", align=left]
-
-A temporary name of a keyspace name or field name to make names more readable or unique, such as:
-
-====
-.Query
-[source,sqlpp]
-----
-SELECT schedule[0].day AS Weekday FROM route;
-----
-====
-
-(((implicit alias)))
-If you do not explicitly give a field an alias, it is given an _implicit alias_ in the result set.
-
-* For a field, the implicit alias is the same as the name of the field in the input.
-* For a nested path, the implicit alias is defined as the last component in the path.
-* For any expression which does not refer to a field, the implicit alias is a dollar sign followed by a number, based on the position of the expression in the projection; for example, `$1`, `$2`, and so on.
-
-[#sec_BestPractices]
-== Best Practices
-
-When possible, explicitly list all fields you want in your result set instead of using a star expression `{asterisk}` to select all fields, since the `{asterisk}` requires an extra trip over your network -- one to get the list of field names and one to select the fields.
-
-[#sec_Examples]
-== Examples
-
-include::ROOT:partial$query-context.adoc[tag=section]
-
 [[ex1]]
 .Select all the fields of 1 document from the `airline` keyspace
 ====
@@ -562,6 +552,88 @@ SELECT * FROM landmark LIMIT 1;
   }
 ]
 ----
+====
+
+[[ex-star]]
+.Star expressions and select expressions with path
+====
+[[q3]]
+.Query A
+[source,sqlpp]
+----
+SELECT * FROM hotel LIMIT 5;
+----
+
+.Results
+[source,json]
+----
+[
+  {
+    "hotel": { // <.>
+      "address": "Capstone Road, ME7 3JE",
+      "alias": null,
+      "checkin": null,
+// ...
+    }
+  }
+]
+----
+
+<.> As the star expression does not include the keyspace name, the results are wrapped in an extra object, and the keyspace name is added to each result.
+
+[[q4]]
+.Query B
+[source,sqlpp]
+----
+SELECT hotel.* FROM hotel LIMIT 5;
+----
+
+.Results
+[source,json]
+----
+[
+  { // <.>
+    "address": "Capstone Road, ME7 3JE",
+    "alias": null,
+    "checkin": null,
+// ...
+  }
+]
+----
+
+<.> As the star expression includes the keyspace name, the keyspace name is not added to the results.
+
+[[q5]]
+.Query C
+[source,sqlpp]
+----
+SELECT meta().id, email, city, phone, hotel.reviews[0].ratings
+FROM hotel LIMIT 5;
+----
+
+.Results
+[source,json]
+----
+[
+  { // <.>
+    "city": "Medway",
+    "email": null,
+    "id": "hotel_10025",
+    "phone": "+44 870 770 5964",
+    "ratings": {
+      "Cleanliness": 5,
+      "Location": 4,
+      "Overall": 4,
+      "Rooms": 3,
+      "Service": 5,
+      "Value": 4
+    }
+  },
+// ...
+]
+----
+
+<.> With a select expression, you may optionally include the keyspace name; in either case, the keyspace name is not added to the results.
 ====
 
 [#sec_RelatedLinks]
