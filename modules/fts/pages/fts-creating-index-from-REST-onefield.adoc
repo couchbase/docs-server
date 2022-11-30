@@ -1,0 +1,374 @@
+= Creating a One Field Index via the REST API
+
+This example quickly creates the same index as xref:fts-creating-index-from-UI-classic-editor-onefield.adoc#main[Creating a One Field Index via the UI].  
+
+The cURL command below was initially created via the Classic Editor in the UI, however the follwoing modifications were made.
+
+* The curl flag "*-s*" to suppress some runtime output.
+
+* The credentials "*-u <username>:<password>*" were altered to "*-u* $*{CB_USERNAME}*:$*{CB_PASSWORD}*".
+
+* The hostname or IP address was replaced with $*{CB_HOSTNAME}*.
+
+* The commands output is piped  through the utility *http://stedolan.github.io/jq[jq]* to enhance readability.
+
+* The two (2) UUIDs were removed (similar to the below) because we want to make a new index not modify an existing one.
++
+[source, json]
+----
+  "uuid": "273a60635f5248e5",
+  "sourceUUID": "2b421d183cb76aebbffa45424736ec2e",
+----
+
+= The Creation Command
+
+The full command to create the index is below and can be executed verbatim if you have the environment variable $*{CB_USERNAME}*, $*{CB_PASSWORD}* and $*{CB_HOSTNAME}* set.
+
+[source, command]
+----
+curl -s -XPUT -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/landmark-content-index -d \
+'{
+  "type": "fulltext-index",
+  "name": "landmark-content-index",
+  "sourceType": "gocbcore",
+  "sourceName": "travel-sample",
+  "planParams": {
+    "maxPartitionsPerPIndex": 1024,
+    "indexPartitions": 1
+  },
+  "params": {
+    "doc_config": {
+      "docid_prefix_delim": "",
+      "docid_regexp": "",
+      "mode": "scope.collection.type_field",
+      "type_field": "type"
+    },
+    "mapping": {
+      "analysis": {},
+      "default_analyzer": "standard",
+      "default_datetime_parser": "dateTimeOptional",
+      "default_field": "_all",
+      "default_mapping": {
+        "dynamic": true,
+        "enabled": false
+      },
+      "default_type": "_default",
+      "docvalues_dynamic": false,
+      "index_dynamic": true,
+      "store_dynamic": false,
+      "type_field": "_type",
+      "types": {
+        "inventory.landmark": {
+          "dynamic": false,
+          "enabled": true,
+          "properties": {
+            "content": {
+              "dynamic": false,
+              "enabled": true,
+              "fields": [
+                {
+                  "docvalues": true,
+                  "include_in_all": true,
+                  "include_term_vectors": true,
+                  "index": true,
+                  "name": "content",
+                  "store": true,
+                  "type": "text"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "store": {
+      "indexType": "scorch",
+      "segmentVersion": 15
+    }
+  },
+  "sourceParams": {}
+}'  | jq .
+----
+
+If you successfully create the index you should a response liekt the follwoing
+
+[source, json]
+----
+{
+  "status": "ok",
+  "uuid": "22ab3f601349af9d"
+}
+----
+
+== Test the One Field Index with a simple query
+
+Request the first 10 items where the content field in the collection `travel-sample`.inventory.landmark has documents with: "view", "food", and "beach"
+
+[source, command]
+----
+curl -s -XPOST -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/landmark-content-index/query \
+-d '{
+  "query": {
+    "query": "+view +food +beach"
+  },
+  "size": 10,
+  "from": 0
+}' |  jq .
+----
+
+The output of a three (3) hits (from a total of 3 matching docs) is as follows
+
+[source, json]
+----
+{
+  "status": {
+    "total": 1,
+    "failed": 0,
+    "successful": 1
+  },
+  "request": {
+    "query": {
+      "query": "+view +food +beach"
+    },
+    "size": 10,
+    "from": 0,
+    "highlight": null,
+    "fields": null,
+    "facets": null,
+    "explain": false,
+    "sort": [
+      "-_score"
+    ],
+    "includeLocations": false,
+    "search_after": null,
+    "search_before": null
+  },
+  "hits": [
+    {
+      "index": "landmark-content-index_22ab3f601349af9d_4c1c5584",
+      "id": "landmark_4428",
+      "score": 2.425509689250102,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "landmark-content-index_22ab3f601349af9d_4c1c5584",
+      "id": "landmark_26385",
+      "score": 1.6270812956011347,
+      "sort": [
+        "_score"
+      ]
+    },
+    {
+      "index": "landmark-content-index_22ab3f601349af9d_4c1c5584",
+      "id": "landmark_38035",
+      "score": 1.1962539437368078,
+      "sort": [
+        "_score"
+      ]
+    }
+  ],
+  "total_hits": 3,
+  "max_score": 2.425509689250102,
+  "took": 289005,
+  "facets": null
+}
+----
+
+== Test the One Field Index with a more complex query
+
+Request the first 10 items where the content field in the collection `travel-sample`.inventory.landmark has documents with: "view", "food", and "beach". 
+However in this case we will display any fields and highlight text, this is possible because of the features we put into the index.
+
+[source, command]
+----
+curl -s -XPOST -H "Content-Type: application/json" \
+-u ${CB_USERNAME}:${CB_PASSWORD} http://${CB_HOSTNAME}:8094/api/index/landmark-content-index/query \
+-d '{
+  "fields": [
+    "*"
+  ],
+  "highlight": {},
+  "query": {
+    "query": "+view +food +beach"
+  },
+  "size": 10,
+  "from": 0
+}' |  jq .
+----
+
+The output of a total of three (3) hits is as follows
+
+[source, json]
+----
+{
+  "status": {
+    "total": 1,
+    "failed": 0,
+    "successful": 1
+  },
+  "request": {
+    "query": {
+      "query": "+view +food +beach"
+    },
+    "size": 10,
+    "from": 0,
+    "highlight": {
+      "style": null,
+      "fields": null
+    },
+    "fields": [
+      "*"
+    ],
+    "facets": null,
+    "explain": false,
+    "sort": [
+      "-_score"
+    ],
+    "includeLocations": false,
+    "search_after": null,
+    "search_before": null
+  },
+  "hits": [
+    {
+      "index": "landmark-content-index_22ab3f601349af9d_4c1c5584",
+      "id": "landmark_4428",
+      "score": 2.425509689250102,
+      "locations": {
+        "content": {
+          "beach": [
+            {
+              "pos": 11,
+              "start": 61,
+              "end": 66,
+              "array_positions": null
+            }
+          ],
+          "food": [
+            {
+              "pos": 3,
+              "start": 13,
+              "end": 17,
+              "array_positions": null
+            }
+          ],
+          "view": [
+            {
+              "pos": 8,
+              "start": 46,
+              "end": 50,
+              "array_positions": null
+            }
+          ]
+        }
+      },
+      "fragments": {
+        "content": [
+          "serves fresh <mark>food</mark> at very reasonable prices - <mark>view</mark> of stoney <mark>beach</mark> with herons"
+        ]
+      },
+      "sort": [
+        "_score"
+      ],
+      "fields": {
+        "content": "serves fresh food at very reasonable prices - view of stoney beach with herons"
+      }
+    },
+    {
+      "index": "landmark-content-index_22ab3f601349af9d_4c1c5584",
+      "id": "landmark_26385",
+      "score": 1.6270812956011347,
+      "locations": {
+        "content": {
+          "beach": [
+            {
+              "pos": 25,
+              "start": 127,
+              "end": 132,
+              "array_positions": null
+            }
+          ],
+          "food": [
+            {
+              "pos": 17,
+              "start": 90,
+              "end": 94,
+              "array_positions": null
+            }
+          ],
+          "view": [
+            {
+              "pos": 34,
+              "start": 169,
+              "end": 173,
+              "array_positions": null
+            }
+          ]
+        }
+      },
+      "fragments": {
+        "content": [
+          "Burgers, seafood, and other simple but tasty meals right at the harbor. You can take your <mark>food</mark> around the corner to sit on the <mark>beach</mark> or the sea wall and enjoy the ocean <mark>view</mark> while you eat."
+        ]
+      },
+      "sort": [
+        "_score"
+      ],
+      "fields": {
+        "content": "Burgers, seafood, and other simple but tasty meals right at the harbor. You can take your food around the corner to sit on the beach or the sea wall and enjoy the ocean view while you eat."
+      }
+    },
+    {
+      "index": "landmark-content-index_22ab3f601349af9d_4c1c5584",
+      "id": "landmark_38035",
+      "score": 1.1962539437368078,
+      "locations": {
+        "content": {
+          "beach": [
+            {
+              "pos": 17,
+              "start": 86,
+              "end": 91,
+              "array_positions": null
+            }
+          ],
+          "food": [
+            {
+              "pos": 50,
+              "start": 280,
+              "end": 284,
+              "array_positions": null
+            }
+          ],
+          "view": [
+            {
+              "pos": 30,
+              "start": 169,
+              "end": 173,
+              "array_positions": null
+            }
+          ]
+        }
+      },
+      "fragments": {
+        "content": [
+          "â¦ <mark>Beach</mark> distillery offers a full menu, Sunday brunch, drinks, and a tremendous ocean <mark>view</mark> with comfortable fire pits. Happy hour Mon-Fri from 5PM to 7PM offers half-priced drinks and a discounted <mark>food</mark> â¦"
+        ]
+      },
+      "sort": [
+        "_score"
+      ],
+      "fields": {
+        "content": "Famous for &quot;the Blue Lady&quot;, a ghost rumored to haunt the premises, the Moss Beach distillery offers a full menu, Sunday brunch, drinks, and a tremendous ocean view with comfortable fire pits. Happy hour Mon-Fri from 5PM to 7PM offers half-priced drinks and a discounted food menu."
+      }
+    }
+  ],
+  "total_hits": 3,
+  "max_score": 2.425509689250102,
+  "took": 410110,
+  "facets": null
+}
+----
