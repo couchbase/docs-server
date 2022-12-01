@@ -15,23 +15,29 @@ Modern databases are deployed on massive clusters.
 Using JSON provides a flexible data mode, and
 {sqlpp} supports enhanced SQL for JSON, to make query processing easier.
 
+== Query Execution: Details
+
 Applications and database drivers submit the {sqlpp} query to one of the available Query nodes on a cluster.
 The Query node analyzes the query, uses metadata on underlying objects to figure out the optimal execution plan, which it then executes.
 During execution, depending on the query, using applicable indexes, the Query node works with the Index and Data nodes to retrieve and perform the planned operations.
 Because Couchbase is a modular clustered database, you scale out data, index, and query services to fit your performance and availability goals.
 
-== Query Execution: Details
+[plantuml,query-execution,svg]
+....
+include::partial$diagrams/query-execution.puml[]
+....
 
-image::services-and-indexes/indexes/query_execution.png["1. Client submits the query over the REST API; 2. Query Service parses, analyzes, and creates plan; 3. Query Service sends request and index filters to Index Service; 4. Index Service returns qualified doc keys to Query Service; 5. Query Service sends fetch request with doc keys to Data Service; 6. Data Service returns documents to the Query Service; 7. Query Service evaluates the documents; 8. Query Service returns result to client",570]
+[#inside_a_query_node]
+=== Inside a Query Node
 
 The following figure shows all the possible phases a SELECT query goes through to return the results.
 Not all queries need to go through every phase, some go through many of these phases multiple times.
 For example, the Sort phase can be skipped when there is no ORDER BY clause in the query; and the Scan-Fetch-Join phases will execute multiple times for correlated subqueries.
 
-=== Inside a Query Node
-
-[#inside_a_query_node]
-image::services-and-indexes/indexes/query_service.svg[,570]
+[plantuml,query-service,svg]
+....
+include::partial$diagrams/query-service.puml[]
+....
 
 http://blog.couchbase.com/sql-for-documents-n1ql-brief-introduction-to-query-planning[This brief introduction to query planning^] has details of query planner.
 When the Index path is chosen, query engine requests the scan by providing the range of values to return.
@@ -52,23 +58,26 @@ The query predicates are translated into spans in the query plan and passed to t
 Spans simply express the predicates in terms of data ranges.
 
 
-== Examples on This Page
+== Examples
+
+The examples in this section use the travel-sample dataset which is shipped with Couchbase Server.
+For instructions on how to install the sample bucket, see {install-sample-buckets}[Sample Buckets].
+
+include::ROOT:partial$query-context.adoc[tag=statement]
 
 The examples on this page illustrate the spans for different predicates and require the following indexes.
 
-To run the examples, xref:manage:manage-settings/install-sample-buckets.adoc[install the `travel-sample` sample bucket] and create these indexes:
-
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-CREATE INDEX idx_airline_id ON `travel-sample`.inventory.airline(`id`);
+CREATE INDEX idx_airline_id ON airline(`id`);
 
-CREATE INDEX idx_airline_name ON `travel-sample`.inventory.airline(`name`);
+CREATE INDEX idx_airline_name ON airline(`name`);
 
 CREATE INDEX idx_route_src_dst_stops
-ON `travel-sample`.inventory.route(sourceairport, destinationairport, stops);
+ON route(sourceairport, destinationairport, stops);
 
 CREATE INDEX idx_route_sched
-ON `travel-sample`.inventory.route(DISTINCT ARRAY v.day FOR v IN schedule END);
+ON route(DISTINCT ARRAY v.day FOR v IN schedule END);
 ----
 
 === Example Translations
@@ -96,9 +105,9 @@ The following table shows some example translations:
 
 Consider the plan for the following query:
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id = 10;
 ----
 
 You can see the spans in the `IndexScan3` section of the Explain for the query:
@@ -155,7 +164,7 @@ You can see the spans in the `IndexScan3` section of the Explain for the query:
         }
       ]
     },
-    "text": "SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;"
+    "text": "SELECT meta().id FROM airline WHERE id = 10;"
   }
 ]
 ----
@@ -193,11 +202,11 @@ If "Low" is missing, the scan starts with `MISSING`.
 |===
 
 [#ex1-equality]
-== Example 1: EQUALITY Predicate
+=== Example 1: EQUALITY Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
+SELECT meta().id FROM airline WHERE id = 10;
 ----
 
 In this example, the predicate `id = 10` is pushed to index scan.
@@ -212,9 +221,9 @@ In this example, the predicate `id = 10` is pushed to index scan.
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id = 10;
 ----
 
 [source,json]
@@ -236,11 +245,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10;
 ----
 
 [#ex2-one-sided-range]
-== Example 2: Inclusive One-Sided Range Predicate
+=== Example 2: Inclusive One-Sided Range Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10;
+SELECT meta().id FROM airline WHERE id >= 10;
 ----
 
 In this example, the predicate `id >= 10` is pushed to index scan.
@@ -255,9 +264,9 @@ In this example, the predicate `id >= 10` is pushed to index scan.
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id >= 10;
 ----
 
 [source,json]
@@ -278,11 +287,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10;
 ----
 
 [#ex3-exclusive-one-sided-range]
-== Example 3: Exclusive One-Sided Range Predicate
+=== Example 3: Exclusive One-Sided Range Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10;
+SELECT meta().id FROM airline WHERE id > 10;
 ----
 
 In this example, the predicate `id > 10` is pushed to index scan.
@@ -297,9 +306,9 @@ In this example, the predicate `id > 10` is pushed to index scan.
 | `0 (NEITHER)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id > 10;
 ----
 
 [source,json]
@@ -320,11 +329,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10;
 ----
 
 [#ex4-inclusive-one-sided-range]
-== Example 4: Inclusive One-Sided Range Predicate
+=== Example 4: Inclusive One-Sided Range Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <= 10;
+SELECT meta().id FROM airline WHERE id <= 10;
 ----
 
 In this example, the predicate `+id <= 10+` is pushed to index scan.
@@ -340,9 +349,9 @@ This query predicate doesn’t contain an explicit start value, so the start val
 | `2 (HIGH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <= 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id <= 10;
 ----
 
 [source,json]
@@ -364,11 +373,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <= 10;
 ----
 
 [#ex5-exclusive-one-sided-range]
-== Example 5: Exclusive One-Sided Range Predicate
+=== Example 5: Exclusive One-Sided Range Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id < 10;
+SELECT meta().id FROM airline WHERE id < 10;
 ----
 
 In this example, the predicate `id < 10` is pushed to index scan.
@@ -384,9 +393,9 @@ The query predicate doesn’t contain an explicit start value, so the start valu
 | `0 (NEITHER)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id < 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id < 10;
 ----
 
 [source,json]
@@ -408,11 +417,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id < 10;
 ----
 
 [#ex6-and]
-== Example 6: AND Predicate
+=== Example 6: AND Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= 10 AND id < 25;
+SELECT meta().id FROM airline WHERE id >= 10 AND id < 25;
 ----
 
 In this example, the predicate `id >= 10 AND id < 25` is pushed to index scan.
@@ -427,9 +436,9 @@ In this example, the predicate `id >= 10 AND id < 25` is pushed to index scan.
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >=10 AND id < 25;
+EXPLAIN SELECT meta().id FROM airline WHERE id >=10 AND id < 25;
 ----
 
 [source,json]
@@ -451,11 +460,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >=10 AN
 ----
 
 [#ex7-multiple-and]
-== Example 7: Multiple AND Predicates
+=== Example 7: Multiple AND Predicates
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE id >= 10 AND id < 25 AND id <= 20;
 ----
 
@@ -471,9 +480,9 @@ In this example, the predicate `+id >= 10 AND id < 25 AND id <= 20+` is pushed t
 | 3 (BOTH)
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE id >=10 AND id < 25 AND id <= 20;
 ----
 
@@ -538,11 +547,11 @@ Internally, the following steps occur:
 . Repeat Steps 1 to 3 for each AND clause.
 
 [#ex8-and-makes-empty]
-== Example 8: AND Predicate Makes Empty
+=== Example 8: AND Predicate Makes Empty
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10 AND id < 5;
+SELECT meta().id FROM airline WHERE id > 10 AND id < 5;
 ----
 
 In this example, the predicate `id > 10 AND id < 5` is pushed to index scan.
@@ -560,9 +569,9 @@ In this example, the predicate `id > 10 AND id < 5` is pushed to index scan.
 This is a special case where the span is Low: 10, High: 5, and Inclusion: 0.
 In this case, the start value is higher than the end value and will not produce results; so, the span is converted to EMPTY SPAN, which will not do any IndexScan.
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10 AND id < 5;
+EXPLAIN SELECT meta().id FROM airline WHERE id > 10 AND id < 5;
 ----
 
 [source,json]
@@ -584,11 +593,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id > 10 AN
 ----
 
 [#ex9-between]
-== Example 9: BETWEEN Predicate
+=== Example 9: BETWEEN Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id BETWEEN 10 AND 25;
+SELECT meta().id FROM airline WHERE id BETWEEN 10 AND 25;
 ----
 
 In this example, the predicate `id BETWEEN 10 AND 25` (that is, id >= 10 AND id \<= 25) is pushed to index scan.
@@ -603,9 +612,9 @@ In this example, the predicate `id BETWEEN 10 AND 25` (that is, id >= 10 AND id 
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id BETWEEN 10 AND 25;
+EXPLAIN SELECT meta().id FROM airline WHERE id BETWEEN 10 AND 25;
 ----
 
 [source,json]
@@ -627,11 +636,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id BETWEEN
 ----
 
 [#ex10-simple-or]
-== Example 10: Simple OR Predicate
+=== Example 10: Simple OR Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10 OR id = 20;
+SELECT meta().id FROM airline WHERE id = 10 OR id = 20;
 ----
 
 In this example, the predicate `id = 10 OR id = 20` produces two independent ranges and both of them are pushed to index scan.
@@ -652,9 +661,9 @@ Duplicate ranges are eliminated, but overlaps are not eliminated.
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10 OR id = 20;
+EXPLAIN SELECT meta().id FROM airline WHERE id = 10 OR id = 20;
 ----
 
 [source,json]
@@ -686,11 +695,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = 10 OR
 ----
 
 [#ex11-simple-in]
-== Example 11: Simple IN Predicate
+=== Example 11: Simple IN Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [10, 20];
+SELECT meta().id FROM airline WHERE id IN [10, 20];
 ----
 
 In this example, the predicate is `id IN [10,20]` (that is, id = 10 OR id = 20).
@@ -714,9 +723,9 @@ If the number of elements exceed 8192, then the index service performs a full sc
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [10, 20];
+EXPLAIN SELECT meta().id FROM airline WHERE id IN [10, 20];
 ----
 
 [source,json]
@@ -748,11 +757,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [10,
 ----
 
 [#ex12-or-between-and]
-== Example 12: OR, BETWEEN, AND Predicates
+=== Example 12: OR, BETWEEN, AND Predicates
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE (id BETWEEN 10 AND 25)
    OR (id > 50 AND id <= 60);
 ----
@@ -774,9 +783,9 @@ In this example, the predicate `+(id BETWEEN 10 AND 25) OR (id > 50 AND id <= 60
 | `2 (HIGH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE (id BETWEEN 10 AND 25)
    OR (id > 50 AND id <= 60);
 ----
@@ -810,11 +819,11 @@ WHERE (id BETWEEN 10 AND 25)
 ----
 
 [#ex13-not]
-== Example 13: NOT Predicate
+=== Example 13: NOT Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <> 10;
+SELECT meta().id FROM airline WHERE id <> 10;
 ----
 
 In this example, the predicate `id <> 10` is transformed to `id < 10 OR id > 10` and then pushed to index scan.
@@ -834,9 +843,9 @@ In this example, the predicate `id <> 10` is transformed to `id < 10 OR id > 10`
 | `0 (NEITHER)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <> 10;
+EXPLAIN SELECT meta().id FROM airline WHERE id <> 10;
 ----
 
 [source,json]
@@ -867,11 +876,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id <> 10;
 ----
 
 [#ex14-not-and]
-== Example 14: NOT, AND Predicates
+=== Example 14: NOT, AND Predicates
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE NOT (id >= 10 AND id < 25);
 ----
 
@@ -892,9 +901,9 @@ In this example, the predicate `id >= 10 AND id < 25` is transformed to `id <10 
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE NOT (id >= 10 AND id < 25);
 ----
 
@@ -926,11 +935,11 @@ WHERE NOT (id >= 10 AND id < 25);
 ----
 
 [#ex15-equality-string]
-== Example 15: EQUALITY Predicate on String Type
+=== Example 15: EQUALITY Predicate on String Type
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE name = "American Airlines";
 ----
 
@@ -946,9 +955,9 @@ In this example, the predicate `name >= "American Airlines"` is pushed to index 
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE name = "American Airlines";
 ----
 
@@ -971,11 +980,11 @@ WHERE name = "American Airlines";
 ----
 
 [#ex16-range-string]
-== Example 16: Range Predicate on String Type
+=== Example 16: Range Predicate on String Type
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE name >= "American Airlines"
   AND name <= "United Airlines";
 ----
@@ -992,9 +1001,9 @@ In this example, the predicate `+name >= "American Airlines" AND name <= "United
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
   WHERE name >= "American Airlines"
     AND name <= "United Airlines";
 ----
@@ -1018,11 +1027,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
 ----
 
 [#ex17-like-1]
-== Example 17: LIKE Predicate
+=== Example 17: LIKE Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE name LIKE "American%";
 ----
 
@@ -1039,9 +1048,9 @@ In the LIKE predicate, the % means match with any number of any characters.
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE name LIKE "American%";
 ----
 
@@ -1064,11 +1073,11 @@ WHERE name LIKE "American%";
 ----
 
 [#ex18-like-2]
-== Example 18: LIKE Predicate
+=== Example 18: LIKE Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE name LIKE "%American%";
 ----
 
@@ -1087,9 +1096,9 @@ In this LIKE predicate '%' is the leading portion of the string, so we can't pus
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE name LIKE "%American%";
 ----
 
@@ -1111,11 +1120,11 @@ WHERE name LIKE "%American%";
 ----
 
 [#ex19-and-composite-index-1]
-== Example 19: AND Predicate with Composite Index
+=== Example 19: AND Predicate with Composite Index
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.route
+SELECT meta().id FROM route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops BETWEEN 0 AND 2;
@@ -1143,9 +1152,9 @@ In this example, the predicate `sourceairport = "SFO" AND destinationairport = "
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+EXPLAIN SELECT meta().id FROM route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops BETWEEN 0 AND 2;
@@ -1180,11 +1189,11 @@ WHERE sourceairport = "SFO"
 ----
 
 [#ex20-and-composite-index-2]
-== Example 20: AND Predicate with Composite Index
+=== Example 20: AND Predicate with Composite Index
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.route
+SELECT meta().id FROM route
 WHERE sourceairport IN ["SFO", "SJC"]
   AND destinationairport = "JFK"
   AND stops = 0;
@@ -1218,9 +1227,9 @@ In this example, the predicate `sourceairport IN ["SFO", "SJC"] AND destinationa
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+EXPLAIN SELECT meta().id FROM route
 WHERE sourceairport IN ["SFO", "SJC"]
   AND destinationairport = "JFK"
   AND stops = 0;
@@ -1275,11 +1284,11 @@ WHERE sourceairport IN ["SFO", "SJC"]
 ----
 
 [#ex21-composite-and-trailing-keys-missing]
-== Example 21: Composite AND Predicate with Trailing Keys Missing in Predicate
+=== Example 21: Composite AND Predicate with Trailing Keys Missing in Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.route
+SELECT meta().id FROM route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK";
 ----
@@ -1301,9 +1310,9 @@ In this example, the predicate `sourceairport = "SFO" AND destinationairport = "
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+EXPLAIN SELECT meta().id FROM route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK";
 ----
@@ -1332,11 +1341,11 @@ WHERE sourceairport = "SFO"
 ----
 
 [#ex22-composite-and-unbounded-high-trailing]
-== Example 22: Composite AND Predicate with Unbounded High of Trailing Key
+=== Example 22: Composite AND Predicate with Unbounded High of Trailing Key
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.route
+SELECT meta().id FROM route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops >= 0;
@@ -1364,9 +1373,9 @@ In this example, the predicate `sourceairport = "SFO" AND destinationairport = "
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+EXPLAIN SELECT meta().id FROM route
 WHERE sourceairport = "SFO"
   AND destinationairport = "JFK"
   AND stops >= 0;
@@ -1400,11 +1409,11 @@ WHERE sourceairport = "SFO"
 ----
 
 [#ex23-equality-query-params]
-== Example 23: EQUALITY Predicate with Query Parameters
+=== Example 23: EQUALITY Predicate with Query Parameters
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1;
+SELECT meta().id FROM airline WHERE id = $1;
 ----
 
 This example pushes the predicate `id = $1` to index scan.
@@ -1419,9 +1428,9 @@ This example pushes the predicate `id = $1` to index scan.
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1;
+EXPLAIN SELECT meta().id FROM airline WHERE id = $1;
 ----
 
 [source,json]
@@ -1443,11 +1452,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1;
 ----
 
 [#ex24-and-query-params]
-== Example 24: AND Predicate with Query Parameters
+=== Example 24: AND Predicate with Query Parameters
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= $1 AND id < $2;
+SELECT meta().id FROM airline WHERE id >= $1 AND id < $2;
 ----
 
 In this example, the predicate `id >= $1 AND id < $2` is pushed to the index scan.
@@ -1462,9 +1471,9 @@ In this example, the predicate `id >= $1 AND id < $2` is pushed to the index sca
 | `1 (LOW)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= $1 AND id < $2;
+EXPLAIN SELECT meta().id FROM airline WHERE id >= $1 AND id < $2;
 ----
 
 [source,json]
@@ -1486,11 +1495,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id >= $1 A
 ----
 
 [#ex25-or-query-params]
-== Example 25: OR Predicate with Query Parameters
+=== Example 25: OR Predicate with Query Parameters
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1 OR id < $2;
+SELECT meta().id FROM airline WHERE id = $1 OR id < $2;
 ----
 
 This example pushes the predicate `id = $1 OR id < $2` to the index scan.
@@ -1510,9 +1519,9 @@ This example pushes the predicate `id = $1 OR id < $2` to the index scan.
 | `0 (NEITHER)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1 OR id < $2;
+EXPLAIN SELECT meta().id FROM airline WHERE id = $1 OR id < $2;
 ----
 
 [source,json]
@@ -1544,11 +1553,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id = $1 OR
 ----
 
 [#ex26-in-query-params]
-== Example 26: IN Predicate with Query Parameters
+=== Example 26: IN Predicate with Query Parameters
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [ $1, 10, $2] ;
+SELECT meta().id FROM airline WHERE id IN [ $1, 10, $2] ;
 ----
 
 In this example, the predicate `id IN [$1, 10, $2]` is pushed to index scan.
@@ -1575,9 +1584,9 @@ In this example, the predicate `id IN [$1, 10, $2]` is pushed to index scan.
 `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [$1, 10, $2];
+EXPLAIN SELECT meta().id FROM airline WHERE id IN [$1, 10, $2];
 ----
 
 [source,json]
@@ -1619,11 +1628,11 @@ EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE id IN [$1,
 ----
 
 [#ex27-any-1]
-== Example 27: ANY Predicate
+=== Example 27: ANY Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.route
+SELECT meta().id FROM route
 WHERE ANY v IN schedule SATISFIES v.day = 0
 END;
 ----
@@ -1640,9 +1649,9 @@ In this example, the predicate `v.day = 0` is pushed to ARRAY index scan.
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+EXPLAIN SELECT meta().id FROM route
 WHERE ANY v IN schedule SATISFIES v.day = 0
 END;
 ----
@@ -1666,11 +1675,11 @@ END;
 ----
 
 [#ex28-any-2]
-== Example 28: ANY Predicate
+=== Example 28: ANY Predicate
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.route
+SELECT meta().id FROM route
 WHERE ANY v IN schedule SATISFIES v.day IN [1,2,3]
 END;
 ----
@@ -1699,9 +1708,9 @@ In this example, the predicate `v.day IN [1,2,3]` is pushed to ARRAY index scan.
 `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.route
+EXPLAIN SELECT meta().id FROM route
 WHERE ANY v IN schedule SATISFIES v.day IN [1,2,3]
 END;
 ----
@@ -1745,13 +1754,13 @@ END;
 ----
 
 [#ex29-equality-on-expr]
-== Example 29: EQUALITY Predicate on Expression
+=== Example 29: EQUALITY Predicate on Expression
 
 NOTE: The following examples don't have the right indexes, or the queries need to be modified to produce an optimal plan.
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline WHERE abs(id) = 10;
+SELECT meta().id FROM airline WHERE abs(id) = 10;
 ----
 
 In this example, no predicate is pushed to index scan.
@@ -1766,9 +1775,9 @@ In this example, no predicate is pushed to index scan.
 | `0 (NEITHER)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline WHERE abs(id) = 10;
+EXPLAIN SELECT meta().id FROM airline WHERE abs(id) = 10;
 ----
 
 [source,json]
@@ -1791,9 +1800,9 @@ The span indicates that the index service is performing a complete index scan.
 If the index does not cover the query, the query service fetches the document from the data node and then applies the predicate.
 For better performance, create a new index as follows:
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-CREATE INDEX `idx_airline_absid` ON `travel-sample`.inventory.airline(abs(`id`));
+CREATE INDEX `idx_airline_absid` ON airline(abs(`id`));
 ----
 
 When index `idx_airline_absid` is used, the predicate `abs(id) = 10` is pushed to index scan.
@@ -1808,9 +1817,9 @@ When index `idx_airline_absid` is used, the predicate `abs(id) = 10` is pushed t
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 USE INDEX (idx_airline_absid)
 WHERE abs(id) = 10;
 ----
@@ -1834,11 +1843,11 @@ WHERE abs(id) = 10;
 ----
 
 [#ex30-overlap]
-== Example 30: Overlapping Predicates
+=== Example 30: Overlapping Predicates
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-SELECT meta().id FROM `travel-sample`.inventory.airline
+SELECT meta().id FROM airline
 WHERE id <= 100
   OR (id BETWEEN 50 AND 150);
 ----
@@ -1860,9 +1869,9 @@ In this example, the predicates `+id <= 100 OR (id BETWEEN 50 AND 150)+` are pus
 | `3 (BOTH)`
 |===
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT meta().id FROM `travel-sample`.inventory.airline
+EXPLAIN SELECT meta().id FROM airline
 WHERE id <= 100
   OR (id BETWEEN 50 AND 150);
 ----
