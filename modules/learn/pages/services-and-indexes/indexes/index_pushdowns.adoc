@@ -1,5 +1,7 @@
 = Pushdowns
 :description: Index Pushdowns are performance optimizations where the Query engine pushes more of the work down to the Indexer.
+:imagesdir: ../../../assets/images
+:page-topic-type: concept
 :page-aliases: performance:index_pushdowns
 
 [abstract]
@@ -14,6 +16,14 @@ This helps performance, predominantly, in two ways:
 
 . Minimize the amount of data transferred from Indexer nodes to Query nodes.
 . Minimize the amount of processing done at Query nodes.
+
+.Examples on this Page
+****
+The examples in this topic use the travel-sample dataset which is shipped with Couchbase Server.
+For instructions on how to install the sample bucket, see xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets].
+
+include::ROOT:partial$query-context.adoc[tag=statement]
+****
 
 == Index Projection
 
@@ -32,17 +42,17 @@ For example, consider the following index and query:
 This example uses the `def_inventory_route_route_src_dst_day` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 CREATE INDEX def_inventory_route_route_src_dst_day
-ON `travel-sample`.inventory.route(sourceairport, destinationairport,
+ON route(sourceairport, destinationairport,
    (DISTINCT (ARRAY (v.day) FOR v IN schedule END)));
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT sourceairport FROM `travel-sample`.inventory.route
+EXPLAIN SELECT sourceairport FROM route
 USE INDEX (def_inventory_route_route_src_dst_day)
 WHERE sourceairport = "SFO"
 LIMIT 1;
@@ -52,7 +62,6 @@ LIMIT 1;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-simple.jsonc[tag=projection]
-// ...
 ----
 
 The query refers to fields `sourceairport` and `type`.
@@ -87,7 +96,6 @@ The `span` and `range` from the EXPLAIN output of <<example-simple>>.
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-simple.jsonc[tag=predicate]
-// ...
 ----
 
 * Each Span defines details about one index-key summarizing corresponding predicate conditions into a range-scan lookup for the index.
@@ -108,7 +116,7 @@ for more details and examples on how predicate pushdown works for various types 
 Composite indexes have more than one index key, and the order of the index keys is important for any lookup or scan of the index, because the indexes structure all the indexed entries in linearized default collation sorted order of all the index-keys.
 For example, consider the following hypothetical index:
 
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 CREATE INDEX `idx_age_name` ON users(age, name);
 ----
@@ -132,8 +140,6 @@ In Couchbase Server 5.0 and later, the Query service and Indexer are enhanced wi
 This improves query performance as it saves the additional overhead in transferring the unwanted data/results to query nodes and subsequently filtering the results.
 This is explained with an example in the following section: <<range-scan-prefix>>.
 
-NOTE: In Couchbase Server 4.x, the indexer would return such extraneous unwanted results and the Query service would filter them, thus guaranteeing accurate final query results.
-
 [[range-scan-prefix]]
 === Composite Predicate with Range Scan on Prefix Index-Keys
 
@@ -145,44 +151,40 @@ Consider the following query, which finds all destination airports within 2000 m
 .Composite Predicate with Range Scan
 ====
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 CREATE INDEX idx_route_src_dst_dist
-ON `travel-sample`.inventory.route(distance, sourceairport, destinationairport);
+ON route(distance, sourceairport, destinationairport);
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 EXPLAIN SELECT destinationairport
-FROM `travel-sample`.inventory.route
+FROM route
 USE INDEX (idx_route_src_dst_dist)
-WHERE distance < 2000 AND sourceairport = "LAX"; <1>
+WHERE distance < 2000 AND sourceairport = "LAX"; -- <1>
 ----
+
+<1> In this query, the predicate has the range condition on the first index-key `distance` and an equality predicate on the 2nd index-key `sourceairport`.
 
 .Results
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-comp-explain.jsonc[tag=excerpt]
-// ...
 ----
 
-In this query:
-
-<1> The predicate has the range condition on the first index-key `distance` and an equality predicate on the 2nd index-key `sourceairport`.
-<2> The predicate is accurately represented and pushed-down to the indexer, as shown in the `spans` attribute of the EXPLAIN query plan output.
-<3> The `range[]` attribute is an array of the predicate bounds for individual index-keys involved in the compound predicate.
-<4> The first element of `range[]` corresponds to the index-key `distance` with (`low`, `high`) values (`null`, `2000`) respectively.
-<5> The second element of `range[]` corresponds to the index-key `sourceairport` with (`low`, `high`) values (`"LAX"`, `"LAX"`) representing equals condition.
+<.> The `spans` attribute of the EXPLAIN query plan output shows that the predicate is accurately represented and pushed-down to the indexer.
+<.> The `range[]` attribute is an array of the predicate bounds for individual index-keys involved in the compound predicate.
+<.> The first element of `range[]` corresponds to the index-key `distance` with (`low`, `high`) values (`null`, `2000`) respectively.
+<.> The second element of `range[]` corresponds to the index-key `sourceairport` with (`low`, `high`) values (`"LAX"`, `"LAX"`) representing equals condition.
 
 The Indexer processes the lookup request and exactly returns only the documents matching the predicate conditions.
 For example, when you xref:manage:monitor/monitoring-n1ql-query.adoc[enable monitoring] with the configuration parameter `profile = "timings"` for this query, you can see that the indexer returns 165 documents, which is the same as the final result set of the query.
 
 [source,json]
 ----
-// ...
 include::example$services-and-indexes/indexes/pushdown-comp-plan.jsonc[tags=index;ellipsis;final]
-// ...
 ----
 ====
 
@@ -198,29 +200,27 @@ Consider the following query, which is a variant of the query in <<example-comp-
 .Composite Predicate with Skip-Key Range Scan
 ====
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 EXPLAIN SELECT sourceairport
-FROM `travel-sample`.inventory.route
+FROM route
 USE INDEX (idx_route_src_dst_dist)
-WHERE distance < 2000 AND destinationairport = "LAX"; <1>
+WHERE distance < 2000 AND destinationairport = "LAX"; -- <1>
 ----
+
+<1> This query has a range predicate on the first index-key `distance` and an equality predicate on the 3rd index-key `destinationairport`.
+There is no predicate on the 2nd index-key `sourceairport`.
 
 .Results
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-skip.jsonc[tag=excerpt]
-// ...
 ----
 
-In this query:
-
-<1> The query has a range predicate on the first index-key `distance` and an equality predicate on the 3rd index-key `destinationairport`.
-There is no predicate on the 2nd index-key `sourceairport`.
-<2> The predicate is pushed-down to the indexer, as shown in the EXPLAIN query plan output.
-<3> The first element of `range[]` corresponds to the index-key `distance` with (`low`, `high`) values (`null`, `2000`) respectively.
-<4> The second element of `range[]` corresponds to the index-key `sourceairport` with no low or high bounds, i.e. a whole range scan.
-<5> The third element of `range[]` corresponds to the index-key `destinationairport` with (`low`, `high`) values (`"LAX"`, `"LAX"`) representing equals condition.
+<.> The EXPLAIN query plan output shows that the predicate is pushed-down to the indexer.
+<.> The first element of `range[]` corresponds to the index-key `distance` with (`low`, `high`) values (`null`, `2000`) respectively.
+<.> The second element of `range[]` corresponds to the index-key `sourceairport` with no low or high bounds, i.e. a whole range scan.
+<.> The third element of `range[]` corresponds to the index-key `destinationairport` with (`low`, `high`) values (`"LAX"`, `"LAX"`) representing equals condition.
 
 By skipping the index-key that does not have a predicate, and including all the non-continuous index-keys that do have predicates, the query uses the index more effectively and reduces the number of documents that need to be fetched.
 This increases query preparation time a little, but vastly speeds up the execution of the query.
@@ -248,15 +248,15 @@ When using a secondary index, both LIMIT and OFFSET operators are pushed to the 
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT * FROM `travel-sample`.inventory.landmark
+EXPLAIN SELECT * FROM landmark
 WHERE city = "San Francisco"
 OFFSET  4000  LIMIT 10000;
 ----
@@ -265,7 +265,6 @@ OFFSET  4000  LIMIT 10000;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-page-1.jsonc[tag=excerpt]
-// ...
 ----
 
 <1> The `IndexScan3` operator handles `limit`.
@@ -279,16 +278,16 @@ When using a primary index, both LIMIT and OFFSET operators are pushed to the In
 This example uses the `def_inventory_landmark_primary` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 CREATE PRIMARY INDEX `def_inventory_landmark_primary`
-  ON `travel-sample`.inventory.landmark;
+  ON landmark;
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT * FROM `travel-sample`.inventory.landmark
+EXPLAIN SELECT * FROM landmark
 OFFSET  4000  LIMIT 10000;
 ----
 
@@ -296,7 +295,6 @@ OFFSET  4000  LIMIT 10000;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-page-2.jsonc[tag=excerpt]
-// ...
 ----
 
 <1> The `PrimaryScan3` operator handles `limit`.
@@ -310,14 +308,14 @@ LIMIT and OFFSET operators are not pushed to the Indexer when the index order is
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT * FROM `travel-sample`.inventory.landmark
+EXPLAIN SELECT * FROM landmark
 USE INDEX(def_inventory_landmark_city)
 WHERE city = "San Francisco"
 ORDER BY name
@@ -328,7 +326,6 @@ OFFSET  4000  LIMIT 10000;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-page-3.jsonc[tags=index;ellipsis;order]
-// ...
 ----
 
 <1> The `IndexScan3` operator does not handle `offset` or `limit`.
@@ -349,15 +346,15 @@ Find all cities that start with "San", and sort the results by the city name in 
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT city FROM `travel-sample`.inventory.landmark
+EXPLAIN SELECT city FROM landmark
 WHERE city LIKE "San%"
 ORDER BY city;
 ----
@@ -380,15 +377,15 @@ Find all cities that start with "San", and sort the results by the document prim
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT city FROM `travel-sample`.inventory.landmark
+EXPLAIN SELECT city FROM landmark
 WHERE city LIKE "San%"
 ORDER BY meta().id;
 ----
@@ -397,7 +394,6 @@ ORDER BY meta().id;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-idx-2.jsonc[tags=index;ellipsis;query]
-// ...
 ----
 
 <1> In this example, you can see an additional ORDER operator before the final projection, because the ORDER BY field `meta().id` is different from the index order key `city`.
@@ -420,15 +416,15 @@ However, the ASC order in <<example-idx-1>> will not be able to leverage the ind
 Descending variation of <<example-idx-1>>.
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-CREATE INDEX idx_landmark_city_desc ON `travel-sample`.inventory.landmark(city DESC);
+CREATE INDEX idx_landmark_city_desc ON landmark(city DESC);
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
-EXPLAIN SELECT city FROM `travel-sample`.inventory.landmark
+EXPLAIN SELECT city FROM landmark
 WHERE city LIKE "San%"
 ORDER BY city DESC;
 ----
@@ -437,7 +433,6 @@ ORDER BY city DESC;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-idx-3.jsonc[tags=index;ellipsis;query]
-// ...
 ----
 ====
 
@@ -459,16 +454,16 @@ Find the alphabetically highest city name in the `landmark` collection.
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 EXPLAIN SELECT MAX(city)
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE INDEX (def_inventory_landmark_city)
 WHERE city IS NOT NULL;
 ----
@@ -477,7 +472,6 @@ WHERE city IS NOT NULL;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-max.jsonc[tag=excerpt]
-// ...
 ----
 ====
 
@@ -494,16 +488,16 @@ Find the alphabetically lowest city name in the `landmark` collection.
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 EXPLAIN SELECT MIN(city)
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE INDEX (def_inventory_landmark_city)
 WHERE city IS NOT NULL;
 ----
@@ -512,7 +506,6 @@ WHERE city IS NOT NULL;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-min.jsonc[tag=excerpt]
-// ...
 ----
 ====
 
@@ -527,16 +520,16 @@ Find the number of cities entered in the `landmark` collection.
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 SELECT COUNT(city) AS NumberOfCities
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE INDEX (def_inventory_landmark_city)
 WHERE city IS NOT NULL;
 ----
@@ -558,10 +551,10 @@ WHERE city IS NOT NULL;
 The details behind <<example-count-out>>.
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 EXPLAIN SELECT COUNT(city) AS NumberOfCities
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE INDEX (def_inventory_landmark_city)
 WHERE city IS NOT NULL;
 ----
@@ -570,10 +563,9 @@ WHERE city IS NOT NULL;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-count.jsonc[tag=excerpt]
-// ...
 ----
 
-<1> In Couchbase Server 5.5 and later, the index operator `IndexCountScan3` counts values so the Query Service does not need to do additional processing.
+<1> The index operator `IndexCountScan3` counts values so the Query Service does not need to do additional processing.
 ====
 
 === COUNT(DISTINCT) Pushdown
@@ -587,16 +579,16 @@ Find the number of unique city names in the `landmark` collection.
 This example uses the `def_inventory_landmark_city` index that comes pre-installed and can be made by the statement:
 
 .Index
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 include::example$services-and-indexes/indexes/pushdown-def-city.n1ql[]
 ----
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 SELECT COUNT (DISTINCT city) AS NumberOfDistinctCities
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE index (def_inventory_landmark_city)
 WHERE city IS NOT NULL;
 ----
@@ -618,10 +610,10 @@ WHERE city IS NOT NULL;
 The details behind <<example-distinct-out>>.
 
 .Query
-[source,{sqlpp}]
+[source,sqlpp]
 ----
 EXPLAIN SELECT COUNT (DISTINCT city) AS NumberOfDistinctCities
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE index (def_inventory_landmark_city)
 WHERE city IS NOT NULL;
 ----
@@ -630,10 +622,9 @@ WHERE city IS NOT NULL;
 [source,json]
 ----
 include::example$services-and-indexes/indexes/pushdown-distinct.jsonc[tag=excerpt]
-// ...
 ----
 
-<1> In Couchbase Server 5.5 and later, the index operator `IndexCountScan3` counts distinct values so the Query Service does not need to do additional processing.
+<1> The index operator `IndexCountScan3` counts distinct values so the Query Service does not need to do additional processing.
 ====
 
 == Related Links
