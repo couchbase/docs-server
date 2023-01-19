@@ -9,39 +9,57 @@
 An index, in this case, is called a covering index and the query is called a covered query.
 As a result, covered queries are faster and deliver better performance.
 
+.Examples on this Page
+****
+The examples on this page use the `travel-sample` bucket, which needs to be installed before use.
+See xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for details.
+
+include::ROOT:partial$query-context.adoc[tag=statement]
+****
+
 == Overview
 
 The following diagram illustrates the query execution work flow without covering indexes:
 
-image::n1ql-query-workflow.png["Query execution workflow including fetch request from Data service"]
+.Query execution workflow including fetch request from Data service
+[plantuml,n1ql-query-workflow,svg]
+....
+include::learn:partial$diagrams/query-execution.puml[tags=!example]
+....
 
 The following diagram illustrates the query execution work flow with covering indexes:
 
-image::n1ql-query-workflow-cover-idx.png["Query execution workflow with no fetch request from Data service"]
+.Query execution workflow with no fetch request from Data service
+[plantuml,n1ql-query-workflow-cover-idx,svg]
+....
+include::learn:partial$diagrams/query-execution.puml[tags=!example;!fetch]
+....
 
 As you can see in the second diagram, a well designed query that uses a covering index avoids the additional steps to fetch the data from the data service.
 This results in a considerable performance improvement.
 
-NOTE: The examples on this page use the `travel-sample` bucket, which needs to be installed before use.
-See xref:manage:manage-settings/install-sample-buckets.adoc[Sample Buckets] for details.
+== Details
 
-You can see the query execution plan using the EXPLAIN statement.
+To see details of covering indexes at work, you can view the query execution plan using the EXPLAIN statement.
 When a query uses a covering index, the EXPLAIN statement shows that a covering index is used for data access, thus avoiding the overhead associated with key-value document fetches.
 Consider a simple index, [.in]`idx_state`, on the attribute [.param]`state` in the `hotel` keyspace:
 
+====
 .Index
-[source,n1ql]
+[source,sqlpp]
 ----
-CREATE INDEX idx_state on `travel-sample`.inventory.hotel (state) USING GSI;
+CREATE INDEX idx_state on hotel (state) USING GSI;
 ----
+====
 
 If we select [.param]`state` from the `hotel` keyspace, the actual values of the field [.param]`state` that are to be returned are present in the index [.param]`idx_state`, and avoids an additional step to fetch the data.
 In this case, the index [.param]`idx_state` is called a covering index and the query is a covered query.
 
+====
 .Query
-[source,n1ql]
+[source,sqlpp]
 ----
-EXPLAIN SELECT state FROM `travel-sample`.inventory.hotel WHERE state = "CA";
+EXPLAIN SELECT state FROM hotel WHERE state = "CA";
 ----
 
 .Plan
@@ -61,30 +79,7 @@ EXPLAIN SELECT state FROM `travel-sample`.inventory.hotel WHERE state = "CA";
           ],
           "filter": "(cover ((`hotel`.`state`)) = \"CA\")",
           "index": "idx_state", // <.>
-          "index_id": "2eecc50f073a0355",
-          "index_projection": {
-            "entry_keys": [
-              0
-            ]
-          },
-          "keyspace": "hotel",
-          "namespace": "default",
-          "scope": "inventory",
-          "spans": [
-            {
-              "exact": true,
-              "range": [
-                {
-                  "high": "\"CA\"",
-                  "inclusion": 3,
-                  "low": "\"CA\""
-                }
-              ]
-            }
-          ],
-          "using": "gsi"
-        },
-        {
+// ...
           "#operator": "Parallel",
           "~child": {
             "#operator": "Sequence",
@@ -97,26 +92,22 @@ EXPLAIN SELECT state FROM `travel-sample`.inventory.hotel WHERE state = "CA";
                   }
                 ]
               }
-            ]
-          }
-        }
-      ]
-    },
-    "text": "SELECT state FROM `travel-sample`.inventory.hotel WHERE state = \"CA\";"
-  }
-]
+// ...
+]}}]}}]
 ----
 
-<.> The `covers` object shows details of the data covered by the index
-<.> The index scan step uses the index we created
-<.> And the projection step uses the data covered by the index
+<.> The `covers` object shows details of the data covered by the index.
+<.> The index scan step uses the index we created ...
+<.> And the projection step uses the data covered by the index.
+====
 
 If you modify the query to select the [.param]`state` and [.param]`city` from the `hotel` keyspace using the same index [.param]`idx_state`, the index does not contain the values of the [.param]`city` field to satisfy the query, and hence a key-value fetch is performed to retrieve this data.
 
+====
 .Query
-[source,n1ql]
+[source,sqlpp]
 ----
-EXPLAIN SELECT state, city FROM `travel-sample`.inventory.hotel
+EXPLAIN SELECT state, city FROM hotel
   USE INDEX (idx_state)
   WHERE state = "CA";
 ----
@@ -133,35 +124,7 @@ EXPLAIN SELECT state, city FROM `travel-sample`.inventory.hotel
           "#operator": "IndexScan3", // <.>
           "bucket": "travel-sample",
           "index": "idx_state", // <.>
-          "index_id": "2eecc50f073a0355",
-          "index_projection": {
-            "primary_key": true
-          },
-          "keyspace": "hotel",
-          "namespace": "default",
-          "scope": "inventory",
-          "spans": [
-            {
-              "exact": true,
-              "range": [
-                {
-                  "high": "\"CA\"",
-                  "inclusion": 3,
-                  "low": "\"CA\""
-                }
-              ]
-            }
-          ],
-          "using": "gsi"
-        },
-        {
-          "#operator": "Fetch",
-          "bucket": "travel-sample",
-          "keyspace": "hotel",
-          "namespace": "default",
-          "scope": "inventory"
-        },
-        {
+// ...
           "#operator": "Parallel",
           "~child": {
             "#operator": "Sequence",
@@ -181,30 +144,27 @@ EXPLAIN SELECT state, city FROM `travel-sample`.inventory.hotel
                   }
                 ]
               }
-            ]
-          }
-        }
-      ]
-    },
-    "text": "SELECT state, city FROM `travel-sample`.inventory.hotel USE INDEX (idx_state) WHERE state = \"CA\";"
-  }
-]
+// ...
+]}}]}}]
 ----
 
-<.> There is no `covers` object, showing that the data is not covered by the index
-<.> The index scan step uses the index we created
-<.> But the projection step does not use the data covered by the index
+<.> There is no `covers` object, showing that the data is not covered by the index.
+<.> The index scan step uses the index we created ...
+<.> But the projection step does not use the data covered by the index.
+====
 
 To use a covering index for the modified query, you must define an index with the [.param]`state` and [.param]`city` attributes before executing the query.
 
+====
 .Index
-[source,n1ql]
+[source,sqlpp]
 ----
-CREATE INDEX idx_state_city on `travel-sample`.inventory.hotel (state, city)
+CREATE INDEX idx_state_city on hotel (state, city)
 USING GSI;
 ----
+====
 
-[IMPORTANT,caption=Attention]
+[IMPORTANT]
 ====
 `MISSING` items are not indexed by indexers.
 To take advantage of covering indexes and for the index to qualify, a query needs to exclude documents where the index key expression evaluates to `MISSING`.
@@ -229,7 +189,8 @@ You must create a composite index with all the required fields for the query eng
 
 xref:n1ql:n1ql-language-reference/prepare.adoc[Prepared statements] also benefit from using covering indexes.
 
-== Examples
+[#examples]
+== Scenarios
 
 The following queries can benefit from covering indexes.
 Try these statements using [.api]`cbq` or the Query Workbench to see the query execution plan.
@@ -239,22 +200,22 @@ Try these statements using [.api]`cbq` or the Query Workbench to see the query e
 For the first few examples, you must create the following covering index.
 
 .Index
-[source,n1ql]
+[source,sqlpp]
 ----
-CREATE INDEX idx_city_country on `travel-sample`.inventory.hotel (city, country);
+CREATE INDEX idx_city_country on hotel (city, country);
 ----
 
 .Aggregate Query
-[source,n1ql]
+[source,sqlpp]
 ----
-EXPLAIN SELECT MAX(country) FROM `travel-sample`.inventory.hotel
+EXPLAIN SELECT MAX(country) FROM hotel
 WHERE city = "Paris";
 ----
 
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
     "cover ((`hotel`.`city`))",
     "cover ((`hotel`.`country`))",
@@ -262,20 +223,20 @@ WHERE city = "Paris";
     "cover (max(cover ((`hotel`.`country`))))"
   ],
   "index": "idx_city_country",
-...
+// ...
 ----
 
 .Expression Query
-[source,n1ql]
+[source,sqlpp]
 ----
-EXPLAIN SELECT country || city FROM `travel-sample`.inventory.hotel
+EXPLAIN SELECT country || city FROM hotel
 WHERE city = "Paris";
 ----
 
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
     "cover ((`hotel`.`city`))",
     "cover ((`hotel`.`country`))",
@@ -283,7 +244,7 @@ WHERE city = "Paris";
   ],
   "filter": "(cover ((`hotel`.`city`)) = \"Paris\")",
   "index": "idx_city_country",
-...
+// ...
 ----
 ====
 
@@ -292,17 +253,17 @@ WHERE city = "Paris";
 This example uses the index `idx_city_country` defined previously.
 
 .Query
-[source,n1ql]
+[source,sqlpp]
 ----
-SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "Paris"
+SELECT country FROM hotel WHERE city = "Paris"
     UNION ALL
-SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "San Francisco";
+SELECT country FROM hotel WHERE city = "San Francisco";
 ----
 
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
       "cover ((`hotel`.`city`))",
       "cover ((`hotel`.`country`))",
@@ -310,7 +271,7 @@ SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "San Francisco"
   ],
   "filter": "(cover ((`hotel`.`city`)) = \"Paris\")",
   "index": "idx_city_country",
-...
+// ...
   "covers": [
       "cover ((`hotel`.`city`))",
       "cover ((`hotel`.`country`))",
@@ -318,7 +279,7 @@ SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "San Francisco"
   ],
   "filter": "(cover ((`hotel`.`city`)) = \"San Francisco\")",
   "index": "idx_city_country",
-...
+// ...
 ----
 ====
 
@@ -327,19 +288,19 @@ SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "San Francisco"
 This example uses the index `idx_city_country` defined previously.
 
 .Query
-[source,n1ql]
+[source,sqlpp]
 ----
 SELECT * FROM (
-  SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "Paris"
+  SELECT country FROM hotel WHERE city = "Paris"
     UNION ALL
-  SELECT country FROM `travel-sample`.inventory.hotel WHERE city = "San Francisco"
+  SELECT country FROM hotel WHERE city = "San Francisco"
 ) AS newtab;
 ----
 
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
       "cover ((`hotel`.`city`))",
       "cover ((`hotel`.`country`))",
@@ -347,7 +308,7 @@ SELECT * FROM (
   ],
   "filter": "(cover ((`hotel`.`city`)) = \"Paris\")",
   "index": "idx_city_country",
-...
+// ...
   "covers": [
       "cover ((`hotel`.`city`))",
       "cover ((`hotel`.`country`))",
@@ -355,7 +316,7 @@ SELECT * FROM (
   ],
   "filter": "(cover ((`hotel`.`city`)) = \"San Francisco\")",
   "index": "idx_city_country",
-...
+// ...
 ----
 ====
 
@@ -364,16 +325,16 @@ SELECT * FROM (
 This example uses the index `idx_city_country` defined previously.
 
 .Query
-[source,n1ql]
+[source,sqlpp]
 ----
-INSERT INTO `travel-sample`.inventory.hotel (KEY UUID(), VALUE city)
-  SELECT country, city FROM `travel-sample`.inventory.hotel WHERE city = "Paris";
+INSERT INTO hotel (KEY UUID(), VALUE city)
+  SELECT country, city FROM hotel WHERE city = "Paris";
 ----
 
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
       "cover ((`hotel`.`city`))",
       "cover ((`hotel`.`country`))",
@@ -381,7 +342,7 @@ INSERT INTO `travel-sample`.inventory.hotel (KEY UUID(), VALUE city)
   ],
   "filter": "(cover ((`hotel`.`city`)) = \"Paris\")",
   "index": "idx_city_country",
-...
+// ...
 ----
 ====
 
@@ -389,16 +350,16 @@ INSERT INTO `travel-sample`.inventory.hotel (KEY UUID(), VALUE city)
 ====
 First, create a new index, [.in]`idx_array`.
 
-[source,n1ql]
+[source,sqlpp]
 ----
-CREATE INDEX idx_array ON `travel-sample`.inventory.hotel(public_likes, name);
+CREATE INDEX idx_array ON hotel(public_likes, name);
 ----
 
 Then, run the following query:
 
-[source,n1ql]
+[source,sqlpp]
 ----
-SELECT name FROM `travel-sample`.inventory.hotel
+SELECT name FROM hotel
   USE INDEX (idx_array)
   WHERE ARRAY_CONTAINS(public_likes, "Jazmyn Harris");
 ----
@@ -406,7 +367,7 @@ SELECT name FROM `travel-sample`.inventory.hotel
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
       "cover ((`hotel`.`public_likes`))",
       "cover ((`hotel`.`name`))",
@@ -414,7 +375,7 @@ SELECT name FROM `travel-sample`.inventory.hotel
   ],
   "filter": "array_contains(cover ((`hotel`.`public_likes`)), \"Jazmyn Harris\")",
   "index": "idx_array",
-...
+// ...
 ----
 ====
 
@@ -422,7 +383,7 @@ SELECT name FROM `travel-sample`.inventory.hotel
 ====
 For this example, first insert the following documents into the default collection in the default scope in the `travel-sample` bucket:
 
-[source,n1ql]
+[source,sqlpp]
 ----
 INSERT INTO `travel-sample` VALUES ("account-customerXYZ-123456789",
 { "accountNumber": 123456789,
@@ -449,7 +410,7 @@ INSERT INTO `travel-sample` VALUES ("codes-version-9",
 
 Create an index, `idx_account_customer_xyz_transDate`:
 
-[source,n1ql]
+[source,sqlpp]
 ----
 CREATE INDEX idx_account_customer_xyz_transDate
     ON `travel-sample` (SUBSTR(transDate,0,10),code)
@@ -458,7 +419,7 @@ CREATE INDEX idx_account_customer_xyz_transDate
 
 Then, run the following query:
 
-[source,n1ql]
+[source,sqlpp]
 ----
 SELECT SUBSTR(account.transDate,0,10) AS transDate, AVG(codes.weight) AS avgWeight
 FROM `travel-sample` AS account
@@ -486,7 +447,7 @@ The query plan for the above query shows that the index covers the query.
 .Plan
 [source,json]
 ----
-...
+// ...
   "covers": [
       "cover (substr0((`account`.`transDate`), 0, 10))",
       "cover ((`account`.`code`))",
@@ -500,7 +461,7 @@ The query plan for the above query shows that the index covers the query.
       "cover ((not ((`account`.`code`) = \"\")))": true
   },
   "index": "idx_account_customer_xyz_transDate",
-...
+// ...
 ----
 ====
 
