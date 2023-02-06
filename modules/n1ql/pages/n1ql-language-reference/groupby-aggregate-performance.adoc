@@ -6,6 +6,11 @@
 [abstract]
 {description}
 
+.Examples on this Page
+****
+include::ROOT:partial$query-context.adoc[tag=statement]
+****
+
 [#Overview]
 == Overview
 
@@ -64,48 +69,110 @@ For details, see <<section_bpf_wjf_ycb>>.
 Here's how a query executes when the indexer handles the grouping and aggregation.
 Note that the query engine does not fetch any data from the data service (KV service).
 
-image::GBAP_55execution.png["Query execution process, showing grouping and aggregation pushed down to the indexer",700]
+.Query execution process, showing grouping and aggregation pushed down to the indexer
+[plantuml,GBAP_55execution,svg]
+....
+@startuml
+
+skinparam maxMessageSize 150
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign direction
+
+' title Query Execution with Grouping and Aggregation Pushdown
+
+participant Application
+
+collections "Query Engine" as Query
+collections "Indexer" as Index
+
+Application -> Query: SELECT\nstatement
+activate Query #teal
+
+Query -[#transparent]> Query: Analyze query; send scan, grouping and aggregation request
+Query -> Index: Scan, grouping and aggregate request
+activate Index #deepskyblue
+
+Index -[#transparent]> Index: Execute scan, grouping and aggregation
+Index -> Query: Projection of results from scan, grouping and aggregation
+deactivate Index
+
+Query -[#transparent]> Query: Perform group merge, if required; project the results
+Query -> Application: Result projection
+deactivate Query
+@enduml
+....
 
 For reference, this is how the same query would be executed without grouping and aggregate pushdown.
 
-image::GBAP_pre55execution.png["Query execution process, showing grouping and aggregation performed by the query engine",700]
+.Query execution process, showing grouping and aggregation performed by the query engine
+[plantuml,GBAP_pre55execution,svg]
+....
+@startuml
+
+skinparam maxMessageSize 150
+skinparam responseMessageBelowArrow true
+skinparam sequenceMessageAlign direction
+
+' title Query Execution without Grouping and Aggregation Pushdown
+
+participant Application
+
+collections "Query Engine" as Query
+collections "Indexer" as Index
+
+Application -> Query: SELECT\nstatement
+activate Query #teal
+
+Query -[#transparent]> Query: Analyze query; send scan request
+Query -> Index: Scan request
+activate Index #deepskyblue
+
+Index -[#transparent]> Index: Execute scan
+Index -> Query: Projection of results from scan
+deactivate Index
+
+Query -[#transparent]> Query: Perform sub-group, grouping and aggregation; project the results
+Query -> Application: Result projection
+deactivate Query
+@enduml
+....
 
 == Examples for Grouping and Aggregation
 
-Let’s consider a composite index to explore some scenarios:
+Consider a composite index:
 
 .Example A
 [source,sqlpp]
 ----
-CREATE INDEX idx_grp_add ON `travel-sample`.inventory.airport
+CREATE INDEX idx_grp_add ON airport
 (geo.alt, geo.lat, geo.lon, id);
 ----
 
-Let’s consider sample queries that can benefit from this optimization and the queries that cannot.
+This section considers sample queries that can benefit from this optimization, and queries that cannot.
 
 Positive Case examples of queries that use indexing grouping and aggregation::
 
 [source,sqlpp]
 ----
-SELECT COUNT(*) FROM `travel-sample`.inventory.airport WHERE geo.alt > 10;
+SELECT COUNT(*) FROM airport WHERE geo.alt > 10;
 
-SELECT COUNT(geo.alt) FROM `travel-sample`.inventory.airport
+SELECT COUNT(geo.alt) FROM airport
 WHERE geo.alt BETWEEN 10 AND 30;
 
-SELECT COUNT(geo.lat) FROM `travel-sample`.inventory.airport
+SELECT COUNT(geo.lat) FROM airport
 WHERE geo.alt BETWEEN 10 AND 30 AND geo.lat = 40;
 
 SELECT geo.alt, AVG(id), SUM(id), COUNT(geo.alt), MIN (geo.lon), MAX(ABS(geo.lon))
-FROM `travel-sample`.inventory.airport WHERE geo.alt > 100 GROUP BY geo.alt;
+FROM airport WHERE geo.alt > 100 GROUP BY geo.alt;
 
-SELECT lat_count, SUM(id) FROM `travel-sample`.inventory.airport
+SELECT lat_count, SUM(id) FROM airport
 WHERE geo.alt > 100 GROUP BY geo.alt
 LETTING lat_count = COUNT(geo.lat) HAVING lat_count > 1;
 
-SELECT AVG(DISTINCT geo.lat) FROM `travel-sample`.inventory.airport
+SELECT AVG(DISTINCT geo.lat) FROM airport
 WHERE geo.alt > 100 GROUP BY geo.alt;
 
-SELECT ARRAY_AGG(geo.alt) FROM `travel-sample`.inventory.airport
+SELECT ARRAY_AGG(geo.alt) FROM airport
 WHERE geo.alt > 10;
 ----
 
@@ -113,7 +180,7 @@ Negative Case examples::
 
 [source,sqlpp]
 ----
-SELECT COUNT(*) FROM `travel-sample`.inventory.airport WHERE geo.lat > 20;
+SELECT COUNT(*) FROM airport WHERE geo.lat > 20;
 ----
 
 This query has no predicate on the leading key `geo.alt`.
@@ -121,14 +188,14 @@ The index `idx_grp_add` cannot be used.
 
 [source,sqlpp]
 ----
-SELECT COUNT(*) FROM `travel-sample`.inventory.airport;
+SELECT COUNT(*) FROM airport;
 ----
 
 This query has no predicate at all.
 
 [source,sqlpp]
 ----
-SELECT COUNT(v1) FROM `travel-sample`.inventory.airport
+SELECT COUNT(v1) FROM airport
 LET v1 = ROUND(geo.lat) WHERE geo.lat > 10;
 ----
 
@@ -141,7 +208,7 @@ The following example uses the `idx_grp_add` index defined previously:
 .Example B
 [source,sqlpp]
 ----
-CREATE INDEX idx_grp_add ON `travel-sample`.inventory.airport
+CREATE INDEX idx_grp_add ON airport
 (geo.alt, geo.lat, geo.lon, id);
 ----
 
@@ -151,7 +218,7 @@ Therefore, the query below is suitable for indexer to handle grouping and aggreg
 [source,sqlpp]
 ----
 SELECT geo.alt, geo.lat, SUM(geo.lon), AVG(id), COUNT(DISTINCT geo.lon)
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.alt BETWEEN 10 AND 30
 GROUP BY geo.alt, geo.lat
 HAVING SUM(geo.lon) > 1000;
@@ -168,11 +235,11 @@ The following example uses the `idx_grp_add` index defined previously:
 .Example C
 [source,sqlpp]
 ----
-CREATE INDEX idx_grp_add ON `travel-sample`.inventory.airport
+CREATE INDEX idx_grp_add ON airport
 (geo.alt, geo.lat, geo.lon, id);
 
 SELECT geo.lat, id, SUM(geo.lon)
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.alt BETWEEN 10 AND 30
 GROUP BY geo.lat, id
 HAVING SUM(geo.lon) > 1000;
@@ -190,11 +257,11 @@ Consider the following index and query:
 .Example D
 [source,sqlpp]
 ----
-CREATE INDEX idx_grp_add_distinct ON `travel-sample`.inventory.hotel
+CREATE INDEX idx_grp_add_distinct ON hotel
 (geo.lat, geo.lon, DISTINCT public_likes, id);
 
 SELECT geo.lat, geo.lon, SUM(id), AVG(id)
-FROM `travel-sample`.inventory.hotel
+FROM hotel
 WHERE geo.lat BETWEEN 10 AND 30
  AND geo.lon > 50
  AND ANY v IN public_likes SATISFIES  v = "%a%" END
@@ -213,11 +280,11 @@ Consider the index and query:
 .Example E
 [source,sqlpp]
 ----
-CREATE INDEX idx_grp_add_all ON `travel-sample`.inventory.hotel
+CREATE INDEX idx_grp_add_all ON hotel
 (ALL public_likes, geo.lat, geo.lon, id);
 
 SELECT un, t.geo.lat, COUNT(un), AVG(t.geo.lat)
-FROM `travel-sample`.inventory.hotel AS t
+FROM hotel AS t
  UNNEST t.public_likes AS un
 WHERE un > "J"
 GROUP BY un, t.geo.lat;
@@ -247,7 +314,7 @@ The following are necessary in order for an indexer to execute GROUP BY and aggr
 == Scenarios for Grouping and Aggregation
 
 Like any feature in a query language, there are subtle variations between each query and index that affects this optimization.
-We use the `travel-sample` bucket to illustrate both positive and negative use cases.
+We use the travel sample dataset to illustrate both positive and negative use cases.
 
 The following table lists the scenarios and requirements for queries to request the indexer to do the grouping and acceleration.
 When the requirements are unmet, the query will fetch the relevant data and then do the grouping and acceleration as usual.
@@ -305,7 +372,7 @@ Use the `MAX()` aggregate to find the highest landmark latitude in each state, g
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx1 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx1 ON landmark
 (country, state, geo.lat);
 ----
 
@@ -313,7 +380,7 @@ CREATE INDEX idx1 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT country, state, MAX(ROUND(geo.lat)) AS Max_Latitude
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE country IS NOT MISSING
 GROUP BY country, state
 ORDER BY Max_Latitude DESC;
@@ -459,7 +526,7 @@ This example uses the `idx1` index defined previously:
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx1 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx1 ON landmark
 (country, state, geo.lat);
 ----
 
@@ -467,7 +534,7 @@ CREATE INDEX idx1 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT COUNT(country) AS Total_landmarks, state, MIN(ROUND(geo.lat)) AS Min_Latitude
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE country IN ["France", "United States", "United Kingdom"]
 GROUP BY state
 ORDER BY Min_Latitude;
@@ -582,7 +649,7 @@ At a particular latitude, the `state` will be the same; but an aggregate functio
 [source,sqlpp]
 ----
 SELECT COUNT(country) Num_Landmarks, MIN(state) State_Name, ROUND(geo.lat) Latitude
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE country IS NOT MISSING
 GROUP BY ROUND(geo.lat)
 ORDER BY ROUND(geo.lat);
@@ -637,7 +704,7 @@ Use the `MIN()` operator to find the lowest landmark longitude in each city, gro
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx3 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx3 ON landmark
 (activity, city, geo.lon);
 ----
 
@@ -645,7 +712,7 @@ CREATE INDEX idx3 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT activity, city, MIN(ROUND(geo.lon)) AS Min_Longitude
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE country IS NOT MISSING
 GROUP BY activity, city
 ORDER BY Min_Longitude, activity;
@@ -733,7 +800,7 @@ Then we can list and group by flight distances by calculating the distance multi
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx4_expr ON `travel-sample`.inventory.route
+CREATE INDEX idx4_expr ON route
 (ROUND(distance*stops), ROUND(distance), sourceairport);
 ----
 
@@ -743,7 +810,7 @@ CREATE INDEX idx4_expr ON `travel-sample`.inventory.route
 SELECT ROUND(distance*stops) AS Distance_Feels_Like,
        MAX(ROUND(distance)) AS Distance_True,
        COUNT(sourceairport) Number_of_Airports
-FROM `travel-sample`.inventory.route
+FROM route
 WHERE ROUND(distance*stops) IS NOT MISSING
 GROUP BY ROUND(distance*stops);
 ----
@@ -829,7 +896,7 @@ Then we can list and group by the uppercase of the airport codes and listing the
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx4_oper ON `travel-sample`.inventory.route
+CREATE INDEX idx4_oper ON route
 (sourceairport, ROUND(distance*stops), distance);
 ----
 
@@ -839,7 +906,7 @@ CREATE INDEX idx4_oper ON `travel-sample`.inventory.route
 SELECT UPPER(sourceairport) AS Airport_Code,
        MIN(ROUND(distance*stops)) AS Distance_Feels_Like,
        SUM(ROUND(distance)) AS Total_Distance
-FROM `travel-sample`.inventory.route
+FROM route
 WHERE sourceairport IS NOT MISSING
 GROUP BY UPPER(sourceairport);
 ----
@@ -885,13 +952,13 @@ To see a separate grouping of `MISSING` and `NULL`, we need to `GROUP BY` a fiel
 .Create Documents
 [source,sqlpp]
 ----
-INSERT INTO `travel-sample`.inventory.landmark
+INSERT INTO landmark
   VALUES("01",{"type":1, "email":"abc","xx":3});
 
-INSERT INTO `travel-sample`.inventory.landmark
+INSERT INTO landmark
   VALUES("02",{"type":1, "email":"abc","xx":null});
 
-INSERT INTO `travel-sample`.inventory.landmark
+INSERT INTO landmark
   VALUES("03",{"type":1, "email":"abcd"});
 ----
 
@@ -899,7 +966,7 @@ INSERT INTO `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT type, xx, MIN(email) AS Min_Email
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE type IS NOT NULL
 GROUP BY type, xx;
 ----
@@ -956,14 +1023,14 @@ NOTE: If there is a filter on the Document ID, then the primary index can be use
 .Index
 [source,sqlpp]
 ----
-CREATE PRIMARY INDEX idx6 ON `travel-sample`.inventory.airport;
+CREATE PRIMARY INDEX idx6 ON airport;
 ----
 
 .Query
 [source,sqlpp]
 ----
 SELECT COUNT(1) AS Count, SUBSTR(META().id,0,9) AS Meta_Group
-FROM `travel-sample`.inventory.airport
+FROM airport
 GROUP BY SUBSTR(META().id,0,9);
 ----
 
@@ -1012,7 +1079,7 @@ LIMIT __n__;
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx7 ON landmark
 (city, name);
 ----
 
@@ -1020,7 +1087,7 @@ CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT city AS City, COUNT(DISTINCT name) AS Landmark_Count
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE city IS NOT MISSING
 GROUP BY city
 LIMIT 4;
@@ -1143,7 +1210,7 @@ This example uses the `idx7` index defined previously:
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx7 ON landmark
 (city, name);
 ----
 
@@ -1151,7 +1218,7 @@ CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT city AS City, COUNT(DISTINCT name) AS Landmark_Count
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE city IS NOT MISSING
 GROUP BY city
 OFFSET 4;
@@ -1304,7 +1371,7 @@ WHERE __a__ IS NOT MISSING;
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx9 ON `travel-sample`.inventory.route
+CREATE INDEX idx9 ON route
 (distance, stops, sourceairport);
 ----
 
@@ -1314,7 +1381,7 @@ CREATE INDEX idx9 ON `travel-sample`.inventory.route
 SELECT SUM(ROUND(distance)) AS Total_Distance,
        SUM(stops) AS Total_Stops,
        COUNT(sourceairport) AS Total_Airports
-FROM `travel-sample`.inventory.route
+FROM route
 WHERE distance IS NOT MISSING;
 ----
 
@@ -1338,7 +1405,7 @@ WHERE distance IS NOT MISSING;
 [source,sqlpp]
 ----
 SELECT SUM(ROUND(distance)) AS Total_Distance
-FROM `travel-sample`.inventory.route;
+FROM route;
 ----
 
 .Results
@@ -1361,7 +1428,7 @@ FROM `travel-sample`.inventory.route;
 SELECT SUM(ROUND(distance)) AS Total_Distance,
        COUNT(ROUND(distance)) AS Count_of_Distance,
        MIN(ROUND(distance)) AS Min_of_Distance
-FROM `travel-sample`.inventory.route
+FROM route
 WHERE distance IS NOT MISSING;
 ----
 
@@ -1387,7 +1454,7 @@ WHERE distance IS NOT MISSING;
 SELECT SUM(ROUND(distance)) AS Total_Distance,
        COUNT(stops) AS Count_of_Stops,
        MIN(sourceairport) AS Min_of_Airport
-FROM `travel-sample`.inventory.route
+FROM route
 WHERE distance IS NOT MISSING;
 ----
 
@@ -1428,7 +1495,7 @@ Use the `MAX()` operator to find the highest landmark latitude in each state, gr
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx10 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx10 ON landmark
 (country, state, ABS(ROUND(geo.lat)));
 ----
 
@@ -1436,7 +1503,7 @@ CREATE INDEX idx10 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT country, state, SUM(ABS(ROUND(geo.lat))) AS SumAbs_Latitude
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 USE INDEX (idx10) -- <1>
 WHERE country IS NOT MISSING
 GROUP BY country, state
@@ -1563,7 +1630,7 @@ GROUP BY __a__;
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx11 ON `travel-sample`.inventory.airport
+CREATE INDEX idx11 ON airport
 (geo.lat, geo.alt, city, geo.lon);
 ----
 
@@ -1574,7 +1641,7 @@ SELECT MIN(ROUND(geo.lat)) AS Min_Lat,
        SUM(geo.alt) AS Sum_Alt,
        COUNT(city) AS Count_City,
        MAX(ROUND(geo.lon)) AS Max_Lon
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.lat IS NOT MISSING
 GROUP BY (ROUND(geo.lat))
 ORDER BY (ROUND(geo.lat)) DESC;
@@ -1652,7 +1719,7 @@ GROUP BY __a__, __b__;
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx12_1 ON `travel-sample`.inventory.airport
+CREATE INDEX idx12_1 ON airport
 (geo.lat, geo.lon, country);
 ----
 
@@ -1660,7 +1727,7 @@ CREATE INDEX idx12_1 ON `travel-sample`.inventory.airport
 [source,sqlpp]
 ----
 SELECT SUM(DISTINCT ROUND(geo.lat)) AS Sum_Lat
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.lat IS NOT MISSING
 GROUP BY ROUND(geo.lat);
 ----
@@ -1693,7 +1760,7 @@ GROUP BY ROUND(geo.lat);
 ----
 SELECT COUNT(DISTINCT ROUND(geo.lat)) AS Count_Lat,
        SUM(DISTINCT ROUND(geo.lon)) AS Sum_Lon
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.lat IS NOT MISSING
 GROUP BY ROUND(geo.lat), ROUND(geo.lon);
 ----
@@ -1754,7 +1821,7 @@ GROUP BY __a__, __b__;
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx12_2 ON `travel-sample`.inventory.airport
+CREATE INDEX idx12_2 ON airport
 (country, ROUND(geo.lat), ROUND(geo.lon));
 ----
 
@@ -1763,7 +1830,7 @@ CREATE INDEX idx12_2 ON `travel-sample`.inventory.airport
 ----
 SELECT COUNT(DISTINCT country) AS Count_Country,
        SUM(DISTINCT ROUND(geo.lat)) AS Sum_Lat
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE country IS NOT MISSING
 GROUP BY country;
 ----
@@ -1797,7 +1864,7 @@ GROUP BY country;
 SELECT COUNT(DISTINCT country) AS Count_Country,
        SUM(DISTINCT ROUND(geo.lat)) AS Sum_Lat,
        COUNT(DISTINCT ROUND(geo.lon)) AS Count_Lon
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE country IS NOT MISSING
 GROUP BY country, ROUND(geo.lat);
 ----
@@ -1848,7 +1915,7 @@ NOTE: The results will be pre-aggregated if the `GROUP BY` key is non-leading, a
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx12_3 ON `travel-sample`.inventory.airport
+CREATE INDEX idx12_3 ON airport
 (country, geo.lat, geo.lon);
 ----
 
@@ -1858,7 +1925,7 @@ CREATE INDEX idx12_3 ON `travel-sample`.inventory.airport
 SELECT MIN(country) AS Min_Country,
        COUNT(DISTINCT 1) AS Constant_Value,
        MIN(ROUND(geo.lon)) AS Min_Longitude
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE country IS NOT MISSING
 GROUP BY geo.lat;
 ----
@@ -1933,7 +2000,7 @@ A DISTINCT aggregate on the first key only, where there is no GROUP BY clause.
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx12_4 ON `travel-sample`.inventory.airport
+CREATE INDEX idx12_4 ON airport
 (geo.alt, geo.lat, geo.lon);
 ----
 
@@ -1941,7 +2008,7 @@ CREATE INDEX idx12_4 ON `travel-sample`.inventory.airport
 [source,sqlpp]
 ----
 SELECT SUM(DISTINCT ROUND(geo.alt)) AS Sum_Alt
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.alt IS NOT MISSING;
 ----
 
@@ -1966,7 +2033,7 @@ This query pushes the aggregation down to the indexer, but does not necessarily 
 [source,sqlpp]
 ----
 SELECT COUNT(DISTINCT 1) AS Const_expr
-FROM `travel-sample`.inventory.airport;
+FROM airport;
 ----
 
 .Results
@@ -1990,7 +2057,7 @@ This query uses the index `idx12_4`, but does not push the aggregation down to t
 [source,sqlpp]
 ----
 SELECT SUM(DISTINCT ROUND(geo.lon)) AS Sum_Lon
-FROM `travel-sample`.inventory.airport
+FROM airport
 WHERE geo.alt IS NOT MISSING;
 ----
 
@@ -2030,7 +2097,7 @@ This example uses the `idx7` index defined previously:
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx7 ON landmark
 (city, name);
 ----
 
@@ -2038,7 +2105,7 @@ CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT city AS City, COUNT(DISTINCT name) AS Landmark_Count
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE city IS NOT MISSING
 GROUP BY city
 HAVING COUNT(DISTINCT name) > 180;
@@ -2094,7 +2161,7 @@ This example uses the `idx7` index defined previously:
 .Index
 [source,sqlpp]
 ----
-CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
+CREATE INDEX idx7 ON landmark
 (city, name);
 ----
 
@@ -2102,7 +2169,7 @@ CREATE INDEX idx7 ON `travel-sample`.inventory.landmark
 [source,sqlpp]
 ----
 SELECT city AS City, COUNT(DISTINCT name) AS Landmark_Count
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE city IS NOT MISSING
 GROUP BY city
 LETTING MinimumThingsToSee = COUNT(DISTINCT name)
@@ -2208,10 +2275,10 @@ Consider the example:
 [source,sqlpp]
 ----
 CREATE INDEX idx_landmark_activity
-ON `travel-sample`.inventory.landmark(activity);
+ON landmark(activity);
 
 EXPLAIN SELECT activity, COUNT(activity)
-FROM `travel-sample`.inventory.landmark
+FROM landmark
 WHERE activity IS NOT MISSING
 GROUP BY activity;
 ----
@@ -2381,7 +2448,7 @@ Key Position to use the Index expr or the query expr.
       }
     ]
   },
-  "text": "SELECT activity, COUNT(activity)\nFROM `travel-sample`.inventory.landmark\nWHERE activity IS NOT MISSING\nGROUP BY activity;"
+  "text": "SELECT activity, COUNT(activity)\nFROM landmark\nWHERE activity IS NOT MISSING\nGROUP BY activity;"
 }
 ----
 

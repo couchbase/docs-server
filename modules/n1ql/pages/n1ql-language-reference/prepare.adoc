@@ -1,7 +1,10 @@
 = PREPARE
 :description: The PREPARE statement prepares a query for repeated execution.
-:page-topic-type: concept
+:page-topic-type: reference
 :imagesdir: ../../assets/images
+
+// TEMP
+include::partial$n1ql-language-reference/collapsible-style.adoc[]
 
 [abstract]
 {description}
@@ -13,6 +16,57 @@ Building plans for {sqlpp} requests may be expensive, in particular where a clus
 Sometimes planning may take more time than actually executing a request.
 
 If you know that a statement text will be executed repeatedly, you can request the {sqlpp} service to prepare the execution plan beforehand, and then request to execute the prepared plan as many times as needed, thereby avoiding the cost of repeated planning.
+
+== Prerequisites
+
+[[authorization]]
+=== RBAC Privileges
+
+The user executing the PREPARE statement must have the RBAC privileges of the statement being prepared.
+For more details about user roles, refer to xref:learn:security/authorization-overview.adoc[Authorization].
+
+.RBAC Examples
+[%collapsible]
+====
+======
+include::ROOT:partial$query-context.adoc[tag=example]
+
+To execute the following statement, user must have the _Query Select_ privilege on both keyspaces `pass:c[airport]` and `pass:c[landmark]`.
+
+[source,sqlpp]
+----
+PREPARE SELECT * FROM airport
+WHERE city = (SELECT RAW city FROM landmark)
+----
+
+To execute the following statement, user must have the _Query Update_ and _Query Select_ privileges on `pass:c[hotel]`.
+
+[source,sqlpp]
+----
+PREPARE UPDATE hotel
+SET city = "San Francisco" WHERE lower(city) = "sanfrancisco"
+RETURNING *
+----
+======
+====
+
+[[query-context]]
+=== Query Context
+
+ifeval::['{page-component-version}' == '7.0']
+_(Introduced in Couchbase Server 7.0)_
+endif::[]
+
+A prepared statement is created and stored relative to the current _query context_.
+You can create multiple prepared statements with the same name, each stored relative to a different query context.
+This enables you to run multiple instances of the same application against different datasets.
+
+To execute a prepared statement, the query context must be the same as it was when the prepared statement was created; otherwise the prepared statement will not be found.
+
+You must therefore set the required query context, or unset the query context if necessary, before creating the prepared statement.
+If you do not set the query context, it defaults to the empty string.
+
+For further information, refer to xref:n1ql:n1ql-intro/queriesandresults.adoc#query-context[Query Context].
 
 [[syntax]]
 == Syntax
@@ -45,18 +99,6 @@ A local name for the prepared statement.
 If you do not specify a local name for the prepared statement, the query engine generates a UUID from the statement text.
 For more details, refer to <<result>> below.
 
-[[usage]]
-== Usage
-
-You can prepare a statement in three ways:
-
-* Using the PREPARE statement in the Query Workbench.
-
-* Using the PREPARE statement in the the xref:tools:cbq-shell.adoc[cbq] command line shell.
-
-* Using the xref:n1ql:n1ql-rest-api/index.adoc[Query REST API] (`/query/service` endpoint).
-
-For information on how to use prepared statements with various SDKs, refer to xref:java-sdk:concept-docs:n1ql-query.adoc#prepared-statements-for-query-optimization[Querying with {sqlpp}] and xref:java-sdk:howtos:n1ql-queries-with-sdk.adoc#parameterized-queries[{sqlpp} from the SDK].
 
 [[parameters]]
 == Parameters
@@ -67,35 +109,17 @@ Parameters may be _named parameters_ or _positional parameters_.
 
 Named parameters are specified by name when the prepared statement is executed.
 To refer to a named parameter in a statement, use `$` followed by the name of the parameter, e.g. `$city`.
-
-====
-[source,sqlpp]
-----
-include::example$utility/prepare-names.n1ql[]
-----
-====
+See <<ex-prepare-names>>.
 
 Positional parameters are specified by the position of each supplied parameter when the statement is executed.
 To refer to a positional parameter in a statement, use `$` followed by the position of the supplied parameter.
 So `$1` refers to the first supplied parameter, `$2` refers to the second supplied parameter, etc.
-
-====
-[source,sqlpp]
-----
-include::example$utility/prepare-numbers.n1ql[]
-----
-====
+See <<ex-prepare-numbers>>.
 
 You may also use `?` to refer to a positional parameter in a statement.
 In this case, the order of parameters in the statement must exactly match the order of parameters when the statement is executed.
 So the first `?` refers to the first supplied parameter, the second `?` refers to the second supplied parameter, etc.
-
-====
-[source,sqlpp]
-----
-include::example$utility/prepare-positions.n1ql[]
-----
-====
+See <<ex-prepare-positions>>.
 
 [[result]]
 == Result
@@ -118,8 +142,8 @@ signature:: The signature of the statement being prepared.
 text:: The full PREPARE statement text.
 
 encoded_plan:: The full prepared statement in encoded format.
-This is included in Couchbase Server 6.5 for for compatibility with previous versions.
-In previous versions of Couchbase Server, you can use the encoded plan in a request to execute a prepared statement.
+This is included for backward compatibility.
+In versions of Couchbase Server prior to Couchbase Server 6.5, you can use the encoded plan in a request to execute a prepared statement.
 
 [[cache]]
 == Statement Cache
@@ -204,43 +228,18 @@ In Couchbase Server 6.5 and later, when a query node is started or restarted, th
 
 If it is not possible to prime the statement cache from another node, you must prepare the statements again before you can execute them.
 
-[[authorization]]
-== Authorization
-
-The user executing the PREPARE statement must have the RBAC privileges of the statement being prepared.
-For more details about user roles, refer to xref:learn:security/authorization-overview.adoc[Authorization].
-
-For example,
-
-To execute the following statement, user must have the _Query Select_ privilege on both keyspaces `pass:c[`travel-sample`.inventory.airport]` and `pass:c[`travel-sample`.inventory.landmark]`.
-
-====
-[source,sqlpp]
-----
-PREPARE SELECT * FROM `travel-sample`.inventory.airport
-WHERE city = (SELECT RAW city FROM `travel-sample`.inventory.landmark)
-----
-====
-
-To execute the following statement, user must have the _Query Update_ and _Query Select_ privileges on `pass:c[`travel-sample`.inventory.hotel]`.
-
-====
-[source,sqlpp]
-----
-PREPARE UPDATE `travel-sample`.inventory.hotel
-SET city = "San Francisco" WHERE lower(city) = "sanfrancisco"
-RETURNING *
-----
-====
-
 [[example]]
-== Example
+== Examples
 
+include::ROOT:partial$query-context.adoc[tag=section]
+
+[[ex-prepare]]
+.Prepared statement
 ====
 .Query
 [source,sqlpp]
 ----
-PREPARE SELECT * FROM `travel-sample`.inventory.route
+PREPARE SELECT * FROM route
 WHERE airline = "FL";
 ----
 
@@ -326,10 +325,37 @@ WHERE airline = "FL";
     "signature": {
       "*": "*"
     },
-    "text": "PREPARE SELECT * FROM `travel-sample`.inventory.route\nWHERE airline = \"FL\";",
+    "text": "PREPARE SELECT * FROM route\nWHERE airline = \"FL\";",
     "useCBO": true
   }
 ]
+----
+====
+
+[[ex-prepare-names]]
+.Prepared statement with named parameters
+====
+[source,sqlpp]
+----
+include::example$utility/prepare-names.n1ql[]
+----
+====
+
+[[ex-prepare-numbers]]
+.Prepared statement with numbered parameters
+====
+[source,sqlpp]
+----
+include::example$utility/prepare-numbers.n1ql[]
+----
+====
+
+[[ex-prepare-positions]]
+.Prepared statement with positional parameters
+====
+[source,sqlpp]
+----
+include::example$utility/prepare-positions.n1ql[]
 ----
 ====
 
@@ -337,3 +363,9 @@ WHERE airline = "FL";
 == Related
 
 * For information on executing the prepared statement, refer to xref:n1ql-language-reference/execute.adoc[EXECUTE].
+
+* For information on using prepared statements with the `cbq` command line shell, refer to xref:tools:cbq-shell.adoc[].
+
+* For information on using prepared statements with the Query REST API (`/query/service` endpoint), refer to xref:n1ql:n1ql-rest-api/index.adoc[].
+
+* For information on using prepared statements with an SDK, refer to xref:java-sdk:concept-docs:n1ql-query.adoc#prepared-statements-for-query-optimization[Querying with N1QL] and xref:java-sdk:howtos:n1ql-queries-with-sdk.adoc#parameterized-queries[N1QL from the SDK].
