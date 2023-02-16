@@ -59,6 +59,9 @@ curl -X POST -u <administrator>:<password>
   -d replicaIndex=[ 0 | 1 ]
   -d conflictResolutionType=[ seqno | lww ]
   -d flushEnabled=[ 0 | 1 ]
+  -d historyRetentionCollectionDefault=[ true | false ]
+  -d historyRetentionBytes=<integer>
+  -d historyRetentionSeconds=<integer>
   -d autoCompactionDefined=[ true | false ]
     -d parallelDBAndViewCompaction=[ true | false ]
     -d databaseFragmentationThreshold[percentage]=<integer>
@@ -92,7 +95,10 @@ Parameters in the _General_ group include:
 * Parameters that _can_ be specified on bucket creation, but if not specified, acquire a default value.
 They include:
 
-** Parameters that _can_ be edited after bucket creation; these being xref:rest-api:rest-bucket-create.adoc#evictionpolicy[evictionPolicy], xref:rest-api:rest-bucket-create.adoc#durabilityminlevel[durabilityMinLevel], xref:rest-api:rest-bucket-create.adoc#threadsnumber[threadsNumber], xref:rest-api:rest-bucket-create.adoc#replicanumber[replicaNumber], xref:rest-api:rest-bucket-create.adoc#compressionmode[compressionMode], xref:rest-api:rest-bucket-create.adoc#maxttl[maxTTL], and xref:rest-api:rest-bucket-create.adoc#flushenabled[flushEnabled].
+** Parameters that _can_ be edited after bucket creation; these being xref:rest-api:rest-bucket-create.adoc#evictionpolicy[evictionPolicy], xref:rest-api:rest-bucket-create.adoc#durabilityminlevel[durabilityMinLevel], xref:rest-api:rest-bucket-create.adoc#threadsnumber[threadsNumber], xref:rest-api:rest-bucket-create.adoc#replicanumber[replicaNumber], xref:rest-api:rest-bucket-create.adoc#compressionmode[compressionMode], xref:rest-api:rest-bucket-create.adoc#maxttl[maxTTL], xref:rest-api:rest-bucket-create.adoc#flushenabled[flushEnabled],
+xref:rest-api:rest-bucket-create.adoc#historyretentioncollectiondefault[historyRetentionCollectionDefault],
+xref:rest-api:rest-bucket-create.adoc#historyretentionbytes[historyRetentionBytes], and
+xref:rest-api:rest-bucket-create.adoc#historyretentionseconds[historyRetentionSeconds].
 
 ** Parameters that _cannot_ be edited after bucket creation; these being xref:rest-api:rest-bucket-create.adoc#buckettype[bucketType], xref:rest-api:rest-bucket-create.adoc#storagebackend[storageBackend], xref:rest-api:rest-bucket-create.adoc#replicaindex[replicaIndex], and xref:rest-api:rest-bucket-create.adoc#conflictresolutiontype[conflictResolutionType].
 
@@ -619,6 +625,122 @@ curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
 
 If successful, the call returns a `200 OK` notification.
 No object is returned.
+
+[#historyretentioncollectiondefault]
+=== historyRetentionCollectionDefault
+
+Whether a change history is made for the bucket.
+The change history records changes made to all collections within the bucket, and is written to disk continuously.
+The value can be either `true` (the default) or `false`.
+
+This parameter is ignored unless the value of `storageBackend` is specified as `magma`.
+This parameter is also ignored unless a positive value is specified for either `historyRetentionSeconds` or `historyRetentionBytes`, or both.
+
+[#example-flushenabled-create]
+==== Example: Enable historyRetentionCollectionDefault, when Creating
+
+The following example creates a bucket, specifies its storage as _magma_, and specifies that a record of changes made to collections within the bucket should _not_ be made.
+
+----
+curl -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d historyRetentionCollectionDefault=false
+----
+
+Success returns `202 Accepted`.
+
+[#example-flushenabled-edit]
+==== Example: Modify historyRetentionCollectionDefault, when Editing
+
+The following example modifies the value of `historyRetentionCollectionDefault` for the existing bucket `testBucket`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d historyRetentionCollectionDefault=true
+----
+
+Success returns `200 OK`.
+Note, however, that this call only results in a change history being written to disk if `storageBackend` was specified as `magma` at bucket-creation, and if a positive value is specified (either prior to or after this call) for either `historyRetentionSeconds` or `historyRetentionBytes`, or for both.
+
+[#historyretentionbytes]
+=== historyRetentionBytes
+
+Specifies the maximum size, in bytes, of the change history that is written to disk for all collections in this bucket when the value of `historyRetentionCollectionDefault` is `true`.
+
+Note that each replica configured for the bucket maintains a copy of the change history: therefore, if two replicas are configured, and the specified maximum size is 1,000,000 bytes, the total size used for the change history across the cluster becomes 3,000,000 bytes.
+
+Note that for a change history to be written to disk, a positive value must be specified either for this parameter or for `historyRetentionSeconds`, or both.
+
+[#example-flushenabled-create]
+==== Example: Set historyRetentionBytes, when Creating
+
+The following example creates a bucket, specifies its storage as _magma_, accepts the default value of `true` for `historyRetentionCollectionDefault`, and specifies the maximum disk-size of the change-record as 12,500,000 bytes.
+Thus, when this size-limit is reached, the oldest key-value pairs in the current record will be successively removed, by means of compaction.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d historyRetentionBytes=12500000
+----
+
+Success returns `202 Accepted`.
+
+[#example-flushenabled-edit]
+==== Example: Modify historyRetentionBytes, when Editing
+
+The following example modifies the value of `historyRetentionBytes` for the existing bucket `testBucket`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d historyRetentionBytes=12000000
+----
+
+Success returns `200 OK`.
+
+[#historyretentionseconds]
+=== historyRetentionSeconds
+
+Specifies the maximum number of seconds to be covered by the change history that is written to disk for all collections in this bucket when the value of `historyRetentionCollectionDefault` is `true`.
+
+Note that for a change history to be written to disk, a positive value must be specified either for this parameter or for `historyRetentionBytes`, or both.
+
+[#example-flushenabled-create]
+==== Example: Set historyRetentionSeconds, when Creating
+
+The following example creates a bucket, specifies its storage as _magma_, accepts the default value of `true` for `historyRetentionCollectionDefault`, and specifies the maximum number of seconds for the change-record as 13,600.
+Thus, key-value pairs that have been recorded prior to 13,600 seconds before the current time will be removed, by means of compaction.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d historyRetentionBytes=13600
+----
+
+Success returns `202 Accepted`.
+
+[#example-flushenabled-edit]
+==== Example: Modify historyRetentionSeconds, when Editing
+
+The following example modifies the number of seconds to be covered by the change history for the existing bucket `testBucket` to 11,000.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d historyRetentionSeconds=11000
+----
+
+Success returns `200 OK`.
 
 [#auto-compaction-parameters]
 == Auto-Compaction Parameters
