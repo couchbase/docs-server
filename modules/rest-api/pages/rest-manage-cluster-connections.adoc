@@ -28,13 +28,29 @@ curl -u <username>:<password> -X POST
   <ip-address-or-domain-name>:8091/pools/default/settings/memcached/global
   -d max_connections=<integer>
   -d system_connections=<integer>
+  -d connection_limit_mode=[ disconnect | recycle ]
+  -d free_connection_pool_size=<integer>
 
 curl -u <username>:<password> -X GET
   <ip-address-or-domain-name>:8091/pools/default/settings/memcached/global
 ----
 
 The `integer` specified as the value for `max_connections` determines the maximum number of connections that can be established by memcached for the cluster.
+The smallest value acceptable for `max_connections` is `2000`.
 The `integer` specified as the value for `system_connections` determines the maximum number of connections that can be established by authenticated system-users for the cluster.
+The smallest value acceptable for `system_connections` is `1000`.
+
+The value of `connection_limit_mode` can be either:
+
+* `disconnect`.
+When the maximum number of connections for authenticated system-users (as specified by the value of `system_connections`) has been reached, each new attempted connection is dropped.
+This is the default.
+
+* `recycle`.
+When the maximum number of connections for authenticated system-users (as specified by the value of `system_connections`) has been reached, each new attempted connection is accepted, and one or more existing, stale connections is dropped.
+
+The value of the optional `free_connection_pool_size` parameter must be an integer: this specifies the number of free connections that should be maintained for the cluster, to ensure that new connections can be immediately accepted when `connection_limit_mode` is specified as `recycle`.
+If no value is specified for `free_connection_pool_size`, the value defaults to 1% of the value specified for `system_connections`.
 
 == Responses
 
@@ -48,15 +64,16 @@ Failure to authenticate returns `401 Unauthorized`.
 Successful authentication with an inappropriate role returns `403 Forbidden`, and an object such as the following: `{"message":"Forbidden. User needs the following permissions","permissions":["cluster.admin.memcached!read"]}`.
 
 Specifying, in a POST, an `integer` whose size is excessive for the environment returns `400 Bad Request`, and an object such as the following: `{"system_connections":"too_large"}`.
+Likewise, specifying an integer whose size is insufficient returns `400 Bad Request`, and an object such as the following: `{"max_connections":"too_small"}`.
 
 == Examples
 
 The following example sets the maximum number of connections for authenticated system-users to `50000`:
 
 ----
-curl -u Administrator:password -v -X POST \
-localhost:8091/pools/default/settings/memcached/global \
--d system_connections=50000
+curl -X POST http://localhost:8091/pools/default/settings/memcached/global \
+-d system_connections=50000 \
+-u Administrator:password
 ----
 
 If successful, the call returns an object such as the following:
@@ -68,9 +85,9 @@ If successful, the call returns an object such as the following:
 The following example sets the maximum number of connections for memcached to `650000`:
 
 ----
-curl -u Administrator:password -X POST \
-localhost:8091/pools/default/settings/memcached/global \
--d  max_connections=650000
+curl -X POST http://localhost:8091/pools/default/settings/memcached/global \
+-u Administrator:password \
+-d max_connections=650000
 ----
 
 If successful, the call returns an object such as the following:
@@ -84,14 +101,32 @@ The returned object thus indicates that both `max_connections` and `system_conne
 The following example returns the current settings for the cluster:
 
 ----
-curl -u Administrator:password -v -X GET \
-localhost:8091/pools/default/settings/memcached/global
+curl -u Administrator:password -X GET \
+http://localhost:8091/pools/default/settings/memcached/global
 ----
 
 If successful, the call returns an object such as the following:
 
 ----
 {"max_connections":650000,"system_connections":50000}
+----
+
+The following example establishes maximum numbers for memcached and system connections as `650000` and `750000` respectively.
+It also specifies the value of `connection_limit_mode` as `recycle`, to ensure that new connections are accepted; and specifies a `free_connection_pool_size` of `10000`.
+
+----
+curl -X POST http://localhost:8091/pools/default/settings/memcached/global \
+-d free_connection_pool_size=10000 \
+-u Administrator:password \
+-d connection_limit_mode=recycle \
+-d system_connections=750000 \
+-d max_connections=650000
+----
+
+If successful, the call returns an object such as the following:
+
+----
+{"max_connections":650000,"system_connections":750000,"connection_limit_mode":"recycle","free_connection_pool_size":10000}
 ----
 
 == See Also
