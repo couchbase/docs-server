@@ -13,48 +13,32 @@ Its capacity is administrator-specified.
 When the change history is full, old records are automatically removed (by means of compaction), to allow space for new records.
 
 Change history can be either _on_ or _off_.
-This is determined at bucket-level: if the change history is _on_, it is active for _all collections_ in the bucket.
+This is determined at bucket-level: if the change history is _on_, it is potentially active for _all collections_ in the bucket.
 
-For a bucket's change history to be switched _on_, the capacity of the change history must be established, as a positive integer corresponding either to _bytes_ or _seconds_.
-If no capacity is specified, no change history is generated.
-Optionally, positive integers can be specified for _both_ bytes and seconds: in such cases, record-removal occurs as soon as either capacity is reached.
+If change history is _on_, the size of the change history should be specified in both _seconds_ and _bytes_:
 
-The minimum capacity for the change history is _2 Gigabytes_ (which would be specified as `2147483648`).
-The maximum is _1.8 Petabytes_ (which would be specified as `18446744073709551615`).
-If an integer outside this range is specified, an error is flagged, no file-size is established, and change history remains disabled for the bucket.
+* The number of _seconds_ establishes a time window, extending from the present into the past.
+Changes recorded prior to the earliest point specified by the current time window are removed.
+
+* The number of _bytes_ establishes a physical size for the change history.
+If this size is exceeded, records are removed, starting with the earliest changes.
+
+The minimum size for the change history is _2 GiB_ (which would be specified as `2147483648`).
+The maximum is _1.8 PiB_ (which would be specified as `18446744073709551615`).
+If a positive integer outside this range is specified, an error is flagged, no file-size is established, and change history remains disabled for the bucket.
+
+If the default value of zero is retained for both seconds and bytes, the recording of change history is disabled.
+If a positive integer is specified for either seconds or bytes, the recording of change history is enabled.
 
 Note that the change history is created _per bucket_, and is replicated in accordance with the number of intra-cluster replicas defined for the bucket.
 Therefore, if two replicas are configured, and the specified maximum size is 2 GB, the total size used for the change history across the cluster becomes 6 GB.
-
-If the change history for a bucket is switched _on_, the recording of changes can be performed in either of two ways, which are:
-
-* _Deduplication off_.
-No deduplication is performed by the Data Service; meaning that all writes to documents in the collection are recorded.
-
-* _Deduplication on_.
-Deduplication _may_ be performed by the Data Service; meaning that only a subset of writes to documents in the collection may be recorded.
-
-Deduplication can be manually configured at collection-level; either when the collection is created; or subsequently, when the collection's existing setting is modified.
-The default setting for all collections is controlled at bucket-level.
 
 == Change-History Management
 
 The following interfaces are provided for configuring change history.
 
 [#change-history-enablement]
-=== Change-History Enablement and Capacity Settings
-
-The recording of change history is enabled at bucket level.
-By default, it is _disabled_.
-It can be enabled at bucket-creation, and can subsequently be disabled and enabled by changing the existing bucket's configuration.
-
-Enablement occurs by defining a capacity for the on-disk change-history file.
-This can be specified with a positive integer, corresponding either to _bytes_ or to _seconds_.
-Optionally, positive integers can be specified for both bytes and seconds.
-If, as the change history's size increases, either capacity is reached, records are removed from the change history (by means of compaction), to make room for new records.
-The minimum capacity for the change-history file is 2 GB.
-
-If the default value of zero is retained in both cases, the recording of change history is disabled.
+=== Change-History Enablement
 
 Change history can be enabled with either:
 
@@ -64,18 +48,15 @@ See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
 * The CLI, using `couchbase-cli bucket-create` (to create a bucket) or `couchbase-cli bucket-edit` (to edit a bucket); specifying one or both of the parameters `history-retention-bytes` and `history-retention-seconds`.
 See xref:cli:cbcli/couchbase-cli-bucket-create.adoc[bucket-create] and xref:cli:cbcli/couchbase-cli-bucket-edit.adoc[bucket-edit].
 
-[#deduplication-bucket-wide]
-=== Deduplication Bucket-Wide Default Settings
+[#default-collection-setting]
+=== Default Collection-Setting
 
-A change history can be created with _deduplication_ either _off_ or _on_.
-If deduplication is _off_, the change history is more complete.
-If deduplication is _on_, the change history is more compact.
+If the change history for a bucket is switched _on_, the recording of changes can be performed for collections within the bucket.
 
-The setting for deduplication can be made at collection-level.
-However, the default for all collections within a bucket can be established when a bucket is either created or edited.
-By default, this setting has a value of `true`, which means that deduplication is _off_ for every collection; unless the setting is overridden in the creating or editing of the individual collection.
+A default setting, controlling whether changes are recorded for all collections within the bucket, can be established when a bucket is either created or edited.
+This setting itself has a default value of `true`, which means that change history is indeed recorded for every collection; unless the setting is overridden in the creating or editing of the individual collection.
 
-The bucket-wide default deduplication setting can be established with either:
+This bucket-wide default setting can be established with either:
 
 * The REST API, using `POST /pools/default/buckets` (to create a bucket) or `POST /pools/default/buckets/<bucketName>` (to edit); specifying the parameter `historyRetentionCollectionDefault`.
 See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
@@ -83,12 +64,10 @@ See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
 * The CLI, using `couchbase-cli bucket-create` (to create a bucket) or `couchbase-cli bucket-edit` (to edit a bucket); specifying the parameter `enable-history-retention-by-default`.
 See xref:cli:cbcli/couchbase-cli-bucket-create.adoc[bucket-create] and xref:cli:cbcli/couchbase-cli-bucket-edit.adoc[bucket-edit].
 
-=== Deduplication Collection-Specific Settings
+[#individual-collection-setting]
+=== Individual Collection-Setting
 
-A change history can be made with deduplication either _off_ or _on_.
-A default setting that applies to all collections can be established at bucket level; as described in xref:learn:data/change-history.adoc##deduplication-bucket-wide[Deduplication Bucket-Wide Default Settings], above.
-
-However, deduplication can also be switched off or on for each individual collection, overriding the established, bucket-wide default.
+Change history can be switched off or on for each individual collection, overriding the established, bucket-wide default.
 This setting can be made either when the collection is created, or subsequently, by editing the collection's configuration.
 
 The setting can be established with either:
@@ -101,8 +80,8 @@ See xref:cli:cbcli/couchbase-cli-collection-manage.adoc[collection-manage].
 
 === Change-History Status and Content-Access
 
-The deduplication status of each collection can be returned by means of the `cbstats` tool, with the arguments `collections` and `collection-details`.
-Output indicates a status of `true` (deduplication is _off_) or `false` (deduplication is _on_).
+The change-history status of each collection can be returned by means of the `cbstats` tool, with the arguments `collections` and `collection-details`.
+Output indicates a status of `true` (change history is _on_) or `false` (change history is _off_).
 See the xref:cli:cbstats/cbstats-collections.adoc[collections] and xref:cli:cbstats/cbstats-collections-details.adoc[collections-details] reference pages for xref:cli:cbstats/cbstats-intro.adoc[cbstats].
 
 To access the change history and examine its contents, use the xref:4.1@kafka-connector::index.adoc[Kafka 4.1 Connector].
@@ -134,13 +113,12 @@ However, a further check is made across checkpoints, prior to writes being persi
 The total number of items recently removed from the flusher in this way is represented by `ep_total_deduplicated_flusher`.
 
 * `history_start_seqno`.
-The smallest document _seqno_ that is part of the history retention.
-This seqno is the starting point of the history window.
+The document seqno_ that represents the starting point of the history window.
 Hence, all documents having a higher seqno will be retained.
 As more and more data is removed from the window, this seqno will be incremented, to correspond to a later document.
 
 * `history_disk_size`.
-On-disk compressed size (after Magma’s block compression and per document compression) of the fragmented and unfragmented data that lies within the history window, expressed _per vBucket_.
+On-disk compressed size (after Magma’s block compression and per document compression) of the fragmented and unfragmented data that lies within the history window, for all vBuckets on the node.
 
 For more information, see the reference page for `cbstats` xref:cli:cbstats/cbstats-all.adoc[all].
 
@@ -156,24 +134,109 @@ In the following descriptions, the _history window_ refers to the time or space 
 * `kv_total_enqueued`, `kv_total_deduplicated`, and `kv_total_deduplicated_flusher`.
 These have the same significance as their equivalents, provided by `cbstats`; described immediately above.
 
-* `ep_magma_history_time_evicted`.
+* `kv_ep_magma_history_time_evicted_bytes`.
 The total amount of data (in bytes) so far removed from the change history, due to the limit established with `historyRetentionSeconds` (REST API) or `history-retention-seconds` (CLI).
 
-* `ep_magma_history_size_evicted`.
+* `kv_ep_magma_history_size_evicted`.
 The total amount of data (in bytes) so far removed from the change history, due to the limit established with `historyRetentionBytes` (REST API) or `history-retention-bytes` (CLI).
 
-* `ep_db_history_file_size`.
+* `kv_ep_db_history_file_size`.
 On-disk compressed size (after Magma’s block compression and per document compression) of the fragmented and unfragmented data that lies within the history window.
 
-* `vb_max_history_disk_size`.
+* `kv_vb_max_history_disk_size`.
 Maximum amount of history retained across all vBuckets.
 The size here is _on-disk compressed_.
++
+The statistic can be used to return data according to `state`: which can be `active`, `pending`, `replica`, or `dead`.
+By default data on all available states is returned.
+For example:
++
+----
+curl -X GET "http://localhost:8091/pools/default/stats/range/kv_vb_max_history_disk_size_bytes?bucket=travel-sample" -u Administrator:password | jq '.'
+----
++
+Output, in summarized form, is as follows:
++
+----
+{
+  "data": [
+    {
+      "metric": {
+        "nodes": [
+          "10.144.231.101:8091"
+        ],
+        "bucket": "travel-sample",
+        "instance": "kv",
+        "name": "kv_vb_max_history_disk_size_bytes",
+        "state": "active"
+      },
+      "values": [
+        [
+          1679399105,
+          "0"
+        ],
+          .
+          .
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "10.144.231.101:8091"
+        ],
+        "bucket": "travel-sample",
+        "instance": "kv",
+        "name": "kv_vb_max_history_disk_size_bytes",
+        "state": "pending"
+      },
+      "values": [
+        [
+          1679399105,
+          "0"
+        ],
+          .
+          .
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "10.144.231.101:8091"
+        ],
+        "bucket": "travel-sample",
+        "instance": "kv",
+        "name": "kv_vb_max_history_disk_size_bytes",
+        "state": "replica"
+      },
+      "values": [
+        [
+          1679399105,
+          "0"
+        ],
+          .
+          .
+      ]
+    }
+  ],
+  "errors": [],
+  "startTimestamp": 1679399105,
+  "endTimestamp": 1679399165
+}
+----
++
+An individual state can be specified with the `state` flag, as follows:
++
+----
+curl -X GET "http://localhost:8091/pools/default/stats/range/kv_vb_max_history_disk_size_bytes?bucket=travel-sample&state=replica" -u Administrator:password | jq '.'
+----
++
+The output from this call will contain only data for the state `replica`.
 
-* `ep_magma_history_logical_disk_size`.
+* `kv_ep_magma_history_logical_disk_size`.
 Size of fragmented and unfragmented data (after per document compression) that lies within the history window.
 This, along with `ep_magma_history_logical_data_size`, can be used to compute fragmentation in history.
 
-* `ep_magma_history_logical_data_size`.
+* `kv_ep_magma_history_logical_data_size`.
 Size of unfragmented data (after per document compression) that lies within the history window.
 This, along with `ep_magma_history_logical_disk_size`, can be used to compute fragmentation in history.
 
