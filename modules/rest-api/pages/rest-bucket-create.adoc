@@ -108,9 +108,6 @@ For full details and examples, see xref:rest-api:rest-bucket-create.adoc#general
 
 === Auto-Compaction
 
-Parameters in the _Auto-compaction_ group support only _standard_ storage: they are unnecessary for _memory-optimized_ storage, and so are ignored, if explicitly specified when memory-optimized storage has been configured.
-For information on index storage, see xref:learn:services-and-indexes/indexes/storage-modes.adoc[Storage Settings].
-
 _All_ auto-compaction parameters can be edited, following bucket creation.
 
 The Auto-compaction parameter group contains the following: xref:rest-api:rest-bucket-create.adoc#autocompactiondefined[autoCompactionDefined], xref:rest-api:rest-bucket-create.adoc#paralleldbandviewcompaction[parallelDBAndViewCompaction], xref:rest-api:rest-bucket-create.adoc#databasefragmentationthresholdpercentage[+databaseFragmentationThreshold[percentage]+], xref:rest-api:rest-bucket-create.adoc#databasefragmentationthresholdsize[+databaseFragmentationThreshold[size]+], xref:rest-api:rest-bucket-create.adoc#viewfragmentationthresholdpercentage[+viewFragmentationThreshold[percentage]+], xref:rest-api:rest-bucket-create.adoc#viewfragmentationthresholdsize[+viewFragmentationThreshold[size]+], xref:rest-api:rest-bucket-create.adoc#purgeinterval[purgeInterval], xref:rest-api:rest-bucket-create.adoc#allowedtimeperiodfromhour[+allowedTimePeriod[fromHour]+], xref:rest-api:rest-bucket-create.adoc#allowedtimeperiodfromminute[+allowedTimePeriod[fromMinute]+], xref:rest-api:rest-bucket-create.adoc#allowedtimeperiodtohour[+allowedTimePeriod[toHour]+], xref:rest-api:rest-bucket-create.adoc#allowedtimeperiodtominute[+allowedTimePeriod[toMinute]+], and xref:rest-api:rest-bucket-create.adoc#allowedtimeperiodabortoutside[+allowedTimePeriod[abortOutside]+].
@@ -120,6 +117,9 @@ Note that _Auto-compaction_ parameters take effect only if both of the following
 * Auto-compaction is enabled, by means of the xref:rest-api:rest-bucket-create.adoc#autocompactiondefined[autoCompactionDefined] parameter.
 
 * An explicit setting is made to the xref:rest-api:rest-bucket-create.adoc#paralleldbandviewcompaction[parallelDBAndViewCompaction] parameter.
+
+Note that in Couchbase Server Enterprise Edition, auto-compaction does not apply to memory-optimized index storage, and there are no settings necessary for configuring the auto-compaction of Global Secondary Indexes using standard index storage.
+For information on storage, see xref:learn:buckets-memory-and-storage/storage-engines.adoc[Storage Engines].
 
 For full details and examples, see xref:rest-api:rest-bucket-create.adoc#auto-compaction-parameters[Auto-Compaction Parameters], below.
 
@@ -686,14 +686,17 @@ If successful, the call returns `202 Accepted`.
 === historyRetentionCollectionDefault
 
 Whether a change history is made for the bucket.
-The change history records changes made to all collections within the bucket, and is written to disk continuously.
 The value can be either `true` (the default) or `false`.
+If the value is `true`, the change history records changes made to all collections within the bucket, unless this setting is overridden for one or more individual collections.
+(For details on per collection overriding, see xref:rest-api:creating-a-collection.adoc[Creating and Editing a Collection]).
 
 This parameter is ignored unless the value of `storageBackend` is specified as `magma`.
 This parameter is also ignored unless a positive value is specified for either `historyRetentionSeconds` or `historyRetentionBytes`, or both.
 
+For an overview of change history, see xref:learn:data/change-history.adoc[Change History].
+
 [#example-flushenabled-create]
-==== Example: Enable historyRetentionCollectionDefault, when Creating
+==== Example: Disable historyRetentionCollectionDefault, when Creating
 
 The following example creates a bucket, specifies its storage as _magma_, and specifies that a record of changes made to collections within the bucket should _not_ be made.
 
@@ -727,14 +730,22 @@ Note, however, that this call only results in a change history being written to 
 
 Specifies the maximum size, in bytes, of the change history that is written to disk for all collections in this bucket when the value of `historyRetentionCollectionDefault` is `true`.
 
-Note that each replica configured for the bucket maintains a copy of the change history: therefore, if two replicas are configured, and the specified maximum size is 1,000,000 bytes, the total size used for the change history across the cluster becomes 3,000,000 bytes.
+The minimum size for the change history is _2 GiB_ (which would be specified as `2147483648`).
+The maximum is _1.8 PiB_ (which would be specified as `18446744073709551615`).
+If a positive integer outside this range is specified, an error is flagged, no file-size is established, and change history remains disabled for the bucket.
+
+Each replica configured for the bucket maintains a copy of the change history.
+Therefore, if two replicas are configured, and the specified maximum size is 2 GiB, the total size used for the change history across the cluster becomes 6 GiB.
 
 Note that for a change history to be written to disk, a positive value must be specified either for this parameter or for `historyRetentionSeconds`, or both.
+Additionally, `storageBackend` must be specified as `magma`.
+
+For an overview of change history, see xref:learn:data/change-history.adoc[Change History].
 
 [#example-flushenabled-create]
 ==== Example: Set historyRetentionBytes, when Creating
 
-The following example creates a bucket, specifies its storage as _magma_, accepts the default value of `true` for `historyRetentionCollectionDefault`, and specifies the maximum disk-size of the change-record as 12,500,000 bytes.
+The following example creates a bucket, specifies its storage as _magma_, accepts the default value of `true` for `historyRetentionCollectionDefault`, and specifies the maximum disk-size of the change-record as _2 GiB_.
 Thus, when this size-limit is reached, the oldest key-value pairs in the current record will be successively removed, by means of compaction.
 
 ----
@@ -743,7 +754,7 @@ curl -v -X POST http://localhost:8091/pools/default/buckets \
 -d name=testBucket \
 -d ramQuota=1100 \
 -d storageBackend=magma \
--d historyRetentionBytes=12500000
+-d historyRetentionBytes=2147483648
 ----
 
 Success returns `202 Accepted`.
@@ -751,12 +762,12 @@ Success returns `202 Accepted`.
 [#example-flushenabled-edit]
 ==== Example: Modify historyRetentionBytes, when Editing
 
-The following example modifies the value of `historyRetentionBytes` for the existing bucket `testBucket`.
+The following example modifies the value of `historyRetentionBytes` to _4 GiB_, for the existing bucket `testBucket`.
 
 ----
 curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
 -u Administrator:password \
--d historyRetentionBytes=12000000
+-d historyRetentionBytes=4294967296
 ----
 
 Success returns `200 OK`.
@@ -767,6 +778,8 @@ Success returns `200 OK`.
 Specifies the maximum number of seconds to be covered by the change history that is written to disk for all collections in this bucket when the value of `historyRetentionCollectionDefault` is `true`.
 
 Note that for a change history to be written to disk, a positive value must be specified either for this parameter or for `historyRetentionBytes`, or both.
+
+For an overview of change history, see xref:learn:data/change-history.adoc[Change History].
 
 [#example-flushenabled-create]
 ==== Example: Set historyRetentionSeconds, when Creating
