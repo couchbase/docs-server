@@ -1,0 +1,253 @@
+= Collecting Logs
+:description: pass:q[Couchbase-Server logs can be collected, prior to inspection.]
+:page-topic-type: reference
+
+[abstract]
+{description}
+
+== HTTP method and URI
+
+----
+POST /controller/startLogsCollection
+
+GET /pools/default/tasks
+
+POST /controller/cancelLogsCollection
+----
+
+[#description]
+== Description
+
+The Couchbase-Server _Logging_ facility records important events, and saves the details to log files, on disk.
+On each node within a Couchbase-Server cluster, logging is performed continuously.
+Logged information can be collected either from all or from selected nodes within the cluster.
+
+The `POST /controller/startLogsCollection` method and endpoint start the collection of Couchbase-Server log files.
+The `POST /controller/cancelLogsCollection` method and endpoint can be used to cancel collection, once it has been started.
+The `GET /pools/default/tasks` method and endpoint, which are fully described in xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks], can be used to return status on ongoing tasks, including the collection of log files.
+
+Both `POST /controller/startLogsCollection` and `POST /controller/cancelLogsCollection` require either the *Full Admin* or the *Cluster Admin* role.
+
+[#log-file-locations]
+=== Log-File Locations
+
+By default, on Linux systems, log files are saved to `/opt/couchbase/var/lib/couchbase/logs`; on MacOS, to `/Users/username/Library/Application Support/Couchbase/var/lib/couchbase/logs`; and on Windows, to `C:\Program Files\Couchbase\Server\var\lib\couchbase\logs`.
+
+== Curl Syntax
+
+[source,bourne]
+----
+curl -X POST http://<ip-address-or-domain-name>:8091/controller/startLogsCollection
+-u <username>:<password>
+-d nodes=[ '*' | <node-list> ]
+-d logRedactionLevel=[ 'partial' | 'none' ]
+-d logDir=<pathname>
+-d tmpDir=<pathname>
+-d logRedactionSalt=<string>
+-d uploadHost=<upload-host-name>
+-d uploadProxy=<upload-proxy-name>
+-d customer=<customer-name>
+-d ticket=<ticket-number>
+
+curl -X POST http://<ip-address-or-domain-name>:8091/controller/cancelLogsCollection
+-u <username>:<password>
+----
+
+For the curl syntax for `GET /pools/default/tasks`, see xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks].
+
+Parameters for `POST /controller/startLogsCollection` are as follows:
+
+* `nodes`. Either a (quoted) wildcard character, `'*'`, indicating that logs are to be collected for all nodes in the cluster; or a list of nodes for which logs are to be collected.
+If a list is specified, each element in the list must be comma-separated from the element that follows it; and each element must take the following form:
++
+[source,bourne]
+----
+ns_1@<ip-address-or-domain-name>
+----
++
+After log-collection has started, if `POST /controller/cancelLogsCollection` is executed, log-collection is stopped on all nodes that were specified by means of the `nodes` flag.
+
+* `logRedactionLevel`.
+The redaction-level for the logs.
+This must be either `none` (the default) or `partial`.
+If `partial` is specified, data such as usernames, keys, and values are redacted from the logs.
+
+* `logDir`.
+The pathname of the directory on each node into which logs are written.
+Each node must have this pathname.
+If a node does not have the pathname, or if the directory has insufficient space, or if the directory is not accessible by user `couchbase`, log-collection fails for that node.
+
+* `tmpDir`.
+The pathname of the directory on each node into which temporary files are written, during log-collection.
+If a node does not have the pathname, the operating system's temporary directory is used instead.
+If the administrator-specified directory has insufficient space, or if the directory is not accessible by user `couchbase`, log-collection fails for that node.
+
+* `logRedactionSalt`.
+Used optionally, to specify a string to be used as the salt, when `partial` redaction is specified; so as to increase redaction-security.
+If no salt is specified, a salt is automatically generated and applied by Couchbase Server.
+
+* `upload-host`.
+Used optionally, to specify, as a URL, the name of the host to which the zip file containing the collected logs is to be uploaded.
+
+* `upload-proxy`.
+Specifies a proxy that can be used for upload; in cases where the cluster has been deployed in a secure environment, and so does not have a direct, outbound connection to the internet.
+
+* `customer`.
+Used optionally, to specify a `customer-name` that is the name of the customer uploading logs.
+
+* `ticket`.
+Used optionally, to specify a `ticket-number` that corresponds to a ticket created by Couchbase Support to track the issue in connection with which logs are being uploaded.
+
+[#responses]
+== Responses
+
+On success, both `POST /controller/startLogsCollection` and `POST /controller/cancelLogsCollection` return `200 OK`; and an empty array.
+
+Status on an ongoing log-collection, including reports of failure, can be accessed by means of `GET /pools/default/tasks`.
+For example, starting log-collection with an inaccessible `output` directory returns `200 OK`: however, subsequent use of `GET /pools/default/tasks` returns output containing the following:
+
+[source,bourne]
+----
+"perNode": {
+      "ns_1@10.144.231.101": {
+        "status": "failed",
+        "collectionStatusCode": "1",
+        "collectionOutput": "do not have write access to the directory /home/vagrant/output2\n"
+      },
+          .
+          .
+          .
+----
+
+Failure to authenticate returns `401 Unauthorized`.
+Specifying an incorrect URL returns `404 Object Not Found`.
+An attempt to start log-collection while log-collection is already underway returns `400 Bad Request` and an error message such as `{"_":"Logs collection task is already started"}`.
+
+An attempt to start log-collection while specifying an unknown node returns `400 Bad Request` and an error message such as `{"nodes":"Unknown nodes: [\"ns_1@10.144.231.105\"]"}`.
+
+[#examples]
+== Examples
+
+The following example starts log-collection for three, explicitly specified cluster-nodes.
+It also specifies that partial redaction be used, and provides a salt.
+Additionally, it specifies an upload-host, a customer-name, and a ticket-number.
+
+[source,bourne]
+----
+curl -X POST http://10.144.231.101:8091/controller/startLogsCollection \
+-u Administrator:password \
+-d nodes=ns_1@10.144.231.101,ns_1@10.144.231.102,ns_1@10.144.231.103 \
+-d logRedactionLevel=partial \
+-d logDir=/home/vagrant/output \
+-d tmpDir=/home/vagrant/tmp \
+-d logRedactionSalt=hello \
+-d uploadHost=couchbase.com \
+-d customer=joe \
+-d ticket=1234
+----
+
+Success returns an empty array. Progress can be checked as follows.
+Note that this example uses https://jqlang.github.io/jq/[jq^], to facilitate output-readability:
+
+----
+curl -X GET http://10.144.231.101:8091/pools/default/tasks -u Administrator:password  | jq
+----
+
+If successful, the call returns output such as the following:
+
+[source,bourne]
+----
+[
+  {
+    "statusId": "953f92ce4618c864dec1f048ae1c0bb2",
+    "type": "rebalance",
+    "subtype": "rebalance",
+    "status": "notRunning",
+    "statusIsStale": false,
+    "masterRequestTimedOut": false,
+    "lastReportURI": "/logs/rebalanceReport?reportID=92aae5912d284b37cd2ace9a25df846e"
+  },
+  {
+    "node": "ns_1@10.144.231.101",
+    "type": "clusterLogsCollection",
+    "perNode": {
+      "ns_1@10.144.231.101": {
+        "status": "started",
+        "path": "/home/vagrant/output/collectinfo-2023-06-06T140735-ns_1@10.144.231.101-redacted.zip"
+      },
+      "ns_1@10.144.231.102": {
+        "status": "started",
+        "path": "/home/vagrant/output/collectinfo-2023-06-06T140735-ns_1@10.144.231.102-redacted.zip"
+      },
+      "ns_1@10.144.231.103": {
+        "status": "started",
+        "path": "/home/vagrant/output/collectinfo-2023-06-06T140735-ns_1@10.144.231.103-redacted.zip"
+      }
+    },
+    "progress": 0,
+    "ts": "2023-06-06 14:07:35",
+    "status": "running",
+    "recommendedRefreshPeriod": 2,
+    "cancelURI": "/controller/cancelLogsCollection"
+  }
+]
+----
+
+In the above output, a `clusterLogsCollection` task executed on node `ns_1@10.144.231.101` is shown to have three `perNode` activities.
+The status for each is displayed as `started`, and the `path` of the output file is shown.
+The `cancelURI` for the task is also provided.
+
+The following call is used to cancel the ongoing log-collection:
+
+[source,bourne]
+----
+curl -X POST http://10.144.231.101:8091/controller/cancelLogsCollection -u Administrator:password
+----
+
+Success returns an empty array.
+Results can be checked by a further use of `GET /pools/default/tasks`.
+Output is as follows:
+
+[source,bourne]
+----
+[
+  {
+    "statusId": "953f92ce4618c864dec1f048ae1c0bb2",
+    "type": "rebalance",
+    "subtype": "rebalance",
+    "status": "notRunning",
+    "statusIsStale": false,
+    "masterRequestTimedOut": false,
+    "lastReportURI": "/logs/rebalanceReport?reportID=92aae5912d284b37cd2ace9a25df846e"
+  },
+  {
+    "node": "ns_1@10.144.231.101",
+    "type": "clusterLogsCollection",
+    "perNode": {
+      "ns_1@10.144.231.101": {
+        "status": "failed"
+      },
+      "ns_1@10.144.231.102": {
+        "status": "failed"
+      },
+      "ns_1@10.144.231.103": {
+        "status": "failed"
+      }
+    },
+    "progress": 100,
+    "ts": "2023-06-06 14:07:35",
+    "status": "cancelled"
+  }
+]
+----
+
+The above output shows that the `status` of each activity is `failed`; and that of the overall task is `cancelled`.
+
+[#see-also]
+== See Also
+
+Logging, redaction, and file upload are described at xref:manage:manage-logging/manage-logging.adoc[Manage Logging].
+This also provides a list of log-files, and a description of how to use logging with Couchbase Web Console
+It also provides an introduction to managing logging with the CLI.
+
+Complete information on using the CLI to start, stop, and get status on log-collection is provided at xref:cli:cbcli/couchbase-cli-collect-logs-start.adoc[collect-logs-start], xref:cli:cbcli/couchbase-cli-collect-logs-stop.adoc[collect-logs-stop], and xref:cli:cbcli/couchbase-cli-collect-logs-status.adoc[collect-logs-status]
