@@ -1,6 +1,8 @@
 = Release Notes for Couchbase Server 7.2
 
 ////
+ALL Server 7.2.1 Release Notes commented out until GA.
+
 [#release-721]
 == Release 7.2.1 (August 2023)
 
@@ -17,6 +19,301 @@ Detailed information on the xref:rest-api:rest-xdcr-create-replication.adoc#filt
 
 * Using the REST API, node-connectivity can now be checked, prior to the creation of an XDCR reference.
 See xref:rest-api:rest-xdcr-connection-precheck.adoc[Checking Connections].
+
+=== Fixed Issues
+
+This release contains the following fixes.
+
+==== Analytics Service
+
+[#table-fixed-issues-721-analytics-service,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-56957[MB-56957^]
+|External collections could not be created using Azure Managed Identity.
+|Azure dependencies have been updated to correct this issue.
+
+|https://issues.couchbase.com/browse/MB-57588[MB-57588^]
+|Query results could be unnecessarily converted twice to JSON when documents were large.
+|The Query result is now converted to JSON once for all documents.
+
+|https://issues.couchbase.com/browse/MB-57615[MB-57615^]
+|When the Prometheus stats returned from Analytics exceeded four kilobytes, the status code was inadvertently set to 500 (Internal Error), and this resulted in a large number of warnings in the Analytics warning log. Couchbase Server discarded these statistics.
+|This has been fixed to properly return a 200 (OK) status code when the size of Prometheus stats exceeds 4KiB, allowing these stats to be recorded properly. The warning is not displayed.
+
+|===
+
+==== Data Service
+
+[#table-fixed-issues-721-data-dervice,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-39344[MB-39344^]
+|The last item in a replica checkpoint was not expelled. In scenarios such as large average item size, high numbers of replicas or low Bucket quota could result in a data-node entering an unrecoverable Out-of-Memory state.
+|ItemExpel has been enhanced to release all the items in a checkpoint when memory conditions allow.
+
+|https://issues.couchbase.com/browse/MB-56084[MB-56084^]
+|A rollback loop affected legacy clients when collections were used and a tombstone newer than the last mutation in the default collection was purged.
+|The lastReadSeqno is now Incremented when the client is not collection-aware.
+
+
+|https://issues.couchbase.com/browse/MB-56644[MB-56644^]
+|In rare cases, after a failover or memcached restart, a replica rollback while under memory pressure might have caused a crash in the Data Service.
+|Memory pressure recovery logic (Item expelling) is now skipped when replica rollback is in progress.
+
+|https://issues.couchbase.com/browse/MB-56970[MB-56970^]
+|XDCR or restore from backup entered an endless loop if attempting to overwrite a document which was deleted or expired some time ago with a deleteWithMeta operation. This was due to a specific unanticipated state in memory which increased CPU usage, and connection became unusable for further operations.
+|deleteWithMeta is now resilient to temporary non-existent values with xattr datatype.
+
+|https://issues.couchbase.com/browse/MB-57002[MB-57002^]
+|When using .NET SDK on Windows 10 client and client certs were enabled on CB Server, the Data-Service did not establish a connection and client bootstrap failed with a OpenSSL “session id context uninitialized" error.
+|Data-Service has been updated to disable TLS session resume.
+
+|https://issues.couchbase.com/browse/MB-57064[MB-57064^]
+|GET_META requests for deleted items fetched metadata in memory which was not evicted in value-eviction buckets.
+|Metadata items are now cleaned when the expiry pager runs.
+
+|https://issues.couchbase.com/browse/MB-57106[MB-57106^]
+|DCP clients streamed in out-of-sequence-order [OSO] backfill snapshots under Magma observed duplicate documents received in the disk snapshot. This happened where the stream was paused and resumed when the resume point was wrongly set to a key already processed in the stream.
+|OSO backfill in Magma now sets the correct resume point after a pause.
+
+|https://issues.couchbase.com/browse/MB-57304[MB-57304^]
+|Data Service rebalance duration was significantly impacted if other DCP clients created a large number of Streams, if those streams needed to be read from disk, due to the lack of prioritizing between rebalance and other DCP clients.
+|The number of backfills each DCP client can perform concurrently has been limited to allow fairer allocation of resources.
+
+|https://issues.couchbase.com/browse/MB-57400[MB-57400^]
+|The computation count for the items remaining DCP/Checkpoint stats exposed to Prometheus was the O(N) function. Where N is the number of items in a checkpoint. This caused various performance issues including Prometheus stats timeouts when checkpoints accumulated a high number of items.
+|The computation count has been optimized and now is O(1). 
+
+|https://issues.couchbase.com/browse/MB-57609[MB-57609^]
+|A spurious auto-failover could happen when Magma compaction visited a TTL'd document that was already deleted.
+|Document not found does not now increment the number of read failures.
+
+|===
+
+==== Index Service
+
+[#table-fixed-issues-721-index-service,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-56339[MB-56339^]
+|During scaling, an GSI indexer rebalance froze and did not successfully complete. This was because an index snapshot was not correctly deleted and recreated.
+|A flag now handles snapshots to ensure they are correctly deleted or recreated when indexes are updated during rebalancing.
+
+|https://issues.couchbase.com/browse/MB-57021[MB-57021^]
+|When alter index updated the replica count, new replicas were not built immediately when the original definition was {defer_build: true}. Existing replicas were built and new replicas were built in the next processing iteration.
+|New replicas are now built when the replica count is updated for deferred indexes. The status of existing index instances is checked, and if ready, a new build of the instance is triggered.
+
+|https://issues.couchbase.com/browse/MB-57059[MB-57059^]
+|Creation of Bloom filter for plasma back indexes was not enabled by default. Enabling it assists partial indexes and insert workloads by optimizing the back index lookups.
+|Bloom filter creation for plasma back indexes is now enabled by default. When upgrading, nodes with support for bloom filters start creating it. You can disable it and opt out.
+
+|https://issues.couchbase.com/browse/MB-57629[MB-57629^]
+|For Indexes created on a default scope and collection with dedicated plasma disk files, when there were many indexes, the overhead of maintaining dedicated files was an issue. The issue was aggravated on low end systems.
+|Shared plasma disk files similar to indexes created on collections are now used, so that the per index overhead is smaller.
+
+|https://issues.couchbase.com/browse/MB-57777[MB-57777^]
+|When the indexer was unable to keep up with KV mutations, and there was a queue of mutations within the indexer, there was a large memory overhead from the bookkeeping of queued up mutations.
+|Indexer has been improved to optimize memory usage so that the bookkeeping overhead is reduced for queued up mutations.
+
+|===
+
+==== Query Service
+
+[#table-fixed-issues-721-query-service,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-56533[MB-56533^]
+|Due to how nested dependencies were handled, a sudden rise in memory utilization of the query service on a node caused a memory alert issue. The node did not recover correctly following a restart.
+|Nested dependencies are now handled appropriately in the ADVISE statement.
+
+|https://issues.couchbase.com/browse/MB-56563[MB-56563^]
+|A query with multiple filters on an index key, one of which was a parameter, could produce incorrect results. This was caused by incorrectly composing the exact index spans to support the query.
+|The way in which exact spans are set has been modified to correct this issue.
+
+|https://issues.couchbase.com/browse/MB-56579[MB-56579^]
+|Covering FLATTEN_KEYS() on an array index generated incorrect results. This was because a modified version of the ANY clause was applied after the index which meant false positives were retained and Distinct scan rows were eliminated.
+|The ANY filter is now applied on an index scan itself when covering an index scan with flatten keys.
+
+|https://issues.couchbase.com/browse/MB-56683[MB-56683^]
+|Inter-service read timeout errors were not detected or handled accordingly. User requests consequently failed with timeout errors without retrying with a new connection.
+|The error handling and retry mechanism has been modified to handle these types of timeout issues and errors.
+
+|https://issues.couchbase.com/browse/MB-56727[MB-56727^]
+|Under certain circumstances, a query with UNNEST used a covering index scan and incorrect results were returned. Reference to the UNNEST expression should have prevented the covering index from being used for the query as the index did not contain the entire array.
+|The logic to determine covering UNNEST scans has been changed to not use a covering index scan for such queries.
+
+|https://issues.couchbase.com/browse/MB-56937[MB-56937^]
+|When an index scan had multiple spans, index selectivity was incorrectly calculated.
+|Index selectivity for multiple index spans is now correctly calculated.
+
+|https://issues.couchbase.com/browse/MB-57024[MB-57024^]
+|Incorrect results were returned for a non-IndexScan on a constant false condition. This was due to incorrect handling of a FALSE WHERE clause.
+|The FALSE WHERE clause is now correctly handled.
+
+|https://issues.couchbase.com/browse/MB-57029[MB-57029^]
+|Querying system:functions_cache in a multi query node cluster returned incomplete results with warnings. The query result included entries in the local query node, but none from remote query nodes. This was due to a typographical error.
+|The typographical error has been corrected.
+
+|https://issues.couchbase.com/browse/MB-57080[MB-57080^]
+|A panic in go_json.stateInString under parsed value functions caused by incorrect concurrent access resulted in the state being freed whilst still in use.
+|The concurrent access issue has been resolved.
+
+|https://issues.couchbase.com/browse/MB-57251[MB-57251^]
+|A Prepared statement might have resulted in an incorrect result in a multi-node environment. For example, a database with two query nodes.
+|Correlated subqueries from an encoded plan are now detected and marked. This ensures correct results are provided.
+
+|https://issues.couchbase.com/browse/MB-57279[MB-57279^]
+|When a WITH clause (common table expression, or CTE) was used inside a subquery, and the WITH clause definition referenced the parent query, and was correlated, the query engine did not properly detect the correlation. This produced an incorrect result from the WITH clause evaluation because the result was not cached correctly.
+|Correlations inside WITH clause definitions are now properly detected.
+
+|https://issues.couchbase.com/browse/MB-57316[MB-57316^]
+|cbq required a client authentication key file whenever a certificate authority file was used.
+|cbq now accepts a certificate authority file without a client key file enabling use with username and password credentials.
+
+|https://issues.couchbase.com/browse/MB-57680[MB-57680^]
+|When appropriate optimizer statistics were used in Cost-Based Optimizer (CBO), for a query with ORDER BY, if there were multiple indexes available for the query, CBO unconditionally favored an index that provided ordering. Such indexes were not always the best ones to use.
+|CBO now allows cost-based comparison of indexes.
+
+|https://issues.couchbase.com/browse/MB-57838[MB-57838^]
+|An ADVISE statement with multiple levels of UNNEST caused a syntax error in the CREATE INDEX statement from the Index Advisor.
+|ADVISE has been improved when there are queries with multiple levels of UNNEST.
+
+|===
+
+==== Cluster Manager
+
+[#table-fixed-issues-721-cluster-manager,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-57484[MB-57484^]
+|A Cluster Manager process crash meant the Delete Bucket memcached command was not always called before bucket files were deleted later in rebalance. This caused the memcached process to crash repeatedly causing data service downtime.
+|The Delete Bucket command is now called on memcached before a file is deleted during rebalance. This ensures mencached doesn’t attempt to read the files.
+
+|===
+
+==== Cross Datacenter Replication (XDCR)
+
+[#table-fixed-issues-721-xdcr,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-56601[MB-56601^]
+|Data streamed from the Data Service over XDCR should always be streamed in order by mutation id. However, in some scenarios, for efficiency, the Data Service streamed records that were not ordered by mutation id. In certain situations, this out-of-sequence-order [OSO] caused performance issues.
+|OSO mode is now available as a global override to be switched off for any currently deployed replications to avoid performance issues.
+
+|https://issues.couchbase.com/browse/MB-56711[MB-56711^]
+|XDCR did not process documents with a JSON array and Extended Attributes (XATTRs). When a document contained XATTRs, XDCR checked for XATTRs in transactions, transaction filters were enabled, and XATTRs were not checked.
+|When documents contain arrays, XATTRs are now checked in the transaction XATTRs, and the document is not prevented from being parsed in an array.
+
+|https://issues.couchbase.com/browse/MB-56741[MB-56741^]
+|Binary documents were replicated when an Advanced Filtering Expression was present.
+|A filter has been added which can be turned on to prevent all binary documents from being replicated.
+
+|https://issues.couchbase.com/browse/MB-56773[MB-56773^]
+|It appeared that XDCR had stalled and an explanation was not provided. For rebalances on the source or target, the XDCR pipeline should be restarted, and data movement should continue. Before the pipeline was restated, there might have been fewer data movements as the rebalanced VBs were no longer streaming.
+|An ETA is now provided in the Server UI to show when the pipeline is due to be restarted.
+
+|https://issues.couchbase.com/browse/MB-56799[MB-56799^]
+|Checkpoint Manager created checkpoint records out-of-sequence when many target nodes ran slowly.
+|Checkpoint Manager now creates checkpoints in sequence when target nodes are slow.
+
+|https://issues.couchbase.com/browse/MB-56848[MB-56848^]
+|The bucket topology service sent a concurrent map iteration and map write panic to XDCR which caused a fatal error.
+|Validation has been improved to prevent the panic from happening.
+
+|https://issues.couchbase.com/browse/MB-56938[MB-56938^]
+|Prometheus stats did not include a pipeline’s status.
+|The pipeline status is now provided as part of a prometheus stat.
+
+|https://issues.couchbase.com/browse/MB-57130[MB-57130^]
+|A Checkpoint Manager Initialization error caused two memory leak types. These were a backfill pipeline and a main pipeline memory leak.
+|The Pipeline Manager and backfill pipeline have both been modified to prevent the memory leaks.
+
+|https://issues.couchbase.com/browse/MB-57183[MB-57183^]
+|XDCR Checkpoint Manager instances were not cleaned up under certain circumstances due to timing and networking issues when contacting target, or when an invalid backfill task was fed in as input.
+|Checkpoint Manager instances are now cleaned up. A flag has been added to check for invalid backfill tasks.
+
+|https://issues.couchbase.com/browse/MB-57234[MB-57234^]
+|When a replication spec change was made to a non-Data Service node, delete replication hung and caused the node to return an incorrect replication configuration.
+|XDCR now checks that the node is running the Data Service and handles it correctly.
+
+|https://issues.couchbase.com/browse/MB-57277[MB-57277^]
+|XDCR could fail due to multiple connection issues. For example, DNS issues or firewalls. For a number of databases, it was a difficult task to manually check every node to determine where the connection issue was. For multiple nodes in a database and in the target database, debugging the issue required many connection checks.
+|A connection pre-check feature has been added to XDCR which ensures all connections from source nodes to target nodes are valid. Credentials are now also checked.
+
+|https://issues.couchbase.com/browse/MB-57412[MB-57412^]
+|Running ipv6 only mode + non-encrypted remote resulted in invalid IP addresses being returned leading to connection issues.
+|A valid IP address is now returned.
+
+|https://issues.couchbase.com/browse/MB-57462[MB-57462^]
+|StatsMgr stopping could hang due to watching for notifications resulting in stranded go-routines.
+|Go-routines are now stopped correctly.
+
+|https://issues.couchbase.com/browse/MB-57562[MB-57562^]
+|When ipv4 only mode was used, and full encryption only had an alternate address configured where the internal address was unresolvable, XDCR resulted in an error when it contacted the target data nodes.
+|The specific scenario has been fixed so that replication can now proceed.
+
+|https://issues.couchbase.com/browse/MB-57743[MB-57743^]
+|The Prometheus endpoint did not expose any XDCR error metrics.
+|XDCR error metrics are now exposed via Prometheus.
+
+|https://issues.couchbase.com/browse/MB-57787[MB-57787^]
+|A legacy race condition where metadata store could cause a conflict was exposed as part of the binary filter improvements.
+|Legacy race conditions have all been resolved.
+
+|https://issues.couchbase.com/browse/MB-58203[MB-58203^]
+|Under certain circumstances, when rebalancing, the target cluster could return an EACCESS error code that caused source XDCR to pause the pipeline.
+|This has been reversed. Instead of pausing the pipeline when rebalancing, XDCR now retries when an EACCESS error is encountered in XmemNozzle. XDCR counts and prints this activity in the log.
+
+|===
+
+==== Metrics and Monitoring
+
+[#table-fixed-issues-721-metrics-monitoring,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-56464[MB-56464^]
+|An issue occurred where the Cluster Manager instructed Prometheus to reload the configuration and the reload timeout impacted other requests.
+|The Cluster Manager has been improved to handle timeouts when instructing Prometheus to reload the configuration.
+
+|https://issues.couchbase.com/browse/MB-56517[MB-56517^]
+|The Cluster Manager's computed utilization stats were inaccurate due to time interval discrepancies in components where data was collected.
+|The Cluster Manager now reports raw stats as Prometheus counters.
+
+|===
+
+==== Storage
+
+[#table-fixed-issues-721-storage,cols="1,2,2",options="header"]
+
+|===
+|Issue | Description | Resolution
+
+|https://issues.couchbase.com/browse/MB-57157[MB-57157^]
+|Inconsistencies were observed where a single Magma bucket in a database took a long time to warm up.
+|The seq index scan has been optimized for tombstones of zero value size. Optimization is for look up by key, sequence iteration, and key iteration. Docs of 0 value size are placed in both key index and seq index.
+
+|https://issues.couchbase.com/browse/MB-57714[MB-57714^]
+|Disk backfills were hanging permanently due to high memory consumption when large documents were streamed over many DCP streams concurrently.
+|Memory for a document read by a DCP stream is now released before  switching to another stream.
+
+|===
+
+End of Server 7.2.1 Release Notes
 ////
 
 [#release-720]
