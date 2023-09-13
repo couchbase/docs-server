@@ -1,0 +1,55 @@
+curl -s -u Administrator:password \
+     http://localhost:8091/settings/saml | jq -S
+
+{
+    "authnNameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
+    "enabled": true,
+    "groupsAttribute": "groups",
+    "groupsAttributeSep": " ,",
+    "groupsFilterRE": ".*",
+    "idpAuthnBinding": "redirect",
+    "idpLogoutBinding": "redirect",
+    "idpMetadataConnectAddressFamily": "undefined",
+    "idpMetadataHttpTimeoutMs": 5000,
+    "idpMetadataOrigin": "https",
+    "idpMetadataRefreshIntervalS": 3600,
+    "idpMetadataTLSCAs": "-----BEGIN CERTIFICATE-----\n
+    . . .
+    \n-----END CERTIFICATE-----",
+    "idpMetadataTLSExtraOpts": "[]",
+    "idpMetadataTLSSNI": "",
+    "idpMetadataTLSVerifyPeer": false,
+    "idpMetadataURL": "https://myorg.okta.com/app/abcdef1234/sso/saml/metadata",
+    "idpSignsMetadata": false,
+    "rolesAttribute": "",
+    "rolesAttributeSep": " ,",
+    "rolesFilterRE": ".*",
+    "singleLogoutEnabled": false,
+    "spAssertionDupeCheck": "disabled",
+    "spBaseURLScheme": "http",
+    "spBaseURLType": "node",
+    "spCertificate": "-----BEGIN CERTIFICATE-----\n
+    . . .
+    \n-----END CERTIFICATE-----\n",
+    "spChain": "",
+    "spConsumeURL": "https://cb.example.com:8091/saml/consume",
+    "spContactEmail": "foo@example.org",
+    "spContactName": "Mr. The Dude",
+    "spEntityId": "https://cb.example.com:8091/saml/metadata",
+    "spKey": "**********",
+    "spLogoutURL": "https://cb.example.com:8091/saml/logout",
+    "spMetadataCacheDuration": "P1M",
+    "spMetadataURL": "https://cb.example.com:8091/saml/metadata",
+    "spOrgDisplayName": "",
+    "spOrgName": "My Organization",
+    "spOrgURL": " http://cb.example.com:8091/",
+    "spSessionExpire": "SessionNotOnOrAfter",
+    "spSignMetadata": true,
+    "spSignRequests": true,
+    "spTrustedFingerprints": [],
+    "spTrustedFingerprintsUsage": "metadataInitialOnly",
+    "spVerifyAssertionEnvelopSig": true,
+    "spVerifyAssertionSig": true,
+    "spVerifyLogoutReqSig": false,
+    "spVerifyRecipient": false
+  }
