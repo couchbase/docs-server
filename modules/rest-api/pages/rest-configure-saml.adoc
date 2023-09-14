@@ -1,5 +1,5 @@
-= Configure LDAP
-:description: pass:q[You can configure Couchbase Server to authenticate a Web Console user via a SAML Identity Provider.]
+= Configure SAML
+:description: pass:q[You can configure Couchbase Server to authenticate a Couchbase Server Web Console user via a SAML Identity Provider.]
 
 [abstract]
 {description}
@@ -8,27 +8,24 @@
 
 *Description*
 
-Returns information about the SAML settings as JSON object.
+Returns Couchbase Server's _Security Assertion Markup Language_ (SAML) settings as JSON object.
 
 *Example*
-
 ----
-curl -s -u Administrator:password \
-     http://localhost:8091/settings/saml | jq
-
+include::rest-api:example$get-saml.sh[]
 ----
 
-== POST /settings/ldap
+== POST /settings/saml
 
 *Description*
 
-This command establishes an LDAP server to provide authentication-support for Couchbase Server.
+Updates Couchbase Server's SAML authentication settings. If the update is successful, this call returns the current settings. If it encounters an error, it returns an error message.
 
 *Syntax:*
 
 ----
  curl -X POST -u <administrator>:<password>
-    http://<host>:<port>/settings/ldap
+    http://<host>:<port>/settings/saml
     -d args
     .
     .
@@ -36,20 +33,13 @@ This command establishes an LDAP server to provide authentication-support for Co
 
 *Example*
 
+In following example:
+
+include::partial$saml-post-example-intro.adoc[]
+
+
 ----
-curl -v -X POST -u Administrator:password \
-http://localhost:8091/settings/ldap \
--d hosts=172.23.124.25 \
--d port=389 \
--d encryption=StartTLSExtension \
--d serverCertValidation=true \
---data-urlencode cacert@/path/to/cert \
--d bindDN='cn=admin,dc=example,dc=com' \
--d bindPass=password \
--d authenticationEnabled=true \
---data-urlencode userDNMapping='{"template":"uid=%u,ou=users,dc=example,dc=com"}' \
--d authorizationEnabled=true \
---data-urlencode groupsQuery='ou=groups,dc=example,dc=com??one?(member=%D)'
+include::rest-api:example$post-saml.sh[]
 ----
 
 .Controller parameters
@@ -57,65 +47,159 @@ http://localhost:8091/settings/ldap \
 |===
 | Parameter | Description
 
-| authenticationEnabled
-| Enables using LDAP to authenticate users. _true_ enables, _false_ disables.
+| authnNameIDFormat
+| The format the SAML message uses to identify its subject (the user who's authenticating). See xref:manage:manage-security/configure-saml.adoc#nameid[NameID and User Identity] for possible values. Defaults to `urn:oasis:names:tc:SAML:2.0:nameid-format:persistent`.
 
-| authorizationEnabled
-| Enables using of LDAP groups for authorization. `true` enables, `false` disables.
+|enabled
+|Boolean that enables SAML authentication with an IdP when set to `true`. Set to `false` by default, which disables SAML authentication.
 
-| hosts
-| Comma-separated list of LDAP hosts.
+|groupsAttribute
+|The name of the SAML attribute from which Couchbase extracts the user's groups. Defaults to an empty string which has Couchbase Server use the list of groups defined for users in their Couchbase Server account. Only has an effect if groupsAttribute has a value.
 
-| port
-| LDAP port
+|groupsAttributeSep
+|The character the IdP uses to separate group names if it sends a list of groups the user. Defaults to `,`. Only has an effect if groupsAttribute has a value.
 
-| encryption
-| Encryption method to communicate with LDAP servers. Can be _StartTLSExtension_, _TLS_, or _false_.
+|groupsFilterRE
+|A regular expression Couchbase Server uses to filter the group names the IdP sends in a SAML attribute. Couchbase Server assigns the user any groups sent by the IdP whose name match the regular expression. Defaults to `.*` which accepts all group names.
 
-| maxParallelConnections
-| Maximum number of parallel connections that can be established with LDAP servers.
+|idpAuthnBinding
+a| Controls how Couchbase Server sends parameters to the IdP. Can be either:
 
-| serverCertValidation
-| Whether server certificate validation be enabled: true enables, false disables.
+* `post`: the default value which sends the parameters as part of POST message to te IdP.
+* `redirect`: sends the parameters to the IdP encoded in the URL.
 
-| cacert
-| Certificate in PEM format to be used in LDAP server certificate validation, if serverCertValidation is _true_.
+|idpLogoutBinding
+|Similar to idpAuthnBinding, but for the logout request.
 
-| maxCacheSize
-| Maximum number of requests that can be cached: defaults to 10000.
+|idpMetadataConnectAddressFamily
+a|Whether to use IPv4 or IPv6 addresses to retrieve metadata from the IdP. One of three values:
 
-| requestTimeout
-| The timeout for LDAP requests, in milliseconds.
+* `undefined`: the default value which automatically determine the address family to use.
+* `inet`: use IPv4 addresses when retrieving the metadata from the IdP.
+* `inet6`: use IPv6 addresses when retrieving the metadata.
 
-| userDNMapping
-| User to distinguished name (DN) mapping. If none is specified, the username is used as the user's distinguished name.
+|idpMetadataHttpTimeoutMs
+|The number of milliseconds Couchbase Server waits for a successful connection to the IdP when retrieving metadata. It reports an error if this periods elapses before the IdP responds. Defaults to 5000 (5 seconds).
 
-| bindDN
-| DN to use for searching users and groups synchronization.
+|idpMetadataOrigin
+|The HTTP protocol to use when retrieving metadata. This setting determines whether Couchbase Server uses a secure connection or not. Can be either `http` or the default `https`.
 
-| bindPass
-| Password for _bindDN_ user.
+|idpMetadataRefreshIntervalS
+|The number of seconds Couchbase Server waits before refreshing the IdP's metadata. Only has an effect if you have enabled metadata refresh. Defaults to 3600 (1 hour).
 
-| groupsQuery
-| LDAP query, to get the users' groups by username in RFC4516 format. The %u and %D placeholders can be used, for username and user's DN respectively.
-If attribute is present in the query, the list of attribute values in the search result is considered as list of user's groups (single entry result is expected): for example: '%D?memberOf?base'.
+|idpMetadataTLSCAs
+|The certificate or certificate chain to use to validate the IdP. Must be in _Privacy Enhanced Mail_ (PEM) format. Required if idpMetadataTLSVerifyPeer is `true`.
 
-If the attribute is not present in the query, every returned entry is considered a group: for example, 'ou=groups,dc=example,dc=com??one?(member=%D)'
+|idpMetadataTLSExtraOpts
+|Extra TLS options that Couchbase Server applies when connecting to the IdP. Only use this parameter if asked to by technical support.
 
-| nestedGroupsEnabled
-| If enabled Couchbase server will try to recursively search for groups for every discovered ldap group. _groupsQuery_ will be user for the search.
+|idpMetadataTLSSNI
+|Sets a custom _Server Name Indication_ (SNI) for the connection from Couchbase Server to  the IdP. 
 
-| nestedGroupsMaxDepth
-| Maximum number of recursive groups requests the server is allowed to perform.
-This option is only valid when nested groups are enabled.
-Value must be an integer between 1 and 100: the default is 10.
+|idpMetadataTLSVerifyPeer
+|A Boolean value that controls whether Couchbase Server verifies the IdP's certificate when fetching metadata. If set to `true`, Couchbase Server verifies the certificate. If it cannot verify the certificate, it returns an error. 
 
-| cacheValueLifetime
-| Lifetime of values in cache in milliseconds. Default 300000 ms.
+|idpMetadataURL
+|The URL from which Couchbase Server retrieves the IdP's metadata.
 
-| clientTLSCert
-| A certificate to be used by Couchbase Server as a client, in authentication with LDAP.
+|idpSignsMetadata
+|A Boolean that tells Couchbase Server if the IdP cryptographically signs its metadata. If the IdP signs its metadata, Couchbase Server attempts to verify the signature. It returns an error if this verification fails.
 
-| clientTLSKey
-| The private key that corresponds to Couchbase Server's client certificate, for use in authentication with LDAP.
+|rolesAttribute
+|The name of a SAML attribute containing the roles that Couchbase Server should apply to the authenticated user. Defaults to an empty string, which has Couchbase Server use its own list of roles from the user's Couchbase Server account.
+
+|rolesAttributeSep
+|The character that separates multiple role names if the IdP supplies a list of roles in the SAML attribute set by rolesAttribute. Defaults to `,`.
+
+|rolesFilterRE
+|A regular expression for Couchbase Server to use to filter role names sent in a SAML attribute. Couchbase Server only grants the roles whose names match the regular expression to the user. Defaults to `.*` which allows all groups in the SAML attribute.
+
+|singleLogoutEnabled
+|A Boolean that controls whether the user is able to log out of both Web Console and their IdP session at once. Defaults to `true` which logs users out of the IdP session when they log out of the Web Console. 
+
+|spAssertionDupeCheck
+|A Boolean value that controls whether Couchbase Server lets users reuse authentication credentials. See xref:manage:manage-security/configure-saml.adoc#dupe-check[SP Assertion Dupe Check] for a description of this parameter's values.
+
+|spBaseURLScheme
+|The scheme for URL that the IdP constructs to send an authenticated user back to Couchbase Server. Can be either the default `http` for unencrypted connections to Couchbase Server or `https` for encrypted connections.
+
+|spBaseURLType
+|Sets the hostname portion of the URL that the IdP redirects the user's browser to after authentication. Defaults to `node`. See xref:manage:manage-security/configure-saml.adoc#sp-base-url[SP Base URL Type] for a description of this parameter's values. 
+
+|spCertificate
+|The public certificate that the IdP uses to verify the authenticity of Couchbase Server's requests in PEM format. The public key you supply must correspond to the private key you supply in spKey. You must set this value to enable SAML authentication.
+
+|spChain
+|One or more certificates in PEM formatthat were used to sign the Couchbase Server's certificate. Supply this value if Couchbase Server's certificate was not directly signed by a well-known signing authority.
+
+|spConsumeURL
+|The URL to which the IdP should send authenticated users back to Couchbase Server. This value overrides the default URL Couchbase Server automatically generates based on spBaseURLType and spBaseURLScheme.
+
+|spContactEmail
+|A contact email address for the administrator responsible for Couchbase Server's SAML integration. 
+
+|spContactName
+|The name of the administrator responsible for Couchbase Server's SAML integration.
+
+|spEntityId
+|The identifier Couchbase Server uses when exchanging SAML messages with the IdP. It defaults to the URL for Couchbase Server's SAML metadata. The actual content of the field is not important as long as the IdP recognizes the identifier.
+
+|spKey
+|The private key Couchbase Server uses to sign and encrypt SAML messages in PEM format. You must supply a private key to enable SAML authentication. This parameter is write-only. A GET request only returns a string of asterisks for this value. 
+
+|spLogoutURL
+|The URL the IdP uses to log the user out of the Web Console. By default, Couchbase Server sets this value based on spBaseURLType and spBaseURLScheme.
+
+|spMetadataCacheDuration
+|Sets how long the IdP caches Couchbase Server's metadata. This value is in https://en.wikipedia.org/wiki/ISO_8601#Durations[ISO8601 duration format^]. The default value `P1M` sets this duration to one month.
+
+|spMetadataURL
+|The URL to retrieve Couchbase Server's SAML metadata. By default, Couchbase Server sets this value based on spBaseURLType and spBaseURLScheme.
+
+|spOrgDisplayName
+|An alternate name of your organization. The IdP can use this value for various purposes, such as when prompting a user to authenticate.
+
+|spOrgName
+|The name of your organization. The IdP can use this value for various purposes, such as when prompting a user to authenticate.
+
+|spOrgURL
+|A URL for your organization. This value does not play a role in authentication. The IdP can use this value for various purposes, such as when prompting a user to authenticate.
+
+|spSessionExpire
+|String value that controls whether the Web Console expires its session when the IdP's authorization expires. When set to the default `SessionNotOnOrAfter` value, the Web Console has the user reauthenticate when the IdP's authentication expires. If set to `false`, the Web Console does not set its session length to match the IdP's authentication expiration.
+
+|spSignMetadata
+|A Boolean value that controls whether Couchbase Server signs its metadata using the key set in spKey. Defaults to `true`, which enables signing the metadata.
+
+|spSignRequests
+|A Boolean value that controls whether Couchbase Server signs its SAML requests to the IdP. Defaults to `true` which enables signing the requests.
+
+|spTrustedFingerprints
+|One or more certificate fingerprints that Couchbase Server can use to authenticate messages from the IdP instead of using certificates. 
+
+|spTrustedFingerprintsUsage
+|String value that controls what Couchbase Server verifies using certificate fingerprints. When set to the default `metadataInitialOnly` value, it uses fingerprints to verify just the metadata it retrieves from the IdP. If set to `everything` it uses fingerprints for all SAML message verification. Only has an effect if at least one fingerprint is set in spTrustedFingerprints.
+
+|spVerifyAssertionEnvelopSig
+|A Boolean value. When set to `true`, Couchbase Server verifies the IdP's signature on the entire SAML message envelope. Only has an effect if idpMetadataTLSCAs contains the IdP's certificate. 
+
+|spVerifyAssertionSig
+|A Boolean value. When set to the default `true` value, Couchbase Server verifies the IdP's signature on the assertion portion of SAML messages. Only has an effect if idpMetadataTLSCAs contains the IdP's certificate. 
+
+|spVerifyLogoutReqSig
+|A Boolean value. When set to `true`, Couchbase Server verifies the IdP's signature on SAML logout requests. Only has an effect if idpMetadataTLSCAs contains the IdP's certificate. 
+
+|spVerifyRecipient
+a|Controls whether Couchbase Server verifies a SAMl message is addressed to it by comparing the SAML recipient with its own recipient name. Its value is one of the following:
+
+* The string `consumeURL`: the default value which has Couchbase Server verify the recipient set in the SAML message matches its own consume URL. 
+* Boolean `false`: Couchbase Server does not verify the recipient and just processes the SAML message.
+* The string `custom`: Couchbase Server uses the name set in spVerifyRecipientValue to verify the SAML recipient. 
+
+|spVerifyRecipientValue
+|If spVerifyRecipient is `custom`, this parameter sets the recipient name that Couchbase Server looks for in SAML messages.  
+
+|usernameAttribute
+|The name of a SAML attribute that Couchbase Server uses as the username of the user who authenticated with the IdP. If you do not supply a value for this parameter, Couchbase Server extracts the username from the nameID in the SAML message.
+
 |===

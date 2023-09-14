@@ -5,8 +5,8 @@ http://localhost:8091/settings/saml \
 -d idpMetadataURL=https://myidp.com/sso/saml/metadata \
 -d spBaseURLScheme=http  \
 -d spBaseURLType=node \
---data-urlencode spCertificate@mycertificate.crt 
---data-urlencode spKey@mykey.pem 
+--data-urlencode spCertificate@my_certificate.crt 
+--data-urlencode spKey@my_key.pem 
 -d idpSignsMetadata=false
 
 {
