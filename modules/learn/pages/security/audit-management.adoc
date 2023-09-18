@@ -1,0 +1,234 @@
+= Audit Management
+:description: pass:q[Actions performed on Capella can be _audited_, using the Public API. \
+This allows users to ensure that system-management tasks are being appropriately performed.]
+
+[abstract]
+{description}
+
+== Audit Records and Their Content
+
+The records created by the Capella Auditing facililty capture information on what actions have been performed, and whether successfully.
+Each record is stored as a JSON document, and appended to a log file, per node.
+The Public API can be used to enable logging, and to collect and download log files.
+
+A conceptual overview of event auditing can be found in xref:security:auditing.adoc[Auditing].
+See xref:security:auditing.adoc#event_tables[Event Tables], for access to lists of auditable events.
+
+== Auditing API
+
+As part of the Public API, the auditing methods and endpoints allow you to:
+
+* List _filterable_ audit events.
+A filterable event is one that can be individually enabled or disabled.
+
+* Get the current audit settings.
+Output includes a list of all enabled audit events, a list of disabled users, and the overall enablement status of the cluster.
+
+* Configure the audit settings.
+Make changes regarding the overall enablement status of the cluster; and regarding which individual events are enabled, and users disabled.
+
+* Create an _audit log request_.
+This instructs Capella to gather and prepare for download all current log files, within a user-specified time-period.
+
+* Return information on current and recent audit log requests; or get information on one specified audit log request.
+The output includes a download URL for each log requests -- which is in each case available once the log request has been fully processed by Capella.
+
+The sections below provide examples of these activities.
+
+Note that information on how to use the Public API, including the calls described below, is provided in xref:public-api-guide:using-cloud-public-api.adoc[Using the Public API].
+
+=== List Filterable Audit Events
+
+`GET /{id}/auditdescriptors` returns a list of all filterable audit events.
+Output resembles the following:
+
+[source,json]
+----
+{
+  "events": [
+    {
+      "description": "Document was mutated via the REST API",
+      "id": 8243,
+      "module": "ns_server",
+      "name": "mutate document"
+    },
+    {
+      "description": "Document was read via the REST API",
+      "id": 8255,
+      "module": "ns_server",
+      "name": "read document"
+    },
+    {
+      "description": "An alert email was successfully sent",
+      "id": 8257,
+      "module": "ns_server",
+      "name": "alert email sent"
+    },
+    {
+      "description": "RBAC information was retrieved",
+      "id": 8265,
+      "module": "ns_server",
+      "name": "RBAC information retrieved"
+    },
+            .
+            .
+            .
+----
+
+The list contains all filterable audit events for the cluster.
+If a filterable audit event is currently disabled, it can be enabled through its inclusion in the `enabledEventIDs` field of
+xref:security:audit-management.adoc#configure-audit-settings[Configure Audit Settings].
+
+[#get-audit-settings]
+=== Get Audit Settings
+
+To get the current audit settings for the cluster, use `GET /{id}/audit`.
+Output resembles the following:
+
+[source,json]
+----
+{
+  "auditdEnabled": true,
+  "disabledUsers": [],
+  "enabledEventIDs": [
+    8243,
+    8255
+  ]
+}
+----
+
+In this sample output, the value of `auditdEnabled` is `true`: this indicates that auditing is currently enabled for the whole cluster; meaning that all _non-filterable_ audit events are necessarily enabled, and a user-specified subset of _filterable_ audit events is enabled.
+
+The value of `disabledUsers` is an empty array, meaning that no users have been _disabled_.
+If a user is disabled, no _filterable_ events are logged for that user.
+For information on disabling users, see xref:security:auditing.adoc#ignoring-events-by-user[Ignoring Filterable Events by User].
+
+The value of `enabledEventIDs` is an array, each of whose members is the ID of a filterable event.
+Each filterable event that corresponds to an ID in the array is currently _enabled_.
+Filterable events whose ID is _not_ in the array are currently _disabled_.
+
+Note that when individual filterable events have been enabled, their `enabledEventIDs` are returned even when the value of `auditdEnabled` is `false` (meaning that no event auditing, including that of enabled filterable events, occurs on the cluster).
+
+[#configure-audit-settings]
+=== Configure Audit Settings
+
+To configure new audit settings, use `POST /{id}/audit`, with a JSON payload such as the following:
+
+[source,json]
+----
+{
+  "auditdEnabled": true,
+  "disabledUsers": [
+    {
+      "domain": "local",
+      "name": "dfelton"
+    },
+    {
+      "domain": "local",
+      "name": "@eventing"
+    }
+  ],
+  "enabledEventIDs": [
+  8243,
+  8255,
+  45070,
+  45073
+  ]
+}
+----
+
+The value of `auditdEnabled` is `true`, specifying that auditing should be enabled for the entire cluster: this enables all _non-filterable_ audit events, and makes possible the enabling of specific _filterable_ audit events.
+
+The value of `disabledUsers` is an array, each of whose elements is an object that specifies a domain and a username.
+For each user corresponding to a username, filterable audit events are disabled.
+See xref:security:auditing.adoc#ignoring-events-by-user[Ignoring Filterable Events by User].
+
+The value of `enabledEventIDs` is an array of integers, each of which is the ID of a filterable audit event.
+Each event corresponding to an included ID is enabled for the cluster.
+
+No object is returned.
+Subsequent to the call, the resulting configuration can be checked by means of `GET /{id}/audit`.
+
+=== Create an Audit Log Request
+
+After auditing has been enabled for the cluster, resulting log files can be gathered and prepared for download.
+This can be specified with `POST /{id}/auditlogs`, using a JSON payload such as the following:
+
+[source,json]
+----
+{
+  "start": "2022-09-04T00:56:07.000Z",
+  "end": "2022-09-05T04:56:07.000Z"
+}
+----
+
+The value for `start` and `end` must in each case be a timestamp in _RFC3339_ format.
+The specified `end` should be later than the specified `start`.
+For additional requirements, see xref:security:auditing.adoc#limitations[Limitations on Export Requests].
+
+Log files for the specified time-period are thus requested to be collected and prepared for download.
+The returned value includes a download ID, which can be referenced in a subsequent Get Audit Log Request call.
+For example:
+
+[source,json]
+----
+{
+  "downloadID": "6af54d75-e620-489b-9ef7-4eaca3918292"
+}
+----
+
+=== Get an Audit Log Request
+
+Once an audit log request has been created, using `POST /{id}/auditlogs`, its status can be retrieved by means of `GET /{id}/auditlogs/{downloadId}`.
+The `downloadId` must be one previously returned by `POST /{id}/auditlogs`, as the value of the `downloadID` parameter.
+
+The information returned for the specified request includes the time of the request's creation, the start and end times of the period for which records are required, a download URL for retrieval of a compressed file that contains the log files, and the progress-status of the request. When progress-status is `ready`, the compressed file can be manually downloaded, using the download URL.
+For example:
+
+[source,json]
+----
+{
+  "createdAt": "2022-09-02T11:23:59.540639163Z",
+  "downloadID": "7c218c08-817c-4762-9cb7-f2b5e5e2b945",
+  "downloadURL": "https://cb-audit-logs-2b7461b5-13bd-4e0e-a2e6-2b78bd36506b.s3.amazonaws.com/export/cluster-audit-logs-d77c12c9-f9e1-4216-8b25-809af9c7969f-from-2022-08-04T04%3A56%3A07Z-to-2022-09-03T04%3A56%3A07Z.tar.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAT277BFQVKR654SI6%2F20220902%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20220902T112403Z&X-Amz-Expires=259200&X-Amz-Security-Token=FwoGZXIvYXdzEBUaDHV1g27xow58PJdAkiK3AQvUFlrkTffQ4JtVJOu6ZqlFg5KDLb17yTebOjGjXPKWotCuOHM4Ri%2B2GK2YB6LdvuNkH9Gsr9bzKr99zYXN9%2FNlMuaWTqLiiPEidGiISiI6JzqjNmutibO3WqvJpMaBzmYFZDSnIENpyKTmV4HsBs7izJwQnd5DQkE%2FpHGtZZm3SZGO%2Bnb%2B5GYENil58I5D%2BWXPTSgQTw57x3XFQmzEVCC746Xyo1%2Bg%2BxqpoyxVc4%2BacWT9BGIMxyjPz8eYBjItHPPiDre5gZCtXKPvpNnxlXfCTg1qJhJ2xDWKVRbNSdt2ajk9fb%2F2InzImqkn&X-Amz-SignedHeaders=host&X-Amz-Signature=27f74d72ad0cedad453a88b32b11dfb17b488d970a2394d57e34e810a162a71d",
+  "end": "2022-09-03T04:56:07Z",
+  "expiration": "2022-09-05T11:24:03.16516322Z",
+  "start": "2022-08-04T04:56:07Z",
+  "status": "ready"
+}
+----
+
+=== List Audit Log Requests
+
+`GET /{id}/auditlogs` returns a list of all audit log export requests.
+The list starts with the most recent request.
+
+The information returned for each request includes the time of the request's creation, the start and end times of the period for which records are required, a download URL for retrieval of a compressed file that contains the log files, and the progress-status of the request.
+
+A single element from the list is exemplified below.
+Note that this return value could also be obtained with `GET /{id}/auditlogs/{downloadId}`, specifying `ad1b3e21-b405-4060-90a8-64d635c067a7` as the `downloadId`.
+
+[source,json]
+----
+"data": [
+    {
+      "createdAt": "2022-09-01T10:26:56.260601214Z",
+      "downloadID": "ad1b3e21-b405-4060-90a8-64d635c067a7",
+      "from": "2022-08-20T07:52:44.377Z",
+      "status": "in-progress",
+      "to": "2022-09-01T07:52:44.377Z"
+    },
+    {
+      "createdAt": "2022-09-01T07:57:06.353848169Z",
+      "downloadID": "2570363d-8507-45eb-baa5-6f1455e90087",
+      "downloadURL": "https://cb-audit-logs-2b7461b5-13bd-4e0e-a2e6-2b78bd36506b.s3.amazonaws.com/export/audit-logs-cluster-d77c12c9-f9e1-
+4216-8b25-809af9c7969f-from-2022-08-25%2007%3A52%3A44.377%20%2B0000%20UTC-to-2022-09-01%2007%3A52%3A44.377%20%2B0000%20UTC.tar.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAT277BFQVNSHQ7DGF%2F20220901%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20220901T080237Z&X-Amz-Expires=259200&X-Amz-Security-Token=FwoGZXIvYXdzEPn%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaDPgEtnGwoad3DrmxZiK3AX%2BHmZ9Wqd34xPuUqNhOWTy3y4Enmqz68W8tPx%2FDkT3a03KO1i1r9C4CEVEmiQKwr%2B27Lh2qkDjBKy8aO2SEHz4CAEB%2BXy9dy6xkhUtKNeboWytBJC64qsw0mjUHFbrY3Fyps4fNlylpFA6wpKWtft7CLe0zmhgIxVSL%2FovRnqk2E8oym7Xl3xsJu%2BDvV17Lfo%2FOenw3HFtpxfI35o%2BmlMTNKQExsZcyhUC0uS3yXGkWhlpGL0aLzyidzsGYBjItKYZ8u7w4uDQTz2zacpVMMZMn5uyfuAgMpsqZXKtwiIX5zcok%2BSsBSxtt7%2Bqc&X-Amz-SignedHeaders=host&X-Amz-Signature=c4adf8876af37ed892fa5c9ab5572d513bc35c92820aaf796808a5eb659e1a71",
+      "expiration": "2022-09-04T08:02:37.572401479Z",
+      "from": "2022-08-25T07:52:44.377Z",
+      "status": "ready",
+      "to": "2022-09-01T07:52:44.377Z"
+    },
+----
+
+In the above output, the `status` is still `in-progress`.
+When `status` is `ready`, the compressed file can be manually downloaded, using the download URL that is the value of `downloadURL`.
