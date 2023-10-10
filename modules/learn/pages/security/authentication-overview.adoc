@@ -6,86 +6,76 @@ _Authentication_ is a process for identifying who is attempting to access a syst
 {description}
 Subsequent to successful authentication, _authorization_ can be performed, whereby the user's appropriate access-level is determined.
 
-[#passing-credentials]
-== Authentication Options
+== Authentication for Administrators
 
-Couchbase-Server authentication typically relies on a _username_ and a _password_, which must be passed into the system by the _user_ (meaning, the administrator or application) that is attempting access.
-The specified username and password must match ones already defined: these must be accessible either on the Couchbase-Server cluster itself, or _externally_.
-External accessibility, which is available only with the Enterprise Edition. Couchbase Server supports external authentication using:
+Administrators log into Couchbase Web Console either by providing their username and password to the administrative UI, or by selecting the _Single Sign-On_ option, at `https://hostname:18091`.
 
-* _Lightweight Directory Access Protocol_ (LDAP) provided by a network-accessible directory-server.
+Optionally, the _unencrypted_ port, 8091 can be used: specified as `http://hostname:8091`.
+Note this is _not_ recommended, as username and password are passed in the clear, from the browser to the console.
 
-* _Pluggable Authentication Modules_ (PAM) authentication framework built into the Linux operating system.
+The best practice for administrator-authentication is to use _single sign-on_, with a provider that is configured to require _Multi-Factor Authentication_ (MFA).
+For more information about securing the network with encryption, see xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
+For more information about single sign-on, see xref:learn:authentication-domains.adoc#saml-authentication[SAML Authentication].
 
-* _Security Assertion Markup Language_ (SAML) authentication supplied by an _Identity Provider_ (IdP). This provider is often run by a third-party, such as Okta, or provided as part of cloud infrastructure, such as Microsoft Azure. This authentication method only grants users access the Couchbase Server Web UI. They can't use it to authenticate for command-line, REST API, or SDK access. See xref:learn:security/authentication-domains.adoc#saml-authentication[SAML Authentication] to learn more about SASL authentication.
+== Authentication for Applications
 
-If a match is achieved, the user is thereby recognized, and so _may_ be granted access.
-If no match is achieved, the user is denied access.
+The recommended method for application-authentication when connecting to Couchbase Server is to use x.509 _certificate-based_ authentication.
+This ensures that only approved users, machines, or endpoints are authenticated, and provides what is known as _mutual authentication_.
 
-Client applications or systems can also pass credentials to Couchbase Server by means of x.509 _certificates_.
+_Mutual-TLS_ (mTLS) certificate-based authentication relies on a _Certificate Authority_ (CA) to validate identities and issue certificates.
+When using this method, no sensitive credentials are shared over the network; and all communication between application and server is performed over an _encrypted channel_, to prevent eavesdropping and impersonation.
 
-[#introduction-to-password-based-authentication]
-== Users, Usernames, and Passwords
+For a complete overview of Couchbase Server’s certificate-handling mechanisms, see xref:learn:security/certificates.adoc[Certificates].
+For practical steps required to set up client and server certificates, see xref:manage:manage-security/manage-certificates.adoc[Manage Certificates].
 
-To access Couchbase Server, all users and applications must authenticate.
-This is typically achieved by means of a _username_ and _password_.
+[#authentication-with-username-and-password]
+=== Authentication with Username and Password
 
-The _Full Administrator_ username and password are established during initialization of Couchbase Server: see xref:manage:manage-nodes/create-cluster.adoc[Create a Cluster] for details.
+In cases where x.509 certificate-based authentication cannot be used, a _username and password_ combination must be provided in the application, to authenticate to Couchbase Server.
+When an application authenticates to the Data Service, one of four mechanisms provided by the Simple Authentication and Security Layer (SASL) framework are used.
+All other Couchbase services use _HTTP Basic Authentication_.
 
-Subsequently, additional users can be added to the cluster as _local_ users: each is at that time assigned a unique _username_, and a unique _password_.
-Passwords can be changed by means of the password-reset tool, xref:cli:cbcli/couchbase-cli-reset-admin-password.adoc[reset-admin-password]; or by Couchbase Web Console, as described in xref:manage:manage-security/manage-users-and-roles.adoc#editing-users-and-groups[Editing Users and Groups].
-For best practices for password-definition, and restrictions on username-design, see xref:learn:security/usernames-and-passwords.adoc[Usernames and Passwords].
+It is strongly recommended to always deploy TLS network encryption and use the defined TLS ports when connecting an application to Couchbase Server.
 
-Users can also be added to the cluster as _external_ users, for whom no password need be specified; since the external user is to be authenticated externally.
+[#data-service-username-password-authentication]
+==== Data-Service Authentication with Username and Password
 
-[#console-access]
-=== Usernames and Passwords for Administrators
+During initial client-server negotiation with the Data Service, when utilizing TLS network encryption, the SASL PLAIN method is always used, with the credentials being secured inside the encrypted network connection.
+For cases where TLS network-encryption is not in use, the strongest authentication protocol supported by both Couchbase Server and the client application is selected for authentication. This is either PLAIN or one of the revisions of SCRAM-SHA challenge-response mechanisms for authenticating.  In ascending order of strength, the Couchbase password-authentication mechanisms are as follows:
 
-When an administrator logs into Couchbase Web Console, if the console is running on the default port, `+http://localhost:8091+`, the specified username and password are passed in the clear, from the browser to the console.
+* PLAIN: The client sends the password in plaintext-form.
 
-Optionally, Couchbase Web Console can be configured for _secure access_, at `+https://localhost:18091+`; so that the username and password are passed in encrypted form.
-For information, see xref:manage:manage-security/manage-console-access.adoc[Manage Console Access].
+* SCRAM-SHA1:   160-bit credential.
 
-[#authentication-for-applications]
-=== Usernames and Passwords for Applications
+* SCRAM-SHA256: 256-bit credential.
 
-To pass credentials, applications must use one of four mechanisms provided by the _Simple Authentication and Security Layer_ (SASL) framework.
-These are PLAIN, and three members of the _Salted Challenge Response Authentication Mechanism_ family of hash functions; which are SCRAM-SHA1, SCRAM-SHA256, and SCRAM-SHA512.
-The SCRAM mechanisms allow applications to authenticate securely, by transmitting the password only in _protected form_.
-Drivers may need to be updated, to support SHA-based hash functions.
+* SCRAM-SHA512:  512-bit credential.
 
-[#password-authentication-mechanisms]
-In ascending order of strength, the Couchbase password-authentication mechanisms are as follows:
+Instead of the client sending the password directly to Couchbase Server, SCRAM uses a challenge-response mechanism, to exchange derived cryptographic credentials using a combination of PBKDF2, HMAC and SHA, so that the application-credential is not exposed to eavesdroppers on the network.
+Note that other communication-data, including queries and database-values, are _not_ encrypted with the SCRAM mechanism: therefore, the SCRAM mechanism should only be used where TLS network-encryption is not an option.
 
-* _PLAIN_: The client sends the password in unencrypted form.
-All clients support this authentication-method.
-It is insecure, providing no defence against passwords being stolen in transmission.
+[#other-service-username-password-authentication]
+==== Authenticating with Other Services, with Username and Password
 
-* _SCRAM-SHA1_: Uses a 160-bit key.
+Application-authentication for all services other than the Data Service uses the HTTP Basic Authentication mechanism, with username and password.
+In consequence, it is essential that TLS network encryption _always_ be deployed, so as to avoid credentials being sent over the network insecurely.
 
-* _SCRAM-SHA256_: One of a group of hash functions referred to as _SHA2_, SCRAM-SHA256 uses a 256-bit key.
+[#secure-credential-storage]
+== Secure Credential Storage
 
-* _SCRAM-SHA512_: Another hash function from the _SHA2_ group, SCRAM-SHA512 uses a 512-bit key; and is the strongest supported authentication protocol.
+Locally managed user-account credentials are stored in Couchbase Server using both the _Argon2ID_ and _PBKDF2_ algorithms.
 
-During initial client-server negotiation, the strongest authentication protocol supported by both Couchbase Server and the application's client OS is selected for use.
-For example, if the client supports only the PLAIN protocol, the PLAIN protocol is used; but if the client also supports the SCRAM-SHA1 protocol, then SCRAM-SHA1 is used.
+_Argon2ID_ is a state of the art password hashing function, designed to be resistant to various password-cracking attacks: including both time-memory trade-off attacks, and side-channel attacks.
+_PBKDF2_ is another powerful password hashing function; and is required to allow SCRAM-SHA capabilities.
+By default, the PBKDF2 credentials are stored with 5,000 iterations: this can be configured with the `POST settings/security/scramShaIterations` REST API method and URI, with a higher specified number increasing the security of the credentials, with the trade-off of higher resource requirements when authentication is performed.
+Following guidance from NIST, it is recommended to disable SCRAM-SHA1 unless it is absolutely required.
 
-A challenge-response method can be transmitted through both encrypted and unencrypted channels.
+The various levels of SCRAM SHA can be disabled with `POST /settings/security/scramSha1Enabled`,
+`POST /settings/security/scramSha256Enabled` and
+`POST /settings/security/scramSha512Enabled`.
+For more information on the using the REST API to configure security settings, see xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
 
-Note that the SCRAM challenge-response protocols authenticate only the process of password-validation.
-To secure the subsequent session, TLS should be used.
-
-[#introduction-to-certificate-based-authentication]
-== Certificate-Based Authentication
-
-Couchbase Server supports the use of x.509 certificates, to authenticate clients.
-This ensures that only approved users, machines, or endpoints are authenticated.
-
-Certificate-based authentication relies on a _Certificate Authority_ (CA) to validate identities and issue certificates.
-The certificate includes information such as the name of the entity it identifies, an expiration date, the name of the CA that issued the certificate, and the digital signature of the issuing CA.
-
-For a complete overview of Couchbase Server's certificate-handling mechanisms, see xref:learn:security/certificates.adoc[Certificates].
-For practical steps required to set up client and server certificates, see xref:manage:manage-security/manage-certificates.adoc[Manage Certificates]
+For cases that do not use SCRAM-SHA, such as those that implement TLS network encryption, it is recommended to _disable_ all variations of SCRAM-SHA; as this will prevent the SCRAM-SHA PBKDF2 hashes from being generated, when Argon2ID provides stronger security for those credentials.
 
 [#authorization]
 == Authorization
