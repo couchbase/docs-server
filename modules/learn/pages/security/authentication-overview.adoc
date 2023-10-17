@@ -6,29 +6,76 @@ _Authentication_ is a process for identifying who is attempting to access a syst
 {description}
 Subsequent to successful authentication, _authorization_ can be performed, whereby the user's appropriate access-level is determined.
 
-[#passing-credentials]
-== Authentication Options
+== Authentication for Administrators
 
-Couchbase-Server authentication typically relies on a _username_ and a _password_, which must be passed into the system by the _user_ (meaning, the administrator or application) that is attempting access.
-The specified username and password must match ones already defined: these must be accessible either on the Couchbase-Server cluster itself, or _externally_.
-External accessibility, which is available only with the Enterprise Edition of Couchbase Server, means either:
+Administrators log into Couchbase Server Web Console either by providing their username and password to the administrative UI, or by selecting the _Single Sign-On_ option, at `https://hostname:18091`.
 
-* On a network-accessible directory-server, by means of the _Lightweight Directory Access Protocol_ (LDAP).
+Optionally, the _unencrypted_ port, 8091 can be used: specified as `http://hostname:8091`.
+Note this is _not_ recommended, as username and password are passed in the clear, from the browser to the console.
 
-* By means of the _Pluggable Authentication Modules_ (PAM) authentication-framework.
+The best practice for administrator-authentication is to use _single sign-on_, with a provider that is configured to require _Multi-Factor Authentication_ (MFA).
+For more information about securing the network with encryption, see xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
+For more information about single sign-on, see xref:learn:security/authentication-domains.adoc#saml-authentication[SAML Authentication].
 
-If a match is achieved, the user is thereby recognized, and so _may_ be granted access.
-If no match is achieved, the user is denied access.
+== Authentication for Applications
 
-Client applications or systems can also pass credentials to Couchbase Server by means of x.509 _certificates_.
+The recommended method for application-authentication when connecting to Couchbase Server is to use x.509 _certificate-based_ authentication.
+This ensures that only approved users, machines, or endpoints are authenticated, and provides what is known as _mutual authentication_.
 
-[#introduction-to-password-based-authentication]
-== Users, Usernames, and Passwords
+_Mutual-TLS_ (mTLS) certificate-based authentication relies on a _Certificate Authority_ (CA) to validate identities and issue certificates.
+When using this method, no sensitive credentials are shared over the network; and all communication between application and server is performed over an _encrypted channel_, to prevent eavesdropping and impersonation.
 
-To access Couchbase Server, all users and applications must authenticate.
-This is typically achieved by means of a _username_ and _password_.
+For a complete overview of Couchbase Server’s certificate-handling mechanisms, see xref:learn:security/certificates.adoc[Certificates].
+For practical steps required to set up client and server certificates, see xref:manage:manage-security/manage-certificates.adoc[Manage Certificates].
 
-All information is provided in xref:learn:security/usernames-and-passwords.adoc[Usernames and Passwords].
+[#authentication-with-username-and-password]
+=== Authentication with Username and Password
+
+In cases where x.509 certificate-based authentication cannot be used, a _username and password_ combination must be provided in the application, to authenticate to Couchbase Server.
+When an application authenticates to the Data Service, one of four mechanisms provided by the Simple Authentication and Security Layer (SASL) framework are used.
+All other Couchbase services use _HTTP Basic Authentication_.
+
+It is strongly recommended to always deploy TLS network encryption and use the defined TLS ports when connecting an application to Couchbase Server.
+
+[#data-service-username-password-authentication]
+==== Data-Service Authentication with Username and Password
+
+During initial client-server negotiation with the Data Service, when utilizing TLS network encryption, the SASL PLAIN method is always used, with the credentials being secured inside the encrypted network connection.
+For cases where TLS network-encryption is not in use, the strongest authentication protocol supported by both Couchbase Server and the client application is selected for authentication. This is either PLAIN or one of the revisions of SCRAM-SHA challenge-response mechanisms for authenticating.  In ascending order of strength, the Couchbase password-authentication mechanisms are as follows:
+
+* PLAIN: The client sends the password in plaintext-form.
+
+* SCRAM-SHA1:   160-bit credential.
+
+* SCRAM-SHA256: 256-bit credential.
+
+* SCRAM-SHA512:  512-bit credential.
+
+Instead of the client sending the password directly to Couchbase Server, SCRAM uses a challenge-response mechanism, to exchange derived cryptographic credentials using a combination of PBKDF2, HMAC and SHA, so that the application-credential is not exposed to eavesdroppers on the network.
+Note that other communication-data, including queries and database-values, are _not_ encrypted with the SCRAM mechanism: therefore, the SCRAM mechanism should only be used where TLS network-encryption is not an option.
+
+[#other-service-username-password-authentication]
+==== Authenticating with Other Services, with Username and Password
+
+Application-authentication for all services other than the Data Service uses the HTTP Basic Authentication mechanism, with username and password.
+In consequence, it is essential that TLS network encryption _always_ be deployed, so as to avoid credentials being sent over the network insecurely.
+
+[#secure-credential-storage]
+== Secure Credential Storage
+
+Locally managed user-account credentials are stored in Couchbase Server using both the _Argon2ID_ and _PBKDF2_ algorithms.
+
+_Argon2ID_ is a state of the art password hashing function, designed to be resistant to various password-cracking attacks: including both time-memory trade-off attacks, and side-channel attacks.
+_PBKDF2_ is another powerful password hashing function; and is required to allow SCRAM-SHA capabilities.
+By default, the PBKDF2 credentials are stored with 5,000 iterations: this can be configured with the `POST settings/security/scramShaIterations` REST API method and URI, with a higher specified number increasing the security of the credentials, with the trade-off of higher resource requirements when authentication is performed.
+Following guidance from NIST, it is recommended to disable SCRAM-SHA1 unless it is absolutely required.
+
+The various levels of SCRAM SHA can be disabled with `POST /settings/security/scramSha1Enabled`,
+`POST /settings/security/scramSha256Enabled` and
+`POST /settings/security/scramSha512Enabled`.
+For more information on the using the REST API to configure security settings, see xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
+
+For cases that do not use SCRAM-SHA, such as those that implement TLS network encryption, it is recommended to _disable_ all variations of SCRAM-SHA; as this will prevent the SCRAM-SHA PBKDF2 hashes from being generated, when Argon2ID provides stronger security for those credentials.
 
 [#authorization]
 == Authorization
@@ -58,5 +105,10 @@ xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users, Groups, an
 
 Couchbase Server assigns each user to one of two _authentication domains_; which are _local_ and _external_.
 The _local_ domain contains users defined locally, on Couchbase Server.
-The _external_ domain contains users defined externally, either on an LDAP server, or on Linux systems that are accessed by means of _PAM_.
+The _external_ domain contains users defined externally on an LDAP server, a SAML IdP provider, or Linux systems that are accessed by means of _PAM_.
 For a complete overview, see xref:learn:security/authentication-domains.adoc[Authentication Domains].
+
+
+
+
+In addition to a username and password requirement, SAML can require _Two-Factor Authentication_ (TFA) such as a one-time code sent via text message or a code generated by an authentication module or app. SAML can also provide _Single Sign On_ (SSO), where a user that has already authenticated with another application is automatically authenticated to use
