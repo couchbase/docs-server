@@ -36,7 +36,7 @@ curl -s -X GET -G -u Administrator:password \
  curl -s -X GET -G -u Administrator:password \
       http://localhost:8091/settings/rbac/backup \
       --data-urlencode 'include=user:local:*' \
-      --data-urlencode 'include=admin' > only-groups.backup 
+      --data-urlencode 'include=admin' > groups-and-admin.backup 
 # end::backup-local-user-and-admin[]
 
 
