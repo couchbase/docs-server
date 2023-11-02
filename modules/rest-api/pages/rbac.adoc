@@ -605,6 +605,7 @@ The local group `ClusterAdmins` is thus deleted.
 Users defined on the Couchbase-Server cluster as either local or external, whose roles were derived entirely from their membership of the `ClusterAdmins` group, henceforth continue to be registered as local users, but are assigned no roles; and therefore no longer have access to the Couchbase-Server cluster.
 If the `ClusterAdmins` group was mapped to an LDAP group, LDAP-authenticated users whose Couchbase-Server roles were derived entirely from that mapping are henceforth assigned no roles; and therefore no longer have access to the Couchbase-Server cluster.
 
+
 [#responses]
 == Responses
 
@@ -617,6 +618,137 @@ An attempt to delete an already deleted user or group fails with `404 Object not
 An attempt to add a user to one or more non-existent groups fails with `400 Bad Request` and an error notification such as `"groups":"Groups do not exist: ClusterAdmins,XDCRAdmins"`.
 
 The creation of an already existing group or local or external user succeeds with `200 OK`: the user is recreated with the newly specified role-assignments and group-memberships; and the group is recreated with the newly specified role-assignments and, optionally, a newly specified mapping.
+
+[backup-restore]
+== Backup and Restore Users and Groups
+
+Use the `/settings/rbac/backup` endpoint to back up and restore users and groups. 
+It's useful if you want to transfer or synchronize users between different database clusters.
+
+=== Backup Users and User Groups
+
+Use the `GET` method with the  `/settings/rbac/backup` endpoint to back up users and user groups in the database, including the Full Administrator account. 
+
+.Syntax
+[source,console]
+----
+ curl -X GET -u <administrator>:<password> 
+    http://<host>:<port>/settings/rbac/backup
+    --data-urlencode 'exclude=<filterExression>'
+    --data-urlencode 'include=<filterExression>'
+----
+
+When called without parameters, the backup endpoint returns all of the users and groups defined in the database in an opaque string. The format and content of the string returned by this call are not guaranteed and may change over time. 
+
+.Example
+The following example backs up all users and groups to a file named `full.backup`. 
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-everything]  
+----
+
+IMPORTANT: The backup contains the hashed passwords for users defined in the local authentication domain. Be sure to keep the contents of the backup secure.
+
+.Parameters
+
+exclude=<filterExpression>::
+Excludes users and user groups from the backup. The backup skips any user or group that matches the `filterExpression`.  The `filterExpression` can be one of the following:
++
+* `*`: excludes everything. 
+* `admin`: excludes the Full Administrator
+* `group:<groupWildcard>`: excludes user group definitions whose name matches the `groupWildcard` wildcard expression. For example, `exclude=group:admin*` excludes any groups whose name starts with the string `admin`.
+* `user:<local|external|\*>:<userWildcard>`: excludes users. The `local`, `external`, or `*` expression sets the authentication domain to which the argument applies. The `userWildcard` wildcard expression determines which usernames the backup excludes. For example, `exclude=user:*:john*` excludes any user whose username starts with the string `john` in both the internal and external authentication domain.
+* `permission:<permissionExpression>`: excludes user groups and users who have the permission matching `permissionExpression`. For example, `exclude=permission:cluster!backup_admin` excludes any user or group that has the backup admin permission at the database level.
+
+include=<filterExression>::
+Includes matching users and groups in the backup. The backup only includes users or groups that match the `filterExpression`. It excludes all users and groups that do not match the expression. The `filterExpression` can be one of the following:
++
+* `*`: includes everything. 
+* `admin`: includes only the Full Administrator
+* `group:<groupWildcard>`: includes only group definitions whose name matches the `groupWildcard` wildcard expression. For example, `include=group:analyst*` includes only groups whose name starts with the string `analyst`.
+* `user:<local|external|\*>:<userWildcard>`: includes users. The `local`, `external`, or `*` expression sets the authentication domain to which the argument applies. The `userWildcard` wildcard expression determines which usernames the backup includes. For example, `include=user:local:tom`  includes just the user named `tom` defined in the local authentication domain. 
+* `permission:<permissionExpression>`: includes groups and users who have the permission in the `permissionExpression`. For example, `include=cluster.collection[travel-sample:*:*].data.docs!any` includes any user or group that has permissions for the documents in the `travel-sample` bucket.
+
+The `exclude` and `include` parameters are mutually exclusive. You cannot use both in the same method call. However, you can have multiple instances of one of the parameters in the method. For example, you can use two instances of the `include` parameter in a single method call. The resulting backup contains the users and groups that match either `include` parameter. 
+
+The following example backs up all users defined in the local authentication domain and all user groups to a file named `local-users-and-groups.backup`. It does not include the Full Administrator, as that account is treated differently than locally defined users.
+
+[source,console]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-local-users-groups]  
+----
+
+The following example backs up all users and user groups except the Full Administrator.
+
+[source,console]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-all-but-admin]  
+----
+
+This example backs up just user groups:
+
+[source,console]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-only-groups]  
+----
+
+This example backs up all local users plus the Full Administrator:
+
+[source,console]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-local-user-and-admin]  
+----
+
+=== Restore Users and Groups
+
+Use the `PUT` method with the  `/settings/rbac/backup` endpoint to restore users and groups from a backup. If the call is successful, it returns a JSON report indicating what it restored and what it skipped.
+
+.Syntax
+[source,console]
+----
+ curl -X PUT -u <administrator>:<password> 
+    http://<host>:<port>/settings/rbac/backup
+    --data-urlencode 'backup=<backupData>''
+    -d canOverwrite=<true|false>
+----
+
+.Parameters
+
+backup=<backupData>:: 
+Required parameter containing the URL encoded backup data returned by a previous GET call. 
+canOverwrite=<true|false>::
+Boolean value that controls whether the restore overwrites any existing users or groups in the database that also exist in the backup. Defaults to false, which means the restore does not overwrite any already-existing users or user groups in the database.
+
+.Example
+
+The following example backs up all users and groups by calling the `GET` method on the `/settings/rbac/backup` endpoint and saving them to a file. 
+Then it deletes the user with the username `user2` by calling the DELETE method (see  xref:#delete-users-and-groups[Delete Users and Groups]). 
+Finally, it restores `user2` by calling the `PUT` method on the `/settings/rbac/backup`, passing it the backup file.
+
+[source,console]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-delete-restore-user]
+----
+
+The output of running these commands:
+
+[source,json]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=backup-delete-restore-user-output]
+----
+
+The following example demonstrates overwriting user accounts and groups in the database that are also in the backup.
+
+[source,console]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=restore-overwrite]
+----
+
+The output from running the previous command is:
+
+[source,json]
+----
+include::rest-api:example$rbac-backup-users-groups.sh[tag=restore-overwrite-output]
+----
 
 [#audit-the-management-of-users-and-roles]
 == Audit the Management of Users and Roles
