@@ -142,62 +142,63 @@ The effects on services other than the Data Service are described below.
 
 The Index Service maintains a cluster-wide set of index definitions and metadata, which allows the redistribution of indexes and index replicas during a rebalance.
 
-The rebalance process takes account of nodes' CPU and RAM utilization, and achieves the best resource-balance possible.
-Note that rebalance does not _move_ indexes or replicas: instead, it _rebuilds_ them in their new locations, using the latest data from the Data Service.
+The rebalance process takes into account the nodes' CPU, RAM, and disk bandwidth to limit its effect on database performance.
 
-The [def]_index redistribution_ setting enables you to specify how Couchbase Server redistributes indexes on rebalance.
-The setting may be established by means of the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Couchbase Web Console] or the xref:manage:manage-settings/general-settings.adoc#index-settings-via-rest[REST API].
+==== Index Rebalance Methods
 
-The setting affects how indexes are redistributed in the following scenarios.
-Note that in Couchbase Server 7.2 and later, the setting affects partitioned and non-partitioned indexes equally.
+You can choose to have the rebalance process move index or replica files between nodes or have it rebuild the indexes in their new locations. 
+By default, Couchbase Server rebuilds the indexes. If you enable the file-based rebalance option, the rebalance process copies the files from the source node to the destination node. 
+Copying the index files is faster than having the target node rebuild the index from scratch.
+However, if you enable file-based rebalancing, you lose the ability to choose which Index Service node handles a specific index. 
 
-Rebalance after an index node is added::
-If the setting is enabled, existing indexes are placed optimally across _all_ index nodes in the cluster, including any new index nodes being added.
-If the setting is disabled, no indexes are redistributed.
+NOTE: The first rebalance after you enable file-based index rebalance does not use the file-based rebalancing method. 
+Instead, the rebalance process rebuilds the indexes. 
+During this rebuild process, Couchbase Server adds metadata to the index files that enables later rebalances to move them between nodes. 
+After this initial rebalance, all later rebalances use the file-base rebalance method as long you as you keep the file-base rebalance enabled.
 
-Rebalance after a non-index node is added or removed::
-If the setting is enabled, indexes are moved from heavily loaded nodes to nodes with free resources to achieve balanced distribution.
-If the setting is disabled, no indexes are redistributed.
+If a file-base rebalance fails, you can try starting a new rebalance. 
+The second rebalance does not re-transfer any index that the failed rebalance finished moving. 
+Instead, it moves just the indexes that had not moved or were in the process of moving when the error occurred.  
 
-Rebalance during index server group repair::
-With multiple server groups, when a group failure leads to all replicas being placed in a single server group, if the setting is enabled, indexes are redistributed to ensure high availability across the server groups after repair.
-If the setting is disabled, no indexes are redistributed.
+You can enable file-based rebalance using settings located under the under the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] settings on Web Console's Settings page. 
+You can also enable it using the REST API's xref:manage:manage-settings/general-settings.adoc#index-settings-via-rest[`settings` endpoint].
 
-The setting does _not_ affect how indexes are redistributed in the following scenarios:
+==== Index Redistribution 
 
-Rebalance when an index node is removed::
-Indexes are moved on rebalance from removed nodes to nodes that continue as part of the cluster.
-Indexes that reside on non-removed nodes are unaffected by rebalance.
+Couchbase Server can redistribute indexes during rebalance. Redistributing indexes can improve performance by offloading heavily-loaded nodes. A rebalance automatically redistributes indexes in the following situations:
 
-Rebalance when index nodes are added and removed::
-During a swap rebalance, indexes from ejected nodes are placed on the nodes being added.
+Rebalance when you add an index node::
+Rebalance always moves indexes off of nodes that you're removing from the cluster to the remaining nodes.
+A rebalance does not affect indexes that reside on nodes that you're not removing. 
 
-If more index replicas exist than can be handled by the number of existing nodes, replicas are dropped: the numbers are automatically made up subsequently, if additional Index Service nodes are added to the cluster.
+Rebalance when you add and remove index nodes::
+A swap rebalance moves indexes from nodes you're removing and places them on the nodes you're adding.
 
-During rebalance, no index node is removed until index-building has completed on alternative nodes.
-This ensures uninterrupted access to indexes.
+You can have a rebalance redistribute indexes im more cases by enabling the **Optimize Index Placement On Rebalance** setting on the Couchbase Server Web Console's xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Settings page]. 
+You can also change this setting using the xref:manage:manage-settings/general-settings.adoc#index-settings-via-rest[Settings REST API] where it is named `redistributeIndexes`.
 
-==== Smart Batching
+NOTE: In Couchbase Server 7.2 and later, the redistribution setting affects both partitioned and non-partitioned indexes.
 
-When rebalance occurs, indexes are relocated and rebuilt in _batches_, so as to place a limit on the amount of work that is attempted concurrently -- the default batch size being `3`.
+Enabling the index redistribution setting causes a rebalance to redistribute indexes in the following situations:
 
-In Couchbase Server Version 7.1 and after, _smart batching_ is used; so as to reduce further the time and resources required to move index metadata, and to rebuild indexes at their new locations during rebalance.
-Specifically, smart batching:
+Rebalance after you add an index node::
+Rebalance optimizes index placement across _all_ index nodes in the cluster, including on the new index nodes.
 
-* Increases rebalance performance by increasing pipeline parallelism, through starting the next batch while the prior batch is only partially completed.
+Rebalance after you add or remove a non-index node::
+Rebalance moves indexes from heavily loaded nodes to nodes with free resources to balance distribution.
 
-* Allows overall concurrency to be increased, through administrator-determined modifications of the batch size.
+Rebalance during an index server group repair::
+A group failure in a multiple server group database can force all replicas into a single group. In this case, rebalance redistributes the replicas to support high availability across server groups after the server group repair.
 
-* Optimizes the sharing of data streams, whereby index relocation occurs.
+NOTE: If after you drop Index Service nodes, the remaining nodes cannot handle all of the index replicas, Couchbase Server drops some of the replicas. If you later add additional Index Service nodes to the cluster, Couchbase Server replaces the dropped replicas.
 
-* Repairs, prior to index relocation, index replicas lost due to node failure.
+==== Index Rebalance Batch Size
 
-* When appropriate, reassigns scheduled index-rebuilding from one batch to the next, in order to balance workloads.
-
-Provided that at least one node in the cluster is running version 7.1+, most of the features of smart-batching apply to a cluster some of whose nodes are running an earlier version.
-
-The default batch size of `3` can be changed by the Full Admin and Cluster Admin roles, by means of the REST API.
-For information, see xref:rest-api:rest-modify-index-batch-size.adoc[Modify Index Batch Size].
+The rebalance process moves or rebuilds indexes in _batches_. 
+This batching limits the overhead of the rebalance on the database. 
+The default batch size is `3`, which means that a rebalance moves or rebuilds up to three indexes at the same time.  
+Users with Full Admin or Cluster Admin roles can change the batch size using the REST API.
+See xref:rest-api:rest-modify-index-batch-size.adoc[Modify Index Batch Size].
 
 [#rebalancing-the-search-service]
 === Search Service
