@@ -2,12 +2,13 @@
 [#release-724]
 == Release 7.2.4 (January 2024)
 
-Couchbase Server 7.2.4 was released in November 2023.
-This maintenance release contains new features and fixes to issues.
+Couchbase Server 7.2.4 was released in November 2023. +
+This maintenance release contains new features and fixes.
 
 [#new-features]
 === New Features and Enhancements
 
+* Prometheus now records information related to disk usage over time:
 * REST interface added to set the retention period of audit files
 * Erlang upgraded to version{nbsp}25.
 * Added `Memcached` alert.
@@ -19,8 +20,26 @@ This maintenance release contains new features and fixes to issues.
 |===
 |Feature | Description
 
+| https://issues.couchbase.com/browse/MB-59237/[MB-59237]
+
+a| Prometheus now records information related to disk usage over time:
+
+* Cumulative number of bytes read from CB Data volume over time.
+* Cumulative number of bytes written to CB Data volume over time.
+* Metrics tracked in Prometheus, similar to existing system metrics.
+* Disk queue size over time (instantaneous sample of current size)
+* Disk read latency.
+
 | https://issues.couchbase.com/browse/MB-59503/[MB-59503]
-| The request is for `ns_server` to provide a REST interface to enter the minimum duration (in minutes) that previously rotated audit files will be retained. This value will be converted to seconds and passed through to memcached. The audit daemon, run during the log rotation task, will remove any files created more than X seconds ago.
+a| The request is for `ns_server` to provide a REST interface to enter the minimum duration (in minutes) that previously rotated audit files will be retained. This value will be converted to seconds and passed through to memcached. The audit daemon, run during the log rotation task, will remove any files created more than X seconds ago. +
+The following REST command is used to change the settings: +
+`$ curl -u Administrator:password -X POST localhost:8091/settings/audit -d pruneAge=1001 -d rotateInterval=900 -d rotateSize=1003`
+
+[horizontal]
+rotateInterval:: Specifies the maximum time-period that is to elapse between log-rotations. Its value must be a number of seconds, in the range of 900 (15 minutes) to 604800 (7 days), inclusive, and must be specified as a non-fractional unit of a minute.
+rotateSize::  Specifes the maximum size to which the `audit.log` file is permitted to grow, before being rotated. Its value must be a number of bytes, in the range of 0 to 524288000 (500 MB), inclusive.
+pruneAge::   The maximum age that the `audit.log` is permitted to reach before being rotated. The value is given in minutes and  must be in range from 0 to 35791394
+
 
 |===
 
@@ -31,36 +50,16 @@ This maintenance release contains new features and fixes to issues.
 |Feature | Description
 
 | https://issues.couchbase.com/browse/MB-8925/[MB-58925]
-| Couchbase Server 7.2.2 currently uses Erlang{nbsp}24. As Couchbase Server 7.2 will be maintained until 2026, Erlang has been upgraded to version{nbsp}25 to ensure we receive future code fixes.
+| Erlang has been upgraded to version 25 in Couchbase Server 7.2.4.
 
 
 |  https://issues.couchbase.com/browse/MB-59261/[MB-59261]
-| `Memcached` alert added. +
-Add an alert when the number of memcached connections has exceeded 90% of the limit.
-|===
-
-
-== Fixed Issues
-
-=== Cluster Manager
-
-[#table-known-issues-724-cluster-manager, cols="10,40,40"]
-|===
-|Issue | Description | Resolution
-
-| https://issues.couchbase.com/browse/MB-59237/[MB-59237]
-| Record OS disk I/O metrics into Prometheus. Currently, there is not enough information recorded in the logs to diagnose slowdowns in the system related to Disk I/O
-a| Record information related to disk usage over time to Prometheus:
-
-* Cumulative number of bytes read from CB Data volume over time, in Prometheus
-* Cumulative number of bytes written to CB Data volume over time.
-* Metrics tracked in Prometheus, similar to existing system metrics.
-* Disk queue size over time (instantaneous sample of current size)
-* Disk read latency.
-
+| Couchbase Server now issues an alert when the number of memcached connections exceeds 90% of the limit.
 
 |===
 
+
+=== Fixed Issues
 
 === Index Service
 [#table-known-issues-724-index-service, cols="10, 40, 40"]
@@ -68,13 +67,50 @@ a| Record information related to disk usage over time to Prometheus:
 |Issue | Description | Resolution
 
 | https://issues.couchbase.com/browse/MB-59646/[MB-59646]
-| Index has zero entries when running `NESTED ARRAY FLATTEN_KEYS()`.
-Should show at least one entry. +
-When there is a nested array entry, the projector is not expanding the missing/null entries.
-| Null or missing entries are now expanded for nested arrays
+| Indexes were not correctly created on nested arrays using the FLATTEN_KEYs function because null or missing entries were not expanded.
+| Issue resolved. Null or missing entries are now expanded for nested arrays
 
 |===
 
+=== XDCR
+[#table-known-issues-724-xdcr, cols="10, 40, 40"]
+|===
+|Issue | Description | Resolution
+
+
+| https://issues.couchbase.com/browse/MB-58758[MB-58758]
+| Erroneous network conditions could lead to the `checkpoint manager` to become slow at stopping.
+| Ensure the `checkpoint manager` stops, even if it has trouble starting due to network issues.
+
+| https://issues.couchbase.com/browse/MB-59339[MB-59339]
+|Race condition in starting and stopping XDCR source nozzle could lead to memory leak.
+| Fixed race condition.
+
+| https://issues.couchbase.com/browse/MB-59446[MB-59466]
+| If Bandwidth Throttler is used, race condition may occur during pipeline shutdown where Out nozzle is unable to exit.
+| Fixed race condition during shutdown to ensure out nozzle closes properly.
+
+| https://issues.couchbase.com/browse/MB-59476[MB-59476]
+| Remote Cluster Service may be stuck and unable to update references modified by another node in the cluster
+| Resync will take place if remote cluster metadata is out of sync to prevent references from being stuck and becoming stale.
+
+| https://issues.couchbase.com/browse/MB-59624[MB-59624]
+| In low-priority replications, it is possible for a Data Service stream to end temporarily, which may not be handled correctly by XDCR, leading to hung replication.
+| XDCR will restart the pipeline if a data service stream is ended. This will ensure that replication will continue.
+
+| https://issues.couchbase.com/browse/MB-59703[MB-59703]
+|  If a replication is idle without mutations, XDCR is unable to detect that a target bucket failover occurred.
+| Ensure target-side failover detection takes place even if the source has no incoming mutations.
+
+| https://issues.couchbase.com/browse/MB-59850[MB-59850]
+|  In a slow running backfill replication, XDCR could be too aggressive in restarting pipelines.
+| Ensure XDCR does not restart backfill pipelines if some progress is observed periodically
+
+| https://issues.couchbase.com/browse/MB-59888[MB-59888]
+| When a target document is locked, and a non-optimistic LWW replication is taking place, XDCR will retrieve a `locked CAS` of `maxUint`. This will cause the source mutation to always lose, and lead to scenarios where a source mutation is not replicated even if it should have won conflict resolution.
+| XDCR will retry conflict resolution for the duration that the document is locked in a pessimistic replication, to ensure that a valid CAS is used for source-side conflict resolution.
+
+|===
 
 === Query Service
 
@@ -84,9 +120,19 @@ When there is a nested array entry, the projector is not expanding the missing/n
 
 
 | https://issues.couchbase.com/browse/MB-57903/[MB-57903]
-| Deep-nested correlations aren’t properly detected and use cached results
-| Fixed
+| When a query has nested correlation references, e.g., `query1` contains a
+  subquery `query2`, which in turn contains another subquery `query3`, and
+  `query3` is correlated with `query1` (but `query2` is not correlated), the
+  nested correlation is not properly detected and the subquery (`query2`)
+  is not properly marked as correlated.
+| Correlation references are detected and marked in different levels of
+  sub-queries. Nested correlation references are properly propagated
+  up such that all sub-queries are properly marked when correlated.
 
+| https://issues.couchbase.com/browse/MB-58648[MB-58648]
+| Prepared statement with user-defined function can lead to a memory leak.
+Caused by the UDF being reloaded.
+| Fix applied. UDFs no longer being reloaded.
 |===
 
 
