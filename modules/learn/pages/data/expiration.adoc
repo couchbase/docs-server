@@ -10,13 +10,13 @@
 [#bucket-data-expiration-overview]
 == Overview
 
-You may want Couchbase Server to automatically remove some documents after a period of time. 
+You may want Couchbase Server to automatically delete some documents after a period of time. 
 For example, you often want documents that contain user session data to expire sometime after the user's last interaction. 
 Or you may use documents to store cached data. 
-
-Couchbase Server Enterprise Edition lets you have documents expire after a period of time. This feature only works in Couchbase and Ephermeral buckets. It does not 
-
 You can have these documents automatically expire so your application knows to refresh the data from its source. 
+
+Couchbase Server Enterprise Edition lets you have documents expire after a period of time, called the document's _Time To Live_ (TTL). 
+This feature only works in Couchbase and Ephemeral buckets. It does not work in Memcached buckets.
 
 You can set an expiration value on an individual document either when you create it or when you mutate it. 
 Set the expiration to the number of seconds the document should exist before Couchbase Server automatically removes it. 
@@ -30,6 +30,12 @@ The `maxTTL` setting also imposes an upper limit on the expiration time you can 
 If you try to set a document's expiration to a period longer than the non-zero `maxTTL` setting, Couchbase Server sets the expiration to `maxTTL`.  
 
 The `maxTTL` setting is not available for scopes. 
+
+When you set `maxTTL` on a collection or bucket, it's applied every time you create or mutate a document.
+This behavior means that the document's life is extended every time you mutate it.
+This works well for use cases such as maintaining user sessions where you want the document to exist for some period of time after the last change to it.
+
+For details about setting expiration and `maxTTL` values, see xref:manage:manage-expiration.adoc[].
 
 == Expiration Setting Priorities
 
@@ -85,20 +91,20 @@ The following table summarizes the interaction between a document's expiration s
 == When maxTTL Changes Take Effect
 
 When you change the `maxTTL` setting of either a bucket or collection, the change does not have an immediate effect on the documents they contain. 
-The `maxTTL` setting of a bucket or collection only has an effect when you create or mutate a document. 
-Any existing expiration set on a document do not change, even if their duration is longer than the `maxTTL` setting.
+The `maxTTL` setting of a bucket or collection only has an effect when you create or mutate a document they contain. 
+Any existing expiration set on a document does not change, even if their duration is longer than the `maxTTL` setting.
 Also, documents that are not set to expire do not automatically start expiring after you have set a non-zero `maxTTL` setting on their collection or bucket.
 To have the existing documents start expiring, you must you must mutate them.
-When you mutate a document, Couchbase Server applies any `maxTTL` settings to the document.  
 
-
-For more details about expiration and the `maxTTL` setting, see xref:manage:manage-expiration.adoc[].
 
 
 [#post-expiration-purging]
 == Post-Expiration Purging
 
-When a document's expiration time elapses, Couchbase Server deletes it when one the following occurs:
+The value you set a document's expiration or a collection or bucket's `maxTTL` is the number of seconds a document should exist. 
+The actual expiration value in the document is saved as a timestamp. 
+This timestamp is the time when you created or mutated the document plus the number of seconds it should exist. 
+When the current time is later than the expiration timestamp, Couchbase Server deletes the document when one the following occurs:
 
 * A query attempts to access it.
 * The xref:learn:buckets-memory-and-storage/memory.adoc#expiry-pager[expiry pager] process runs.
@@ -112,60 +118,26 @@ To make sure that no trace of deleted items remain, Couchbase Server removes tom
 This purge is an automatic, non-disruptive background-process. 
 You can change the schedule of metadata purges using Couchbase Server Web Console.
 See xref:manage:manage-settings/configure-compact-settings.adoc[Auto-Compaction].
-The console lets you set the intervals between purges to be short so that COuchbase Server removes tombstones promptly.
+The console lets you set the intervals between purges to be short so that Couchbase Server removes tombstones promptly.
 
 [#bucket-expiration-and-xdcr]
 == Expiration and XDCR
 
-Cross data center replication does not replicate the bucket or collection `maxTTL` setting from the source to the target.
-However, individual document's expirations (including expirations set by containing bucket or collection's `maxTTL` setting) are replicated to the target. 
-Buckets and collections on the target cluster can have their own `maxTTL` settings, which can differ from those of the buckets and collections in the source.
-If the target collection or bucket have a non-zero `maxTTL` setting, it affects the expiration of the replicated document the same way the source's `maxTTL` setting effects the source document:
+Cross Datacenter Replication (XDCR) does not replicate the bucket or collection `maxTTL` setting from the source to the target.
+However, by default XDCR replicates the individual document's expirations (including expirations set by containing bucket or collection's `maxTTL` setting) to the target. 
+Buckets and collections on the target cluster can have their own `maxTTL` settings that can differ from those of the buckets and collections in the source.
+When the target collection or bucket has a non-zero `maxTTL` setting, the target database applies it as described earlier.
+Couchbase Server treats the replicated expiration time as being explicitly set on the document when applying `maxTTL` settings even if it resulted from a `maxTTL` setting in the source.
 
-* If the replciated document's expiration is not set or set to 0, Couchbase Server sets the document's expiration to the `maxTTL` of the collection or bucket. 
-* If the document's expiration is greater than the target collection or bucket's non-zero `maxTTL` setting, Couchbase Server sets the document's expiration to the target's `maxTTL`.
-* If the document's expiration is less than the target collection or bucket's non-zero `maxTTL` setting, Couchbase Server keeps the replicated document's expiration.
+You can use xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[deletion filters] to prevent XDCR from replicating expiration values.
 
-
-Note that in cases where the TTL of the replicated item is above that of the bucket's or the collection's TTL or is 0, if bi-directional XDCR has been set up, the TTL of the item at the source is eventually also either reduced or reset to the value of the target's bucket or collection TTL.
-
-Note also that when an item is replicated by XDCR, its expiration time is communicated to the target as absolute.
-This requires that the system clocks of the respective clusters be fully synchronized; otherwise, inconsistent behavior may result (as, for example, in the case where an item arrives at the target-cluster with an absolute expiration time that is earlier than the current time acknowledged by the target-cluster).
+IMPORTANT: For replicated documents to expire consistently in a source and target database, be sure to synchronize the system clocks of the two database clusters. 
+Otherwise, replicated documents which should expire at the same time as their source documents may expire before or after the source.
 See xref:install:synchronize-clocks-using-ntp.adoc[Clock Sync with NTP].
 
-Note that optionally, TTL can be _omitted_ from a document replicated by means of XDCR.
-For details, see xref:manage:manage-xdcr/filter-xdcr-replication.adoc#deletion-filters[Deletion Filters].
-
-[#setting-bucket-data-expiration]
-== Setting Expiration on Buckets and Collections
-
-An expiration time can be set for a bucket by means of any of the following:
-
-* The UI provided by Couchbase Web Console.
-See xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket].
-
-* The Couchbase CLI.
-See xref:cli:cbcli/couchbase-cli-bucket-create.adoc[bucket-create].
-
-* The Couchbase REST API.
-See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
-
-An expiration time can be set for a collection by means of:
-
-* The UI provided by Couchbase Web Console.
-See xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc#manage-scopes-and-collections-with-the-ui[Manage Scopes and Collections with the UI].
-
-* The Couchbase CLI.
-See xref:cli:cbcli/couchbase-cli-collection-manage.adoc[collection-manage].
-
-* The REST API.
-See xref:rest-api:creating-a-collection.adoc[Creating a Collection].
-
-For information on roles that allow modification of bucket and collection settings, see
-xref:learn:security/roles.adoc[Roles].
-
 [#auditing]
-== Auditing
+== Auditing Expiration
 
-If _auditing_ is switched on, changes to each bucket's expiration time are recorded, and can be subsequently viewed.
-See xref:learn:security/auditing.adoc[Auditing].
+When you enable _auditing_, Couchbase Server logs changes to each bucket's `maxTTL` setting.
+See xref:learn:security/auditing.adoc[Auditing] for .
+
