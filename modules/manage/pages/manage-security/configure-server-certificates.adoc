@@ -240,7 +240,8 @@ On Linux, this directory is `/opt/couchbase/var/lib/couchbase/inbox/`.
 ----
 sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/
 ----
-. Deploy the node certificate and node private key by copying them to the `inbox` directory.
+
+. Copy the node certificate and node private key by copying them to the `inbox` directory.
 +
 [source, console]
 ----
@@ -657,6 +658,7 @@ sudo chmod -R 0600 /opt/couchbase/var/lib/couchbase/inbox/*
 
 . Upload the root and intermediate certificates.
 +
+[source, console]
 ----
 curl -X POST http://10.143.192.102:8091/node/controller/loadTrustedCAs \
      -u Administrator:password
@@ -664,6 +666,7 @@ curl -X POST http://10.143.192.102:8091/node/controller/loadTrustedCAs \
 
 . Upload the node certificate, specifying the established password for the private key.
 +
+[source, console]
 ----
 curl -X POST http://10.143.192.102:8091/node/controller/reloadCertificate 
      -u Administrator:password
@@ -680,6 +683,102 @@ You must make sure each client certificate does have a copy.
 
 For more information using the REST API to manage certificates, see xref:rest-api:rest-certificate-management.adoc[Certificate Management API].
 
+== Deploy a Certificate and Private Key to a Node in a PKCS #12 File
+
+PKCS #12 format certificates let you bundle certificates, private keys, and other objects into a single file.
+Couchbase Server supports using PKCS #12 files for deploying certificates, private keys, and chains of trust for nodes.
+It does not support using them for other purposes, such as client or cluster certificates. 
+
+Couchbase Server imposes several requirements on using PKCS #12 files for node certificate deployment:
+
+* You must set a pass phrase on the PKCS #12 file you use to deploy certificates and keys.   
+* You must pass the PKCS #12 file's passphrase as an argument to the REST API call you use to deploy the certificate. 
+* The PKCS #12 file must be in the node's inbox directory with the filename `couchbase.p12`. 
+
+The following example demonstrates how to bundle the node's certificate and private key into a PKCS #12 file and deploy it on a node.
+
+. Follow steps 1 through 10 in the xref:#root-and-node-certificates[Create and Deploy Cluster and Node Certificates] example. 
+When you complete these steps you'll have a certificate and associated private key for the cluster.
+
+. Bundle the node's certificate and private key into a single PKCS #12 file:
++
+[source, console]
+----
+openssl pkcs12 -export -out couchbase.p12 -inkey private/couchbase.default.svc.key 
+        -in public/couchbase.default.svc.pem
+----
++
+The arguments in this command are:
++
+* `pkcs12` tells `openssl` you want to work ith a PCKS #12 certificate. 
+* `-export` tells `openssl` you want to create a new certificate.
+* `-out couchbase.p12` sets the output filename. 
+The file is saved in the current directory with the name Couchbase Server expects for a PKCS #12 certificate.
+* `-inkey private/couchbase.default.svc.key` tells the command to import the node's private key from the file you created earlier.
+It also has `openssl` to password protect the private key.
+* `-in public/couchbase.default.svc.pem` tells the command where to find the node's certificate.
++
+The command prompts you to enter a password for the private key twice.
+
+. If the node to which you're deploying the certificate does not have an inbox directory, create it. 
++
+[source, console]
+----
+sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/
+----
+
+. Copy the PKCS #12 certificate to the node's inbox:
++
+[source, console]
+----
+sudo cp couchbase.p12 /opt/couchbase/var/lib/couchbase/inbox/
+----
+
+. Deploy the root certificate.
+Couchbase Server expects to find the root certificate in a subdirectory named `CA` in the `inbox` directory.
+Create the subdirectory and then copy the root CA file:
++
+[source, console]
+----
+sudo mkdir /opt/couchbase/var/lib/couchbase/inbox/CA
+sudo cp ./ca.pem /opt/couchbase/var/lib/couchbase/inbox/CA/.
+----
+
+. Make all files in the `inbox` directory readable by just the `couchbase` user:
++
+[source, console]
+----
+sudo chown -R couchbase /opt/couchbase/var/lib/couchbase/inbox/*
+sudo chmod -R 0600 /opt/couchbase/var/lib/couchbase/inbox/*
+----
+
+. Call the REST API to have Couchbase Server load the root certificate for the cluster:
++
+[source, console]
+----
+curl -X POST http://10.143.192.102:8091/node/controller/loadTrustedCAs -u Administrator:password
+----
++
+
+. Load the node certificate and its private key by calling the xref:rest-api:upload-retrieve-node-cert.adoc[reloadCertificate] REST API. 
+You must pass the password for the PKCS #12 certificate as an argument to the REST API call:
++
+[source, console]
+----
+curl -X POST http://10.143.192.102:8091/node/controller/reloadCertificate \
+     -u Administrator:password 
+     -d '{"privateKeyPassphrase": {"type": "plain", "password": "private-key-password"}}'
+----
++
+The JSON value you pass to the command supplies the password for the private key in the PKCS #12 certificate as plain text.
+Replace the `private-key-password` with the password you entered in step 2. 
+
+Couchbase Server extracts the private key and certificate from the `couchbase.p12` file and activates them on the node.
+
+This example has the node's certificate directly signed by the cluster certificate. 
+If instead you need to use one or more intermediate certificates to sign the node, you can choose to include these to establish a chain of trust.
+You can include a chain of intermediate certificates by adding a `-chain` argument to the `openssl` command in step 2.
+See OpenSSL's https://www.openssl.org/docs/manmaster/man1/openssl-pkcs12.htmlp[openssl-pkcs12^] documentation for documentation on `-chain` and other arguments.
 
 == Single Versus Multiple Root Certificates:
 
@@ -714,7 +813,7 @@ See xref:manage:manage-security/enable-client-certificate-handling.adoc[Enable C
 The examples in this page create a self-signed root certificate use that certificate's private key to sign other certificates.
 In production environments, you often want to use a root certificate signed by a well-known Certificate Authority.
 In this case, instead of creating the cluster certificate yourself, you will use the certificate signed by the external CA to sign certificates.
-You also usually create intermediate certificates to sign the node and client certificates instead of directly signing them using the cluster certificate.
+You also often create intermediate certificates to sign the node and client certificates instead of directly signing them using the cluster certificate.
 
 
 [#adding-new-nodes]
