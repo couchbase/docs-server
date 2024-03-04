@@ -1,0 +1,114 @@
+= Checking Connections
+:description: pass:q[Node-connectivity can be checked, prior to the creation of an XDCR reference.]
+:page-topic-type: reference
+
+[abstract]
+{description}
+
+== HTTP Method and URI
+
+----
+POST /xdcr/connectionPreCheck
+----
+
+== Description
+
+Each Data-Service node in an XDCR source cluster must be able to connect to each Data-Service node in a prospective target cluster.
+In 7.2.1+, the `POST /xdcr/connectionPreCheck` method and URI allow all required connections to be checked, prior to the creation of a reference.
+Used with the same URI, the `GET` method returns information on a specified, ongoing connection-check.
+
+== Curl Syntax
+
+----
+curl -X POST -u <username>:<password>
+  http://<ip-address-or-domain-name>:8091/xdcr/connectionPreCheck
+  -d name=<targetClusterName>
+  -d hostname=<ip-address-or-domain-name-for-target-cluster>
+  -d username=<username-for-target-cluster>
+  -d password=<password-for-target-cluster>
+
+curl -X GET -u <username>:<password>
+  http://<ip-address-or-domain-name>:8091/xdcr/connectionPreCheck?taskId=<taskId>
+----
+
+In the `POST` statement, the `name` must be the name assigned locally to the target cluster.
+In the `GET` statement, the `taskID` specified as the query parameter is one previously returned from a successful `POST`.
+
+[#responses]
+== Responses
+
+Success for the `POST` returns `200 OK` and an object containing the `hostname` and `username` for the target, and a `taskId` of the form `task`/_<localhost>_/_<integer>_, where the specified integer is the unique identifier for the task.
+
+For both `POST` and `GET`, failure to authenticate returns `401 Unauthorized`.
+An incorrectly specified URI returns `404 Object Not Found`.
+
+For `POST`, failure to specify a hostname returns `400 Bad Request` and the message `"hostname (ip) is missing"`.
+Failure to specify a name returns `400 Bad Request` and the message `"cluster name is missing"`.
+
+For `GET`, failure to specify a `taskId` returns `500 Internal Server Error` and a message such as `No taskID provided to get the pre-check results`, or `1 query parameter, taskId expected, got 0`.
+
+When `GET` is successful, `200 OK` is returned, with an object whose data includes one of the status messages listed below:
+
+* If a problem is encountered, the message may be either `"This version of some or all the nodes doesn't support the connection pre-check"`, or `"Intra-cluster replication detected, skipping connection pre-check"`.
+(Note that no check is required when target and source are specified as the same cluster.)
+
+* If the check is still in progress, the message may be one of the following: `"Sending requests to the peer"`, `"P2PSend was successful, waiting for the node's response"`, `"Response obtained from the node, storing the results"`, or `"P2P protocol successfully executed, no errors"`.
+
+* If the check is complete, the message is as follows: `"Connection check was successful, no errors"`.
+
+== Examples
+
+In the following example, a connection check is made from the local cluster to a remote cluster locally named as `MyRemoteCluster`, using the remote IP address `10.145.250.102`.
+The output is piped to the https://jqlang.github.io/jq/[jq^] program, to facilitate readability.
+
+----
+curl -v -X POST http://localhost:8091/xdcr/connectionPreCheck \
+-u Administrator:password \
+-d hostname=10.145.250.102 \
+-d username=Administrator \
+-d password=password \
+-d name=MyRemoteCluster | jq '.'
+----
+
+If the call is successful, the connection-check is started, and an object such as the following is returned:
+
+----
+{
+  "hostname": "10.145.250.102:8091",
+  "taskId": "task/127.0.0.1/11",
+  "username": "Administrator"
+}
+----
+
+The `taskId` thus returned can now be used to return the status of the connection-check that has been started.
+The following example duly returns the current status of this connection-check:
+
+----
+curl -X GET -u Administrator:password \
+"http://localhost:8091/xdcr/connectionPreCheck?taskId=task/127.0.0.1/10" | jq '.'
+----
+
+If successful, the call returns an object such as the following:
+
+----
+{
+  "done": true,
+  "result": {
+    "10.145.250.101:8091": {
+      "10.145.250.102:8091": [
+        "Connection check was successful, no errors"
+      ]
+    }
+  },
+  "taskId": "task/127.0.0.1/11"
+}
+----
+
+This indicates that the check has concluded, and was successful.
+Note that if the output contains `"done": false`, instead of `"done": true`, this means that the check is not yet complete: in this case, the `GET` call should be made again.
+(It may take as long as 60 seconds, following initiation of a connection-check, for the response to show `"done": true`.)
+
+== See Also
+
+Information on creating a reference is provided in xref:rest-api:rest-xdcr-create-ref.adoc[Creating a Reference].
+A complete overview of XDCR is provided in xref:learn:clusters-and-availability/xdcr-overview.adoc[Cross Data Center Replication (XDCR)].
