@@ -1,107 +1,131 @@
-= Set up Prometheus to Consume Couchbase Metrics
+= Configure Prometheus to Collect Couchbase Metrics
 
-:description: This page will demonstrate how to enable a Prometheus server to read from Couchbase's Prometheus-ready endpoints.
+:description: Couchbase Server provides an API endpoint that helps you configure Prometheus to collect data from it.
 
 [abstract]
-With Couchbase 7.x, it's not necessary to write a custom Prometheus Exporter.
 {description}
+
+https://prometheus.io/docs/introduction/overview/[Prometheus^] is an open source event monitoring and alerting system. 
+You can configure it to collect metrics from your Couchbase Database Server. 
+Once configured, you can use Prometheus to alert you to conditions in your database. 
+You can also use it to visualize activity in your database either directly, or through integration with tools like Grafana.
+
+For a general introduction to using Prometheus with Couchbase, see the blog post https://www.couchbase.com/blog/scraping-database-metrics-from-couchbase-capella-with-prometheus/[Scraping Database Metrics from Couchbase Capella with Prometheus^].
+
+To collect metrics from your Couchbase Server database, Prometheus must connect to the nodes in its cluster. 
+Therefore, it needs to have a list of the cluster's nodes. 
+To make this process easier and help automate updating Prometheus's list of nodes, Couchbase Server provides a discovery API endpoint named `/prometheus_sd_config`. 
+Calling this endpoint returns a list of the nodes in the cluster in a format that Prometheus can use.
+
+NOTE: Prior to version 7.2.1, an endpoint named `/prometheus_sd_config.yaml` was the best way to configure Prometheus to collect metrics from Couchbase Server. 
+This endpoint is now deprecated because the new `/prometheus_sd_config` discovery API endpoint offers more features. 
+See xref:rest-api:rest-discovery-api.adoc#old-api[Replicate the Earlier Discovery API]  to learn how to call the new API to generate the same output as the now-deprecated `/prometheus_sd_config.yaml` endpoint.
 
 == Prerequisites
 
-Make sure that you have https://www.docker.com/get-started[Docker] installed and running on your machine. 
-You should also have an available Couchbase cluster with at least one running node.
+You should create a Couchbase Server user for Prometheus to use when connecting to your database. 
+Assign this user the External Stats Reader role which grants it the ability to call the discovery API. 
+This role also gives it the ability to read Couchbase Server's metrics. 
 
-:sectnums:
+To get the certificate from the Couchbase Server Web Console: 
 
-== Prepare the target configuration file
-Create a file that contains a list of the cluster's node targets. 
-This is done by issuing a request to the server from the command line:
+. Click *Security*.
+. Click the *Certificates* tab. 
+. Copy the contents of the *Trusted Root Certificates* text field to a file.
 
-[source, console]
-----
-wget --content-disposition \
-    'http://10.112.211.101:8091/prometheus_sd_config.yaml' \
-    --http-user Administrator --http-password password
-----
+Save the file to a location in your Prometheus host. 
+When you configure your Prometheus job to collect metrics from Couchbase Server, add the file to the job definition's `tls_config` section. 
 
-This will generate a configuration file containing the target addresses of the nodes in your cluster. 
+If you do not want to Prometheus to use the secure ports, you can change the port number the discovery API call returns. 
+See xref:rest-api:rest-discovery-api.adoc[Prometheus Discovery API]. 
 
-NOTE: The name and contents of the file will depend on the configuration of the cluster:
+== Call the Discovery API
 
-.couchbase_sd_config_my-cluster.yml
-[source, yaml]
-----
-- targets:
-    - '10.144.220.101:8091'
-    - '10.144.220.102:8091'
-----
+You have two ways to use the discovery API when configuring Prometheus to collect metrics from Couchbase Server: file-based, or HTTP service discovery. 
 
-Create a new directory on your system and copy the file to the new directory:
+To use the file-based method, you call the discovery API and save the results to a file. 
+Then you configure Prometheus to read this file to get the list of nodes. 
+With this method, you have to take additional steps to update the list if you change the nodes in your Couchbase Database.
 
-[source, console]
-----
-mkdir ~/prometheus
-cp couchbase_sd_config_my-cluster.yml ~/prometheus
-----
+To use the HTTP service discovery method, you configure Prometheus to get the list directly from the discovery API endpoint. 
+When you choose this method, Prometheus's defaults to  periodically calling the API endpoint to see if your database's configuration has changed. 
 
-== Create the Prometheus configuration file
-Create a new file called `prometheus.yml` in the directory containing the targets file. 
-Populate the file with the following text:
+The following sections explain each of these methods.
 
-.prometheus.yml
-[source, yaml]
-----
-scrape_configs:
-  - job_name: 'couchbase_cluster'    # <.>
-    basic_auth:
-      username: 'Administrator'    # <.>
-      password: 'password'    #<.>
-    file_sd_configs:
-      - files:
-          - 'couchbase_sd_config_my-cluster.yml'    # <.>
-        refresh_interval: 15s
-----
+=== File-Based Configuration
 
-<.> This is the name that Prometheus will assign to the process retrieving data from the target nodes.
-<.> The username the process can use to log into the cluster.
-<.> The password the process will use to log into the cluster.
-<.> The name of target file. 
-The process will use this to read th addresses of the target nodes.
+With file-based configuration, you directly call the API discovery endpoint using `curl` or `wget` and save the output to a file. 
+By default, the endpoint returns the list of all nodes in the cluster in JSON format. 
+Prometheus accepts the list in either JSON or YAML format. 
 
-The directory should contain the following files.
+To use the file-based method:
 
-[source, text]
-----
-📂 ~ (home directory)
-+ 📂 prometheus
-    📄 prometheus.yml
-    📄 couchbase_sd_config_my-cluster.yml
-
-----
-
-NOTE: The cluster configuration file will have a different name to the one shown here.
-
-== Install Prometheus
-
-Open a terminal window and run the following command to provision Prometheus:
-
-[source, console]
-----
-docker run \
-    -p 9090:9090 \    # <.>
-    -v ~/prometheus:/etc/prometheus \    # <.>
-    prom/prometheus
-----
-<.> The port through which the Prometheus server is accessed and takes the form: `-p{nbsp}host-port:container-port`.
+. Call the Discovery API endpoint `/prometheus_sd_config` and save the results to a file. 
+The following example calls the discovery API endpoint using the `prometheus` user on a Couchbase node whose hostname is `node1` and saves the output to a file named `couchbase_nodes.json`:
 +
-[horizontal]
-*host-port*:: The port of the host machine used to access the Prometheus service.
-*container-port*:: This is the port used internally by the container. The host port maps on to this.
+[source, console]
+----
+curl  --get -u prometheus:password \
+      http://node1:8091/prometheus_sd_config \
+      > couchbase_nodes.json
+----
+. Copy the file to your Prometheus host if you did not run `curl` on your Prometheus host. 
+. Once the files are in place on the Prometheus host, edit the `prometheus.yml` configuration file. 
+Add a new job to collect metrics from your Couchbase Database. 
+In this job, add a `file_sd_configs` key entry. Set its value to the path to the file containing the list of nodes you created earlier. 
++
+The following example defines a new job to collect metrics from a Couchbase Server, where the certificate  and node list files are in the `/etc/prometheus` directory.
++
+[source, yaml]
+----
+  - job_name: "couchbase-server"
+    basic_auth: 
+      username: "prometheus"
+      password: "_password_"
+    tls_config:
+      ca_file: "/etc/prometheus/cb-cert.pem"
+    scheme: "https"
+    file_sd_configs:
+      - files: 
+        - "/etc/prometheus/couchbase_nodes.json"
+----
 
-<.> This is the mapping of the Prometheus configuration directory to the host machine configuration.
-`~/prometheus` will be mapped on to the Prometheus instance configuration directory inside the Docker container.
+NOTE: As mentioned earlier, the file-based configuration does not automatically update if there are changes in your Couchbase Server cluster. 
+Prometheus cannot automatically update its configuration if you add or remove nodes. 
+However, it does monitor the file containing the list of nodes for changes. 
+You can automate updates to this file by having a task that periodically calls the Couchbase Server discovery API endpoint and updates the list file. 
+However, it's easier to just configure Prometheus to call the discovery API itself and let it manage the updates.
 
-== Test the configuration
-Once the Docker container has started up, visit `http://localhost:9090/targets` to ensure that Prometheus is accessing the cluster correctly:
+== Configure HTTP Service Discovery
 
-image::monitor/prometheus-alert.png[]
+You can configure Prometheus to call the Couchbase Server discovery API itself. 
+With this method, has the benefit that Prometheus defaults to periodically calling the endpoint so it automatically learns of any added or removed nodes. 
+
+To use the HTTP service discovery method, add a job to your Prometheus hosts's `prometheus.yml` configuration file to collect data from your Couchbase Database. 
+In this job, add an `http_sd_configs` section that tells Prometheus to call your database's discovery API endpoint. 
+You must also provide authentication in this section in addition to the authentication Prometheus uses to retrieve the metrics. 
+If you're using encrypted connections, add the path to your Couchbase Server's certificate. 
+
+The following example shows a job configuration to collect metrics from a Couchbase Server by calling the discovery API on a node named `node1`. 
+The `http_sd_configs` section contains its own copy of the `basic_auth` and `tls_config` subsections. 
+
+[source, yaml]
+----
+  - job_name: "couchbase-server"
+    basic_auth: 
+      username: "prometheus"
+      password: "password"
+    tls_config:
+      ca_file: "/etc/prometheus/cb-cert.pem"
+    scheme: "https"
+    http_sd_configs:
+    - url: https://node1:18091/prometheus_sd_config
+      basic_auth: 
+        username: "prometheus"
+        password: "password"
+      tls_config:
+        ca_file: "/etc/prometheus/cb-cert.pem"
+----
+
+You can change the list that the discovery API returns by adding query parameters to the URL in the `http_sd_configs` section. 
+See xref:rest-api:rest-discovery-api.adoc[Prometheus Discovery API].
