@@ -111,6 +111,8 @@ Most deployments can achieve optimal performance with 1 Gbps interconnects, but 
 == Sizing Data Service Nodes
 
 Data Service nodes handle data service operations, such as create/read/update/delete (CRUD).
+The sizing information provided below applies both to the _Couchstore_ and _Magma_ storage engines: however, the _differences_ between these storage engines should also be reviewed, before sizing is attempted.
+For information, see xref:learn:buckets-memory-and-storage/storage-engines.adoc[Storage Engines].
 
 It's important to keep use-cases and application workloads in mind since different application workloads have different resource requirements.
 For example, if your working set needs to be fully in memory, you might need large RAM size.
@@ -183,7 +185,7 @@ Based on the provided data, a rough sizing guideline formula would be:
 | `total_dataset * (working_set_percentage)`
 
 | Cluster RAM quota required
-| `(total_metadata + working_set) * (1 + headroom) / (high_water_mark)`
+| `(total_metadata + working_set) * (1 + overhead_percentage) / (high_water_mark)`
 
 | Number of nodes
 | `Cluster RAM quota required / per_node_ram_quota`
@@ -257,7 +259,7 @@ The following sizing guide can be used to compute the memory requirement for eac
 | [.var]`index_entry_size` (Size of secondary key)
 | 50 bytes
 
-| [.var]`working_set_percentage` (memdb, Plasma, ForestDB)
+| [.var]`working_set_percentage` (Nitro, Plasma, ForestDB)
 | 100%, 20%, 20%
 |===
 
@@ -268,13 +270,13 @@ The following sizing guide can be used to compute the memory requirement for eac
 | `overhead_percentage`
 | 25%
 
-| `metadata_back_index` (memdb, Plasma, ForestDB)
+| `metadata_back_index` (Nitro, Plasma, ForestDB)
 | 46, 46, 40 bytes
 
-| `metadata_main_index` (memdb, Plasma, ForestDB)
+| `metadata_main_index` (Nitro, Plasma, ForestDB)
 | 74, 74, 70 bytes
 
-| `metadata_per_entry` (memdb, Plasma, ForestDB)
+| `metadata_per_entry` (Nitro, Plasma, ForestDB)
 | `metadata_back_index` + `metadata_main_index`
 |===
 
@@ -285,20 +287,20 @@ Based on the provided data, a rough sizing guideline formula would be:
 |===
 | Variable | Calculation
 
-| [.var]`total_index_data(secondary index)` (memdb)
+| [.var]`total_index_data(secondary index)` (Nitro)
 | `(num_entries) * (metadata_per_entry + ID_size + index_entry_size)`
 
 | [.var]`total_index_data(secondary index)` (Plasma, ForestDB)
 | `(num_entries) * (metadata_per_entry + ID_size + index_entry_size) * 2`
 
-| [.var]`total_index_data(primary index)` (memdb, Plasma, ForestDB)
+| [.var]`total_index_data(primary index)` (Nitro, Plasma, ForestDB)
 | `(num_entries) * (metadata_main_index + ID_size + index_entry_size)`
 
 | [.var]`index_memory_required(100% resident)` (memdb)
-| `total_index_data * (1 + overhead)`
+| `total_index_data * (1 + overhead_percentage)`
 
 | [.var]`index_memory_required(20% resident)` (Plasma, ForestDB)
-| `total_index_data * (1 + overhead) * working_set`
+| `total_index_data * (1 + overhead_percentage) * working_set`
 |===
 
 Based on the above formula, these are the suggested sizing guidelines:
@@ -308,7 +310,7 @@ Based on the above formula, these are the suggested sizing guidelines:
 |===
 | Variable | Calculation
 
-| [.var]`total_index_data(secondary index)` (memdb)
+| [.var]`total_index_data(secondary index)` (Nitro)
 | (10000000) * (120 + 30 + 50) = 2000000000 bytes
 
 | [.var]`total_index_data(secondary index)` (Plasma)
@@ -317,7 +319,7 @@ Based on the above formula, these are the suggested sizing guidelines:
 | [.var]`total_index_data(secondary index)` (ForestDB)
 | (10000000) * (80 + 30 + 50) * 2 = 3200000000 bytes
 
-| [.var]`index_memory_required(100% resident)` (memdb)
+| [.var]`index_memory_required(100% resident)` (Nitro)
 | (2000000000) * (1 + 0.25) = 2500000000 bytes
 
 | [.var]`index_memory_required(20% resident)` (Plasma)
@@ -327,7 +329,7 @@ Based on the above formula, these are the suggested sizing guidelines:
 | (3200000000) * (1 + 0.25) * 0.2 = 800000000 bytes
 |===
 
-The above example shows the memory requirement of a secondary index with 10M index entries, each with 50 bytes size of secondary key and 30 bytes size of documentID. The memory usage requirements are 2.5GB(memdb, 100% resident), 1GB(plasma, 20% resident), 800MB(Forestdb, 20% resident).
+The above example shows the memory requirement of a secondary index with 10M index entries, each with 50 bytes size of secondary key and 30 bytes size of documentID. The memory usage requirements are 2.5GB(Nitro, 100% resident), 1GB(plasma, 20% resident), 800MB(Forestdb, 20% resident).
 
 Note that the storage engine used in the sizing calculation corresponds to the storage mode chosen for Index Service in the following way:
 
@@ -342,7 +344,7 @@ Note that the storage engine used in the sizing calculation corresponds to the s
 | Plasma
 
 | Memory-Optimized (Enterprise Edition)
-| memdb
+| Nitro
 |===
 
 == Sizing Query Service Nodes
@@ -362,6 +364,9 @@ There are a few questions that will help size the cluster:
 Different queries have different resource requirements.
 A simple query might return results within milliseconds while a complex query may require several seconds.
 
+The number of queries that may be processed simultaneously may be approximated with the formula _CPU&#95;cores * 4_.
+The maximum queue-length for queries may be approximated with the formula _CPU&#95;cores * 256_.
+If either limit is reached, additional queries are rejected with a `503` error.
 
 == Sizing Analytics Service Nodes
 
@@ -424,7 +429,28 @@ However, if you use timers you will have to allocate an additional space of abou
 
 Let’s say you have a context of 200 bytes (total 1K/timer), then for 100,000 active timers you would need 100 MB of additional space in this bucket.
 
-As a best practice, we recommend that you keep this collection 100% resident.  Note that this collection can be shared across all your Eventing Functions.
+As a best practice, we recommend that you keep this collection 100% resident.
+Note that this collection can be shared across all your Eventing Functions.
+
+== Sizing Backup Service Nodes
+
+The hardware requirements for running a backup cluster are as follows:
+
+
+.Hardware requirements
+|===
+||Minimum |Recommended
+
+| CPUs
+|4{nbsp}CPU cores
+|16{nbsp} CPU cores
+
+| Memory
+|8{nbsp}GiB
+|16{nbsp}GiB
+
+|===
+
 
 
 == Sizing for Replication (XDCR)
