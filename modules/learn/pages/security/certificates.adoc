@@ -1,5 +1,5 @@
 = Certificates
-:description: Couchbase Server supports x.509 and Public-Key Cryptography Standard (PKCS) #12 certificates for client and server security and  authentication.
+:description: Couchbase Server supports using certificates for client and server security and  authentication.
 :page-aliases: security:security-certs-auth,security:security-encryption
 :page-toclevels: 3
 [abstract]
@@ -9,97 +9,162 @@
 [#certificates-in-couchbase]
 == Certificates and Couchbase Server
 
-Configuring Couchbase Server with certificates has these benefits:
+To maintain security, Couchbase Server can verify the identity of any system it connects to or that tries to connect to it.
+This verification ensures that only authorized systems can interact with the database.
+By default, Couchbase Server nodes always verifies the identity of other nodes in the cluster.
+You can choose to have Couchbase Server also verify the identity of client systems and XDCR clusters.
+Couchbase Server verifies the identity of systems using certificates. 
 
-* Only approved users, applications, machines, and endpoints can access system resources.
+Similarly, you can configure Couchbase Server to identify itself to other systems using certificates. 
+This use of certificates lets other systems such as clients and XDCR clusters verify the identity of your database.
 
-* Clients can verify the identity of Couchbase Server, ensuring that they're not exchanging data with a rogue entity.
-
-Managing certificates requires Full Admin, Local User Security Admin, or External User Security Admin privileges.
+Certificates indicate trust (and therefore identity) by cryptographically signing other certificates.
+You use a certificate's private key to sign another certificate.  
+In this case, the certificate you use to sign another is called a Certificate Authority (CA) or a root certificate. 
+When you use a CA to sign a certificate, you're indicating you trust the system using certificate.
+If Couchbase Server trusts the CA, it can trust a system that identifies itself with a certificate signed by the CA. 
+You can also use the signed certificate as an intermediate certificate by using its own private key to sign new certificates.
+By signing the new certificate, the intermediate certificate extends the trust of the CA to the newly signed certificate.
+This series of signings establishes a chain of trust from the CA, through the intermediate certificate, to new certificate. 
 
 This page provides a general overview of using certificates with Couchbase Server and clients.
 It assumes you know the basics of Transport Layer Security (TLS) and certificates. 
 To learn more about these topics, see the Wikipedia article on  https://en.wikipedia.org/wiki/Public_key_certificate[Public key certificate^],  and OpenSSL's https://wiki.openssl.org/index.php/Command_Line_Utilities[Command Line Utilities] page.
 
+Managing certificates requires Full Admin, Local User Security Admin, or External User Security Admin privileges.
+
 For step-by-step instructions for creating and deploying certificate for Couchbase Server and clients, see xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates] and xref:manage:manage-security/configure-client-certificates.adoc[Configure Client Certificates].
 
 [#certificate-hierarchies]
-=== Certificate Hierarchies
+=== Couchbase Server's Trust Store
 
-A Couchbase Server cluster organizes certificates in a hierarchy.
-The certificate with overall authority for the cluster is at the top of the hierarchy.
-This certificate is the root certificate, also called the cluster certificate, because it is the certificate for the cluster as a whole.
-All certificates on lower tiers of the hierarchy inherit its authority.
-You use one certificate to sign other, lower-level certificates. 
-This signing lets the new certificate inherit its own authority from the high-level certificate.
+You tell Couchbase Server which CAs and intermediate certificates to trust by adding them to its trust store.
+The trust store is a collection of certificates that's shared cluster-wide--each node can access the certificates in it.
+The nodes in the cluster use these certificates to determine whether to trust other nodes during TLS connection negotiation.
 
-In Couchbase Server 7.1 and later, verifying a trust chain uses one of these procedures:
+When a system--another node, or a client or XDCR cluster when configured to connect securely--interacts with a node, it provides its certificate as identification.
+The node tries to identify the system by establishing a chain of trust from the system's certificate to a certificate in the trust store. 
+For example, suppose a client system has a certificate signed by an intermediate certificate which in turn was signed by a CA in the trust store.
+In this case, the node finds a chain of trust from the system's certificate, through the intermediate certificate, and to a CA in the trust store.
+Therefore, it can trust the identity of the other system.
 
-* The entity proving its identity gives its own certificate and all intermediate certificates to the requesting party.
-The requesting party then tries to find the CA--the last certificate in the chain--in its own trust store.
-If it does, authentication may proceed.
-
-* The entity proving its identity sends only its own certificate to the requesting party.
-The requesting party has to find all associated intermediates, and the CA, in its own trust store.
-If it does, the requesting party can trust the entity.
 
 [#server-certificates]
-=== Default Certificates and Certificate Substitution
+=== Default Certificates
 
-By default, Couchbase Server generates self-signed root and entity certificates to protect cluster and individual nodes.
-You can replace these certificates with customized or externally acquired certificates and with corresponding certificate-chains.
-You may choose to replace these certificates to use ones signed by a well-known CA, or to add extensions to the certificates.
-Administrators must create all client certificates and certificate chains because Couchbase Server does not generate them by default.
+By default, when you create a new cluster, Couchbase Server generates a self-signed CA that it uses as its root CA.
+It uses this CA to sign server certificates that it automatically generates for each node.
+The root CA appears under *Trusted Root Certificates* on the *Certificates* tab of the *Security* page in the Couchbase Server Web Console.
 
-The private key of the default self-signed cluster certificate is not available.
-Therefore, you cannot create custom certificate-chains based on the default certificate.
-To create custom certificate-chains, generate a custom cluster certificate and private key. 
-Another option is to get a root CA from an external authority and create intermediate certificates based on it, as described in xref:#intermediate-certificates[Intermediate Certificates].
+image::learn:security/security_certificates_page.png[align=left]
 
-[#cluster-certificate]
-=== Cluster Certificate
+This page also lists each node's certificate.
 
-Couchbase Server provides a default self-signed cluster certificate which it generates and deploys while creating the first node in a cluster.
-You can deploy a new replacement cluster certificate on the cluster using the Couchbase REST API or command line interface.
-For example, you can replace the certificate with one supplied by a well-known CA to make authentication with third parties easier.
-The current cluster certificate is always visible on the *Root Certificate* panel of the *Security* screen of Couchbase Server Web Console.
-See xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[Root Certificate].
+As you add nodes to the cluster, Couchbase Server automatically creates a new server certificate for them signed by this CA.
+These default certificates allow the nodes to verify each other's identity, preventing outside systems from masquerading as a node.
+They a basic level of security.
 
-You supply a certificate for the cluster in X.509 format. 
-The certificate must be in a Privacy Enhanced Mail (PEM) file. 
-These files have the extension `.pem`. 
-The file can have any name, although `ca.pem` is commonly used. 
-They contain a single certificate. 
-With this format, you supply a separate private key file in  PKCS #1 or PKCS #8 format, with a `.key` extension. 
-The name of the private key often corresponds to the name of the certificate it generates. 
-For example, `ca.key` would be used to generate `ca.pem`.
+You can add additional custom root certificates to Couchbase Server's trust store. 
+Common uses for the additional certificates includes signing certificates to identify client or XDCR clusters.
+You can also use additional root certificates to replace the node certificates that Couchbase Server automatically generates.  
+The following sections explain these uses of custom certificates.
+
+=== Custom Root Certificates
+
+You can choose to create your own certificates, optionally signed by a well-known authority, and add them to Couchbase Server's trust store.
+These additional certificates are listed under Trusted Root Certificates on the *Certificates* tab of the *Security* page, along with the self-signed CA.
+You can use these custom root certificates to sign certificates for client systems and XDCR peers.
+
+NOTE: You cannot use the private key for the self-signed root CA that Couchbase Server created to sign node certificates.
+Therefore, the only way to create certificates for client systems and XDCR clusters is to create and add custom certificates to the trust store.
+
+=== Custom Node Certificates
+
+You can also use a custom root certificate to sign node certificates.
+As long as the signing certificate has a chain of trust leading to a CA in the Couchbase Server's trust store, the node's certificate will be trusted by other nodes.
+
+If you want to use custom node certificates, you can choose to replace the default self-signed root certificate  with your own customized one.
+To replace the self-signed CA, you must first replace each node's certificate with one you signed using the new CA.
+Once no node has a certificate that was signed by the self-signed CA you can delete the it.
+You can learn which nodes have certificates signed by a root CA from entry in the Couchbase Server Web Console's *Certificates* tab on the *Security* page. 
+ The *Certs Issued For Nodes* field lists any nodes that have certificates signed by the certificate.
+
+Couchbase Server only automatically generates node certificates for new nodes using its default self-signed root certificate.
+If you remove this certificate, Couchbase Server does not automatically generate certificates for new nodes. 
+In this case, you must create a certificate for a new node before adding or joining it to the cluster.
+
+Couchbase Server requires certificates for nodes to meet the following requirements:
+
+* The node's certificate must have an attribute that limits its validity to the specific node.
+See xref:#node-certificate-validation[Node Certificate Validation] for an explanation.
+* The certificate must either:
+** An X.509 format certificate in PEM format and named `chain.pem`. 
+In addition, you must also supply the certificate's private key in a file named `pkey.key`. 
+See xref:#private-key-formats[Private Keys] for a discussion of the private keys Couchbase Server supports.
+** A PKCS #12 format file. 
+See xref:#pkcs12[PKCS #12 Certificates for Nodes] for more information about this format.
+
+See xref:manage:manage-security/configure-server-certificates.adoc#root-and-node-certificates[Create and Deploy Cluster and Node Certificates] for step-by-step instructions on creating the new CA and node certificates.
+
+=== Supported Certificate Formats
+
+Most of the certificates you use with Couchbase Server are in the X.509 format.
+Certificates you add to the trust store must meet the following criteria:
+ 
+* The certificate must be in a Privacy Enhanced Mail (PEM) file. 
+* These files have the extension `.pem`. 
+* The file can have any name, although `ca.pem` is commonly used. 
+* They contain a single certificate. 
 
 For examples of creating cluster and other certificates based on private keys see in xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates]
 
-=== Multiple Root CAs
+[#pkcs12]
+==== PKCS #12 Certificates for Nodes
 
-Couchbase Server supports using multiple root CA certificates.
-Together, these certificates constitute a trust store, which Couchbase Server uses to determine whether or not to trust a client. 
-If the client's root CA in the client's trust chain is in the cluster's trust store, Couchbase Server trusts the client.
+When creating custom certificates for node, you can use PKCS #12 format certificates instead of X.509 certificates.
+This format lets you bundle the node's certificate, private key, and certificate chain into a single file.
+Couchbase Server only supports this format for nodes. 
 
-The Couchbase Server trust store provides authority to individual nodes.
-Each node has at most one node certificate, potentially with a concatenated trust chain.
-The certificate or its chain of trust  points to a single oot CA in the cluster's trust store.
-The trust chains of multiple nodes can point to a single root CA.
-All root CAs in the trust store are accessible to all nodes.
-You can use multiple root CAs when encrypting node-to-node communications.
+When you upload a PKCS #12 certificate, Couchbase Server extracts the node's private key and certificate and handles them the same way it handles individual X.509 certificates.
 
-For more information, see xref:learn:security/using-multiple-cas.adoc[Using Multiple Root Certificates].
+Several things to note when using PKCS #12 certificates:
+
+* The PKCS #12 file's name must be `couchbase.p12` and be located in the node's inbox directory.
+* Make sure node's inbox directory only contains the PKCS #12 certificate file.  
+If the directory contains both a PKCS #12 certificate and a private key file named `pkey.key`, the call to reload the node's certificates fails.
+In this case, Couchbase Server cannot determine which file you want it to reload, and refuses to continue. 
+
+See xref:manage:manage-security/configure-server-certificates.adoc#pkcs12[Deploy a Certificate and Private Key to a Node in a PKCS #12 File] for an example of using this certificate format.
+
+[#node-certificate-validation]
+==== Node Certificate Validation
+
+In Couchbase Enterprise Server, each node certificate must have the node's name specified as a Subject Alternative Name (SAN).
+This attribute restricts the certificate so it's only valid for the node named in the SAN.
+
+The SAN must meet the following requirements:
+
+* If the node name is a Fully Qualified Domain Name (FQDN), the SAN must be this FQDN with a `DNS:` prefix.
+For example, `DNS:*.localhost.com`.
+When the node name is an FQDN, the SAN cannot specify an IP address.
+
+* If the node name is an IPv4 or an IPv6 IP Address, the SAN must be the IP address, with an `IP:` prefix.
+For example, `IP:127.0.0.1` or `IP:0:0:0:0:0:0:0:1`.
+When the node name is an IP address, the SAN cannot specify an FQDN.
+
+NOTE: You can use the wildcard character in all expressions.
+
+For examples configuring node certificate including setting the node's name as a SAN, see xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
 
 [#intermediate-certificates]
 === Intermediate Certificates
 
 An intermediate certificate--sometimes referred to as a subordinate certificate, an intermediate CA, or a signing CA--can be either:
 
-* A certificate signed by the cluster certificate, which is often  called the root CA.
+* A certificate signed by the root CA certificate.
 
 * One of a chain of intermediate certificates, each of which was signed by one preceding it in the chain. 
-The first certificate in the chain must be signed by the cluster certificate.
+The first certificate in the chain must be in Couchbase Server's trust store.
 
 The main purpose of the intermediate certificate is to sign node certificates, client certificates, or other intermediate certificates. 
 Signing node certificates convey the authority of the cluster certificate to the node or client certificates indirectly.
@@ -111,36 +176,6 @@ However, if you use customized certificates and certificate chains, you can defi
 You can upload intermediate certificates to the Couchbase Server trust store.
 For information, see xref:learn:security/using-multiple-cas.adoc#adding-intermediate-certificates-to-the-trust-store[Adding Intermediate Certificates to the Trust Store].
 
-[#node-certificate]
-=== Node Certificates
-
-Each node has its own certificate  signed  by the cluster certificate. 
-Couchbase Server automatically generates the node certificates by creating a new private key and signing the certificate using cluster's certificate. 
-This process occurs whenever you create a single-node cluster and when you add additional nodes.
-
-This automated process provides basic out-of-the-box security for all of Couchbase Server's secure ports. 
-See xref:install:install-ports.adoc[Couchbase Server Ports] &#8212;  and xref:learn:clusters-and-availability/node-to-node-encryption.adoc[Node-to-Node Encryption] for a description of these ports.
-
-However, using customized certificates with additional extensions that provide subject alternative names and signed by a root authority can provide a higher level of security. 
-See xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates] for instructions on how to create custom cluster and node certificates.
-
-==== PKCS #12 Certificate Support for Nodes
-
-In addition to using X.509 certificates for nodes, you can also use PKCS #12 format certificates.
-This format lets you bundle the node's certificate, private key, and chain of trust into a single file.
-Couchbase Server only supports this format for node certificates. 
-See xref:manage:manage-security/configure-server-certificates.adoc#pkcs12[Deploy a Certificate and Private Key to a Node in a PKCS #12 File] for more about this certificate format.
-
-When you upload a PKCS #12 certificate, Couchbase Server extracts the node's private key and certificate and handles them the same way it handles individual X.509 certificates.
-
-Several things to note when using PKCS #12 certificates:
-
-* The PKCS #12 file must be named `couchbase.p12`.
-* Make sure node's inbox directory only contains the PKCS #12 certificate file.  
-If the directory contains both a PKCS #12 certificate and a private key file named `pkey.key`, the call to reload the node's certificates fails.
-In this case, Couchbase Server cannot determine which file you want it to reload, and refuses to continue. 
-* 
-
 
 [#client-certificates]
 == Client Certificates
@@ -151,7 +186,7 @@ Information included in the certificate identifies the user by means of a userna
 
 Couchbase Server creates and uses client certificates by default for inter-node communication.
 These certificates are not visible to the user.
-Administrators must create the client certificates for XDCR or SDK-client connections explicitly based on a customized replacement cluster certificate.
+Administrators must create the client certificates for XDCR or SDK-client connections explicitly based on a  root CA certificate that's in the Couchbase Server's trust store.
 
 When authenticating a client that uses certificate-based authentication, Couchbase Server asks the client to present its certificate.
 If Couchbase Server finds that the certificate's chain of trust leads to a root authority that it recognizes, it trusts the client.
@@ -159,16 +194,18 @@ Couchbase Server then verifies that the certificate has not expired.
 After verifying the certificate is still valid, Couchbase Server extracts the username from the certificate.
 If the username matches an existing user and the user has the correct roles to access Couchbase Server via the client, Couchbase Server lets the client connect.
 
+A similar process allows the server to authenticate with the client in a process called mutual TLS (mTLS) or https://en.wikipedia.org/wiki/Mutual_authentication[mutual authentication^].
+
 NOTE: The client's authentication with the server relies on the private key used to create the client certificate.
 The client digitally signs a message with its private key and sends the message to the server.
 The server uses the client's public key to verify that the client sent the message.
-For an example this private key use when securing XDCR, see xref:manage:manage-xdcr/enable-full-secure-replication.adoc#specify-full-xdcr-security-with-certificates[Specify Root and Client Certificates, and Client Private Key].
-Another example is the securing contact with an LDAP host, explained in xref:manage:manage-security/configure-ldap.adoc#client-certificate[Configure LDAP].
 
-A similar process allows the server to authenticate with the client in a process called mutual TLS (mTLS) or https://en.wikipedia.org/wiki/Mutual_authentication[mutual authentication^].
+For an example of using private keys to secure XDCR, see xref:manage:manage-xdcr/enable-full-secure-replication.adoc#specify-full-xdcr-security-with-certificates[Specify Root and Client Certificates, and Client Private Key].
+
+For an example iof using certificates to secure a connection to an LDAP host, see xref:manage:manage-security/configure-ldap.adoc#client-certificate[Configure LDAP].
 
 [#identity-encoding-in-client-certificates]
-=== Specifying Usernames for Client-Certificate Authentication
+=== Specifying Usernames for Client Certificate Authentication
 
 The client certificate can contain the username to use for a client connection. 
 You can configure Couchbase Server to search for a username among multiple elements within the client certificate.
@@ -269,24 +306,7 @@ You can still use Subject Common Name.
 
 Examples of certificate creation provided in xref:manage:manage-security/manage-certificates.adoc[] continue to include definitions of Subject Common Name for both server and client.
 
-[#node-certificate-validation]
-== Node-Certificate Validation
 
-In Couchbase Enterprise Server Version 7.2 and later, each node certificate must have the node's name specified as a Subject Alternative Name (SAN).
-
-The SAN must meet the following requirements:
-
-* If the node name is a Fully Qualified Domain Name (FQDN), the SAN must be this FQDN with a `DNS:` prefix.
-For example, `DNS:*.localhost.com`.
-When the node name is an FQDN, the SAN cannot specify an IP address.
-
-* If the node name is an IPv4 or an IPv6 IP Address, the SAN must be the IP address, with an `IP:` prefix.
-For example, `IP:127.0.0.1` or `IP:0:0:0:0:0:0:0:1`.
-When the node name is an IP address, the SAN cannot specify an FQDN.
-
-NOTE: You can use the wildcard character in all expressions.
-
-For complete examples of server-certificate configuration, specifying the node-name as a SAN, see xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
 
 [#certificate-checking]
 === Certificate Checking
@@ -335,12 +355,10 @@ See xref:manage:manage-settings/configure-alerts.adoc[] for more information abo
 
 Couchbase Server supports using both RSA and X.509 Elliptic Curve (EC) private keys.
 
-In version 7.1 and later, Couchbase Server supports PKCS #1 and PKCS #8 file formats for private keys:
-
-* Couchbase Server supports using the PKCS #1 file format only for unencrypted private keys. 
+Couchbase Server supports using the PKCS #1 file format only for unencrypted private keys. 
 This format only supports RSA keys. 
 
-* Couchbase Server supports using PKCS #8 file format for both unencrypted and encrypted private keys.
+Couchbase Server supports using PKCS #8 file format for both unencrypted and encrypted private keys.
 The user-specified `EncryptedPrivateKeyInfo` must use PKCS #5 v2 algorithms.
 This format supports both RSA and Elliptic Curve keys.
 
@@ -351,7 +369,7 @@ When generating EC keys using the `openssl` command, be sure to use the `-noout`
 == JSON Passphrase Registration
 
 If a node's certificate has an encrypted private key, you can give Couchbase Server the key's passphrase, so it can use the private key when necessary.
-You registere the passpassphrase by passing Couchbase Server a JSON object using the REST API.
+You register the passphrase by passing Couchbase Server a JSON object using the REST API.
 For information, see xref:rest-api:upload-retrieve-node-cert.adoc[Upload and Retrieve a Node Certificate].
 
 
