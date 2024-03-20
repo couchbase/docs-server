@@ -1,9 +1,9 @@
 = Migrate a Bucket's Storage Backend
 :description: Full and Cluster Administrators can migrate a bucket's storage backend by calling the REST API and then performing full restores on the nodes containing the bucket.
 
-== Storage Backend Migration Overview
-
 [.edition]#{enterprise}#
+
+== Storage Backend Migration Overview
 
 You can migrate a bucket's storage backend if you find the bucket's current backend is not appropriate. 
 You can migrate from Couchstore to Magma, or from Magma to Couchstore. 
@@ -26,6 +26,10 @@ Before migrating a bucket, verify that the bucket's parameters meet the requirem
 For example, a Magma bucket must have a memory quota of at least 1{nbsp}GB. 
 The REST API call to change the bucket's storage backend returns an error if the bucket does not meet the new storage backend's requirements. 
 See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for a list of storage backend requirements.
+
+If you're planning to migrate from Couchstore to Magma, also consider the current disk usage on the nodes containing the bucket. 
+Magma's default fragmentation settings can result in higher disk use. 
+See xref:#disk_usage[Disk Use Under Couchstore Verses Magma] for more information.
 
 [#perform_migration]
 == Perform a Migration
@@ -90,36 +94,42 @@ It has migrated to the new storage backend.
 . Repeat the previous two steps for the remaining nodes in the cluster.
 
 [#disk_usage]
-== Disk Usage Under Couchstore Verses Magma
+== Disk Use Under Couchstore Verses Magma
 
 If you migrate a bucket's storage from Couchstore to Magma, you may see increased disk usage. 
 Couchstore's default threshold for fragmentation is 30%.
 When a Couchstore bucket reaches this threshold, Couchbase Server attempts to fully compact the bucket. 
 If the bucket has a low write workload, Couchbase Server may be able to compact the bucket to 0% fragmentation.
+
 Magma's default fragmentation threshold is 50%.
 Couchbase Server treats this threshold differently than the Couchstore threshold.
-Instead of attempting to compact the bucket until it has 0% fragmentation, Couchbase Server tries to compact a Magma bucket to maintain its fragmentation at 50%.
-This maintenance of 50% fragmentation may result in greater disk use for a Magma-backed bucket vs. the Couchstore-backed bucket.
+It does not try to compact the bucket until it has 0% fragmentation.
+Instead, Couchbase Server tries to compact a Magma bucket to maintain its fragmentation at 50%.
+This maintenance of 50% fragmentation may result in greater disk use for a Magma-backed bucket verses the Couchstore-backed bucket.
 
-If you find the migrated bucket's disk use is too high, you have two options:
+If you find that a bucket migrated to Magma has high disk use, you have two options:
 
-* Reduce the fragmentation threshold of the Magma bucket to 30%.
+* Reduce the fragmentation threshold of the Magma bucket. 
+FOr example, you could choose to reduce the fragmentation threshold to 30%.
 You should only consider changing the threshold if the bucket's workload is not write intensive.
 
 * Roll back the migration. 
-You can migrate a bucket from Magma back to Couchstore after conversion.
-You can even roll back an in-process migration if you notice high disk usage on nodes that you have already migrated.
-See the next section for details.
+You can revert a bucket from Magma back to Couchstore after (or even during) a migration.
+See the next section for more information.
 
 == Rolling Back a Migration
 
 As you migrate each node's vBuckets to a new storage backend, you may decided that the migration is not meeting your needs.
-For example, you may see increased disk usage when moving from Couchstore to Magma as explained in xref:#disk_usage[Disk Usage Under Couchstore Verses Magma].
-In this case, you can roll back the migration:
+For example, you may see increased disk usage when moving from Couchstore to Magma as explained in xref:#disk_usage[Disk Use Under Couchstore Verses Magma].
+You can roll back the migration by changing the bucket's backend setting to its original value.
+Then have any migrated nodes rewrite their vBuckets back to the old backend.
+You can perform a roll back on an ongoing migration. 
+Just force the nodes you have already migrated to rewrite their vBuckets.
+You do not have to perform any steps for nodes you did not migrate.
 
-. Call the REST API to change the bucket's backed back to its previous value. 
-For example, suppose you followed the steps in xref:#perform_migration[Perform a Migration] to migrate the Travel Sample bucket to Magma.
-Then you would use this command to roll it back:
+For example, to roll back the migration shown in xref:#perform_migration[Perform a Migration], you would follow these steps:
+
+. Call the REST API to change the bucket's backend back to Couchstore: 
 +
 [source,console]
 ----
@@ -133,7 +143,7 @@ include::manage:example$migrate-bucket-storage-backend.sh[tag=change-backend-cou
 include::manage:example$migrate-bucket-storage-backend.sh[tag=get-node-overrides]
 ----
 +
-If you followed the earlier example of migrating the Travel Sample bucket to Magma, the output would look like this:
+For the migration shown in xref:#perform_migration[Perform a Migration], the output looks like this:
 +
 [source,json]
 ----
@@ -145,11 +155,11 @@ null
 null
 ----
 +
-In this case, the node named node3 was migrated to Magma and must be rolled back.
+In this case, you must roll back node3 because you migrated it to Magma.
 
 . For each node that you have already migrated, perform another xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] or a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] to roll the vBuckets on the node back to the previous backend. 
 +
-For example, to roll back node3 shown in the prior step, follow these steps:
+To roll back node3, follow these steps:
 +
 .. Perform a graceful failover of node3: 
 +
