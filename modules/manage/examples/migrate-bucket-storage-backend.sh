@@ -23,9 +23,9 @@ curl -s GET -u Administrator:password \
 # end::get-backend[]
 
 # tag::get-node-overrides[]
-curl GET -u Administrator:password \
+curl -s GET -u Administrator:password \
     http://localhost:8091/pools/default/buckets/travel-sample \
-    jq '.nodes[] | .hostname,.storageBackend'  
+    | jq '.nodes[] | .hostname,.storageBackend'  
 # end::get-node-overrides[]
 
 
@@ -50,3 +50,12 @@ curl -X POST -u Administrator:password  \
     http://localhost:8091/controller/rebalance \
     -d 'knownNodes=ns_1@node1.,ns_1@node2.,ns_1@node3.'
 # end::rebalance-cluster[]
+
+
+# tag::change-backend-couchstore[]
+curl -X POST -u Administrator:password \
+  http://localhost:8091/pools/default/buckets/travel-sample \
+  -d 'storageBackend=couchstore'
+# end::change-backend-couchstore[]
+
+

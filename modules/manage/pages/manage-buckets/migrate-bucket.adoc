@@ -1,30 +1,48 @@
 = Migrate a Bucket's Storage Backend
 :description: Full and Cluster Administrators can migrate a bucket's storage backend by calling the REST API and then performing full restores on the nodes containing the bucket.
 
-== Storage Backend Migration Overview
-
 [.edition]#{enterprise}#
 
-You can migrate a bucket's storage backend if you find the bucket's current backend is not appropriate. You can migrate from Couchstore to Magma, or from Magma to Couchstore. For example, you can migrate a bucket from Couchstore to Magma if the bucket's working set grows beyond its memory quota. 
+== Storage Backend Migration Overview
 
-You start a bucket's migration by calling the REST API to edit the bucket's `storageBackend` parameter. This call changes the bucket's global storage backend parameter. However, it doesn't trigger an immediate conversion of the vBuckets to the new backend. Instead, Couchbase adds override settings to each node to indicate its vBuckets still use the old storage backend. To complete the migration, you must force the vBuckets to be rewritten. The two ways to trigger this rewrite is by performing a swap rebalance or a graceful failover followed by a full recovery. As Couchbase writes the vBuckets during these processes, it removes the storage override and saves the vBuckets using the new storage backend.
+You can migrate a bucket's storage backend if you find the bucket's current performance is not meeting your needs. 
+For example, you can migrate a bucket from Couchstore to Magma if the bucket's working set grows beyond its memory quota. 
 
-NOTE: While you're migrating a bucket between storage backends, you can only change the bucket's `ramQuota` and `storageBackend` parameters. Couchbase Server prevents you from making changes to the bucket's other parameters.
+You can migrate from Couchstore to Magma, or from Magma to Couchstore. 
+You start a bucket's migration by calling the REST API to edit the bucket's `storageBackend` setting. 
+This call changes the bucket's global storage backend parameter. 
+However, it does not trigger an immediate conversion of the vBuckets to the new backend. 
+Instead, Couchbase adds override settings to each node to indicate its vBuckets still use the old storage backend. 
+To complete the migration, you must force the vBuckets to be rewritten. 
+The two ways to trigger this rewrite are to perform a swap rebalance or a graceful failover followed by a full recovery. 
+As Couchbase writes the vBuckets during these processes, it removes the storage override and saves the vBuckets using the new storage backend.
+
+NOTE: While you're migrating a bucket between storage backends, you can only change the bucket's `ramQuota` and `storageBackend` parameters. 
+Couchbase Server prevents you from making changes to the bucket's other parameters.
 
 == Prerequisites
 
-Before migrating a bucket, verify that the bucket's parameters meet the requirements for the new storage backend. For example, a Magma bucket must have a memory quota of at least 1{nbsp}GB. The REST API call to change the bucket's storage backend returns an error if the bucket doesn't meet the new storage backend's requirements. See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for a list of storage backend requirements.
+Before migrating a bucket, verify that the bucket's parameters meet the requirements for the new storage backend. 
+For example, a Magma bucket must have a memory quota of at least 1{nbsp}GB. 
+The REST API call to change the bucket's storage backend returns an error if the bucket does not meet the new storage backend's requirements. 
+See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for a list of storage backend requirements.
 
+If you're planning to migrate from Couchstore to Magma, also consider the current disk usage on the nodes containing the bucket. 
+Magma's default fragmentation settings can result in higher disk use. 
+See xref:#disk_usage[Disk Use Under Couchstore Verses Magma] for more information.
 
+[#perform_migration]
 == Perform a Migration
 
-. Call the REST API to change the bucket's `storageBackend` parameter. For example, the following command changes the storage backend of the travel-sample bucket to Magma.
+. Call the REST API to change the bucket's `storageBackend` parameter. 
+For example, the following command changes the storage backend of the travel-sample bucket to Magma.
 +
 [source,console]
 ----
 include::manage:example$migrate-bucket-storage-backend.sh[tag=change-backend]
 ----
-. Verify that the nodes containing the bucket now have storage backend override settings for their vBuckets. The following example calls the REST API to get the bucket configuration and filters the result through the `jq` command to list the node names and their storage backend formats.
+. Verify that the nodes containing the bucket now have storage backend override settings for their vBuckets. 
+The following example calls the REST API to get the bucket configuration and filters the result through the `jq` command to list the node names and their storage backend formats.
 +
 [source,console]
 ----
@@ -36,9 +54,13 @@ The output of the previous command lists each node and the backend storage forma
 ----
 include::example$storage_backend_overrides.log[]
 ----
-. For every node that contains the bucket, perform either a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] or a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] to rewrite the vBuckets on the node. Both of these methods have their own limitations. Swap rebalance requires that you add an additional node to the cluster. The graceful failover and full recovery method temporarily removes a node from your cluster which can cause disruptions. 
+. For every node that contains the bucket, perform either a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] or a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] to rewrite the vBuckets on the node. 
+Both of these methods have their own limitations. 
+Swap rebalance requires that you add an additional node to the cluster. 
+The graceful failover and full recovery method temporarily removes a node from your cluster which can cause disruptions. 
 +
-You can take these steps via the UI, the command-line tool, or REST API calls. The following example demonstrates using the REST API to perform a graceful failover and full recovery on a node named node3.
+You can take these steps via the UI, the command-line tool, or REST API calls. 
+The following example demonstrates using the REST API to perform a graceful failover and full recovery on a node named node3.
 +
 .. Perform a graceful failover of node3: 
 +
@@ -46,7 +68,8 @@ You can take these steps via the UI, the command-line tool, or REST API calls. T
 ----
 include::manage:example$migrate-bucket-storage-backend.sh[tag=failover-node]
 ----
-.. Wait until the failover is complete. Then perform a full recovery on the node:
+.. Wait until the failover is complete. 
+Then perform a full recovery on the node:
 +
 [source,console]
 ----
@@ -58,12 +81,107 @@ include::manage:example$migrate-bucket-storage-backend.sh[tag=recover-node]
 ----
 include::manage:example$migrate-bucket-storage-backend.sh[tag=rebalance-cluster]
 ----
-. After triggering each node to rewrite its vBuckets, verify the node is now using the new storage backend. Re-run the command from step 2 to list the nodes and any storage backend overrides:
+. After triggering each node to rewrite its vBuckets, verify the node is now using the new storage backend. 
+Re-run the command from step 2 to list the nodes and any storage backend overrides:
 +
 [source,console]
 ----
 include::manage:example$storage-backend-override-node3.sh[]
 ----
 +
-The `null` under node3 indicates that it does not have a storage backend override. It has migrated to the new storage backend.
+The `null` under node3 indicates that it does not have a storage backend override. 
+It has migrated to the new storage backend.
 . Repeat the previous two steps for the remaining nodes in the cluster.
+
+[#disk_usage]
+== Disk Use Under Couchstore Verses Magma
+
+If you migrate a bucket's storage from Couchstore to Magma, you may see increased disk usage. 
+Couchstore's default threshold for fragmentation is 30%.
+When a Couchstore bucket reaches this threshold, Couchbase Server attempts to fully compact the bucket. 
+If the bucket has a low write workload, Couchbase Server may be able to compact the bucket to 0% fragmentation.
+
+Magma's default fragmentation threshold is 50%.
+Couchbase Server treats this threshold differently than the Couchstore threshold.
+It does not perform a full compaction with the goal of reducing the bucket's fragmentation to 0%.
+Instead, Couchbase Server compacts a Magma bucket to maintain its fragmentation at the threshold value.
+This maintenance of the default 50% fragmentation can result in greater disk use for a Magma-backed bucket verses the Couchstore-backed bucket.
+
+If a bucket you migrated to Magma has higher sustained disk use that interferes with the node's performance, you have two options:
+
+* Reduce the fragmentation threshold of the Magma bucket. 
+For example, you could choose to reduce the fragmentation threshold to 30%.
+You should only consider changing the threshold if the bucket's workload is not write-intensive.
+For write-intensive workloads, the best practice for Magma buckets is to leave the fragmentation setting at 50%.
+See xref:manage:manage-settings/configure-compact-settings.adoc[] to learn how to change the bucket's database fragmentation setting.
+
+* Roll back the migration. 
+You can revert a bucket from Magma back to Couchstore during or after a migration.
+See the next section for more information.
+
+== Rolling Back a Migration
+
+As you migrate each node's vBuckets to a new storage backend, you may decide that the migration is not meeting your needs.
+For example, you may see increased disk usage when moving from Couchstore to Magma as explained in xref:#disk_usage[Disk Use Under Couchstore Verses Magma].
+You can roll back the migration by:
+
+. Changing the bucket's backend setting to its original value.
+. Force any migrated nodes to rewrite their vBuckets back to the old backend.
+
+You do not have to perform any steps for nodes you did not migrate.
+
+For example, to roll back the migration shown in xref:#perform_migration[Perform a Migration], you would follow these steps:
+
+. Call the REST API to change the bucket's backend back to Couchstore: 
++
+[source,console]
+----
+include::manage:example$migrate-bucket-storage-backend.sh[tag=change-backend-couchstore]
+----
+
+. Determine which nodes you have already migrated by calling the REST API to get the bucket's metadata:
++
+[source,console]
+----
+include::manage:example$migrate-bucket-storage-backend.sh[tag=get-node-overrides]
+----
++
+For the migration shown in xref:#perform_migration[Perform a Migration], the output looks like this:
++
+[source,json]
+----
+"node3.:8091"
+"magma"
+"node2.:8091"
+null
+"node1.:8091"
+null
+----
++
+In this case, you must roll back node3 because you migrated it to Magma.
+
+. For each node that you have already migrated, perform another xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] or a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] to roll the vBuckets on the node back to the previous backend. 
++
+To roll back node3, follow these steps:
++
+.. Perform a graceful failover of node3: 
++
+[source,console]
+----
+include::manage:example$migrate-bucket-storage-backend.sh[tag=failover-node]
+----
+.. Wait until the failover is complete. 
+Then perform a full recovery on the node:
++
+[source,console]
+----
+include::manage:example$migrate-bucket-storage-backend.sh[tag=recover-node]
+----
+.. When recovery is complete, perform a rebalance:
++
+[source,console]
+----
+include::manage:example$migrate-bucket-storage-backend.sh[tag=rebalance-cluster]
+----
+
+. Repeat the previous step until all nodes that you'd migrated have rolled back to their original storage backend. 
