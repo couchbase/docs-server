@@ -33,10 +33,6 @@ You can use `cbbackupmgr` to backup, restore, and archive buckets on either the 
 Calling `cbbackupmgr` runs a backup, restore, or archive task a single time.
 To use it on a regular schedule, you must rely on an external scheduling system such as `cron`.
 
-* The Backup Service can perform full backups to a repository where it has already performed a full backup. 
-The `cbbackupmgr` only performs a full backup on an empty repository.
-Once it has performed an initial full backup, it only performs incremental backups into the repository.
-
 See xref:backup-restore:enterprise-backup-restore.adoc[cbbackupmgr] for more information about using the command-line tool.
 
 [#backup-service-architecture]
@@ -64,8 +60,7 @@ A plan contains the following information:
 * The data to back up.
 
 * Where to store the backup.  
-The storage location can be either `filesystem` or `cloud` storage. 
-Selecting `cloud` storage for the backup location requires additional parameters such as the name of the bucket for storing the backup, and the access credentials.
+You associate a plan with a repository where it stored backup data (see the next section).
 
 * The schedule for the Backup Service to run backup tasks.
 
@@ -77,12 +72,17 @@ In addition to just backing up data, a backup task can also merge backups.
 [#repositories]
 == Repositories
 
-A repository is a location where Couchbase Server can store backup data.
-All nodes in the cluster must be able to access the repository location. 
-The name you assign the location must be unique across the cluster.
-You define a location to store backups either for a specific bucket or all buckets in the cluster.
-
+A repository is a location where Couchbase Server can store backup data. 
 You associate a repository with a plan.
+You must set several options to define the repository, including:
+
+* Whether the repository is for all buckets, or a specific bucket.
+
+* Whether the repository is in `filesystem` or `cloud` storage. 
+
+* The repository's location--a path for filesystem repositories or the cloud provider details plus a local staging directory for cloud repositories.
+All nodes in the cluster must be able to access the repository location. 
+
 Once you define the repository, the Backup Service performs backups and optionally merges of the data in the bucket or buckets on the schedule in the plan.
 
 NOTE: The `cbbackupmgr` tool takes a lock on the repository to which it's backing up data. 
@@ -138,8 +138,9 @@ For example, suppose you have a repository whose plan defines two tasks named Ta
 
 * If TaskB is scheduled to start while an instance of TaskA is still running on a cluster with multiple Backup-Service nodes, TaskB fails.
 In this case, the Backup Service passes a new instance of TaskB to the Backup Service on a different node from the one that's running TaskA.
-However, TaskB fails to start because TaskA's instance of `cbbackupmgr` holds a lock on the repository.
-This lock prevents TaskB's `cbbackupmgr` process from writing data to the repository, so it fails.
+This Backup Service node starts TaskB immediately.
+However, TaskA's instance of `cbbackupmgr` holds a lock on the repository.
+This lock prevents TaskB's `cbbackupmgr` process from getting a lock on the repository, causing it to fail.
 
 When a task fails to start,  the next successful backup task backs up the data it would have backed up.
 
@@ -154,12 +155,10 @@ If one task is scheduled to start while another task is running, the Backup Serv
 One drawback of this configuration is that it reduces resiliency. 
 If the single Backup Service node fails over, then there is no other Backup Service available to handle backups.
 
-You can also configure one repository per bucket. 
-Then add one Backup Service node for each bucket. 
-In this configuration, each backup task would have its own repository, removing the possibility of different tasks conflicting.
+If you want greater resiliency for your backups, you can add multiple Backup Service nodes to the cluster.
+This increases the risk of having backup tasks fail due to overlap if backing up into the same repository.
 
 In either of these cases, you still need to schedule the tasks so that the same task does not overlap with itself.
-
 
 [#specifying-merge-offsets]
 == Setting Merge Offsets
