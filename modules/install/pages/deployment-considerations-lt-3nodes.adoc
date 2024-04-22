@@ -18,6 +18,7 @@ The following limitations apply to deployments with two nodes:
 +
 When a deployment of Couchbase Server has fewer than three nodes, auto-failover is disabled.
 This is because with fewer than three nodes in the deployment, it's not easy to determine which node is having an issue and thus avoid a split-brain configuration.
+You can optionally add an arbiter node to your cluster to provide xref:#quorum-arbitration[quorum arbitration].
 
 * *Maximum number of replicas is 1*
 +
@@ -32,29 +33,59 @@ In the event of a failure, running the cluster at this level ensures that the re
 [#quorum-arbitration]
 === Quorum Arbitration
 
-For a two-node cluster, safer running can be achieved by the deployment of a third node, as an _Arbiter_ node: this means _a node that hosts no Couchbase service_.
-An Arbiter node can be deployed only under Couchbase Server Version 7.6 and later.
+If you're deploying a two-node database or a database with two server groups, consider adding an arbiter node to your cluster.
+An arbiter node is part of the Couchbase Server cluster, but it doesn't any service other than the xref:learn:clusters-and-availability/cluster-manager.adoc[] which joins it to the cluster. 
+The arbiter node helps your cluster in two ways:
 
-Note that although the addition of the Arbiter does mean that the cluster is thereby made a three-node cluster, the third node may not require the capacity of either of the data-serving nodes.
+* It provides xref:learn:clusters-and-availability/nodes.adoc#fast-failover[fast failover] which decreases the cluster's latency when responding to a failover.
 
-Such a deployment ensures that the cluster is protected against the situation where the nodes get divided into two separate sets, due to an unanticipated https://en.wikipedia.org/wiki/Network_partition[network partition^].
-For information, see xref:learn:clusters-and-availability/hard-failover.adoc[Hard Failover], and in particular, xref:learn:clusters-and-availability/hard-failover.adoc#default-and-unsafe[Hard Failover in Default and Unsafe Modes].
+* It provides quorum arbitration, which allows Couchbase Server to execute a failover when it would otherwise refuse to do so.
 
-For information on service deployment with:
+In a two-node cluster without an arbiter node, when one node fails the other cannot differentiate between node failure and a network failure causing https://en.wikipedia.org/wiki/Network_partition[network partitioning^].
+The remaining node refuses to failover to avoid a split brain configuration where two groups of nodes independently alter data and risk potential data conflicts.
+The arbiter node eliminates the possibility of conflict by ensuring only one set of nodes can continue to operate.
+The arbiter provides a quorum to the remaining node, letting it know that it's safe to failover and take on the role of the failed node.
 
-* The REST API, see xref:rest-api:rest-set-up-services.adoc[Assigning Services].
+The arbiter node fulfills a similar role when there are two xref:learn:clusters-and-availability/groups.adoc[server groups]. 
+In case of network partitioning, the arbiter node can make sure that only one server group continues processing.
+To play this role, the arbiter node should be in a third server group to maximize the chance of it remaining available if one of the server groups fails. 
+Ideally, you should locate it in a separate rack when using physical hardware.
+When it runs in a container, cloud instance, or as a virtual machine, locate it on a separate host machine from the server groups.
 
-* Couchbase Web Console during node-addition and node-joining, see the demonstrated uses of checkboxes, in xref:manage:manage-nodes/add-node-and-rebalance#arbiter-node-addition[Add a Node and Rebalance] and in xref:manage:manage-nodes/join-cluster-and-rebalance#arbiter-node-join[Join a Cluster and Rebalance].
+To deploy an arbiter node, add or join a node to the cluster without assigning it any services. 
+For instructions on adding a node, see:
 
-* The CLI during node-addition, see xref:cli:cbcli/couchbase-cli-server-add[server-add].
+*  xref:rest-api:rest-set-up-services.adoc[Assigning Services] to deploy via the REST API.
+
+* xref:manage:manage-nodes/add-node-and-rebalance#arbiter-node-addition[Add a Node and Rebalance] and xref:manage:manage-nodes/join-cluster-and-rebalance#arbiter-node-join[Join a Cluster and Rebalance] to deploy via the Couchbase Server Web Console.
+
+* The xref:cli:cbcli/couchbase-cli-server-add[server-add] command to deploy via the command line interface.
+
+For more information about failover, see xref:learn:clusters-and-availability/hard-failover.adoc[Hard Failover], and in particular, xref:learn:clusters-and-availability/hard-failover.adoc#default-and-unsafe[Hard Failover in Default and Unsafe Modes].
+
+==== Arbiter Nodes and Licenses
+
+An arbiter node does not run any services other than the xref:learn:clusters-and-availability/cluster-manager.adoc[].
+This service is necessary to make the arbiter node part of the Couchbase Server cluster.
+Because it does not run other services, such as the xref:learn:services-and-indexes/services/data-service.adoc[], the arbiter node does not require an additional license to run. 
+It's essentially free aside from the cost of running the physical hardware, container, or cloud instance. 
+
+==== Sizing Recommendations for Arbiter Nodes
+
+Because the arbiter node runs only the Cluster Manager service, it often does not require the same resources as other nodes in the cluster.
+Your best option for choosing hardware or a cloud instance for an arbiter node is to start with the smallest instance you plan to or are already using in your cluster.
+Then monitor the arbiter node's CPU and RAM usage when your cluster experiences failovers and rebalanaces.
+Rebalances in the cluster cause the highest CPU loads and memory use on the arbiter node.
+If you find the arbiter is not using all of the CPU and RAM you allocated to it, you can choose to downsize it.
+The arbiter's RAM and CPU use grow as the number of nodes, buckets, and collections grow in your cluster.
+Therefore, continue to monitor the RAM and CPU use of your arbiter node, especially after you expand your cluster.
 
 === Metadata Management
 
 In Couchbase Server 7.0+, metadata is managed by means of _Chronicle_; which is a _consensus-based_ system, based on the https://raft.github.io/[Raft^] algorithm.
 Due to the strong consistency with which topology-related metadata is thus managed, in the event of a _quorum failure_ (meaning, the unresponsiveness of at least half of the cluster's nodes -- for example, the unresponsiveness of one node in a two-node cluster), no modification of nodes, buckets, scopes, and collections can take place until the quorum failure is resolved.
 
-Note that optionally, the quorum failure can be resolved by means of _unsafe failover_.
-However, that the consequences of unsafe failover in 7.0 are different from those in previous versions; and the new consequences should be fully understood before unsafe failover is attempted.
+
 
 For a complete overview of how all metadata is managed by Couchbase Server, see xref:learn:clusters-and-availability/metadata-management.adoc[Metadata Management].
 For information on _unsafe failover_ and its consequences, see xref:learn:clusters-and-availability/hard-failover.adoc#performing-an-unsafe-failover[Performing an Unsafe Failover].
