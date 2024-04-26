@@ -1,49 +1,67 @@
 = Getting Cluster Tasks
-:description: pass:q[A list of ongoing cluster tasks can be returned with the `GET /pools/default/tasks` HTTP method and URI.]
+:description: pass:q[You can list tasks running on the cluster using the `GET /pools/default/tasks` HTTP method and URI.]
 :page-topic-type: reference
+:page-toclevels: 3
 
 [abstract]
 {description}
-Additionally, a report on the last-completed rebalance can be returned with `GET /logs/rebalanceReport?reportID=<report-id>`.
+In addition, a report on the last-completed rebalance can be returned with `GET /logs/rebalanceReport?reportID=REPORT_ID`.
 
 [#http-method-and-uri]
-== HTTP methods and URIs
+== HTTP Methods and URIs
 
 ----
+
 GET /pools/default/tasks
 
-GET /logs/rebalanceReport?reportID=<report-id>
+GET /pools/default/tasks?taskId=TASK_ID
+
+GET /logs/rebalanceReport?reportID=REPORT_ID
 ----
 
 [#rest-get-cluster-tasks-description]
 == Description
 
-By means of `GET /pools/default/tasks`, ongoing cluster-tasks can be reported; with status, id, and additional information returned for each.
+Calling `GET /pools/default/tasks` lists tasks running on the cluster. 
+The list includes the task's ID, status, and other relevant informaatiom. 
+You can return information about sample bucket loading tasks by supplying its `taskId` as a parameter: `GET /pools/default/tasks?taskID=TASK_ID`.
 
-By means of `GET /logs/rebalanceReport?reportID=<report-id>`, a report can be returned, providing information on a completed _rebalance_.
+Calling `GET /logs/rebalanceReport?reportID=REPORT_ID`, a report can be returned, providing information on a completed _rebalance_.
 The required `report-id` is provided in the object returned by `GET /pools/default/tasks`.
 
 [#curl-syntax]
 == Curl Syntax
 
 ----
-curl -v -X GET -u <username>:<password>
-  http://<ip-address>:8091/pools/default/tasks
+curl -s -u USER_NAME:PASSWORD -G \
+     http://NODE_NAME_OR_ADDRESS:PORT/pools/default/tasks \
+     -d "taskId=TASK_ID"
 
-curl -v -X GET -u <username>:<password>
-  http://<ip-address>:8091/logs/rebalanceReport?reportID=<report-id>
+
+curl -s -u USER_NAME:PASSWORD -G
+     http://NODE_NAME_OR_ADDRESS:PORT/logs/rebalanceReport
+     -d "reportID=REPORT_ID"
 ----
 
-The required `report-id` is provided in the object returned by `GET /pools/default/tasks`, as the value of `lastReportURI`.
+The arguments shown in the syntax are:
+
+* *`USER_NAME`*: the username to use when connecting to Couchbase Server.
+* *`PASSWORD`*: the password for the user.
+* *`NODE_NAME_OR_ADDRESS`*: the name or IP address of a node in the cluster.
+* *`TASK_ID`*: the optional ID of a sample bucket loading task whose status you want ot view. 
+You can find the `taskId` for a sample bucket task from the return value of calls to either the `/sampleBuckets/install` or `/pools/default/tasks` 
+If you do not provide a task ID, the call returns all tasks on the cluster.
+* *`REPORT_ID`*: the required rebalance report ID.  
+You can find this ID from the rebalance task's `lastReportURI` field in the task list returned by calling `GET /pools/default/tasks` without parameters.
 
 [#responses]
 == Responses
 
-For `GET /pools/default/tasks`, success gives the response code `200 OK`, and returns an object containing information on the current status of ongoing tasks.
-See the examples provided below.
+A successful call to `GET /pools/default/tasks` returns the response code `200 OK` and an object containing  details about a specific task when you supply a `taskId` argument.
+If you do not supply the `taskId` argument,  it returns an object containing information about all tasks.
 
-For `GET /logs/rebalanceReport?reportID=<report-id>`, success gives the response code `200 OK`, and returns an object that contains a report on the last-completed rebalance.
-Specifying a `report-id` that cannot be found gives `200 OK`, but returns an object signifying the error, as follows:
+A successful call to `GET /logs/rebalanceReport?reportID=REPORT_ID` returns response code `200 OK` and an object containing a report on the rebalance  whose `reportID` matches `REPORT_ID`.
+If you pass Couchbase Server a `reportID` that it cannot find, it returns the response code `200 OK` and an object containing the following error:
 
 ----
 {
@@ -51,7 +69,7 @@ Specifying a `report-id` that cannot be found gives `200 OK`, but returns an obj
 }
 ----
 
-Specifying a `report-id` of incorrect length gives `400 Bad Request`, and returns an object signifying the error, as follows:
+Passing a `reportID` of incorrect length returns `400 Bad Request` and an object with the following error message:
 
 ----
 {
@@ -61,25 +79,25 @@ Specifying a `report-id` of incorrect length gives `400 Bad Request`, and return
 }
 ----
 
-For both calls, failure to authenticate gives `401 Unauthorized`.
+For both endpoints, failure to authenticate returns the response `401 Unauthorized`.
 
 [#examples]
 == Examples: Retrieving Cluster Tasks
 
-The following examples show output returned in accordance with _whether_ tasks are in progress; and if so, _which_.
+The following examples demonstrate using the `/pools/default/tasks` and `/logs/rebalanceReport` endpoints.
 
 [#no-tasks-underway]
-=== No Tasks Underway
+=== No Tasks Running
 
-When the cluster has no tasks underway, the method verifies this.
-Here, the output is piped to the https://stedolan.github.io/jq[jq] tool, to enhance readability.
+When the cluster has no tasks running, calling the `/pools/default/tasks` method returns just the most recent rebalance task:
+
 
 ----
 curl -u Administrator:password -v -X GET \
-http://10.143.194.101:8091/pools/default/tasks | jq '.'
+     http://10.143.194.101:8091/pools/default/tasks | jq '.'
 ----
 
-Output is as follows:
+Output is piped through the https://stedolan.github.io/jq[`jq`^] tool to enhance readability and appears as the following:
 
 ----
 [
@@ -96,41 +114,143 @@ Output is as follows:
 
 The default output indicates that no rebalance is underway.
 A `statusId` and task `type` are provided.
-The `lastReportURI` specifies the location of the _report_ of the last rebalance to have been performed.
+The `lastReportURI` specifies the location of the report of the last rebalance to have been performed.
 See the xref:rebalance-reference:rebalance-reference.adoc[Rebalance Reference], for further information.
 
 [#adding-a-bucket]
-=== Adding a Bucket
+[#loading-a-sample-bucket]
+=== Monitoring Sample Bucket Loading Tasks
 
-When a bucket is being added (in this case, the sample bucket `beer-sample`), status can be returned by entering the method in the standard way, specifying the IP address of the cluster, or `localhost`, as appropriate:
+You can monitor the tasks Couchbase Server starts to load one or more samples buckets through the `/pools/default/tasks` method. 
+The following example starts loading two sample buckets by calling  the `/sampleBuckets/install` endpoint:
 
+[source, console]
+----
+include::rest-api:example$install-sample-bucket.sh[]
+----
+
+The response lists the tasks the method call started to load the sample buckets:
+
+[source, json]
+----
+include::rest-api:example$sample-bucket-install-response.json[]
+----
+
+You can also list the tasks using the `/pools/default/tasks` method:
+
+[source, console]
 ----
 curl -u Administrator:password -v -X GET \
-http://localhost:8091/pools/default/tasks | jq '.'
+     http://localhost:8091/pools/default/tasks | jq '.'
 ----
 
-Output is as follows:
+The output of this call returns the active sample bucket task which is loading the `beer-sample` bucket:
 
+[source, json]
+----
+include::rest-api:example$sample-bucket-tasks.json[]
+----
+
+NOTE: The task for loading the `travel-sample` does not appear in the previous output because it is not currently running. 
+Only one sample bucket task runs at a time.
+
+To monitor a sample bucket task specifically, you can call `/pools/default/tasks` with the `taskId` found in either the response from `/sampleBuckets/install` or the list of tasks from `/pools/default/tasks`.
+The following example demonstrates getting the status of the `travel-sample` bucket task:
+
+[source, console]
+----
+ curl -s -u Administrator:password  -G \ 
+      http://localhost:8091/pools/default/tasks \
+      -d "taskId=ed6cd88e-d704-4f91-8dd3-543e03669024" | jq '.'
+----
+
+The result shows that the task is queued:
+
+[source, json]
 ----
 [
   {
-    "statusId": "1f05320a7b359e1672ffc8b7ee69a8b5",
-    "type": "rebalance",
-    "status": "notRunning",
-    "statusIsStale": false,
-    "masterRequestTimedOut": false,
-    "lastReportURI": "/logs/rebalanceReport?reportID=0c41dba637a8971b1aa921a89e851d83"
-  },
-  {
-    "status": "running",
+    "task_id": "f1c55abe-926a-415d-bf36-f3d99c27016f",
+    "status": "queued",
     "type": "loadingSampleBucket",
-    "bucket": "beer-sample",
-    "pid": "<0.24849.21>"
+    "bucket": "travel-sample",
+    "bucket_uuid": "not_present"
   }
 ]
 ----
 
-The output indicates that no rebalance is underway, but that the `loadingSampleBucket` operation is ongoing.
+Viewing the status of the `beer-sample` task shows that it's running:
+
+[source, json]
+----
+[
+  {
+    "task_id": "e2a5e251-faee-415d-b146-d0891123075b",
+    "status": "running",
+    "type": "loadingSampleBucket",
+    "bucket": "beer-sample",
+    "bucket_uuid": "not_present"
+  }
+]
+----
+
+After the `beer-sample` tasks finishes, Coucbbase Server starts the `travel-sample` task.
+Calling `/pools/default/tasks` again without a `taskId` shows the `travel-sample` task as well as a number of indexing tasks, as shown in the following result:
+
+[source, json]
+----
+[
+  {
+    "statusId": "e36859e44fb7c226c180b4610313f074",
+    "type": "rebalance",
+    "subtype": "rebalance",
+    "status": "notRunning",
+    "statusIsStale": false,
+    "masterRequestTimedOut": false,
+    "lastReportURI": "/logs/rebalanceReport?reportID=af5b2ac96af031218bae6e3411b007b5"
+  },
+  {
+    "type": "global_indexes",
+    "recommendedRefreshPeriod": 2,
+    "status": "running",
+    "bucket": "travel-sample",
+    "index": "def_inventory_route_sourceairport",
+    "id": 5548520957444133000,
+    "progress": 0,
+    "statusIsStale": false
+  },
+  {
+    "type": "global_indexes",
+    "recommendedRefreshPeriod": 2,
+    "status": "running",
+    "bucket": "travel-sample",
+    "index": "def_inventory_route_schedule_utc",
+    "id": 7890207154426784000,
+    "progress": 19,
+    "statusIsStale": false
+  },
+    . 
+    . 
+    . 
+  {
+    "type": "global_indexes",
+    "recommendedRefreshPeriod": 2,
+    "status": "running",
+    "bucket": "travel-sample",
+    "index": "def_inventory_airline_primary",
+    "id": 2691871325047162400,
+    "progress": 12,
+    "statusIsStale": false
+  },
+  {
+    "task_id": "f1c55abe-926a-415d-bf36-f3d99c27016f",
+    "status": "running",
+    "type": "loadingSampleBucket",
+    "bucket": "travel-sample",
+    "bucket_uuid": "not_present"
+  }
+]
+----
 
 [#compacting-a-bucket]
 === Compacting a Bucket
@@ -171,32 +291,13 @@ The output indicates that the `beer-sample` bucket is being compacted.
 Progress is reported in terms of `changesDone`, `totalChanges`, and a `progress` figure that is a percentage of total completion.
 A URI is provided for cancelling compaction, if required.
 
-[#loading-a-sample-bucket]
-=== Loading a Sample Bucket
 
-If a sample bucket is loaded, task status can be returned, by entering the method in the standard way, specifying the IP address of the cluster, or `localhost`, as appropriate:
 
-----
-curl -X GET http://localhost:8091/pools/default/tasks -u Administrator:password | jq '.'
-----
-
-The output includes the following:
-
-----
-{
-  "status": "running",
-  "type": "loadingSampleBucket",
-  "bucket": "travel-sample",
-  "pid": "<0.11528.51>"
-}
-----
-
-This indicates that the `travel-sample` bucket is being loaded, and shows the process id for the task.
 
 [#performing-xdcr]
 === Performing XDCR
 
-If an instance of XDCR is underway, its task status can be returned, by entering the method in the standard way, specifying the IP address of the cluster, or `localhost`, as appropriate:
+You can monitor an ongoing XDCR task using the `/pools/default/tasks` method:
 
 ----
 curl -X GET http://localhost:8091/pools/default/tasks -u Administrator:password | jq '.'
