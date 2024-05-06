@@ -33,45 +33,18 @@ a| Must be one of:
 
 | `task-subset-specification`
 | One or more query parameters filter that limits the tasks this method returns.   
-| <<subset-spec,Subset Parameter String>>
+| <<subset-spec,Task Subset Parameter String>>
 
 |===
 
-
-
-[#description]
-== Description
-
-This HTTP method and URI return an array containing the entire task history for the repository specified by the `repository-name` path-parameter.
-
-The `task-subset-specification` lets you select a subset of the tasks that you want the method to return.
-
-
-
-
-[#curl-syntax]
-== Curl Syntax
-
-----
-curl -X GET http://$NODE_ADDRESS:$PORT/cluster/self\
-/repository/$REPO_STATUS/$REPOSITORY_NAME/taskHistory \
--u $USERNAME:$PASSWORD
-
-curl -X GET http://$NODE_ADDRESS:$PORT/cluster/self\
-/repository/$REPO_STATUS/$REPOSITORY_NAME/taskHistory\
-/?$TASK_SUBSET_SPECIFICATION
--u $USERNAME:$PASSWORD
-
-----
-
 [[subset-spec]]
-===Task Subset Specifications
+=== Task Subset Parameter String
 
 You can filter the list of tasks this method returns using the optional task subset specification query string. 
-
+You can supply one or more of the following parameters:
 
 ----
-first=<date>&limit=<integer>&taskName=<task-name>
+first={date}&limit={count}&taskName={task-name}
 ----
 
 .Task Subset Query String Parameters
@@ -80,44 +53,90 @@ first=<date>&limit=<integer>&taskName=<task-name>
 |Name | Description | Value 
 
 | `date`
-! The earliest date to 
+| Only returns tasks that started after the supplied date. 
+| A datetime string in https://www.rfc-editor.org/rfc/rfc3339[RFC-3339] format
+
+| `count`
+| The number of most recent tasks to return.
+| Integer
+
+| `task-name`
+a| Only returns task whose names exactly matches `task-name` including case.
+Use this option to filter  when multiple tasks are writing to the same repository.
+| String
 
 |===
 
-The `date` specified as the value of the query parameter `first` is the earliest date for which tasks are included.
-The integer specified as the value of the query parameter `limit` is the maximum number of tasks to be returned.
-The string provided as the value of the optional query parameter `taskName` is the name of the single task to be returned.
+[#description]
+== Description
+
+This HTTP method and URI return an array containing the entire task history for the repository specified by the `repository-name` path-parameter.
+
+The `task-subset-specification` lets you select a subset of the tasks that you want the method to return.
+
+[#curl-syntax]
+== Curl Syntax
+
+----
+curl -X GET http://$NODE_ADDRESS:$PORT/cluster/self\
+     /repository/$REPO_STATUS/$REPOSITORY_NAME/taskHistory \
+     -u $USERNAME:$PASSWORD
+
+curl -G -X GET http://$NODE_ADDRESS:$PORT/cluster/self\
+     /repository/$REPO_STATUS/$REPOSITORY_NAME/taskHistory
+     [-d 'first=$DATE'] [-d 'limit=$COUNT'] [-d 'taskName=$TASK_NAME']
+     -u $USERNAME:$PASSWORD
+----
 
 == Required Permissions
 
-Full Admin or Read-Only Admin roles.
+Full Admin, Backup Full Admin, or Read-Only Admin roles.
 
 [#responses]
 == Responses
 
-Successful execution returns `200 OK`, and an array each of whose members is an object containing information on a task discharged for the repository.
-If an invalid parameter is specified, `400` is returned.
-If the specified repository cannot be found, `404 Object Not Found` is returned.
-If an internal error prevents successful execution, `500 Internal Server Error` is returned.
-Failure to authenticate returns `401 Unauthorized`.
-An incorrectly specified URI returns `404 Object Not Found`.
+|===
+|Value | Description  
 
+| `200 OK` and JSON array containing the tasks
+| Successful call.
 
+| `400`
+| Invalid parameter.
+
+| `400 Object Not found`
+| The repository in the endpoint URI does not exist.
+
+| `401 Unauthorized`
+|  Authorization failure due to incorrect username or password.
+
+| `403 Forbidden`, plus a JSON message explaining the minimum permissions.
+| The provided username has insufficient privileges to call this method.
+
+| `404 Object Not Found`
+| Error in the URI path.
+
+| `500 Internal Server Error`
+| Error in Couchbase Server.
+
+|===
 
 
 [#example]
-== Example
+== Examples
 
 The following call returns the entire task history for the active repository `quarterHourBackups`:
 
+[source, console]
 ----
 curl -v -X GET http://127.0.0.1:8097/api/v1/cluster/self/\
-repository/active/quarterHourBackups/taskHistory \
--u Administrator:password
+     repository/active/quarterHourBackups/taskHistory \
+     -u Administrator:password
 ----
 
 If the call is successful, the first part of the potentially extensive output may appear as follows:
 
+[source, json]
 ----
 [
   {
@@ -179,12 +198,129 @@ If the call is successful, the first part of the potentially extensive output ma
                 .
 ----
 
-The array thus includes objects for specific runs of the task `fifteenMinuteBackup`.
+The array includes objects for specific runs of the task `fifteenMinuteBackup`.
 Each object incudes the `start` and `end` time of the task; and lists specific `node_runs`, with details on buckets whose data was backed up.
 
+The following example demonstrates using the `first` and `limit` query parameters to limit the results to two tasks that started after  
+
+[source, console]
+----
+curl -G -s -X GET http://127.0.0.1:8097/api/v1/cluster/self/repository/active/quarterHourBackups/taskHistory \
+     -d 'first=2024-05-06T14:24:22Z' 
+     -d 'limit=2' 
+     -u Administrator:password | jq
+----
+
+A successful call returns a task list resembling the following:
+
+[source, json]
+----
+[
+  {
+    "task_name": "fifteenMinuteBackup",
+    "status": "done",
+    "start": "2024-05-06T17:24:22.471826882Z",
+    "end": "2024-05-06T17:24:28.901488385Z",
+    "node_runs": [
+      {
+        "node_id": "1a41682a59f40d3932d2cf7b131a2312",
+        "status": "done",
+        "start": "2024-05-06T17:24:22.483698673Z",
+        "end": "2024-05-06T17:24:28.889650843Z",
+        "progress": 100,
+        "stats": {
+          "id": "36dfeb46-78b0-428a-b9d6-36b0169ac685",
+          "current_transfer": 1,
+          "total_transfers": 1,
+          "transfers": [
+            {
+              "description": "Backing up to 2024-05-06T17_24_22.886394673Z",
+              "stats": {
+                "started_at": 1715016262871131000,
+                "finished_at": 1715016268874403800,
+                "buckets": {
+                  "travel-sample": {
+                    "total_items": 63344,
+                    "total_vbuckets": 1024,
+                    "vbuckets_complete": 1024,
+                    "bytes_received": 28672,
+                    "failover_logs_received": 1024,
+                    "started_at": 1715016266774038500,
+                    "finished_at": 1715016268870321400,
+                    "complete": true
+                  }
+                },
+                "users": {},
+                "complete": true
+              },
+              "progress": 100,
+              "eta": "2024-05-06T17:24:28.878288801Z"
+            }
+          ],
+          "progress": 100,
+          "eta": "2024-05-06T17:24:28.878288801Z"
+        },
+        "error_code": 0
+      }
+    ],
+    "error_code": 0,
+    "type": "BACKUP"
+  },
+  {
+    "task_name": "fifteenMinuteBackup",
+    "status": "done",
+    "start": "2024-05-06T17:09:22.279129423Z",
+    "end": "2024-05-06T17:09:28.677706343Z",
+    "node_runs": [
+      {
+        "node_id": "1a41682a59f40d3932d2cf7b131a2312",
+        "status": "done",
+        "start": "2024-05-06T17:09:22.291632632Z",
+        "end": "2024-05-06T17:09:28.667370885Z",
+        "progress": 100,
+        "stats": {
+          "id": "7dabe789-0413-4ef2-b7d9-e942cab1da75",
+          "current_transfer": 1,
+          "total_transfers": 1,
+          "transfers": [
+            {
+              "description": "Backing up to 2024-05-06T17_09_22.690112298Z",
+              "stats": {
+                "started_at": 1715015362678973000,
+                "finished_at": 1715015368655166200,
+                "buckets": {
+                  "travel-sample": {
+                    "total_items": 63344,
+                    "total_vbuckets": 1024,
+                    "vbuckets_complete": 1024,
+                    "bytes_received": 28672,
+                    "failover_logs_received": 1024,
+                    "started_at": 1715015366548654800,
+                    "finished_at": 1715015368651093200,
+                    "complete": true
+                  }
+                },
+                "users": {},
+                "complete": true
+              },
+              "progress": 100,
+              "eta": "2024-05-06T17:09:28.658444968Z"
+            }
+          ],
+          "progress": 100,
+          "eta": "2024-05-06T17:09:28.658444968Z"
+        },
+        "error_code": 0
+      }
+    ],
+    "error_code": 0,
+    "type": "BACKUP"
+  }
+]
+----
 [#see-also]
 == See Also
 
-An overview of the Backup Service is provided in xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
-A step-by-step guide to using Couchbase Web Console to configure and use the Backup Service is provided in xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Manage Backup and Restore].
-Information on using the Backup Service REST API to create a plan (and in so doing, define one or more tasks) is provided in xref:rest-api:backup-create-and-edit-plans.adoc[Create and Edit Plans].
+* For a an overview of the Backup Service, see xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
+* For a step-by-step guide to configure and use the Backup Service using the Souchbase Server Web Console, see  xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Manage Backup and Restore].
+* For information about using the Backup Service REST API to create a plan, see xref:rest-api:backup-create-and-edit-plans.adoc[Create and Edit Plans].
