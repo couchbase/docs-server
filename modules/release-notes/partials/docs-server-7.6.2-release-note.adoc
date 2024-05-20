@@ -1,0 +1,183 @@
+== Release 7.6.2 (June 2024)
+
+Couchbase Server 7.6.2 was released in June 2024. This maintenance release contains new features and fixes several known issues.
+
+For detailed information on new features and enhancements, please see xref:introduction:whats-new.adoc[].
+
+[#new-features-762]
+=== New Features and Enhancements
+
+==== Cluster Manager
+
+[#table-new-features-762-cluster-manager, cols="10,40"]
+|===
+|Feature | Description
+
+| https://issues.couchbase.com/browse/MB-57610[MB-57610]
+| Added metrics to allow exposing the rebalance progress via the Stats and Prometheus endpoints.
+
+|===
+
+==== Backup Service
+
+[#table-new-features-762-backup-service, cols="10,40"]
+|===
+|Feature | Description
+
+| https://issues.couchbase.com/browse/MB-54433[MB-54433]
+| In the Backup Service, the users cannot control the number of threads `cbbackupmgr` runs with.
+  There have been cases where the automatically chosen number of threads for `cbbackupmgr` have not been optimal, and users would like to be able to choose the number of threads for the backup jobs.
+
+Users can now assign the number of threads per node in the backup service using the REST API. +
+The is done by setting a map with nodeUUID key and a thread value, which will allow the backup service to use the thread value for the scheduled job. +
+Users can also assign zero threads to a node which will correspond to `cbbackupmgr` dynamically choosing the number of threads based on node configuration.
+
+| https://issues.couchbase.com/browse/MB-61072[MB-61072]
+
+| Read-only admins cannot see any part of the Backup Service in the UI or run any of the Backup Service APIs.
+ This was not acceptable to many customers, as read-only administrative users often monitor clusters and check that backups have been completed.
+
+Now, Users with the read-only admin role can now access the backup service. They can now view tasks that have run, their statuses, what repositories and plans there are, but cannot inspect data or run backups, restores, or merges.
+
+
+|===
+
+
+==== Search Service
+
+[#table-new-features-762-search-service, cols="10,40"]
+|===
+|Feature | Description
+
+|https://issues.couchbase.com/browse/MB-61216[MB-61216]
+| A user had to set the `query` attribute to `match_none` alongside the `knn` attribute within the search request when the user wanted to do a pure kNN search. This behavior will still work.
+
+A user can now  optionally choose to drop the `query` attribute entirely when coupling with `knn` and this will automatically resolve to "match_none" behind the scenes.
+
+In a mixed cluster, the user will see a search request free of the `query` attribute complain on a 7.6 node, while a 7.6.2 node will allow the request.
+|===
+
+[#fixed-issues-762]
+=== Fixed Issues
+
+This release contains the following fixes:
+
+==== Cluster Manager
+
+[#table-fixed-issues-762-cluster-manager,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-60621[MB-60621]
+| The `sys_cpu_cgroup_seconds_total{mode="usage"}` stat also included the amount of time for `sys_cpu_cgroup_seconds_total{mode="user"}` and `sys_cpu_cgroup_seconds_total{mode="sys"}`. As a result, using certain functions e.g. `sum(sys_cgroup_seconds_total)` would double the `user` count and `sys` time.
+| To prevent this, the `sys_cpu_cgroup_seconds_total{mode="usage"}`  is no longer returned and is replaced with `sys_cpu_cgroup_usage_seconds_total`.
+
+| https://issues.couchbase.com/browse/MB-60883[MB-60883]
+a| The Cache Miss Ratio metric showed the number of background fetch operations over the total number of read operations.
+However, the implementation meant that:
+
+. the value did not represent a meaningful quantity to the user in all configurations.
+. the meaning of the value changed between different bucket types and eviction policies.
+
+The value could also show as being greater than 100%, as it did not account for all cases of background fetch.
+
+| The metric now shows the ratio between the number of read operations which failed due to the key not being present, and all read operations:
+
+`kv_ops{op="get", result="miss"} / kv_ops{op="get"}`.
+
+
+
+
+|===
+
+==== Storage Engine
+[#table-fixed-issues-762-storage-engine,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+
+| https://issues.couchbase.com/browse/MB-60879[MB-60879]
+| HashTable resizing can be avoided by setting the minimum size to be large enough, but there was no metric to indicate what that should be.
+| Added `kv_vb_ht_avg_size` and `kv_vb_ht_max_size` which summarizes the current HT sizes across vBuckets.
+
+| https://issues.couchbase.com/browse/MB-61525[MB-61525]
+| when a Consumer node enters an OOM phase, the `DCP Consumer` starts buffering incoming messaged into Checkpoints. For those messages we don't, (and we can't) enforce the CheckpointQuota by design, as consumers are allowed to process and buffer DCP messages up to limits defined by the `dcp_consumer_buffer_ratio` config param.
+| We now expose the real `checkpoint mem-usage` limit, which is `(checkpoint_memory_ratio + dcp_consumer_buffer_ratio)`.
+
+|===
+
+
+==== Eventing Service
+[#table-fixed-issues-762-eventing-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-61488[MB-61488]
+| When performing a subdocument mutation through eventing the sub-document api(`couchbase.mutateIn`), the operation would sometimes fail with the error code `LCB_ERR_SUBDOC_XATTR_UNKNOWN_MACRO` and cause exceptions in the JavaScript code.
+| Fixed in 7.6.2
+
+|===
+
+
+==== Search Service
+[#table-fixed-issues-762-search-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-60719[MB-60719]
+| Running a query with `score:none` results in response containing `score:0`. The score is incorrectly added to the response.
+| If a user runs a query with `score:none` then the query response will no longer contain `score:0`.
+
+
+| https://issues.couchbase.com/browse/MB-61043[MB-61043]
+| A skewed cluster won't be corrected because we early exit rebalance if there is no topology change, and there are no missing actives or replicas.
+| Now, the system updates the `rebalance early exit code` to check for such a skewed partition count.
+
+| https://issues.couchbase.com/browse/MB-61310[MB-61310]
+| During rebalance, when moving partitions around, we track the progress of movement and then check the seq numbers the partition has  caught up relative to the view of the partition on source node and also the `KV`’s view. +
+This progress monitoring procedure  was only for active partitions
+| You can now optionally monitor the replicas as well
+
+|===
+
+==== Tools
+[#table-fixed-issues-762-tools,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-60630[MB-60630]
+| Moving a cloud backup archive in a normal GCP bucket to a locked GCP bucket (which allows creating new files but prohibits modifying or deleting pre-existing objects) and then performing  a restore from that bucket. +
+The restore didn't fail, which would be the expected behavior; instead, the restore hangs.
+
+The problem occurs because `cbbackupmgr` always retries on 403s responses when using a GCP client, since it considered them intermittent.
+
+|`cbbackupmgr` no longer considers 403s as temporary errors,
+and will not always retry when receiving them.
+
+| https://issues.couchbase.com/browse/MB-61630[MB-61630]
+| Previously it was not possible to import an encrypted backup repository into the backup service as we did not accept the KMS parameters.
+| Both the UI and REST API now allow users to specify the KMS and its authentication parameters so an encrypted repository can successfully be imported.
+
+| https://issues.couchbase.com/browse/MB-61631[MB-61631]
+| Previously, passing a relative path to `cbbackupmgr` as `--obj-staging-dir`, the backup or restore would fail with an empty object name.
+| Fixed: passing a relative path no longer fails.
+
+|===
+
+
+[#known-issues-760]
+=== Known Issues
+
+This release contains the following known issues:
+
+
+==== Index Service
+[#table-known-issues-762-index-service, cols="10,40,40"]
+|===
+|Issue | Description | Workaround
+
+| https://issues.couchbase.com/browse/MB-62220[MB-62220]
+| Dropped replicas are not rebuilt during swap rebalance
+| Drop and then recreate the indexes.
+
+|===
