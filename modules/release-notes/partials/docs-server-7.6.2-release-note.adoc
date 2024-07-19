@@ -1,0 +1,197 @@
+== Release 7.6.2 (July 2024)
+
+Couchbase Server 7.6.2 was released in July 2024. This maintenance release contains new features and fixes several known issues.
+
+For detailed information on new features and enhancements, please see xref:introduction:whats-new.adoc[].
+
+[#fixed-issues-762]
+=== Fixed Issues
+
+This release contains the following fixes:
+
+==== Cluster Manager
+
+[#table-fixed-issues-762-cluster-manager,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-60621[MB-60621]
+| The `sys_cpu_cgroup_seconds_total{mode="usage"}` stat also included the amount of time for `sys_cpu_cgroup_seconds_total{mode="user"}` and `sys_cpu_cgroup_seconds_total{mode="sys"}`. As a result, using certain functions e.g. `sum(sys_cgroup_seconds_total)` would double the `user` count and `sys` time.
+| To prevent this, the `sys_cpu_cgroup_seconds_total{mode="usage"}`  is no longer returned and is replaced with `sys_cpu_cgroup_usage_seconds_total`.
+
+| https://issues.couchbase.com/browse/MB-60883[MB-60883]
+a| The Cache Miss Ratio metric showed the number of background fetch operations over the total number of read operations.
+However, the implementation meant that:
+
+. the value did not represent a meaningful quantity to the user in all configurations.
+. the meaning of the value changed between different bucket types and eviction policies.
+
+The value could also show as being greater than 100%, as it did not account for all cases of background fetch.
+
+| The metric now shows the ratio between the number of read operations which failed due to the key not being present, and all read operations:
+
+`kv_ops{op="get", result="miss"} / kv_ops{op="get"}`.
+
+
+
+
+|===
+
+==== Storage Engine
+[#table-fixed-issues-762-storage-engine,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+
+| https://issues.couchbase.com/browse/MB-60879[MB-60879]
+| HashTable resizing can be avoided by setting the minimum size to be large enough, but there was no metric to indicate what that should be.
+| Added `kv_vb_ht_avg_size` and `kv_vb_ht_max_size` which summarizes the current HT sizes across vBuckets.
+
+| https://issues.couchbase.com/browse/MB-61525[MB-61525]
+| With the removal of the dedicated DCP consumer buffer in 7.6.0 in a temporary out-of-memory scenario, a consumer node could continue to consume DCP mutations and add to the checkpoint beyond the allocated checkpoint memory quota. This is limited by the dcp consumer buffer quota.
+| A new metric has been added to track the sum of the checkpoint quota and the DCP consumer buffer quota. This is used to make
+sure the memcached
+ memory allocation on a consumer node isn't exceeding the allocated memory quotas: +
+`checkpoint_mem-usage` limit = `checkpoint_memory_ratio` + `dcp_consumer_buffer_ratio`.
+
+| https://issues.couchbase.com/browse/MB-62547[MB-62547]
+| A critical issue occurs when performing an off-line-upgrade, graceful failover, or delta-recovery upgrade methods on index service nodes from Couchbase Server versions 7.1 through 7.2 to versions 7.6.0 or 7.6.1.
+The upgrade corrupted existing indexes requiring you to drop and rebuild them.
+| Issue resolved.
+
+|===
+
+==== Query Service
+[#table-fixed-issues-762-query-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-61014[MB-61014]
+| The planner may not pick a covering index if the index is defined with a complex `WHERE` clause (e.g. `AND` or `OR` clauses involving `!=`, `NOT` or `IN` predicates).
+| Issue resolved.
+
+| https://issues.couchbase.com/browse/MB-61171[MB-61171]
+| In rare circumstances with high-load Query, requests can fail to complete, blocking rebalance attempts. +
+Such requests don't affect other regular processing beyond occupying a servicer, but a rebalance can't complete until they do.
+ By the time it is an issue, it is likely that the client that submitted such a request has already terminated, and the request
+  is just stuck in Query processing.
+  Deleting such a request from `system:active_requests` using the REST API may release it. +
+  Forcibly restarting the Query service will clear the issue.
+| Issue resolved.
+
+|===
+
+==== Eventing Service
+[#table-fixed-issues-762-eventing-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-61488[MB-61488]
+| When performing a Sub-Document operation using the Eventing `couchbase.mutateIn` Sub-Document API, the operation sometimes caused exceptions in the JavaScript code and failed with the error code `LCB_ERR_SUBDOC_XATTR_UNKNOWN_MACRO`.
+| Issue resolved.
+
+| https://issues.couchbase.com/browse/MB-50944[MB-50944]
+| Eventing did not properly support read-write bindings to collections with Sync Gateway attached at the source.
+Adding a new Eventing function failed if the bucket alias was set to read-write.
+| Issue resolved.
+
+|===
+
+==== Index Service
+[#table-fixed-issues-762-index-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-61387[MB-61387]
+| To speed up the initial process of building the index, the index service has an optimization that skips checking for existing entries and directly adds new ones.
+This optimization is crucial for the initial build but should not be used for updates to existing indexes.
+Unfortunately, in a rare sequence of events, all indexes might be accidentally enabled for this optimization, leading to duplicate entries in the storage layer and causing incorrect results.
+| Optimization is only enabled for those indexes that are undergoing the initial build process.
+
+
+| https://issues.couchbase.com/browse/MB-61793[MB-61793]
+| The indexes made using the plasma storage engine have both in-memory and on-disk components.
+There are some components which are always present in memory and are never evicted to disk, so they consume the same memory
+even at varying resident ratios. +
+For any rebalance or index planning calculation, the memory usage of all indexes at the recommended resident ratio is estimated and used.
+During these estimations, the memory taken by the fixed in-memory component was also scaled up with the respective resident ratio, which caused overestimation. This overestimation is only evident at very low resident ratios and could sometimes cause rebalance failure.
+| Now, a more accurate calculation is made to avoid overestimating the memory of the indexes.
+
+
+| https://issues.couchbase.com/browse/MB-62199[MB-62199]
+| During restore, the index planning operation adds replicas for lost replicas of indexes in the plan.
+
+If multiple indexes exist with the same name, there are lost replicas, and there are not enough indexer nodes to hold all the
+index replicas in the plan, then extra replicas will not be removed from the plan, and can remain on the old node. +
+This causes restore operation failures.
+| Issue resolved.
+|===
+==== Search Service
+[#table-fixed-issues-762-search-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-60719[MB-60719]
+| Running a query with `score:none` results in response containing `score:0`. The score is incorrectly added to the response.
+| If a user runs a query with `score:none` then the query response will no longer contain `score:0`.
+
+
+| https://issues.couchbase.com/browse/MB-61043[MB-61043]
+| In scenarios where a rebalance is followed by a failover, the partitions are not evenly distributed across all nodes, causing a skewness.
+| Skewness has been resolved.
+
+| https://issues.couchbase.com/browse/MB-61310[MB-61310]
+| During rebalance, when moving partitions around, we track the progress of movement and then check the seq numbers the partition has  caught up relative to the view of the partition on source node and also the `KV`’s view. +
+This progress monitoring procedure  was only for active partitions
+| You can now optionally monitor the replicas as well
+
+| https://issues.couchbase.com/browse/MB-61654[MB-61654]
+| Prometheus fails to scrape the new `xattrs` fields)
+| Problem caused by the use of `*num_vectors` which uses Prometheus-reserved character; `num_vectors` will no longer show up in
+ the stats.
+
+
+
+|===
+
+==== Tools
+[#table-fixed-issues-762-tools,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://issues.couchbase.com/browse/MB-60630[MB-60630]
+| Moving a cloud backup archive in a normal GCP bucket to a locked GCP bucket (which allows creating new files but prohibits modifying or deleting pre-existing objects) and then performing  a restore from that bucket. +
+The restore didn't fail, which would be the expected behavior; instead, the restore hangs.
+
+The problem occurs because `cbbackupmgr` always retries on 403s responses when using a GCP client, since it considered them intermittent.
+
+|`cbbackupmgr` no longer considers 403s as temporary errors,
+and will not always retry when receiving them.
+
+| https://issues.couchbase.com/browse/MB-61630[MB-61630]
+| Previously it was not possible to import an encrypted backup repository into the backup service as we did not accept the KMS parameters.
+| Both the UI and REST API now allow users to specify the KMS and its authentication parameters so an encrypted repository can successfully be imported.
+
+| https://issues.couchbase.com/browse/MB-61631[MB-61631]
+| Previously, passing a relative path to `cbbackupmgr` as `--obj-staging-dir`, the backup or restore would fail with an empty object name.
+| Issue resolved.
+
+|===
+
+
+[#known-issues-762]
+=== Known Issues
+
+This release contains the following known issues:
+
+
+==== Index Service
+[#table-known-issues-762-index-service, cols="10,40,40"]
+|===
+|Issue | Description | Workaround
+
+| https://issues.couchbase.com/browse/MB-62220[MB-62220]
+| Dropped replicas are not rebuilt during swap rebalance
+| Drop and then recreate the indexes.
+
+|===
