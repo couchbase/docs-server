@@ -837,50 +837,254 @@ An immediate merge cannot be triggered for cloud storage.
 During the input-sequence for repository-creation, storage for the repository can be specified.
 See xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#schedule-backups[Schedule Backups], for an example of using the local filesystem.
 Alternatively, cloud storage can be selected, from the *Storage Locations* field of the *Select Plan* dialog.
-When the selection is made, the dialog expands vertically, as follows:
+When the selection is made, press btn:[Next], and the dialog expands as follows:
 
-image:manage-backup-restore/cloudStorageOptions.png[,420,align=left]
+image::manage-backup-restore/createRepository.png[,420, align="left"]
+
+. Fill in a unique `ID` for the Repository ID.
+
+. Select the `Bucket` for the backup.
+
+. For the `Storage Locations`, select `Cloud` from the drop-down list. The dialog will expand to show the cloud options.
+
+. Fill in the location of the `Staging Directory`. This is the local location that will be used to store temporary data whilst the backup is in operation. Generally, the staging area should be large enough to hold 10% of your dataset (the minimum amount should be 50 GB).
+. Depending on the `Provider` you select from the drop-down list (`AWS`, `Azure`, or `GCP`), you will have a number of different option:
+with AWS and Azure, you can simply fill in the presented dialog box with the cloud service details; GCP will require you to obtain credentials from the Google service, which you then use to fill in the dialog. Both options are presented below.
+
+
+[tabs]
+====
+AWS / Azure::
++
+--
+image::manage-backup-restore/cloudStorageOptions.png[,420,align=left]
 
 The fields are as follows:
 
-* *Staging Directory*.
+Staging Directory::
 A directory on the local file system that is large enough to accommodate approximately 10% of the data set that is to be backed up.
 A minimum of 50 GB is recommended.
-The pathname of the location must be accessible to all nodes in the cluster that are running the Backup Service; but the location itself must be _not_ be shared by NFS or any equivalent protocol.
+The pathname of the location must be accessible to all nodes in the cluster that are running the Backup Service, but the location itself must _not_ be shared by NFS or any equivalent protocol.
 Instead, the location must be a non-shared directory on the local file system for the node.
 
-* *Provider*.
+Provider::
 To use either S3 or S3-compatible storage, select *AWS*.
 
-* *Cloud Bucket*.
+Cloud Bucket::
 The bucket in the cloud to which data will be backed up.
 
-* *Path Prefix*.
+Path Prefix::
 The path of the archive, within the cloud bucket.
 This should take the form `/path/inside/the/bucket`.
 
-* *Cloud Auth Type*
+Cloud Auth Type::
 The type of authentication to be used when communicating with the cloud provider.
 The options are *ID and key* (which means that an ID and key will indeed be required for communication to be successful) and *Instance metadata service* (which means that credentials will be sought from the metadata service running in the node's virtual machine).
 Each option assumes that appropriate configuration procedures for the cloud environment have been followed.
 
-* *Credential ID*.
+Credential ID::
 The credential ID for the store.
 For AWS, this is the _access key id_.
-If *Instance metadata service* has been specified as the value for *Cloud Auth Type*, this field is inapplicable, and is no longer displayed.
+If *Instance metadata service* has been specified as the value for *Cloud Auth Type*, this field is inapplicable and is no longer displayed.
 
-* *Credential Key*.
+Credential Key::
 The secret key for the store.
 For AWS, this is the _AWS secret access key_.
 If *Instance metadata service* has been specified as the value for *Cloud Auth Type*, this field is inapplicable, and is no longer displayed.
 
-* *Region*.
+Region::
 The AWS Region for the repository.
 For example, `us-east-1`, `us-west-2`.
 
 Under *Advanced cloud options*, the *Endpoint* field accepts an optional endpoint, used to connect to AWS; and overriding the endpoint used by the cloud-provider.
 
 If checked, the *S3 Force path style* checkbox ensures that the AWS path style used is the earlier (rather than the more recent, which is not supported by all S3 compatible object stores).
+
+--
+
+GCP::
++
+--
+
+Before setting up the GCP cloud backup, you will first need to get an Oauth token and a `refresh` token associated with your GCP service. To do this, follow these steps.
+
+. [#retrieve-client-id-and-client-secret]*Retrieve the client id and the client secret.*
+
+.. Access the console under your GCP account, select menu:API & Services[Credentials]
++
+image::manage-backup-restore/gcpCredentials.png[]
+.. Create an`Oauth` token for use with the Couchbase backup service.
+
+.. Create a service account for use with the Couchbase backup service.
+
+.. [#get-client-secret-key]#Select the Oauth Client ID you wish to use and click the btn:[Download] link.  From the resulting dialog, download the JSON file which contains the client ID and the client secret. The file contains the client information you will need for the next step:#
++
+[source, json, subs="+quotes"]
+----
+{
+    "installed": {
+        "client_id": "*<client_id>*",
+        "project_id": "<project_id>",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "client_secret": "*<client_secret>*",
+        "redirect_uris": [
+            "http://localhost"
+        ]
+    }
+}
+----
+
+. [#retrieve-oauth-credentials]*Retrieve the `OAUTH` credentials.*
++
+Use the `client_id` and the `client_secret` obtained in the previous section as parameters in a shell command that will return the refresh token for the backup service. This involves interrogating the GCP service to extract a refresh token for your OAuth client ID.
+
+.. Create a shell script containing the following commands:
++
+[source,shell, subs="+quotes"]
+----
+CLIENT_ID= "**<client_id>**"
+CLIENT_SECRET="**<client_secret>**"
+SCOPE="https://www.googleapis.com/auth/devstorage.read_write"
+ENDPOINT="https://accounts.google.com/o/oauth2/v2/auth"
+URL="$ENDPOINT?client_id=$CLIENT_ID&response_type=code&scope=$SCOPE&access_type=offline&redirect_uri=http://localhost:12345"
+open $URL
+----
+
+.. Save the script with a `.sh` extension (e.g., `oauth.sh`)
+
+.. Execute the `chmod` command to make the script executable.
++
+[source, console]
+----
+chmod u+x ./oauth.sh
+----
+
+.. Now execute the script.
++
+[source, console]
+----
+./oauth.sh
+----
++
+The script will open your default browser; you can copy the `oauth` credential from the string in the browser URL input field.
++
+TIP: You may need to click through a few pages, until you see `https:localhost:12345` in the URL field.
++
+image::manage-backup-restore/getOauthCodefromURL.png[]
++
+Copy the string denoted by the `code` field for use in the next section.
+
+. [#generate-refresh-token]*Generate the Refresh Token*
++
+Now, you will create a short shell script, using te oauth credentials you retrieved in the <<retrieve-oauth-credentials,previous section>>.
+
+.. Create a new shell script for generating the refresh token.
++
+[source, shell,subs="+quotes"]
+----
+CLIENT_ID= "**<client_id>**"
+CLIENT_SECRET= "**<client_secret>**"
+AUTH_CODE= "**<oauth_code>**"
+curl -s -X POST https://www.googleapis.com/oauth2/v4/token --data-urlencode "client_id=$CLIENT_ID" --data-urlencode "client_secret=$CLIENT_SECRET" --data-urlencode "code=$AUTH_CODE" --data-urlencode "redirect_uri=http://localhost:12345" --data-urlencode "grant_type=authorization_code"
+----
++
+Fill in the `client_id` and the the `client_secret` you retrieved from <<retrieve-client-id-and-client-secret,this section>>, and the `oauth` token you generated <<retrieve-oauth-credentials,here>>.
+
+.. Save the script with an `.sh` extension (e.g., `refresh.sh`).
+
+.. Execute the `chmod` command to make the script executable.
++
+[source, console]
+----
+chmod u+x ./refresh.sh
+----
+
+.. [#get-refresh-token]#Execute the script.#
++
+[source, console]
+----
+./refresh.sh
+----
++
+You will receive a response written to the console that contains the refresh token. Make a note of the refresh token.
++
+[source, json]
+----
+{
+  "access_token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "expires_in": 3599,
+  "refresh_token": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "scope": "https://www.googleapis.com/auth/devstorage.read_write",
+  "token_type": "Bearer"
+}
+----
+
+.. Use the information gathered above to fill in the cloud service plan details.
++
+image::manage-backup-restore/createRepositoryForGCP.png[,420]
++
+ID::
+A unique name assigned to the backup repository.
+Bucket::
+The name of the bucket you wish to
+back up.
+
+Storage Location::
+This should remain set to `cloud` for cloud storage.
+
+Staging Directory::
+A directory on the local file system that is large enough to accommodate approximately 10% of the data set that is to be backed up.
+A minimum of 50 GB is recommended.
+
+Provider::
+This should remain set as `GCP`.
+
+Cloud Bucket::
+The name of the bucket on the `GCP` service you are backing up to.
+
+Cloud Auth Type::
+This can be either `ID and Key` or `Instance Metadata Service`.
++
+[NOTE]
+=====
+For the `Instance Metadata Service` you will need to  configure your GCP VM service account so that the VM instance can read and write to the cloud storage bucket.
+=====
++
+You will require a different set of options depending on which one cloud authentication type you choose:
++
+'''
++
+[%collapsible]
+.`Id` and `Key`
+=====
+
+. Use the ID you obtained <<retrieve-client-id-and-client-secret,here>> for the `Credential ID`.
+. Enter the client secret key from the file you downloaded <<get-client-secret-key,here>> as the `Credential Key`.
+. Use the token you obtained <<get-refresh-token,here>> for the `Refresh Token`.
+
+'''
+=====
++
+.Metadata Service
+[%collapsible]
+=====
+
+If you are using a GCP virtual machine to hold your backup, then you can make use of the GCP VM service account with the `Metadata Service` authorization type.
+
+. Ensure that the service account that are using on https://cloud.google.com/[Google Cloud] has `Access scopes` set to `Set access for each API`.
++
+image::manage-backup-restore/gcpServiceAccountSetup.png[]
++
+. When `Access scopes` set, you will be provided with a list of scopes which can be changed to set the value for each of the GCP scopes. Ensure that you have changed the `Storage` scope to `Read/Write`.
++
+image:manage-backup-restore/gcpAccessScopes.png[]
+
+'''
+=====
+--
+====
 
 [#using-the-rest-api]
 == Using the REST API
