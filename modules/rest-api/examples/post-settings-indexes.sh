@@ -10,6 +10,6 @@ curl -v -X POST http://127.0.0.1:8091/settings/indexes \
 -d enablePageBloomFilter=false
 # end::gsi-settings[]
 
-# tag::deactivate-ftb-rebalance[]
+# tag::disable-ftb-rebalance[]
 curl -X POST http://<host>:8091/settings/indexes -d enableShardAffinity=false -u Administrator:<password>
-# end::deactivate-ftb-rebalance[]
+# end::disable-ftb-rebalance[]
