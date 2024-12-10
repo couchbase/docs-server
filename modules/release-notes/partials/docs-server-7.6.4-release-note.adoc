@@ -1,6 +1,6 @@
 == Release 7.6.4 (December 2024)
 
-Couchbase Server 7.6.4 was released in October 2024. This maintenance release contains new features and fixes several known issues.
+Couchbase Server 7.6.4 was released in December 2024. This maintenance release contains new features and fixes several known issues.
 
 For detailed information on new features and enhancements, please see xref:introduction:whats-new.adoc[].
 
@@ -25,8 +25,12 @@ This release contains the following fixes:
 | Issue resolved.
 
 | https://jira.issues.couchbase.com/browse/MB-62413[MB-62413]
-| When a username is extracted from a client certificate, no check was made for its existence on the server.
-| The username extracted from the client certificate is checked for its existence in couchbase-server.
+| When a username is extracted from a client certificate, the candidate username is checked for its existance in couchbase-server. If such user doesn't exist, algorithm now doesn't stop, but tries to extract another candidate username.
+|Issue resolved.
+
+| https://jira.issues.couchbase.com/browse/MB-63981[MB-63871]
+| The /prometheus_sd_config endpoint  provides a new option `clusterLabels` which species the cluster name and cluster UUID be returned. Prometheus will use them as labels in time series data. 
+| This provides a method to guarantee uniqueness for stats with the same name gathered from multiple clusters.
 
 |===
 
@@ -57,7 +61,7 @@ However, as part of the file-based rebalance process introduced in 7.6.0, a reco
 | XDCR connection pre-check now supports alternate addresses, DNS SRV, and works identically to XDCR remote cluster references.
 
 | https://jira.issues.couchbase.com/browse/MB-63738[MB-63738]
-| XDCR dashboard on Source cluster now shows a UI alert when a pipeline is stuck due to EACCESS errors while writing to Target cluster.
+| The XDCR dashboard on Source cluster now shows a UI alert when a pipeline is stuck due to EACCESS errors while writing to Target cluster.
 | Issue resolved.
 
 |===
@@ -91,7 +95,22 @@ a| In previous versions of Couchbase Server, a clear delimiter between a numeric
 | From version `7.6.4+`, a statement containing text such as: `… 1AND …`
   will now correctly generate a syntax error indicating it is an invalid number. +
   Correct such instances by inserting a space between the numeric constant and the following token, e.g. `… 1 AND …`.
-  
+
+| https://jira.issues.couchbase.com/browse/MB-63518[MB-63518]
+|An API issue has been resolved where attempting to set the completed-stream-size to zero when it was already zero via the administrative REST API would:
+
+   * Prevent stream completion.
+
+   * Block access to the system:vitals keyspace or vitals end-point.
+
+   * Require a full Query process restart on affected nodes as the only previous workaround.
+
+| Issue resolved.
+
+| https://jira.issues.couchbase.com/browse/MB-63420[MB-63420]
+a| A server panic was resolved when processing an aggregate function with a less-common reference structure, such as MAX([d.date, d][1]). The more standard form MAX([d.date, d])[1] was not impacted. The fix ensures stable query processing for this edge case.
+
+| Issue resolved.
 
 |===
 
@@ -101,21 +120,9 @@ a| In previous versions of Couchbase Server, a clear delimiter between a numeric
 |Issue | Description | Resolution
 
 | https://jira.issues.couchbase.com/browse/MB-63014[MB-63014]
-| In earlier versions of Couchbase, when an eventing function is under deployment or being resumed,
-then, if the function has any destination bucket bindings whose LCB instances are to be bootstrapped,
-and there were ongoing KV service issues, (e.g., a network partition, firewall on the KV port, etc.),
-`Eventing` used to leave these LCB instances in an unhealthy state and skip past them to continue with deployment. +
-  Unfortunately, these LCB handles will never be repaired, even if the KV issues are eventually resolved. +
-  This resulted in any subsequent operations scheduled on this LCB instance to fail and not return control.
-  From the customer's perspective, the eventing function was stuck.
+| In earlier versions of Couchbase, during eventing function deployment or resumption, KV service disruptions (like network partitions) could leave LCB instances in an unrecoverable, unhealthy state. This caused the eventing function to become permanently stuck, with subsequent operations failing to return control, rendering the function non-functional.
 
-| `Eventing` keeps track of the LCB instances' statuses
-and retries bootstrapping the unhealthy LCB instance(s) until the operation timeout. +
-The operation timeout is derived from the script timeout. +
-This process is described as "lazy" because `Eventing` retries the LCB bootstrap process
-when the customer's JavaScript code uses the corresponding bucket binding(s). +
-With this change in approach,
-Eventing can ensure that the customer's JavaScript code does not get stuck and times out the mutation's processing instead.
+| This issue has been resolved. Couchbase Eventing now actively monitors LCB instance statuses and implements a "lazy" retry mechanism for bootstrapping unhealthy instances. The retry process continues until the operation times out, which is dynamically determined by the script timeout. This ensures that JavaScript code remains responsive, with mutations timing out gracefully if bootstrap attempts fail, instead of causing a complete function lockup.
 
 
 |===
@@ -141,13 +148,13 @@ where we didn't consider new nodes coming in when placing lost indexes.
 Hence, we can repair lost replicas.
 
 | https://jira.issues.couchbase.com/browse/MB-62919[MB-62919]
-| After enabling GSI shard-based rebalance from the Web UI and saving the settings, it is not possible to disable the same setting by unticking the box. The box is greyed out and cannot be interacted with.
+| After enabling GSI shard-based rebalance from the Web UI and saving the settings, it was not possible to disable the same setting by unticking the box. The box is greyed out and cannot be interacted with.
 | Issue resolved.
 
 | https://jira.issues.couchbase.com/browse/MB-63276[MB-63276]
 | An issue in the rebalancer caused several partitions to miss streaming mutations when partitioned indexes were moved during file-based rebalances.  This issue resulted in corrupt indexes as not all data was processed. +
 The issue occurred only with partitioned indexes with file-based rebalances enabled.
-| Issue resolved
+| Issue resolved.
 
 |===
 
@@ -158,11 +165,15 @@ The issue occurred only with partitioned indexes with file-based rebalances enab
 |Issue | Description | Resolution
 
 | https://jira.issues.couchbase.com/browse/MB-62427[MB-62427]
-| The absence of `segmentVersion` within `params.store` of index definitions in `6.x` leads to a situation  of `v11` and `v16` segments being mixed,
-which in turn, leads to panics arising while building `v16` segments.
+| In index definitions from version 6.x, the `segmentVersion` parameter is absent, with it previously defaulting to v11. With 7.6 we’ve updated the default to v16. So when the `segmentVersion` is absent, the v16 code will be going into effect.
 
-This problem only occurs when `6.x` index definitions survive an upgrade from `6.x` to `7.6.x` but not from `7.x` from `7.[0-2].x` to
-`7.6.x` because `segmentVersion` exists by default for indexes introduced in any version `7.0+`.
+An issue in the v16 code while interpreting data with no vector fields caused an alignment panic. This panic is fixed with 7.6.4 allowing 6.x index definitions to work ok in 7.6.4.
+
+   * This problem occurs only for index definitions that survive an upgrade from 6.x to 7.x and then 7.6.x without being “re-built” meaning they’d still be using the v11 file format.
+
+   * Indexes that were introduced in server version 7.x and later or re-built after the cluster was fully upgraded to 7.x (which will have a segmentVersion:15 setting within their index definition) will not encounter this issue, because they invoke the v15 code.
+
+| In summary, version 7.6.4 now supports upgrades of 6.x index definitions. However, Couchbase recommends upgrading indexes to 15+ segment version format for improvements in indexing footprint and performance.
 
 | Issue resolved.
 
@@ -175,7 +186,7 @@ This problem only occurs when `6.x` index definitions survive an upgrade from `6
 |Issue | Description | Resolution
 
 | https://jira.issues.couchbase.com/browse/MB-61013[MB-61013]
-| The Backup service should not allow backups to be created in the data directory
+| The Backup service incorrectly allowed backups to be created in the data directory
 because the server could delete the backup files.
 | The server will not allow archives to be created in the data directory.
 
