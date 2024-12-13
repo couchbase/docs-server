@@ -1,5 +1,49 @@
-[#section-new-feature-couchbase-cluster]
+[#section-new-feature-800-couchbase-cluster]
 === Couchbase Cluster
+
+
+
+https://jira.issues.couchbase.com/browse/MB-61457[MB-61457]::
+The following settings have been added to the `/pools/default/buckets` REST APIs.
++
+
+|===
+|Argument Name |Type |Valid values |Default
+
+|`accessScannerEnabled`
+|bool
+|true, false
+|true
+
+|`expiryPagerSleepTime`
+|int
+|0 to maxInt
+|600
+
+|`warmupBehavior`
+|string
+|background, blocking, none
+|background
+
+|`memoryLowWatermark`
+|int
+|50 to 89
+|75
+
+|`memoryHighWatermark`
+|int
+|51 to 90
+|85
+|===
+
+https://jira.issues.couchbase.com/browse/MB-61946[MB-61946]::
+The `/pools/default/nodeServices` endpoint results now include the UUID and name of the cluster.
++
+[source, shell]
+----
+ "clusterUUID": "0e23ca344ef4aafaf2b48ed90c5335ef",
+  "clusterName": "CouchbaseTestLab"
+----
 
 https://jira.issues.couchbase.com/browse/MB-62583[MB-62583]::
 The `/prometheus_sd_config` endpoint  provides a new option “clusterLabels” which species the cluster name and cluster UUID be returned. Prometheus will use them as labels in time series data. This provides a method to guarantee uniqueness for stats with the same name gathered from multiple clusters.
@@ -15,28 +59,109 @@ curl --get -u <username:password> \
     -d clusterLabels=none|uuidOnly|uuidAndName
 ----
 
-https://jira.issues.couchbase.com/browse/MB-61946[MB-61946]::
-The `/pools/default/nodeServices` endpoint results now include the UUID and name of the cluster.
+[#section-new-feature-data-service]
+=== Data Service
+
+
+https://jira.issues.couchbase.com/browse/MB-9418[MB-9418]::
+The previous warmup behavior was to load values and not complete warmup until the Bucket reaches one of:
++
+--
+* `warmup_min_memory_threshold` — defaults to 100%.
+* `warmup_min_items_threshold` — defaults to 100%.
+* The bucket low watermark (i.e., 75% of the Bucket quota)
+--
++
+*Resolution:* Couchbase Server adds a new parameter, `warmup_behavior`. 
+This new parameter can be used to change the thresholds using a single command. 
++
+`warmup_behavior` takes one of three settings:
++
+[horizontal]
+`blocking`:::
+Warmup behaves the same as it did before with no background warmup
+`background`:::
+Warmup now loads items in the background, allowing the bucket to have write availability much quicker than blocking.
+`none`:::
+Warmup is disabled; the bucket comes online with no items loaded.
+
+https://jira.issues.couchbase.com/browse/MB-64071[MB-64071]::
+Couchbase Server has a new metric
+tracking the version information from a user agent character string connected to the data service.
+This appears at the cluster’s `/metrics` endpoint and supplies a count of the top connected clients.
+For example, in this case the `Java SDK 3.7.6` has connected once and the `Golang SDK core IO` has connected three times:
 +
 [source, shell]
 ----
- "clusterUUID": "0e23ca344ef4aafaf2b48ed90c5335ef",
-  "clusterName": "CouchbaseTestLab"
-----
+# TYPE kv_current_external_client_connections untyped 
+kv_current_external_client_connections\{sdk="gocbcore/v10.5.2"} 3 
+kv_current_external_client_connections\{sdk="java/3.7.6"} 1
 
-[#section-new-feature-query-engine]
-=== Query Engine
+----
++
+To use this most effectively, it should be captured in a time-series to observe changes in the counter over time.
+This will avoid misinterpretation of the metric, so that clients that connected long ago
+but are no longer connected will not be considered.
++
+The metric includes the first 32 characters sent by any clients up to the first space character
+and limits the number of metrics to 100. 
+Additional information sent by clients at connection time can be found in the logs.
+
+
+[#section-new-feature-800-XDCR]
+=== XDCR
+https://jira.issues.couchbase.com/browse/MB-61048[MB-61048]::
+Once faulty remote cluster credentials are fixed, XDCR will now be able to more quickly restart replications that depend on the repaired references.
+
+[#section-new-feature-800-query-service]
+=== Query Service
 
 https://jira.issues.couchbase.com/browse/MB-63459[MB-63459]::
 New to `8.0.0` is the ability to manipulate document extended attributes (xattrs) via a common SQL++ statement.
 +
 `INSERT` and `UPSERT` statement options may now include a “xattrs” object element detailing additions and changes to the xattrs (omissions do not delete xattrs).
 +
-The `UPDATE` statement now supports `SET` and `UNSET` of `meta().xattrs.{attribute} elements.`
+The `UPDATE` statement now supports `SET` and `UNSET` of `meta().xattrs.+{attribute}+ elements.`
 
-[#section-new-feature-vectot-search]
+[#section-new-feature-800-vector-search]
 === Vector Search
 
 * On x86 platforms, Vector Search now uses the processor's Advanced Vector Extensions 2 (AVX2) feature to improve performance.
 Because of this change,  Couchbase Server running on x86 platforms requires a processor that supports these AVX2 instructions.
 For more information, see xref:install:pre-install.adoc#vector_cpu_requirements[Vector Search CPU Requirements].
+
+[#section-new-feature-800-index-service]
+=== Index Service
+
+https://jira.issues.couchbase.com/browse/MB-60953[MB-60953]::
+We have improved the creation of large replicated partitioned index definitions
+to create all replicas and partitions in the same iteration,
+rather than doing it asynchronously in the background.
+This leads to better utilization of DCP streams.
+
+[#section-new-feature-800--tools]
+=== Tools
+
+https://jira.issues.couchbase.com/browse/MB-44863[MB-44863]::
+When using the Backup Service, you can now configure a retention period for a repository,
+automating the deletion of old backups if desired.
+You can choose a default retention period,
+and you can choose to override this default for individual backups if desired.
+
+
+https://jira.issues.couchbase.com/browse/MB-60337[MB-60337]::
+Previously,
+it was possible to remove backups which would cause dependent incremental backups
+to become invalid if they depended on those deleted backups.
+With this release, such deletes are prevented by default but can be overridden with the new `--disable-safe-remove-check` flag
+
+https://jira.issues.couchbase.com/browse/MB-60676[MB-60676]::
+When there are multiple backup service nodes in a cluster,
+we now prevent more than one job for a repo from being run concurrently.
+Previously this could happen, even though it always results in one of the jobs failing.
+
+https://jira.issues.couchbase.com/browse/MB-61073[MB-61073]::
+It is now possible to change the plan used by a repository.
+The repository first needs to be paused, and then the plan can be changed,
+and the repository resumed, where it will now execute the tasks from its new plan.
+
