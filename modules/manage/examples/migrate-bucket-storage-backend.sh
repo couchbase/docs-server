@@ -58,4 +58,10 @@ curl -X POST -u Administrator:password \
   -d 'storageBackend=couchstore'
 # end::change-backend-couchstore[]
 
+# tag::prereq-rollbackstorage-param[]
+curl -v -X POST http://localhost:8091/pools/default/buckets/testbucket -u Administrator -d historyRetentionCollectionDefault=false
+# end::prereq-rollbackstorage-param[]
 
+# tag::prereq-rollbackstorage-collection[]
+curl -X PATCH -u Administrator http://localhost:8091/pools/default/buckets/testbucket/scopes/_default/collections/_default -d history=false
+# end::prereq-rollbackstorage-collection[]
