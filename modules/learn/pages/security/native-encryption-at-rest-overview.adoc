@@ -1,0 +1,119 @@
+= Native Encryption at Rest Overview
+:description: Couchbase Server can encrypt data, configuration, logs, and audit information it saves to disk. This encryption can help reduce the chances or severity of data breaches.
+:page-toclevels: 2
+[.edition]#{enterprise}#
+
+[abstract]
+{description}
+This feature is transparent to the database's users. 
+Couchbase Server automatically decrypts data when read from disk and encrypts it when writing it to disk.
+
+== Encrypting Bucket Data
+
+When encrypting data in buckets, you choose which buckets to encrypt.
+For example, you can decide to just encrypt buckets containing sensitive data (such as customer information).
+You can also choose to leave less-sensitive data unencrypted (such as product catalog data).
+Encrypting just sensitive data can help reduce the overhead of encrypting and decrypting data on your cluster.
+
+Each bucket can have its own encryption key.
+This configuration is useful in multi-tenancy configurations where each customer can have their own encryption key.
+
+== Encrypting Audit, Logs, and Configuration Data
+
+In addition to data, you can encrypt audit, logs, and most configuration data. 
+Each of these types of data can have its own encryption key.
+
+[NOTE]
+====
+Currently, some configuration data is not encrypted.
+This includes:
+
+* Bootstrap information
+* Node and internal client certificates
+* Prometheus configuration, metric data, and tokens used to gather metrics
+====
+
+
+== Encryption at Rest Keys 
+
+To encrypt data, you must create at least one encryption key. 
+Couchbase Server uses the keys you create directly to generate Data Encryption Keys (DEKs) which it uses to encrypt the information it stores on disk.
+This two-layer system lets Couchbase Server manage the rotation and deletion of the DEKs.
+The encryption keys can be either managed by Couchbase Server, or by a Key Management Service. 
+See <<#kms>>.
+
+When you create an encryption key, you choose what Couchbase Server can encrypt with it. 
+You choose one or more things the key can encrypt:
+
+* **Other encryption keys** 
+Makes the key a Key Encryption Key (KEK). 
+You use a KEK to encrypt other encryption keys instead of relying on the database's master password.
+* **Data**. 
+You can uae the key to encrypt all data or restrict its use to specific buckets.
+* **Configuration**
+* **Logs**
+* **Audits**
+
+You can use a single Secret for encrypting all data, logs, audit, and configuration information.
+This configuration is easy to configure, but is not flexible.
+For more complex environments (such as multi-tenancy databases), you can choose to create multiple encryption keys.
+You then choose keys to encrypt one or more buckets as well as logs, audits, and configuration data.
+You can also create layers of encryption keys.
+For example, you can have a master encryption key that is managed by an external key management system (see <<#kms>>). 
+Then you use the master key to encrypt additional encryption keys, each of which you assign to a different bucket or  
+
+=== Encryption Key Rotation and Expiration
+
+Key rotation generates new encryption keys on aregular basis and retires old ones.
+Frequent rotations limit the amount of data encrypted with any one key.
+It can help limit the exposure of data if a data breach compromises an encryption key.
+
+You can choose to have Couchbase Server rotate encryption keys and DEKs automatically.
+By default, Couchbase Server automatically rotates DEKs.
+You choose how frequently Couchbase Server rotates DEKs and (if you enable it) encryption keys.
+
+When Couchbase Server generates a new encryption key or DEK during rotation, it does not delete the expired key immediately.
+It uses the new key to encrypt data as it writes it to disk. 
+Mutating a document results in it being encrypted with the currently-active DEK.
+Couchbase Server does not re-encrypt existing data unless it is mutated.
+Instead, it keeps the expired keys so it can decrypt the older data.
+
+Couchbase Server only deletes an expired DEK when either of the following occur:
+
+* When no data uses the DEK for encryption. 
+Once the last piece of data that relies on the DEK for decryption is either mutated or deleted, Couchbase Server is free to delete the DEK.
+
+* The DEK's lifetime elapses.
+Couchbase Server can set a maximum lifetime for a DEK.
+When a DEK's lifetime elapses, Couchbase Server uses the  currently-active DEK to re-encrypts any data that is still encrypted with the expired DEK.
+It then deletes the expired DEK.
+
+You can adjust the rotation and lifetime for DEKs to suit your environment.
+
+
+[#kms]
+=== Encryption Key Management Services
+
+A key management service generates and stores the encryption keys Couchbase Server uses to encrypt its DEKs.
+When you create a key, you choose which key management service you want to manage it.
+Couchbase Server works with several key management services:
+
+Couchbase Server Key Auto-Generation::
+You can have Couchbase Server act as the key management system.
+This method does not require any additional configuration.
+However, using this method means that Couchbase Server stores your encryption keys locally, leaving them more vulnerable if there is a security breach.
+
+AWS Key Management Service::
+You can use the https://docs.aws.amazon.com/kms/latest/developerguide/overview.html[AWS Key Management Service] (AWS KMS) to manage keys for you.
+Using this method requires some configuration.
+However, this method is more secure because AWS it keeps the encryption keys secure internally.
+Even if one or more nodes in your cluster suffer a security breach, the encryption keys remain secure within the AWS KMS.
+
+KMSs that support Key Management Interoperability Protocol (KMIP)::
+https://en.wikipedia.org/wiki/Key_Management_Interoperability_Protocol[KMIP] is a standards protocol implemented by key management services.
+Couchbase Server can work with any KMS that implements this standard.
+As with AWS KMS, using a KMIP-compliance KMS enhances security by ensuring that the encryption keys are not stored locally in the cluster.
+
+Because you can choose a different KMS for each encryption key, you can have some keys managed by an external KMS.
+You can then use these external keys to sign other encryption keys that Couchbase Server manages. 
+
