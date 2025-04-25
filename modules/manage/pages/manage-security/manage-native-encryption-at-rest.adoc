@@ -1,30 +1,33 @@
 = Manage Native Encryption at Rest
 :description: pass:q[Couchbase Server's native encryption at rest protects sensitive data by encrypting it when writing it to disk.]
 :tabs:
-:page-toclevels: 2
-[.edition]#{enterprise}#
+:page-topic-type: guide
+:page-toclevels: 3
+:keywords: encryption at rest, security
+:page-edition: Enterprise Edition
+:page-topic-type: reference
 
 [abstract]
 {description}
 This feature is transparent to the database's users. 
 Couchbase Server automatically decrypts data when read from disk and encrypts it when writing it to disk.
+
+You can encrypt:
+
+* All data in a non-ephemeral bucket 
+* Logs
+* Configuration data
+* Audit data
+
 For an overview of native encryption at rest, see xref:learn:security/native-encryption-at-rest-overview.adoc[].
 
-
-
-You can only use encryption at rest on 
+## Enabling Encryption
 
 Enabling encryption at rest is a two step process:
 
 . Create at least one encryption key.
 Couchbase Server uses these keys to encrypt its own encryption keys for data. 
 . Enable encryption for one or more types of data. 
-You can encrypt:
-+
-* All data in a bucket
-* Logs
-* Configuration data
-* Audit data
 
 The following sections explain these steps in greater detail.
 
@@ -45,26 +48,44 @@ You have three options to choose from:
 See xref:learn:security/native-encryption-at-rest-overview.adoc#kms[Encryption Key Management Services] for more information.
 
 You must decide what your encryption can encrypt. 
-You can create an encryption key that can encrypt any data and sign other keys.
+You can create an encryption key that can encrypt any data and other encryption keys.
 You can also choose to limit what data the key can be use to encrypt, or configure it to only encrypt other encryption keys. 
 See learn:security/native-encryption-at-rest-overview.adoc#keys[Encryption at Rest Keys] for more information.
 
 You must have the proper privileges to create encryption keys.
-Only users with the xref:learn:security/roles.adoc#full-admin[Full Admin] or xref:learn:security/roles.adoc#security-admin[Security Admin] roles can create encryption keys. 
+Only users with the xref:learn:security/roles.adoc#full-admin[Full Admin] or xref:learn:security/roles.adoc#security-admin[Security Admin] roles can create them. 
 
 ### Create an Encryption Key Using the Couchbase Server Web Console
 
 To create an encryption key using the Couchbase Server Web Console:
 
 . Select menu:Security[] on the main menu.
-. Click the menu:Encryption at Rest[] tab.
-. Click the btn[Add Encryption Key] button.
-. In the *Add Encryption Key* dialog, enter a name for your key in the *Name* box.
+. Click the menu:Encryption at Rest[] tab. 
+The *Encryption at Rest* page opens.
+
++
+image::manage-security/encryption-at-rest-page.png[]
+
+. Click the btn:[Add Encryption Key] button to open the *Add Encryption Key* dialog.
+
++
+image::manage-security/add-encryption-key-dialog.png[,400]
+
+
+. Enter a name for your key in the *Name* box.
 . If you want to limit what your key can encrypt, click *Configure* to expand the list of uses. 
 Then choose what you want to your key to be able to encrypt.
 
 +
-If you want to limit which buckets your key can be used to encrypt, deselect *Data* and then select the buckets.
+image::manage-security/add-encryption-key-uses.png[,300]
+
++
+If you want your key to only be able encrypt specific buckets, deselect *Data* and then select the buckets.
+
++
+IMPORTANT: If you're creating an encryption key managed by the AWS KMS, only leave *Key Encryption Key (KEK)* selected.
+Do not use AWS KMS to directly encrypt any type of data.
+See xref:learn:security/native-encryption-at-rest-overview.adoc#aws-kms-caution[this caution] for more information.
 
 . Under *Key Type*, choose the KMS you want to manage your key.
 The option you choose changes the fields in the rest of the dialog.
@@ -78,9 +99,9 @@ AWS::
 --
 [start=8]
 . Enter the Amazon Resource Name (ARN) for the encryption key and the AWS Region in which the KMS is located.
-. Choose whether to enable the AWS Instance Metadata Service.
-Enable this option if your Couchbase Server cluster runs on AWS EC2 instances and uses IAM roles to access other AWS services. 
-. Enter the paths on your cluster where you have stored the AWS crendital, config, and profile files.
+. Choose whether to use the AWS Instance Metadata Service.
+Enable this option if your Couchbase Server cluster runs on AWS EC2 instances to allow it to access other AWS services. 
+. Enter the paths on your cluster where you have stored the AWS credential, configuration, and profile files.
 . Verify that your settings work by clicking the btn:[Test Encryption Key Settings] button.
 
 --
@@ -91,10 +112,20 @@ KMIP::
 To use a KMIP-compatible KMS:
 
 [start=8]
-. Enter the host and port number for the KMS server, and choose a timeout for network connections.
-. Choose which certificates to use when verifying the identity of the KMS, or choose to not verify.
-. Enter the details for the client certificate Couchbase Server uses to authenticate with the KMS including how to encrypt the certificate passphrase.
-. Choose whether you want Couchbase Server to fetch the key from the KMS and encrypt data itself, or if you want the KMS to encrypt the data for you. 
+. Enter the host and port number for the KMS server and choose a timeout for network connections.
+. Choose which certificates to use when verifying the identity of the KMS.
+You can choose to not verify the KMS's identity, however this is insecure. 
+. Enter the details for the client certificate Couchbase Server uses to authenticate with the KMS.
+This information includes how to encrypt the certificate passphrase.
+. In the *KMIP Encryption/Decryption Approach* field, choose how Couchbase Server interacts with the KMS:
+
++
+* Select *Use KMIP Get & encrypt locally*, if you want Couchbase Server to retrieve the encryption key from the KMS and use it locally to decrypt keys and data.
+* Select *Use KMIP native Encrypt/Decrypt operation* to have Couchbase Server send the encrypted DEKs to the KMS so it can decrypt them. 
+This method is more secure, because the encryption key does not leave the KMS.
+However, this does result in more round trips to the KMS.
+Depending on the KMS configuration, network latency, and other factors, these addtional KMS requests may affect performance.
+
 --
 
 Auto-Generated::
@@ -105,11 +136,13 @@ To complete creating the key:
 
 [start=8]
 . Choose whether you want to use the cluster's master password or another encryption key to encrypt your new key.
-If you want to use another encryption key, you must an existing one that allows itself to be used as a Key Encryption Key (KEK).
+If you want to use another encryption key, it must be configured as a Key Encryption Key (KEK).
 . Decide whether you want Couchbase Server to cache the key.
 This setting lets Couchbase Server keep the key unencrypted in memory so it does not have to decrypt it for each read or write.
+Disabling this option introduces more overhead as the key needs to be decrypted for each use.
+It does increase security slightly by reducing the chances that the unencrypted key could be leaked.
 . Decide whether you want to have the keys auto rotate. 
-If you choose to rotate them, enter how often, and select a date and time for the first rotation.
+If you choose to rotate them, enter how often to rotate, a date and time for the first rotation.
 See xref:learn:secrutiy/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration] for more information about key rotation.
 --
 
@@ -118,11 +151,47 @@ See xref:learn:secrutiy/native-encryption-at-rest-overview.adoc#rotation-expirat
 ### Create an Encryption Key Using the REST API
 
 The REST API's `/settings/encryptionKey` endpoint lets you create and manage encryption keys.  
+To create an encryption key, send a POST containing details of the key to this endpoint.
+All POST calls have several common keys that they must include: 
 
-Users with xref:learn:security/roles.adoc#bucket-admin[Bucket Admin] or Cluster Admin roles can enable encryption for rest for buckets as long as an encryption key exists that is allowed to create the bucket. 
+* `name`: the name for the key.
+* `type`: The type of the key.
+Couchbase Server only supports AES 256 encryption keys.
+Therefore, the only important part of the value is the KMS that will manage the key: 
+
++
+** `awskms-aes-key-256`: managed by AWS's KMS.
+** `auto-generated-aes-key-256` managed by Couchbase Server.
+** `kmip-aes-key-256` managed by a KMIP-compatible KMS.
+
+* `useage`: an array that lists what the key can encrypt. 
+Valid values are:
+
+** `audit-encryption`: can encrypt audit data
+** `bucket-encryption`: can encrypt all buckets.
+When a key can only encrypt specific buckets, each bucket has an entry in the list in the format `bucket-encryption-<bucket-name>`.
+See *FIXME* for more information.
+** `config-encryption`: can encrypt configuration information.
+** `KEK-encryption`: can encrypt other encryption keys.
+** `log-encryption`: can encrypt log 
+
+* `data`: contains KMS-specific settings.       
++
+[{tabs}]
+====
+AWS::
++
+--
+
+
+
+
 
 
 
 // Notes:
 // bucket-admin, no access to security in Web Console. Can apply encryption at rest to bucket if a suitable key exists.
 // cluster-admin can enable encryption at rest for a bucket. Cannot access Secrutiy settings.
+
+
+Users with xref:learn:security/roles.adoc#bucket-admin[Bucket Admin] or Cluster Admin roles can enable encryption for rest for buckets as long as an encryption key exists that's allowed to create the bucket. 
