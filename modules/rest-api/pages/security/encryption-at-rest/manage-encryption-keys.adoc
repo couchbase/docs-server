@@ -2,6 +2,7 @@
 :description: pass:q[You must create encryption at rest keys before you can have Couchbase Server encrypt data as it saves it to disk.]
 :page-edition: Enterprise Edition
 :page-topic-type: reference
+:tabs:
 :page-toclevels: 3
 
 [abstract]
@@ -38,6 +39,7 @@ GET  /settings/encryptionKey/{KEY-ID}
 
 | `KEY-ID`
 | The `id` attribute of the key you want to view. 
+See the <<#gey-keys-example,example>> for an explanation of getting this value.
 | Integer
 |===
 
@@ -49,23 +51,324 @@ curl -sS -u <username>:<password> \
      -X GET 'http[s]://<hostname>>:[8091|18091]/settings/encryptionKeys/[key-id]' 
 ----
 
-.GET Path Parameters
+.Path Parameters
 `key-id`::
 *Optional* The id of the single encryption at rest key whose details you want to retrieve.
 
 
 ==== Required Privileges
 
-Any of the following roles:
+You must have at least on one of the following roles:
 
-* Full Admin
-* security_admin_local
-* security_admin_external
-* ro_admin
+* xref:learn:security/roles.adoc#admin[Full Admin]
+* xref:learn:security/roles.adoc#security_admin_local[Local User Admin]
+* xref:learn:security/roles.adoc#security_admin_external[External User Admin]
+* xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]
 
 ==== Responses
 
 `200 OK`::
+Returns the encryption at rest keys or a particular key if you specified the `key-id` path parameter. 
+See examples for an example of the keys.
 
-Returned even if user does not have permission to view keys. 
++
+NOTE: Call returns `200 OK` and an empty JSON message if user does not have permission to view keys. 
+
+`404 Object Not Found`::
+Returned if you specified a `key-id` path parameter which does not match the ID of an encryption at rest key.
+
+[#gey-keys-example]
+==== Examples
+
+The following example gets all of the encryption at rest keys defined in the system.
+
+[source,bash]
+----
+ curl -v -u Administrator:password \
+      -X GET 'http://127.0.0.1:8091/settings/encryptionKeys/' | jq
+----
+
+An example of running the previous command:
+
+[source,json]
+----
+[
+  {
+    "data": {
+      "keys": [
+        {
+          "id": "b3dd8518-e747-4a64-ad6b-db9c5d306a6c",
+          "active": true,
+          "creationDateTime": "2025-04-23T16:22:39Z",
+          "keyMaterial": "******"
+        }
+      ],
+      "encryptWith": "nodeSecretManager",
+      "canBeCached": true,
+      "autoRotation": false
+    },
+    "id": 7,
+    "name": "data-one-buckey-key",
+    "type": "auto-generated-aes-key-256",
+    "usage": [
+      "bucket-encryption-beer-sample",
+      "bucket-encryption-test"
+    ],
+    "creationDateTime": "2025-04-23T16:22:39Z"
+  },
+  {
+    "data": {
+      "port": 5696,
+      "host": "https://kms.example.com",
+      "reqTimeoutMs": 1000,
+      "keyPath": "/scripts/certs/cb_key.pem",
+      "keyPassphrase": "******",
+      "encryptionApproach": "useGet",
+      "certPath": "/scripts/certs/cb_cert.pem",
+      "caSelection": "useSysAndCbCa",
+      "encryptWith": "nodeSecretManager",
+      "historicalKeys": [],
+      "activeKey": {
+        "id": "0788edb1-1418-4225-903b-bc1f9f59aa4d",
+        "kmipId": "550e8400-e29b-41d4-a716-446655440000",
+        "creationDateTime": "2025-04-23T14:44:20Z"
+      },
+      "encryptWithKeyId": -1
+    },
+    "id": 2,
+    "name": "kmip-key",
+    "type": "kmip-aes-key-256",
+    "usage": [
+      "KEK-encryption",
+      "bucket-encryption",
+      "config-encryption",
+      "log-encryption",
+      "audit-encryption"
+    ],
+    "creationDateTime": "2025-04-23T14:44:20Z"
+  },
+  {
+    "data": {
+      "profile": "",
+      "configFile": "",
+      "useIMDS": true,
+      "region": "us-east-1",
+      "keyARN": "arn:aws:kms:us-east-1:000000000000:key/aaaaaaaa-bbbb-dddd-eeee-ffffffffffff",
+      "credentialsFile": "",
+      "storedKeyIds": [
+        {
+          "id": "c1cddf80-720e-47f0-adb7-641f5cb2ce22",
+          "creationDateTime": "2025-04-23T16:00:22Z"
+        }
+      ]
+    },
+    "id": 6,
+    "name": "Example AWS key",
+    "type": "awskms-aes-key-256",
+    "usage": [
+      "KEK-encryption"
+    ],
+    "creationDateTime": "2025-04-23T16:00:22Z"
+  }
+]
+----
+
+In the result, a `data` object defines each of the encryption keys.
+All keys have the following fields:
+
+* `id`: the integer identifying the encryption key
+* `name`: the friendly name assigned by the administrator who created the key.
+* The `usage` field which controls what you can encrypt using the key.
+* `type`: which key management system (KMS) managed the key.
++
+NOTE: The `type` also contains the encryption algorithm used for the encryption at rest key. 
+Currently, this is always `aes-key-256`.
+
+Other notable portions of the `data` field's schema depends on the type of key it contains:
+
+Keys managed by Couchbase Server::
+
+* The `keys` list contains the current and expired encryption keys. 
+* The `autorotation` field indicates whether Couchbase Server automatically rotates the key.
+When set to true, additional fields, such as  `data.rotationIntervalInDays` and `nextRotationTime` show details of the key's rotation.
+
+Keys managed by a KMIP-compatible KMS::
+
+* The fields configure the authentication with the KMS.   
+
+=== Create an Encryption Key
+
+Create a new encryption-at-rest key or modify an existing key.
+
+
+.Create an Encryption Key
+----
+POST /settings/encryptionKey/
+----
+
+
+
+==== curl Syntax
+
+[source,bash]
+----
+curl -sS -u Administrator:password \
+  -X POST http://<host>>:<port>/settings/encryptionKeys \
+  --data-binary @- <<EOF | jq
+{
+  "name": "<keyname>",
+  "usage": [
+    "<usage>"[."<usage>"...]
+  ],
+  "type": "<KMS>",
+  "data": {
+    <KMS-specific-fields>
+  }
+}
+EOF
+----
+
+.Parameters
+
+`host`::
+Hostname or IP address of a Couchbase Server.
+
+`port`::
+Port for the data service. 
+Defaults are 8091 for unencrypted and 18901 of encrypted.
+
+`keyname`::
+A name to give to the key. 
+This name must be different from any other encryption-at-rest key.
+
+`usage`::
+A comma-separated list of one or more uses for this key.
+Allowed values for this list are:
+
++
+* `"KEK-encryption"`: Can act as a key encryption key (KEK).
+* `"bucket-encryption"`: Can encrypt any bucket in the cluster.
+* `"<bucket-name>-encryption"`: Can encrypt only the bucket named `bucket-name`.
+* `"config-encryption"`: Can encrypt configuration information.
+* `"log-encryption"`: Can encrypt logs.
+* `"audit-encryption"`: Can encrypt audit data.
+
+`type`::
+Defines the encryption standard and the key management system for the key.
+All keys use AES 256 encryption.
+Allowed values are:  
+
++
+* `"awskms-aes-key-256"`: AWS KMS manages the key.
+* `"kmip-aes-key-256"`: A KMIP-compatible KMS manages the key.
+* `"auto-generated-aes-key-256"`: Couchbase Server manages the key.
+
+`KMS-specific-fields`::
+The contents of the `data` object depend on the KMS set in the `type` field because each KMS ha its unique settings.
+
++
+[{tabs}]
+====
+AWS::
++
+--
+
+[source,json]
+----
+  "data": {
+    "keyARN": "<arn>",
+    "region": "<region>",
+    "useIMDS": <true|false>,
+    ["profile": "Mprofile-name",
+      "configFile": "",]
+  }
+----
+
+
+* `"arn"`: The https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html[Amazon Resource Name (ARN)^] that identifies the key. 
+* `"region"`: The region hosting your AWS KMS.
+* `"useIMDS"`: Boolean controlling whether to use Amazon's https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html[Instance Metadata Service (IMD)^] when contacting  the AWS KMS. 
+Set this to `true` when your cluster is hosted on AWS EC2 instaces.
+* `"profile"` (optional): Path to the 
+* `"configFile"`: 
+
+
+--
+
+KMIP KMS::
++
+--
+To use a KMIP-compatible KMS:
+
+[start=8]
+. Enter the host and port number for the KMS server and choose a timeout for network connections.
+. Choose which certificates to use when verifying the identity of the KMS.
+You can choose to not verify the KMS's identity, however this is insecure. 
+. Enter the details for the client certificate Couchbase Server uses to authenticate with the KMS.
+This information includes how to encrypt the certificate passphrase.
+. In the *KMIP Encryption/Decryption Approach* field, choose how Couchbase Server interacts with the KMS:
+
++
+* Select *Use KMIP Get & encrypt locally*, if you want Couchbase Server to retrieve the encryption key from the KMS and use it locally to decrypt keys and data.
+* Select *Use KMIP native Encrypt/Decrypt operation* to have Couchbase Server send the encrypted DEKs to the KMS so it can decrypt them. 
+This method is more secure, because the encryption key does not leave the KMS.
+However, this does result in more round trips to the KMS.
+Depending on the KMS configuration, network latency, and other factors, these addtional KMS requests may affect performance.
+
+--
+
+Auto-Generated::
++
+--
+This option has Couchbase Server manage the key.
+To complete creating the key:
+
+[start=8]
+. Choose whether you want to use the cluster's master password or another encryption key to encrypt your new key.
+If you want to use another encryption key, it must be configured as a Key Encryption Key (KEK).
+. Decide whether you want Couchbase Server to cache the key.
+This setting lets Couchbase Server keep the key unencrypted in memory so it does not have to decrypt it for each read or write.
+Disabling this option introduces more overhead as the key needs to be decrypted for each use.
+It does increase security slightly by reducing the chances that the unencrypted key could be leaked.
+. Decide whether you want to have the keys auto rotate. 
+If you choose to rotate them, enter how often to rotate, a date and time for the first rotation.
+See xref:learn:secrutiy/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration] for more information about key rotation.
+--
+
+====
+
+
+
+
+
+==== Required Privileges
+
+You must have at least on one of the following roles:
+
+* xref:learn:security/roles.adoc#admin[Full Admin]
+* xref:learn:security/roles.adoc#security_admin[Security Admin]
+
+
+
+.Update an Encryption Key
+----
+PUT /settings/encryptionKey/{KEY-ID}
+----
+
+
+.Path Parameters
+[cols="2,3,2", caption=]
+|===
+|Name | Description | Schema
+
+| `KEY-ID`
+| The `id` attribute of the key you want to update. 
+| Integer
+|===
+
+.Path Parameters
+
+`key-id`::
+
+
 
