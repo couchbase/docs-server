@@ -1,13 +1,31 @@
 = XDCR enableCrossClusterVersioning
-:description: pass:q[Hybrid Logical Vector (HLV) must be enabled for each of the buckets participating in the replication process using the `enableCrossClusterVersioning` property. As a result, mobile and XDCR become a part of the same replication process.]
+:description: pass:q[Enabling the bucket property `enableCrossClusterVersioning` allows XDCR to add metadata to each replicated document.]
 
 [abstract]
 {description}
 
 
-When you set the bucket property `enableCrossClusterVersioning` (ECCV) to `true`, for each document processed by XDCR, XDCR stores an internal history of the document in the extended attributes. This set of information is also called Hybrid Logical Vector (HLV), which is a set of Hybrid Logical Clock (HLC) information.
+Enabling the bucket property `enableCrossClusterVersioning` for all buckets in the replication topology is a pre-requisite for some XDCR features. The bucket property `enableCrossClusterVersioning` cannot be disabled once it is set to `true`. Therefore, you must understand all the pre-requisites and the full effects of setting `enableCrossClusterVersioning` to `true` before enabling it.
 
-NOTE: The bucket property `enableCrossClusterVersioning` must be set to `true` to use the `mobile=[Off | Active]` flag, and this flag in turn  enables the setting _XDCR Active-Active with Sync Gateway 4.0+_. For more information about XDCR Active-Active with Sync Gateway 4.0+, see xref:learn:clusters-and-availability/xdcr-active-active-sgw.adoc[XDCR Active-Active with Sync Gateway].
+When you set the bucket property `enableCrossClusterVersioning` (ECCV) to `true`, for each document processed by XDCR, XDCR stores additional metadata for the document in the extended attributes. This set of information is also called Hybrid Logical Vector (HLV), which is a set of Hybrid Logical Clock (HLC) information.
+
+[#dependent-xdcr-features]
+== Dependent XDCR features
+
+This section lists feature settings on which replication related XDCR-mobile interoperability depends.
+
+[#bidirectional-replication-with-sgw-and-xdcr]
+=== Bi-directional replication with Sync Gateway and XDCR
+
+Pre-requisites for a bi-directional replication with Sync Gateway and XDCR are as follows:
+
+* Set the bucket property `enableCrossClusterVersioning` to `true` to use the `mobile=[Off | Active]` flag during the processes xref:manage:manage-xdcr/create-xdcr-replication.adoc[Create a Replication] and xref:manage:manage-xdcr/xdcr-management-overview.adoc[Manage XDCR]. Then set the `mobile=[Off | Active]` flag to `Active` for a bi-directional replication with Sync Gateway 4.0+ and XDCR.
+
+* Use Sync Gateway 4.0 or a higher version. When you're using Sync Gateway 4.0 or a higher version, Sync Gateway adds HLV information (whether or not you have actively set `enableCrossClusterVersioning` to `true` in the bucket property). The existence of the HLV information causes XDCR to maintain that information, so for one-way (unidirectional) XDCR-Sync Gateway users, using Sync Gateway 4.0 or a higher version means that there are additional metadata. You must enable the bucket property `enableCrossClusterVersioning` for all buckets in the replication topology and set the flag `mobile` to `Active` in the XDCR replication to configure bi-directional replication with Sync Gateway and XDCR.
+
+For information about XDCR Active-Active with Sync Gateway 4.0+ (or to configure bi-directional replication with Sync Gateway and XDCR), see xref:learn:clusters-and-availability/xdcr-active-active-sgw.adoc[XDCR Active-Active with Sync Gateway].
+
+IMPORTANT: This is an important limitation to the _XDCR Active-Active with Sync Gateway_ feature. If you use the user created extended attributes (xattrs) in your documents, and you have more than 10 user xattrs in a document, then you cannot use the feature _XDCR Active-Active with Sync Gateway_. This is due to an internal limitation of managing extended attributes in a document. If you try to use the feature _XDCR Active-Active with Sync Gateway_ when you have more than 10 user xattrs in your document, the XDCR replication **silently skips** replicating the document that has more than 10 user xattrs. As a result, the source and target data in the replication skipped documents will not be consistent. The only way you will know this skip occured is because the Prometheus stat **subdoc_cmd_docs_skipped** will be incremented and the document will _not_ be consistent between the target and source. So, if your documents have more than 10 user xattrs, do _not_ enable the property `enableCrossClusterVersioning` with a purpose to use the _XDCR Active-Active with Sync Gateway_ feature.
 
 [#hlv-data-maintained-in-xattr]
 == Hybrid Logical Vector (HLV) data maintained in the extended attributes
@@ -16,11 +34,16 @@ The new metadata, HLV, is stored as a system user created extended attribute (xa
 
 The HLV metadata takes up `109 + 40N` bytes of space per document, where N is the number of buckets mutating the document in the replication topology. 
 
-NOTE: The size of the HLV metadata must remain constant as long as your replication topology is constant. However, the HLV data accumulation occurs when the replication topology changes and the document copy goes through different clusters, for example, when being restored to a new cluster.
+NOTE: As long as your replication topology is constant, the size of the HLV metadata will grow to 109 + 40N and remain constant. However, the HLV data accumulation occurs when the replication topology changes and the document copy goes through different clusters, for example, when being restored to a new cluster.
 
 To remove the accumulated or outdated HLV data, the HLV metadata is pruned periodically. You can control the pruning frequency by setting the bucket property `versionPruningWindowHrs`.
 
-IMPORTANT: This is an important limitation to the _XDCR Active-Active with Sync Gateway_ feature. If you use the user created extended attributes (xattrs) in your documents, and you have more than 10 user xattrs in a document, then you cannot use the feature _XDCR Active-Active with Sync Gateway_. This is due to an internal limitation of managing extended attributes in a document. If you try to use the feature _XDCR Active-Active with Sync Gateway_ when you have more than 10 user xattrs in your document, the XDCR replication **silently skips** replicating the document that has more than 10 user xattrs. As a result, the source and target data in the replication skipped documents will not be consistent. The only way you will know this skip occured is because the Prometheus stat **subdoc_cmd_docs_skipped** will be incremented and the document will _not_ be consistent between the target and source. So, if your documents have more than 10 user xattrs, do _not_ enable the property `enableCrossClusterVersioning` with a purpose to use the _XDCR Active-Active with Sync Gateway_ feature.
+[#remove-hlv-metadata]
+=== Remove HLV metadata
+
+After enabling, you cannot disable the bucket property `enableCrossClusterVersioning`. You can, however, backup and restore the data to a bucket where `enableCrossClusterVersioning` is set to `false`, and remove the xattr information added by XDCR using the option `cbbackupmgr restore --disable-hlv`. 
+
+NOTE: To remove the on-going maintenance of HLV information, you must remove the xattr information previously added to the documents. To completely remove the effects of enabling HLV, only restoring the data to a bucket where `enableCrossClusterVersioning` is set to `false` is not enough.
 
 [#modify-enablecrossclusterversioning]
 == Modify the bucket property enableCrossClusterVersioning
@@ -37,10 +60,6 @@ NOTE: `versionPruningWindowHrs` must be set to the same value for all buckets in
 [#manage-version-pruning-window-hrs]
 === Manage the bucket property versionPruningWindowHrs
 
-You can manage the bucket property `versionPruningWindowHrs` through REST API as follows:
-
-* For information about creating the bucket property `versionPruningWindowHrs` through REST API, see xref:rest-api:rest-bucket-create.adoc#curl-syntax[Curl Syntax].
-
-* For information about modifying the bucket property `versionPruningWindowHrs` through REST API, see xref:rest-api:rest-bucket-create.adoc#example-versionpruningwindowhrs-edit[Example: Specifying time value for versionPruningWindowHrs, when Editing].
+For information about modifying the bucket property `versionPruningWindowHrs` through REST API, see xref:rest-api:rest-bucket-create.adoc#example-versionpruningwindowhrs-edit[Example: Specifying time value for versionPruningWindowHrs, when Editing].
 
 
