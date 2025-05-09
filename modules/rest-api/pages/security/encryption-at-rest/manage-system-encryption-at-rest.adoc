@@ -1,0 +1,442 @@
+= Manage Audit, Config, and Log Encryption at Rest
+:description: pass:q[You can use the REST API to view and change the state of encryption at rest for non-bucket data.]
+:page-edition: Enterprise Edition
+:page-topic-type: reference
+:tabs:
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+== Description
+
+The REST API described in this page lets you control encryption at rest for audit data, configuration settings, and logs in Couchbase Server.
+See xref:learn:security/native-encryption-at-rest-overview.adoc[] for more information about encryption at rest.
+
+== HTTP Methods 
+
+This API endpoint supports the following methods:
+
+* <<#get-settings>>
+* <<#change-settings>>
+
+
+
+[#get-settings]
+== Get Audit, Config, and Log Encryption-at-Rest Settings
+
+Use this endpoint to get the current encryption-at-rest settings for non-bucket data.
+
+.List All Settings
+----
+GET /settings/security/encryptionAtRest
+----
+
+=== curl Syntax
+
+[source,bash]
+----
+ curl -s -u $USER:$PASSWORD -X GET \
+      'http://{HOST}:{PORT}/settings/security/encryptionAtRest' | jq 
+----
+
+.Path Parameters
+:priv-link: get-privs
+include::partial$user-pw-host-port-params.adoc[]
+
+
+[[get-privs]]
+=== Required Privileges
+
+You must have at least on one of the following roles:
+
+* xref:learn:security/roles.adoc#security_admin_external[External User Admin]
+* xref:learn:security/roles.adoc#admin[Full Admin]
+* xref:learn:security/roles.adoc#security_admin_local[Local User Admin]
+* xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]
+* xref:learn:security/roles.adoc#security_admin[Security Admin]
+
+=== Responses
+
+`200 OK`::
+Returns the encryption-at-rest settings for audit, config, and logs. 
+See examples for an example of the output.
+
+`403 Forbidden`::
+Returned if the user does not have one of the roles listed in <<get-privs>>. 
+
+
+[#gey-keys-example]
+=== Examples
+
+The following example gets the current encryption-at-rest status.
+
+[source,bash]
+----
+curl -Ss -u Administrator:password -X \
+     GET 'http://127.0.0.1:8091/settings/security/encryptionAtRest' | jq
+----
+
+An example of running the previous command:
+
+[source,json]
+----
+{
+  "audit": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": 0,
+    "encryptionMethod": "encryptionKey",
+    "info": {
+      "dataStatus": "encrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:35:40Z"
+    }
+  },
+  "config": {
+    "dekLastDropDate": "2025-04-23T18:43:23Z",
+    "dekLifetime": 31536000,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": 0,
+    "encryptionMethod": "encryptionKey",
+    "info": {
+      "dataStatus": "encrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:43:27Z"
+    }
+  },
+  "log": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": 0,
+    "encryptionMethod": "encryptionKey",
+    "info": {
+      "dataStatus": "partiallyEncrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:34:34Z"
+    }
+  }
+}
+----
+
+Each type of system data that you can configure to be encrypted has its own object in the output (`audit`, `config`, `log`).
+Some important fields in each of these objects are:
+
+* The `info.dataStatus` field shows whether the data is being encrypted.
+* If Couchbase Server is encrypting the data, `encryptionMethod` indicates what it's using to encrypt it.  
+This value can be:
+** `disabled`: not being encrypted
+** `encryptionKey`: encrypted using an encryption-at-rest key.
+** `nodeSecretManager`: Couchbase Server uses the master database password to encrypt the data.
+
+
+
+
+[[change-settings]]
+== Change Audit, Config, and Log Data Encryption-at-Rest Settings
+
+You can create or update an encryption-at-rest-key key using the REST API.
+
+
+.Change Audit, Config, and Log Encryption at Rest Settings
+----
+POST /settings/security/encryptionAtRest
+----
+
+=== curl Syntax
+
+.Create an Encryption at Rest Key
+[source,bash]
+----
+curl -sS -u $USER:$PASSWORD \
+  -X POST http://{HOST}:{PORT}/settings/security/encryptionAtRest \
+  [-d '<type>.encryptionMethod=<method>']
+  [-d '<type>.encryptionKeyId=<KEY_ID>']
+  [-d '<type>.dekRotationInterval=<rotation-seconds>']  
+  [-d '<type>.dekLifetime=<lifetime-seconds>']
+----
+
+:priv-link: change-privs
+.Path Parameters
+include::partial$user-pw-host-port-params.adoc[]
+
+
+.Fields
+
+
+`type`::
+The type of the data whose encryption-at-rest-settings you want to change. 
+Must be one of these values:
+
++
+* `audit`: change settings for encrypting audit data.
+* `config`: change settings for encrypting configuration data.
+* `log`: change settings for encrypting log data. 
+
+`encryptionMethod`::
+Controls whether and how the data is encrypted.
+Allowed values are:
+
++
+* `disabled`: The data is not encrypted.
+* `encryptionKey`: Couchbase Server encrypts the data using an encryption-at-rest key.
+When you choose this option, you must also set `encryptionKeyId`.
+* `nodeSecretManager`: Couchbase Server encrypts the data using the master database password.
+
+`encryptionKeyId` (integer)::
+The `id` field value of the encryption-at-rest-key that Couchbase Server uses to encrypt the data. 
+See xref:manage-encryption-keys.adoc#list-keys[List Encryption-at-Rest Keys] to learn how to get the `id` of the key you want to use.
+This field is required when you set `encryptionMethod`` to `encryptionKey`.
+
+`dekRotationInterval` (integer)::
+The duration of time, in seconds, that the data encryption key (DEK) Couchbase Server uses to encrypt the data is valid.
+Once this time elapses, Couchbase Server rotates the DEK automatically.
+Defaults to `2592000` (30 days).
+See xref:learn:security:native-encryption-at-rest-overview.adoc[Encryption Key Rotation and Expiration] for more information about key rotation.
+
+`dekLifetime` (integer)::
+The period of time, in seconds, that Couchbase Server keeps expired DEKs before deleting them.
+Couchbase Server keeps expired DEKs until either the lifetime elapses or no data remains encrypted with the DEK.
+If the DEK’s lifetime elapses while data is still encrypted with it, Couchbase Server re-encrypts the data using the active DEK and deletes the expired one. 
+Defaults to `31536000` (1 year).
+See xref:learn:security:native-encryption-at-rest-overview.adoc[Encryption Key Rotation and Expiration] for more information about key lifetime.
+
+
+[[change-privs]]
+=== Required Privileges
+
+You must have at least on one of the following roles:
+
+* xref:learn:security/roles.adoc#admin[Full Admin]
+* xref:learn:security/roles.adoc#security_admin[Security Admin]
+
+
+=== Responses
+
+`200 OK`::
+Returns a JSON message containing the settings for audit, config, and log after your changes were applied. 
+See <<#change-examples>> for examples of the returned JSON.
+
+`400 Bad Request`::
+Returned when errors occur, such as leaving out a required setting or invalid JSON. 
+Also returns a descriptive JSON message.
+For example, if you set `config.encryptionMethod` to `encryptionKey` but do not set `encryptionKeyId`, you receive this message:
+
++
+[source,json]
+----
+{
+  "errors": {
+    "config.encryptionMethod": "encryptionKeyId must be set when encryptionMethod is set to encryptionKey"
+  }
+}
+----
+
+If you set `config.encryptionKeyId` to a non-existent key, you get the following message:
+
+[source,json]
+----
+{
+  "errors": {
+    "config.encryptionKeyId": "Key does not exist"
+  }
+}
+----
+
+`403 Forbidden`::
+Returned if you do not have the proper roles to call this API.
+See <<change-privs>>.
+
+
+
+[#create-examples]
+=== Examples
+
+[#log-use-master]
+.Encrypt Log Data Using the Master Database Password
+
+The following example configures logs to use the master database password to encrypt data by setting `log.encryptionMethod` to `nodeSecretManager`.
+
+[source,bash]
+----
+ curl -v -u Administrator:password \
+      -X POST 'http://127.0.0.1:8091/settings/security/encryptionAtRest' \
+      -d "log.encryptionMethod=nodeSecretManager" | jq
+----
+
+The output of running the previous example looks like this:
+
+[source,json]
+----
+{
+  "audit": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "disabled",
+    "info": {
+      "dataStatus": "unknown",
+      "dekNumber": 0,
+      "issues": []
+    }
+  },
+  "config": {
+    "dekLastDropDate": "2025-04-23T18:43:23Z",
+    "dekLifetime": 31536000,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "nodeSecretManager",
+    "info": {
+      "dataStatus": "encrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:43:27Z"
+    }
+  },
+  "log": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "nodeSecretManager",
+    "info": {
+      "dataStatus": "partiallyEncrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:34:34Z"
+    }
+  }
+}
+----
+
+
+
+.Encrypt Audit Data Using Encryption-at-Rest Key
+
+
+The following example uses an encryption-at-rest key to encrypt the audit data.
+
+[source,bash]
+----
+ curl -v -u Administrator:password \
+      -X POST 'http://127.0.0.1:8091/settings/security/encryptionAtRest' \
+      -d "audit.encryptionMethod=encryptionKey" \
+      -d "audit.encryptionKeyId=0" | jq
+----
+
+The output of the previous example looks like this:
+
+[source,json]
+----
+{
+  "audit": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": 0,
+    "encryptionMethod": "encryptionKey",
+    "info": {
+      "dataStatus": "unknown",
+      "dekNumber": 0,
+      "issues": []
+    }
+  },
+  "config": {
+    "dekLastDropDate": "2025-04-23T18:43:23Z",
+    "dekLifetime": 31536000,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "nodeSecretManager",
+    "info": {
+      "dataStatus": "encrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:43:27Z"
+    }
+  },
+  "log": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "nodeSecretManager",
+    "info": {
+      "dataStatus": "partiallyEncrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:34:34Z"
+    }
+  }
+}
+----
+
+NOTE: In the example, you may notice that `audit.info.dataStatus` indicates the data's status is `unknown`.
+It reports this state because Couchbase Server was still encrypting the data when the call to the `encryptionAtRest` endpoint returned the JSON message. 
+Eventually, this status becomes `encrypted` once Couchbase Server finishes encryting the audit data.
+
+
+.Disable Encryption-at-Rest for Logs and Audit
+
+[source,bash]
+----
+curl -v -u Administrator:password \
+     -X POST 'http://127.0.0.1:8091/settings/security/encryptionAtRest' \
+     -d "audit.encryptionMethod=disabled" \
+     -d "log.encryptionMethod=disabled" | jq
+----
+
+The output from the previous example looks like this:
+
+[source,json]
+----
+{
+  "audit": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "disabled",
+    "info": {
+      "dataStatus": "encrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-05-08T17:59:46Z"
+    }
+  },
+  "config": {
+    "dekLastDropDate": "2025-04-23T18:43:23Z",
+    "dekLifetime": 31536000,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "nodeSecretManager",
+    "info": {
+      "dataStatus": "encrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:43:27Z"
+    }
+  },
+  "log": {
+    "dekLastDropDate": "",
+    "dekLifetime": 0,
+    "dekRotationInterval": 2592000,
+    "encryptionKeyId": -1,
+    "encryptionMethod": "disabled",
+    "info": {
+      "dataStatus": "partiallyEncrypted",
+      "dekNumber": 3,
+      "issues": [],
+      "oldestDekCreationDatetime": "2025-04-23T18:34:34Z"
+    }
+  }
+}
+----
+
+NOTE: As with the previous example, the values of the `audit.info.dataStatus` and `log.info.dataStatus` do not match the `encryptionMethod` setting.
+It takes time for Couchbase Server to decrypt the data when you turn off encryption-at-rest.
