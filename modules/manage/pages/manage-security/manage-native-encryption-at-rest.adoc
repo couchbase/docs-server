@@ -26,15 +26,18 @@ For an overview of native encryption at rest, see xref:learn:security/native-enc
 Enabling encryption at rest is a two step process:
 
 . Create at least one encryption key.
-Couchbase Server uses these keys to encrypt its own encryption keys for data. 
+You must use an encryption-at-rest key to encrypt bucket data.
+You can choose to use the master database password instead of an encryption-at-rest key to encrypt audit, configuration, and log data.
+However, for the best security, you should use an encryption-at-rest key managed by an external Key Management Service (KMS).
 . Enable encryption for one or more types of data. 
 
 The following sections explain these steps in greater detail.
 
+[[create-keys]]
 ## Creating Encryption Keys
 
-Before encrypting data at rest, you must create at least one encryption key.
-You can limit what type of data each key can encrypt or limit them to . 
+Before encrypting bucket data at rest, you must create at least one encryption key.
+You should also consider creating encryption-at-rest keys when encrypting audit, configuration, and log data.
 
 ### Requirements
 
@@ -139,10 +142,10 @@ To complete creating the key:
 If you want to use another encryption key, it must be configured as a Key Encryption Key (KEK).
 . Decide whether you want Couchbase Server to cache the key.
 This setting lets Couchbase Server keep the key unencrypted in memory so it does not have to decrypt it for each read or write.
-Disabling this option introduces more overhead as the key needs to be decrypted for each use.
-It does increase security slightly by reducing the chances that the unencrypted key could be leaked.
-. Decide whether you want to have the keys auto rotate. 
-If you choose to rotate them, enter how often to rotate, a date and time for the first rotation.
+Disabling this option increases processor resource use because Couchbase Server has to decrypt the key for each use.
+Disabling it does slightly improve security by reducing the chance of in-memory key exposure attacks.
+. Decide whether you want to have the encryption-at-rest key auto rotate. 
+If you choose to rotate it, enter how often to rotate, a date and time for the first rotation.
 See xref:learn:secrutiy/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration] for more information about key rotation.
 --
 
@@ -152,41 +155,84 @@ See xref:learn:secrutiy/native-encryption-at-rest-overview.adoc#rotation-expirat
 
 The REST API's `/settings/encryptionKey` endpoint lets you create and manage encryption keys.  
 To create an encryption key, send a POST containing details of the key to this endpoint.
-All POST calls have several common keys that they must include: 
 
-* `name`: the name for the key.
-* `type`: The type of the key.
-Couchbase Server only supports AES 256 encryption keys.
-Therefore, the only important part of the value is the KMS that will manage the key: 
+The following example shows how to create an encryption key managed by Couchbase Server using the REST API:
 
-+
-** `awskms-aes-key-256`: managed by AWS's KMS.
-** `auto-generated-aes-key-256` managed by Couchbase Server.
-** `kmip-aes-key-256` managed by a KMIP-compatible KMS.
+include::rest-api:example$encryption-at-rest/create-auto-generated-key.adoc[]
 
-* `useage`: an array that lists what the key can encrypt. 
-Valid values are:
+Some of the parameters set in the example are:
 
-** `audit-encryption`: can encrypt audit data
-** `bucket-encryption`: can encrypt all buckets.
-When a key can only encrypt specific buckets, each bucket has an entry in the list in the format `bucket-encryption-<bucket-name>`.
-See *FIXME* for more information.
-** `config-encryption`: can encrypt configuration information.
-** `KEK-encryption`: can encrypt other encryption keys.
-** `log-encryption`: can encrypt log 
+* `name`: the name you want to give the key.
+* `type`: the KMS you want to use to manage the key and the key's encryption algprithm.
+* `usage`: the type of data the key can encrypt.
 
-* `data`: contains KMS-specific settings.       
-+
-[{tabs}]
-====
-AWS::
+The `data` object content depends on the KMS you chose.
+For keys managed by Couchbase Server, the `data` object's content mainly set key rotation options.
+The example sets the `rotationIntervalInDays` to `90` and the date of the next rotation to July 1st 2025.
+
+The output of running the  previous example looks like this:
+
+include::rest-api:example$encryption-at-rest/create-auto-generated-key-response.adoc[]
+
+See xref:rest-api:security/encryption-at-rest/manage-encryption-keys.adoc#create-key[Create or Update an Encryption-at-Rest Key] for details on how to create keys using the REST API.
+
+## Encrypt Data at Rest
+
+Once you have created an encrytion-at-rest key, you can use it to encrypt bucket data.
+For audit, configuration, and log data, you can choose to use the master database password instead of an encryption-at-rest key.
+
+The following sections explain how to enable encryption for each type of data.
+
+### Encrypt Bucket Data 
+
+To encrypt a bucket, you must have at least one encrytion-at-rest key configured to encrypt all buckets or the specific bucket you want to encrypt. 
+See <<create-keys>> for more information about creating encryption-at-rest keys.
+
+Users with xref:learn:security/roles.adoc#bucket-admin[Bucket Admin] or xref:learn:security/roles.adoc#cluster-admin[Cluster Admin] roles can enable encryption for rest for buckets as long as an encryption key exists that's allowed to encrypt the bucket. 
+
+.Encrypt a Bucket Using the Couchbase Server Web Console
+. On the main menu, select menu:Buckets[].
+. You can encrypt a bucket when you create it or you can edit an existing bucket to encrypt it.
 +
 --
+For an existing bucket:
+
+a. Click the name of the bucket you want to encrypt.
+a. Click btn:[Edit].
+
+For a new bucket:
+
+a. Click btn:[Add Bucket] to open the *Create Bucket* dialog.
+--
+
+. In the *Edit Bucket Settings* or *Add Data Bucket* dialog, expand the *Advanced bucket settings* section.
+. Select the *Enable Encryption at Rest*.
+. In the *Available Encryption Keys* list, select the encryption key you want to use to encrypt the bucket.
+. Configure the *DEK Rotation Interval* and *DEK Life Time* settings to configure the data encryption key rotation.
+See xref::learn:security/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration] for more information about these settings.
+. Click btn:[Add Bucket] or btn:[Save Changes] to save your changes.
+
+.Encrypt a Bucket Using the REST API
+To encrypt a bucket using the REST API, send a POST request to the `/pools/default/buckets` endpoint with the `encryptionType` parameter set to `full` and the `encryptionKey` parameter set to the ID of the encryption key you want to use.
 
 
+When creating a bucket, you can set the `encryptionAtRestKeyId` parameter to the ID of the encryption key you want to use to encrypt the bucket:
 
+include::rest-api:example$encryption-at-rest/bucket-encryption-examples.adoc[tag=create-bucket]
 
+When updating an existing bucket, you can set the `encryptionAtRestKeyId` parameter to the ID of the encryption key you want to use to encrypt the bucket:
 
+include::rest-api:example$encryption-at-rest/bucket-encryption-examples.adoc[tag=alter-bucket]
+
+If the bucket is already encrypted, Couchbase Server will re-encrypt the bucket using the new key. 
+If the bucket is not encrypted, Couchbase Server encrypts it.
+
+See xref:rest-apt:rest-bucket-create.adoc[] for more inform,ation about creating and updating buckets using the REST API.
+
+### Encrypt Audit, Configuration, and Log Data
+
+You can encrypt audit, configuration, and log data using the master database password or an encryption-at-rest key.
+By default, Couchbase Server encrypts the configuration data using the master key. 
 
 
 // Notes:
@@ -194,4 +240,4 @@ AWS::
 // cluster-admin can enable encryption at rest for a bucket. Cannot access Secrutiy settings.
 
 
-Users with xref:learn:security/roles.adoc#bucket-admin[Bucket Admin] or Cluster Admin roles can enable encryption for rest for buckets as long as an encryption key exists that's allowed to create the bucket. 
+
