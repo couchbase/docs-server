@@ -7,8 +7,15 @@
 
 You can migrate a bucket's storage backend if you find the bucket's current performance is not meeting your needs. 
 For example, you can migrate a bucket from Couchstore to Magma if the bucket's working set grows beyond its memory quota. 
-
 You can migrate from Couchstore to Magma, or from Magma to Couchstore. 
+Migrating to a Magma bucket always results in a bucket with 1024 vBuckets, regardless of the number of vBuckets in the original bucket.
+
+NOTE: The backend migration described in this section does not support migrating between buckets with different numbers of vBuckets.
+You cannot migrate a Couchstore or Magma bucket with 1024 vBuckets to a Magma bucket with 128 vBuckets.
+Similarly, you cannot migrate from a Magma bucket with 128 vBuckets to a Couchstore or a Magma bucket with 128 vBuckets.
+To migrate between buckets with different number of vBuckets, you can use a local cross datacenter replication (XDCR).
+See <<xdcr-migration>> for more information.
+
 You start a bucket's migration by calling the REST API to edit the bucket's `storageBackend` setting. 
 This call changes the bucket's global storage backend parameter. 
 However, it does not trigger an immediate conversion of the vBuckets to the new backend. 
@@ -185,3 +192,122 @@ include::manage:example$migrate-bucket-storage-backend.sh[tag=rebalance-cluster]
 ----
 
 . Repeat the previous step until all nodes that you'd migrated have rolled back to their original storage backend. 
+
+
+[#xdcr-migration]
+== XDCR Storage Backend Migration
+
+You can use xref:learn:clusters-and-availability/xdcr-overview.adoc[] to migrate data between two buckets with different storage backends, including between Magma buckets using different numbers of vBuckets.
+You can perform this migration on the same cluster or between two clusters.
+
+include::learn:partial$xdcr-magma-128-vbucket-incompatibility.adoc[]
+
+To perform an XDCR storage backed migration on the same cluster, it must have enough memory and storage for two copies of the bucket's data. 
+After the migration, you can drop the original bucket to free the resources it uses.
+
+The process for performing a backend migration using XDCR is similar to configuring any other XDCR replication.
+The only difference is that the source and destination of the replication are the same cluster.
+
+The following steps demonstrate migrating a Magma bucket with 128 vBuckets named `travel-sample` to a Magma bucket with 1024 vBuckets named `travel-sample-1024`:
+
+. Create a new bucket named `travel-sample-1024` using the Magma storage backend  with 1024 vBuckets.
+For more information about creating a bucket, see xref:manage:manage-buckets/create-bucket.adoc[].
+The following example uses the REST API to create the new bucket:
+
++
+[source,console]
+----
+curl -X POST http://127.0.0.1:8091/pools/default/buckets \
+     -u Administrator:password \
+     -d name=travel-sample-1024 \
+     -d storageBackend=magma \
+     -d numVbuckets=1024 \
+     -d ramQuota=1024 
+----
+
+. Recreate any scopes and collections in the new bucket that are in the original bucket.
+Replication does not recreating missing scopes and collections for you.
+You can create the scopes and collections manually or reuse any deployment scripts you have.
+See xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc[] for details on creating scopes and collections.
+
++
+You can also create a script to  recreate the scopes and collections in the new bucket.
+For example, the following Python script uses the Python SDK to accomplish this task:
+
++
+[source,python]
+----
+include::manage:example$duplicate-scopes-collections.py[]
+----
+
+. Add a loopback reference to the cluster. 
+The following example uses the REST API to add an XDCR reference named `self` to the cluster that uses the loopback IP address as the hostname:
+
++
+[source,console]
+----
+ curl -X POST http://127.0.0.1:8091/pools/default/remoteClusters -u Administrator:password \
+-d username=Administrator \
+-d password=password \
+-d hostname=127.0.0.1 \
+-d name=self \     
+-d demandEncryption=0 | jq
+----
+
++
+The out of previous command is:
+
++
+[source,json]
+----
+{
+  "connectivityErrors": null,
+  "deleted": false,
+  "hostname": "127.0.0.1:8091",
+  "name": "self",
+  "network_type": "",
+  "secureType": "none",
+  "uri": "/pools/default/remoteClusters/self",
+  "username": "Administrator",
+  "uuid": "a43e930240738b5aee16e2688a65d08f",
+  "validateURI": "/pools/default/remoteClusters/self?just_validate=1"
+}
+----
+
+. Create an XDCR replication from the original bucket to the new bucket.
+The following example uses the REST API to create the replication:
+
++
+[source,console]
+----
+curl -v -X POST -u Administrator:password \
+http://127.0.0.1:8091/controller/createReplication \
+-d fromBucket=travel-sample \
+-d toCluster=self \
+-d toBucket=travel-sample-1024 \
+-d replicationType=continuous \
+-d createTarget=true \
+-d enableCompression=1 | jq
+----
+
++
+The result of the previous command looks like this:
+
++
+[source,json]
+----
+{
+  "id": "a43e930240738b5aee16e2688a65d08f/travel-sample/travel-sample-1024"
+}
+----
+
++
+The replication process starts.
+
+. Monitor the replication process until it completes.
+You can monitor the replication process xref:manage:manage-xdcr/create-xdcr-replication.adoc#monitor-current-replications[via the Couchbase Server Web Console] or by xref:rest-api:rest-xdcr-statistics.adoc[calling the REST API].
+Once the replication has duplicated all of the documents in the original bucket without errors, you can stop and delete it.
+Then you can drop the original bucket.
+
++
+IMPORTANT: Be sure to update all clients to use the new bucket before you stop the replication.
