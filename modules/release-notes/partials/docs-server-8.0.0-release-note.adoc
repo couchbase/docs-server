@@ -1,8 +1,3 @@
-
-
-
-
-
 [#release-80]
 == Release 8.0 (August 2025)
 
@@ -21,15 +16,27 @@ This maintenance release contains fixes to issues.
 [#dlist-known-issues-80-storage]
 
 
+*https://jira.issues.couchbase.com/browse/MB-60542/[MB-60542]*::
+
+The Couchbase Server and Couchbase Columnar builds incorporate the kv_engine commit [fd8914a](https://github.com/couchbase/kv_engine/commit/fd8914a76eedf8a3bc515c550581359a93efb0f6) with the commit message referencing MB-60542. This update involves parsing and dumping the "deprecated" and "notes" fields in the `gen_stat_definitions.cc` file. Both Couchbase Server 8.0.0-1545 and Couchbase Columnar 1.2.0-1009 include this change.
+
 *https://jira.issues.couchbase.com/browse/MB-61385/[MB-61385]*::
 
-The recent Couchbase update addresses the handling of invalid CAS values, introducing configurable modes like "error" and "replace" to manage CAS thresholds. The system can now either reject writes with out-of-bounds CAS values or regenerate a CAS value. A new "cas_value_invalid" status provides clearer error reporting. Two configuration parameters, `_hlc_invalid_strategy_` and `_dcp_hlc_invalid_strategy_`, allow different default behaviors for front-end operations and DCP replication. Discussions continue on managing compatibility and backward support, with a focus on avoiding data corruption and conflicts during replication. The default strategy for new buckets on 8.0 is set to "error," and further REST API enhancements are being considered for adjusting settings like the CAS threshold.
+Couchbase made changes to handle invalid CAS values, implementing a new "MaxFutureCasThreshold" to guard against CAS inconsistencies that could disrupt XDCR replication. They introduced two configurable modes for handling these values: "error," which rejects operations, and "replace," which regenerates the CAS. To address compatibility and potential CAS issues, three approaches were identified: a fix to reject faulty CAS inputs (MB-61385), a fix to prevent sending documents with invalid CAS (MB-55758), and support for extended error handling (MB-62034). The implementation details and strategies were refined to allow dynamic configuration and ensure compatibility across different versions. Furthermore, changes to default configurations were tracked via new configuration parameters and upcoming API adjustments.
 
 *https://jira.issues.couchbase.com/browse/MB-65644/[MB-65644]*::
 
-Couchbase-server-8.0.0-2772 includes an indexing commit aimed at addressing MB-65644. This commit, identified by c8f3dab, changes the plasma configuration by setting enableCompressFullMarshal to false. The issue is scheduled to be closed in version 8.0.0-2905.
+Couchbase-server-8.0.0-2772 includes an indexing commit that addresses issue MB-65644. The change involves setting the plasma configuration option `enableCompressFullMarshal` to false. This update is associated with commit [c8f3dab](https://github.com/couchbase/indexing/commit/c8f3dab54a4f5fe4f93f98b657ccc03f93d28dd8). The issue will be resolved in version 8.0.0-2905.
 
 
+=== Data Service
+
+[#dlist-known-issues-80-data-service]
+
+
+*https://jira.issues.couchbase.com/browse/MB-62295/[MB-62295]*::
+
+The build of couchbase-server version 8.0.0-1668 includes the kv_engine commit [db74893](https://github.com/couchbase/kv_engine/commit/db74893ff4dda84876a821364317b4627437758e), which introduces the use of symbolic links for audit.log as part of resolving MB-62295. This change has been validated on build 8.0.0-2236. The symbolic link points to a timestamped audit log file, which is part of ongoing updates and user transparency efforts in the product. Additionally, the couchbase-columnar-1.2.0-1009 build also incorporates the same kv_engine commit. Release notes need to be updated accordingly with this information.
 
 
 
@@ -41,9 +48,45 @@ Couchbase-server-8.0.0-2772 includes an indexing commit aimed at addressing MB-6
 
 *https://jira.issues.couchbase.com/browse/MB-66140/[MB-66140]*::
 
-The couchbase-server-8.0.0-3074 build includes a goxdcr update addressing MB-66140. This introduces the 'PipelineReinitHash' as a replication specification setting, ensuring that pipelines undergoing a `PipelineReinitStream` update do not resume from a checkpoint.
+In some scenarios, due to race conditions, changing the filter expression or explicit/migration mapping may cause the replication to fail streaming from the beginning. As a consequence, some Source bucket documents may get missed from being replicated to the Target bucket.
+
++
+
+This has been fixed in 8.0. It is advised to avoid changing these three replication settings:
+
+* filterExpression
+* collectionsExplicitMapping
+* collectionsMigrationMode
+
++
+
+until all nodes in the cluster have been upgraded.
 
 
+=== Query Service
+
+[#dlist-known-issues-80-query-service]
+
+
+*https://jira.issues.couchbase.com/browse/MB-62793/[MB-62793]*::
+
+The original limit of one XATTR per KV op was relaxed to a maximum of 16 in KV server version 7.6; this ticket explores extending that relaxation to queries.
++
+With this change, users can:
+
+
+. Use up to 15 XATTR fields in their query.
+
+
+. CREATE INDEX no longer imposes a limit on the number of XATTR fields that can be indexed.
+
+*https://jira.issues.couchbase.com/browse/MB-63459/[MB-63459]*::
+
+New to 7.7.0 is the ability to manipulate document extended attributes (xattrs) via common SQL++ statements.  
+
++
+
+INSERT and UPSERT statement OPTIONS may now include an “xattrs” object element detailing additions and changes to the xattrs (omissions do not delete xattrs).  The UPDATE statement now supports SET and UNSET of meta().xattrs.{attribute} elements.
 
 
 === Eventing Service
@@ -53,9 +96,17 @@ The couchbase-server-8.0.0-3074 build includes a goxdcr update addressing MB-661
 
 *https://jira.issues.couchbase.com/browse/MB-64081/[MB-64081]*::
 
-Eventing in Couchbase doesn't work with App Services due to a parsing issue in cloud deployments. The issue arises because the Sync Gateway registry object is enclosed within an additional "config" key, unlike in on-prem deployments. A patch has been developed and is under review, targeting a resolution by November 5th. The issue will be backported to version 7.6.4, and a specific smoke test for Capella is being added. Testing previously didn't cover the Capella environment, but adjustments are being made to include this environment in future tests.
+Eventing was not working with App Services due to a Sync Gateway registry parsing issue. The registry object was enclosed in a "config" key within the "_sync" system xattr in cloud deployments, unlike on-prem setups. This caused the Eventing parser to fail. The issue occurs when App Services with Sync Gateway 3.2 co-exist with Eventing version >=7.6.2. Fixes for this issue are under review, targeting a resolution by November 5th. Testing in Capella was not thoroughly conducted before, leading to the current situation. Patches are planned to be backported to earlier versions once approved.
 
 
+=== Backup Service
+
+[#dlist-known-issues-80-backup-service]
+
+
+*https://jira.issues.couchbase.com/browse/MB-62655/[MB-62655]*::
+
+The new Query AWR (Automatic Workload Repository) Report Generator tool allows customers to generate reports on query performance statistics. This tool requires AWR to be enabled on the cluster.
 
 
 
@@ -72,6 +123,12 @@ When shard affinity is enabled, the indexer internally maps all replicas of an i
 
 
 
+=== Tools
+
+[#dlist-known-issues-80-tools]
 
 
+*https://jira.issues.couchbase.com/browse/MB-62655/[MB-62655]*::
+
+The new Query AWR (Automatic Workload Repository) Report Generator tool allows customers to generate reports on query performance statistics. This tool requires AWR to be enabled on the cluster.
 
