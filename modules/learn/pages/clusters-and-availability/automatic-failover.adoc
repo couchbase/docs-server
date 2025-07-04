@@ -32,8 +32,11 @@ For information on managing auto-failover, see the information provided for Couc
 
 == Failover Events
 
-Auto-failover occurs in response to failed/failing events.
-There are three types of event that can trigger auto-failover:
+Auto-failover occurs in response to failed/failing events. Auto-failover applies to the node -- it’s the node that fails over regardless of the triggering event. There are specific types of events that trigger auto-failover processing. However, auto-failover will only actually occur if all of the checks (constraints and policies) for auto-failover pass.  
+
+The constraints and policies checked after the triggering event are described in xref:learn:clusters-and-availability/automatic-failover.adoc#auto-failover-constraints[Auto-Failover Constraints] and xref:learn:clusters-and-availability/automatic-failover.adoc#failover-policy[Service-Specific Auto-Failover Policy] sections. For example, despite the triggering event, an auto-failover of a node may be prevented due to the lack of a quorum or because there aren’t any other nodes running a service that exists on the node to be auto-failed over.
+
+Below are the types of events that can trigger auto-failover processing on a node:
 
 * _Node failure_.
 A server-node within the cluster is unresponsive (due to a network failure, very high CPU utilization problem, out-of-memory problem, or other node-specific issue). This means that the the cluster manager of the node has not sent heartbeats in the configured timeout period, and therefore, the health of the services running on the node is unknown.
@@ -67,6 +70,9 @@ The list below describes other conditions that must be met for an auto-failover 
 
 * If the majority of nodes in the cluster can form a quorum to initiate failover, following the failure of one of the nodes.
 For example, given a cluster of 18 nodes, _10_ nodes are required for the quorum; and given a cluster of 17 nodes, _9_ nodes are required for the quorum.
+** In the event of certain disk read/write issues it is important to also consider the efficacy of the nodes in the cluster. Should a node encounter such an issue, particularly an issue causing extreme disk slowness, and the disk encountering the issue is shared between the Data Service and the Cluster Manager, then this node is unlikely to be able to participate in this quorum. The idea of a quorum should be extended beyond “nodes that can communicate with one another” to “nodes that can communicate with one another and and can reliably read from, and write to, their respective disks”.
+** In the event of some disk read/writes issues the Cluster Manager may instead become completely unresponsive to the other nodes in the Cluster. In such a scenario an auto-failover should be possible provided that all other constraints are met.
+** In the event of certain disk read/write issues on the orchestrator node, particularly extreme disk slowness, it may not be possible to perform an auto-failover at all. The orchestrator node is in charge of orchestrating failover and, as such, must be part of the quorum of nodes required to perform the failover. 
 
 * Only up to an administrator-specified maximum number of nodes.
 After this maximum number of auto-failovers has been reached, no further auto-failover occurs, until the count is manually reset by the administrator, or until a rebalance is successfully performed.
@@ -80,9 +86,11 @@ Therefore, even a single event may not trigger a response; and an administrator-
 * If the cluster has been configured to _preserve durable writes_, only if the failover cannot result in the loss of durably written data.
 See xref:learn:data/durability.adoc#preserving-durable-writes[Preserving Durable Writes].
 
-Note that auto-failover should be configured only when the cluster contains sufficient resources to handle all possible consequences: workload-intensity on remaining nodes may increase significantly.
+The constraints must be met for auto-failover to occur (after a monitored/configured event is seen) and below are some other important considerations when you configure auto-failover:
 
-Auto-failover is for intra-cluster use only: it does not work with xref:learn:clusters-and-availability/xdcr-overview.adoc[Cross Data Center Replication (XDCR)].
+* The auto-failover should be configured only when the cluster contains sufficient resources to handle all possible consequences: workload-intensity on remaining nodes may increase significantly. The maxCount parameter of the auto-failover settings can be used to avoid this sort of thundering herd problem by limiting the number of nodes that can be automatically failed over. However, remember that if you want all of the nodes in a server group to be able to be auto-failed over, maxCount should at least be the number of nodes in the server group.
+
+* Auto-failover may take significantly longer if the unresponsive node is that on which the _orchestrator_ is running; since _time-outs_ must occur, before available nodes can elect a new orchestrator-node and thereby continue.
 
 * Auto-failover may take significantly longer if the unresponsive node is that on which the _orchestrator_ is running; since _time-outs_ must occur, before available nodes can elect a new orchestrator-node and thereby continue. Faster failover can be achieved by deploying an arbiter node, which is a node that hosts no Couchbase service. See xref:learn:clusters-and-availability/nodes.adoc#fast-failover[Fast Failover].
 
@@ -90,6 +98,12 @@ See xref:manage:manage-settings/configure-alerts.adoc[Alerts], for
 details on configuring email alerts related to failover.
 
 See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness], for information on server groups.
+
+See xref:learn:clusters-and-availability/nodes.adoc#adding-arbiter-nodes.adoc[Adding Arbiter Nodes] for more information on the use of arbiter nodes for xref:learn:clusters-and-availability/nodes.adoc#fast-failover [fast failover] and xref:install:deployment-considerations-lt-3nodes.adoc#quorum-arbitration [quorum arbitration].  
+
+See xref:learn:clusters-and-availability/cluster-manager.adoc[Cluster Manager] for more information on the NS-Server and the Master Services, aka the Orchestrator.
+
+learn/clusters-and-availability/cluster-manager.html
 
 [#failover-policy]
 == Service-Specific Auto-Failover Policy
@@ -218,7 +232,7 @@ Auto-failover is configured by means of parameters that include the following.
 
 * _Timeout_.
 The number of seconds that must elapse, after a node or group has become unresponsive, before auto-failover is triggered. This number is configurable: the default is 120 seconds; the minimum permitted duration is 1 second when set through the REST API and 5 seconds when set from the UI; the maximum is 3600 seconds.
-Note that a low number reduces the potential time-period during which a consistently unresponsive node remains unresponsive before auto-failover is triggered; but may also result in auto-failover being unnecessarily triggered, in consequence of short, intermittent periods of node unavailability.
+ that a low number reduces the potential time-period during which a consistently unresponsive node remains unresponsive before auto-failover is triggered; but may also result in auto-failover being unnecessarily triggered, in consequence of short, intermittent periods of node unavailability.
 +
 WARNING: Care must be taken when running an un-replicated Index Service and a Data Service configured for fast failover (i.e., 5 seconds) on the same node.
 If the failover is triggered, unnecessarily or otherwise, then the index service will be lost.
