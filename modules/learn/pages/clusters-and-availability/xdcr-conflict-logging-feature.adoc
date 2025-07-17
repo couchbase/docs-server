@@ -1,0 +1,308 @@
+= XDCR Conflict Logging
+:description: pass:q[]
+
+[abstract]
+{description}
+
+In the earlier Couchbase Server versions, XDCR detects and resolves silently each iteration of conflicts occurring during the comparison of source and target documents in the replication process.
+However, a conflict can arise when an application connected to the source cluster modifies the source document while simultaneously another application connected to the target cluster modifies the target document, where both documents have the same document ID.
+The source and target documents are independently modified by different applications simultaneously within the convergence window*, so the changes in one document are not recorded in the other document’s history.
+This is a true conflict.
+
+*_A convergence window is the period during which multiple actors, such as users, applications, or clusters, can modify the same document in an active-active topology, before the changes have fully converged across all clusters._
+
+[#what-you-can-do-using-xdcr-conflict-logging]
+== What you can do using XDCR conflict logging
+
+Instead of automatically proceeding to the conflict resolution after the source and target documents comparison, the XDCR conflict logging feature, introduced in the Couchbase Server v8.0 release, allows you to do the following:
+
+. Create conflict collections to store the logs for true conflicts.
+. Select a conflict collection during an XDCR configuration.
+. Use conflict collection to access and compare the source and target document conflicts and metadata from the logs.
+. Determine the mutations (causality) that caused conflict in both the documents.
+. Select necessary mutations from the source or the target documents logically for replication to prevent data loss.
+. Proceed with the Sequence or Timestamp based conflict resolution process and manually add the selected mutations to document through upsert.
+. Resume the replication process.
+
+The logged information helps you to quickly identify the conflicts and address potential data loss or application design issues.
+Conflict logging leverages existing XDCR conflict resolution methods (either Sequence or Timestamp-based), eliminating the need for custom resolution functions.
+
+[#hlv]
+== Hybrid Logical Vectors (HLVs)
+
+Hybrid Logical Vectors (HLVs), also known as Version Vectors, are metadata stored as system created extended attributes (xattrs) by XDCR in each document undergoing replication.
+XDCR detects true conflicts using HLV metadata.
+
+HLV on each cluster stores, tracks, and compares the history (causality) of mutated documents and the document IDs.
+As a result, when conflict occurs due to mutations, XDCR uses HLV metadata to detect true conflicts, which can be logged.
+When a true conflict occurs, XDCR uses HLV to log document ID, document contents, and conflicting document histories into a pre-defined Conflict collection created by you.
+
+HLV includes the document history, a version vector, where the version information includes CAS (compare-and-swap, which is a Hybrid Logical Clock) and a md5 (bucketUUID and clusterUUID).
+You have the current and the previous versions, so you can compare the history of the documents.
+HLV forms a part of the Conflict Record Document (CRD).
+
+HLV comprises of the following information:
+
+* Current Version (CV)
+* Merge Versions (MV)
+* Previous Versions (PV)
+
+As HLV includes the CV, MV, and PV, it captures a document’s current version and causal history.
+HLV is a strong clock because it can uniquely identify each mutation across multiple clusters, and it can be used to detect true conflicts.
+
+In an HLV, CV takes precedence over the MV and PV, and the MV takes precedence over the PV.
+As a result, HLV supports the following functionalities:
+* As CV takes precedence over MV and previous versions PV, it is not necessary to check the full version vector for causality.
+If another document’s CV or MV dominates the current document’s CV, it also dominates the current document overall.
+
+* As a result, the PV can be safely pruned without risk of data loss.
+
+You can use `versionPruningWindowHrs`, which is a bucket property, to prune HLV metadata. For more information, see versionPruningWindowHrs.
+
+IMPORTANT: To use HLV for detecting true conflicts, as a prerequisite, the bucket property `enableCrossClusterVersioning` must be enabled for all buckets in the replication topology. Once you enable `enableCrossClusterVersioning`, you cannot disable it. See XDCR enableCrossClusterVersioning and Enabling XDCR Conflict Logging for more information.
+
+[#HLV-metadata-format]
+=== HLV metadata format
+
+This is an example of HLV metadata.
+
+[source,json]
+{"_vv": {
+	"cvCAS": "0x00007dacae059a16",
+
+     "src": "5pRi8Piv1yLcLJ1iVNJIsA",
+     "ver": "0x00007dacae059a16",
+
+     "pv": {
+       "NqiIe0LekFPLeX4JvTO6Iw": "0x00008cd6ac059a16",
+       "LhRPsa7CpjEvP5zeXTXEBA": "0x000006d7ac059a16"
+     }
+   }
+}
+
+The explanation for the HLV metadata example is as follows.
+
+* _vv: HLV metadata or Version Vector.
+* `cvCAS`: This is HLV version, which has the following 2 properties when being compared with the document CAS:
+  * CAS == cvCAS: Indicates a replication (XDCR) mutation.
+  * CAS > cvCAS: Indicates that HLV is out-of-date and an application mutation. XDCR will update cvCAS.
+    +
+    For more information, see cvCAS.
+    +
+    NOTE: KV (Key-Value) or SDK are not aware of HLV. Only XDCR updates HLV based on CAS and cvCAS.
+* Current Version (CV): The current or the latest version of the document (“ver”). The actor or source responsible for the latest version (“src”).
+* Previous Versions (PV): Indicates the causality (history) of a document. Document history must be tracked to detect conflicts when multiple clusters are involved; CV is insufficient. PV stores the highest CAS from all other sources (other than CV) in the replication topology that have updated this document.
+    +
+    For example, if A, B and C are actively updating the document and A is in CV, then PV will have B and C.
+
+[#cvcas]
+=== cvCAS
+
+A cvCAS is the timestamp of Hybrid Logical Vector (HLV).
+cvCAS represents the CAS (Compare-And-Swap) value of the source/target document from which the HLV was generated.
+If the HLV represents the current version of the source/target document, then the comparision of cvCAS and CAS can be as follows:
+
+* When CAS != cvCAS, it indicates that the document has been modified locally, so a new HLV must be generated to represent the updated document version. If CAS > cvCAS, it indicates that the local cluster has updated the document after replication.
+
+* When CAS == cvCAS, it indicates that the document was replicated from another cluster and not modified since replication. Replicating the document to a target cluster sets cvCAS to the CAS value of the source document’s metadata.
+
+* When cvCAS is missing, the cvCAS value of the document is 0. When a document is created, it does not contain a cvCAS value. This indicates that the mutation originated from the local cluster.
+
+[#enabling-hlv]
+=== Enabling Hybrid Logical Vectors (HLVs)
+
+To enable the conflict logging feature, as a prerequisite, Hybrid Logical Vectors (HLVs) must be enabled on all buckets of all clusters participating in the replication topology before turning on other secondary settings.
+This serves as an audit event log for debugging purposes.
+
+To enable HLV creation in the documents and to enable the conflict logging feature, set the bucket property `enableCrossClusterVersioning` to true in both source and target buckets.
+As a result, for each document processed by XDCR, HLV is created and the HLV storage is enabled in the document extended attributes (xattrs).
+For more information about the bucket property `enableCrossClusterVersioning` and HLV, see XDCR enableCrossClusterVersioning.
+
+See Example: Turning on enableCrossClusterVersioning, when Editing.
+
+NOTE: In the future, to add a new cluster to the existing replication topology, enable HLV on each new cluster to activate conflict logging. Only the data that's upserted or modified after enabling HLV can participate in conflict logging.
++
+Once `enableCrossClusterVersioning` is enabled, it cannot be disabled.
+
+[#use-conflictlogging-and-loggingrules]
+=== Use conflict logging key and loggingRules value to create replication
+
+Create a replication by using the new replication setting, which accepts a key and a corresponding JSON object as the value.
+
+* `conflictLogging` is the replication setting key.
+* `loggingRules` is the JSON object as the value.
+
+To configure these settings from UI, see Create a Replication and Replicate Using Scopes and Collections.
+
+NOTE: By default, conflicts are logged in the conflict collection of the conflict bucket you create. You can use `loggingRules` to override the default setting.
+
+[#conflictlogging-key]
+=== conflictLogging key
+
+`conflictLogging` is the replication setting key and its details are as follows.
+
+**Disabled**
+
+* Parameter: {}
+* Description: An empty JSON object value must be specified to disable the conflict logging feature.
+
+**Enabled for all conflicts**
+
+* Parameter: 
+```
+{
+   “bucket”: [bucketName],
+   “collection”: [scope].[collection]”,
+}
+```
+
+* Example:
+```
+{
+   “bucket”: “bucket1.prime”,
+   “collection”: “scope2.collection3”,
+}
+
+{
+   “bucket”: “b2.prime”,
+   “collection”: “_default.col4”,
+}
+```
+
+* Description: The `bucket` key in the embedded object indicates the bucket in which the conflict collection is located. Periods (`.`) are allowed in bucket names.
++
+The `collection` key in the embedded object indicates the scope and collection namespace for the conflict collection. This is required to enable the conflict logging feature.
+
+**Enabled with special logging rules**
+
+* Parameter:
+```
+{
+   “bucket”: [bucketName],
+   “collection”: [scope].[collection]”,
+   “loggingRules”: {<logging_rules>},
+}  
+```
+
+* Example:
+```
+{
+    "bucket": "bucket1",
+    "collection": "scope2.collection3",
+    "loggingRules": {
+        "s1": {},
+        "s1.privateCol": null,
+        "privateScope": null,
+        "privateScope.specialCol": {},
+        "rbacScope": {
+            "bucket": "customBucket",
+            "collection": "customScope.customCollection"
+        },
+        "rbacScope.rbacCollection": {
+            "bucket": "customBucket",
+            "collection": "specialScope.specialCollection"
+        }
+    }
+}
+```
+
+* Description: The `loggingRules` key is optional.
++
+If you use the `loggingRules` key, then the value must be a non-empty JSON object with specific key-value pairs, where each pair is a specific rule.
++
+The mutations that cause conflicts are compared with the rules. If a conflict causing mutation does not belong to a rule from `loggingRules`, that conflict is not logged.
+
+* Example explanation: Default logging of conflicts happens in `scope2.collection3` of `bucket1`.
++
+You can override the defaults by providing special logging rules using `loggingRules`.
+
+** All conflicts from `s1` except mutations that belong in `s1.privateCol` will be logged in the conflict collection `scope2.collection3` of `bucket1`.
+** None of the conflicts from `privateScope` will be logged. However, documents from a special collection `privateScope.specialCol` in the same `privateScope` will be logged.
+** All conflicts from `rbacScope` will be logged in a separate bucket `customBucket` and collection `customScope.customCollection`.
+** If a conflict is caused by a mutation from `rbacScope.rbacCollection`, then that conflict is logged in `specialScope.specialCollection`.
+
+**Disabled with stored logging rules**
+
+* Parameter:
+```
+{
+   “bucket”: [bucketName],
+   “collection”: [scope].[collection]”,
+   “loggingRules”: {...},
+   “disabled”: true,
+}
+```
+
+* Description: This is similar in function to the Disabled potential value.
+However, this value provides the additional benefit of saving the logging rules on disk, which enables the restoration of the rules from the UI.
+
+[#logging-rules]
+=== loggingRules
+
+This section explains conflict logs mapping. The value of `loggingRules` is a JSON object composed of any number of the following Key-Value (KV) formats.
+
+NOTE: The keys and their priorities of each KV pair are specified in the format similar to Rules for Explicit Mappings and also have the same priority as listed in the mapping rules. Similar to explicit mapping mode, if a source scope or collection is not specified, then the conflict from that source is ignored (not handled).
+
+
+
+
+
+
+
+
+|===
+| Name | Parameter/Example | Description |
+
+| Enabled for all conflicts 
+|``
+    {
+    “bucket”: [bucketName],
+    “collection”: [scope].[collection]”,
+    }
+    ``
+|``
+    {
+    “bucket”: “bucket1.prime”,
+    “collection”: “scope2.collection3”,
+    }
+
+    {
+    “bucket”: “b2.prime”,
+    “collection”: “_default.col4”,
+    }
+    ``
+| Description: The `bucket` key in the embedded object indicates the bucket in which the conflict collection is located. Periods (`.`) are allowed in bucket names.
++
+The `collection` key in the embedded object indicates the scope and collection namespace for the conflict collection. This is required to enable the conflict logging feature.
+
+|===
+
+
+|===
+| Name | Parameter/Example | Description |
+
+| **Enabled for all conflicts** 
+|```
+    {
+    “bucket”: [bucketName],
+    “collection”: [scope].[collection]”,
+    }
+    ```
+|```
+    {
+    “bucket”: “bucket1.prime”,
+    “collection”: “scope2.collection3”,
+    }
+
+    {
+    “bucket”: “b2.prime”,
+    “collection”: “_default.col4”,
+    }
+    ```
+| Description: The `bucket` key in the embedded object indicates the bucket in which the conflict collection is located. Periods (`.`) are allowed in bucket names.
++
+The `collection` key in the embedded object indicates the scope and collection namespace for the conflict collection. This is required to enable the conflict logging feature.
+
+|===
+
+
