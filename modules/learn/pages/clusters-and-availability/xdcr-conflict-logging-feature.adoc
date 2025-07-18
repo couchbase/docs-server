@@ -9,7 +9,7 @@ However, a conflict can arise when an application connected to the source cluste
 The source and target documents are independently modified by different applications simultaneously within the convergence window*, so the changes in one document are not recorded in the other document’s history.
 This is a true conflict.
 
-*_A convergence window is the period during which multiple actors, such as users, applications, or clusters, can modify the same document in an active-active topology, before the changes have fully converged across all clusters._
+*_A convergence window is a period during which multiple actors, such as users, applications, or clusters, can modify the same document in an active-active topology, before the changes have fully converged across all clusters._
 
 Instead of automatically proceeding to the conflict resolution after the source and target documents comparison, the XDCR conflict logging feature, introduced in the Couchbase Server v8.0 release, allows you to log conflict details for manual review and resolution. The logged information enables you to address potential data loss or application design issues.
 Conflict logging leverages existing XDCR conflict resolution methods (either Sequence or Timestamp-based), eliminating the need for custom resolution functions.
@@ -60,7 +60,9 @@ As HLV includes the CV, MV, and PV, it captures a document’s current version a
 HLV is a strong clock because it can uniquely identify each mutation across multiple clusters, and it can be used to detect true conflicts.
 
 In an HLV, CV takes precedence over the MV and PV, and the MV takes precedence over the PV.
+
 As a result, HLV supports the following functionalities:
+
 * As CV takes precedence over MV and previous versions PV, it is not necessary to check the full version vector for causality.
 If another document’s CV or MV dominates the current document’s CV, it also dominates the current document overall.
 
@@ -73,7 +75,7 @@ IMPORTANT: To use HLV for detecting true conflicts, as a prerequisite, the bucke
 [#HLV-metadata-format]
 === HLV metadata format
 
-This is an example of HLV metadata.
+This is an example of the HLV metadata.
 
 [source,json]
 {"_vv": {
@@ -89,18 +91,19 @@ This is an example of HLV metadata.
 
 The explanation for the HLV metadata example is as follows.
 
-* _vv: HLV metadata or Version Vector.
-* cvCAS: This is HLV version, which has the following 2 properties when being compared with the document CAS:
-  * CAS == cvCAS: Indicates a replication (XDCR) mutation.
-  * CAS > cvCAS: Indicates that HLV is out-of-date and an application mutation. XDCR will update cvCAS.
-  +
-  For more information, see cvCAS.
-  +
+* `_vv`: HLV metadata or Version Vector.
+* `cvCAS`: This is HLV version, which has the following 2 properties when being compared with the document CAS:
+** `CAS` == `cvCAS`: Indicates a replication (XDCR) mutation.
+** `CAS` > `cvCAS`: Indicates that HLV is out-of-date and an application mutation. XDCR will update `cvCAS`.
++
+For more information, see cvCAS.
++
 NOTE: KV (Key-Value) or SDK are not aware of HLV. Only XDCR updates HLV based on CAS and cvCAS.
-* Current Version (CV): The current or the latest version of the document (“ver”). The actor or source responsible for the latest version (“src”).
++
+* Current Version (CV): The current or the latest version of the document (`“ver”`). The actor or source responsible for the latest version (`“src”`).
 * Previous Versions (PV): Indicates the causality (history) of a document. Document history must be tracked to detect conflicts when multiple clusters are involved; CV is insufficient. PV stores the highest CAS from all other sources (other than CV) in the replication topology that have updated this document.
-    +
-    For example, if A, B and C are actively updating the document and A is in CV, then PV will have B and C.
++
+For example, if A, B and C are actively updating the document and A is in CV, then PV will have B and C.
 
 [#cvcas]
 === cvCAS
@@ -128,7 +131,6 @@ For more information about the bucket property `enableCrossClusterVersioning` an
 See Example: Turning on enableCrossClusterVersioning, when Editing.
 
 NOTE: In the future, to add a new cluster to the existing replication topology, enable HLV on each new cluster to activate conflict logging. Only the data that's upserted or modified after enabling HLV can participate in conflict logging.
-+
 Once `enableCrossClusterVersioning` is enabled, it cannot be disabled.
 
 [#use-conflictlogging-and-loggingrules]
@@ -144,7 +146,7 @@ To configure these settings from UI, see Create a Replication and Replicate Usin
 NOTE: By default, conflicts are logged in the conflict collection of the conflict bucket you create. You can use `loggingRules` to override the default setting.
 
 [#conflictlogging-key]
-=== conflictLogging key
+==== conflictLogging key
 
 `conflictLogging` is the replication setting key and its details are as follows.
 
@@ -244,7 +246,7 @@ You can override the defaults by providing special logging rules using `loggingR
 However, this value provides the additional benefit of saving the logging rules on disk, which enables the restoration of the rules from the UI.
 
 [#logging-rules]
-=== loggingRules
+==== loggingRules
 
 This section explains conflict logs mapping. The value of `loggingRules` is a JSON object composed of any number of the following Key-Value (KV) formats.
 
@@ -716,7 +718,7 @@ This logged target document consists of the following elements:
 ** Document body and xattrs of the target bucket from the conflict.
 ** Document key: `tgt_<timestamp>_<SHA>`.
 
-[using-sdk-with-sqlpp-clog]
+[using-sdk-sqlpp-for-conflict-logs]
 === Using Couchbase SDK with SQL++ for Conflict Logs
 
 The most common way to view these documents is by using the Couchbase SDK with SQL++.
@@ -837,8 +839,136 @@ The query result is as follows:
 ]
 ```
 
-
-
 NOTE: As the conflict log documents won’t be replicated, if you need to replicate them, copy them into a different document.
+
+[#using-eventing-for-conflict-logs]
+=== Using Eventing for Conflict Logs
+
+The conflict logs and conflict documents are not replicated as XDCR’s special attribute (system xattrs called `_xdcr_conflict`) prevents replication:
+
+```
+"xattrs": {
+    "_xdcr_conflict": true
+    }
+```
+
+To force replicate the conflict logs and conflict documents, do the following:
+
+. Use Eventing to copy the document to a new collection along with other modifications.
+
+. Replicate the new document from the new collection.
+
+You cannot update system xattrs, however, following is an example of an Eventing function you can deploy to combine the `crd_`, `src_`, and `tgt_` documents into one new document that does not have the system attribute.
+Here, it is assumed that the documents are small.
+If the documents are large, then you can copy only the relevant fields from the `src` and `tgt` documents to a single document.
+
+[#eventing-example-clog]
+==== Eventing example
+
+This is an Eventing function example to copy the conflict log documents into a single new document.
+
+Eventing bucket alias:  `src` for `conflictlogs._default.bucket1logs` with read only access.
+
+Eventing bucket alias: `copy` for `conflictlogs._default.bucket1logs_copy` with read/write access.
+
+[source,javascript]
+```
+function OnUpdate(doc, meta, xattrs) {
+    if (meta.id.startsWith("crd_") === true)
+    {
+    log("crd doc created/updated", meta.id);
+
+    //get the conflict source and target document id's
+    var suffix = (meta.id).substring(4);
+    var srcId = "src_" + suffix;
+    var tgtId = "tgt_" + suffix;
+
+    //read the conflicting source and target documents
+    var src_doc = src[srcId];
+    var tgt_doc = src[tgtId];
+
+    //add the conflicting source and target documents to the crd doc
+    doc["src_doc"] = src_doc;
+    doc["tgt_doc"] = tgt_doc;
+
+    //copy the resulting new crd doc to a different collection
+    copy[meta.id] = doc;
+    }
+}
+```
+
+Resulting document example:
+
+NOTE: See Conflict Record Format to understand the document format.
+
+```
+{
+  "timestamp": "2025-05-20T19:25:55.308Z",
+  "id": "crd_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
+  "docId": "ASHUNK100",
+  "replId": "1bc375a26b7f822ebe91288c58a6c614/bucket1/bucket1-PN8-oFADADCOe6S6A8YuIw==",
+  "srcDoc": {
+    "id": "src_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
+    "nodeId": "127.0.0.1",
+    "bucketUUID": "6cd3a35ba2d337d84d4fcd30c3a46fb9",
+    "clusterUUID": "d976db26a5ce512a243db65a3026073f",
+    "isDeleted": false,
+    "collection": "_default",
+    "scope": "_default",
+    "expiry": 0,
+    "flags": 33554438,
+    "cas": 1747769124557291500,
+    "revSeqno": 4,
+    "xattrs": {
+      "_vv": "{\"cvCas\":\"0x00002a1777524118\",\"src\":\"ntR6bcR9VHcjcPpQ5osEiw\",\"ver\":\"0x00002a1777524118\",\"pv\":[\"000018fe76524118@8DdrZBqHaACpmDeYJIv+kg\"]}",
+      "_sync": "",
+      "_mou": ""
+    }
+  },
+  "tgtDoc": {
+    "id": "tgt_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
+    "nodeId": "34.213.22.102",
+    "bucketUUID": "fada12469f1027ecb078d2c19a2802fb",
+    "clusterUUID": "1bc375a26b7f822ebe91288c58a6c614",
+    "isDeleted": false,
+    "collection": "_default",
+    "scope": "_default",
+    "expiry": 0,
+    "flags": 33554438,
+    "cas": 1747769104359030800,
+    "revSeqno": 4,
+    "xattrs": {
+      "_vv": "{\"cvCas\":\"0x000018fe76524118\",\"src\":\"8DdrZBqHaACpmDeYJIv+kg\",\"ver\":\"0x000018fe76524118\"}",
+      "_sync": "",
+      "_mou": ""
+    }
+  },
+  "src_doc": {
+    "author": "Unknown",
+    "create_date_utc": "2025-05-20T07:56:26",
+    "res_from": "WEST",
+    "res_name": "Harry West",
+    "res_note": "visitor -- HJV NOTE EAST",
+    "reserved": true,
+    "title": "Ashmole 782",
+    "type": "book",
+    "unix_time": "1747768801",
+    "update_date_utc": "2025-05-20T19:20:01"
+  },
+  "tgt_doc": {
+    "author": "Unknown",
+    "create_date_utc": "2025-05-20T07:56:26",
+    "res_from": "WEST",
+    "res_name": "Harry West",
+    "res_note": "visitor -- HJV NOTE WEST",
+    "reserved": true,
+    "title": "Ashmole 782",
+    "type": "book",
+    "unix_time": "1747768801",
+    "update_date_utc": "2025-05-20T19:20:01"
+  }
+}
+```
+
 
 
