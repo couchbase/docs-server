@@ -1,31 +1,40 @@
 = XDCR Conflict Logging
-:description: pass:q[]
+:description: pass:q[XDCR Conflict Logging feature enables you to detect and log true conflicts that occur during XDCR replication, allowing you to manually resolve conflicts and prevent data loss.]
 
 [abstract]
 {description}
 
-In the earlier Couchbase Server versions, XDCR detects and resolves silently each iteration of conflicts occurring during the comparison of source and target documents in the replication process.
+In earlier Couchbase Server versions, XDCR detects and resolves each iteration of conflicts automatically during the comparison of source and target documents in the replication process, without notifying the user.
 However, a conflict can arise when an application connected to the source cluster modifies the source document while simultaneously another application connected to the target cluster modifies the target document, where both documents have the same document ID.
 The source and target documents are independently modified by different applications simultaneously within the convergence window*, so the changes in one document are not recorded in the other document’s history.
 This is a true conflict.
 
 *_A convergence window is the period during which multiple actors, such as users, applications, or clusters, can modify the same document in an active-active topology, before the changes have fully converged across all clusters._
 
-[#what-you-can-do-using-xdcr-conflict-logging]
-== What you can do using XDCR conflict logging
-
-Instead of automatically proceeding to the conflict resolution after the source and target documents comparison, the XDCR conflict logging feature, introduced in the Couchbase Server v8.0 release, allows you to do the following:
-
-. Create conflict collections to store the logs for true conflicts.
-. Select a conflict collection during an XDCR configuration.
-. Use conflict collection to access and compare the source and target document conflicts and metadata from the logs.
-. Determine the mutations (causality) that caused conflict in both the documents.
-. Select necessary mutations from the source or the target documents logically for replication to prevent data loss.
-. Proceed with the Sequence or Timestamp based conflict resolution process and manually add the selected mutations to document through upsert.
-. Resume the replication process.
-
-The logged information helps you to quickly identify the conflicts and address potential data loss or application design issues.
+Instead of automatically proceeding to the conflict resolution after the source and target documents comparison, the XDCR conflict logging feature, introduced in the Couchbase Server v8.0 release, allows you to log conflict details for manual review and resolution. The logged information enables you to address potential data loss or application design issues.
 Conflict logging leverages existing XDCR conflict resolution methods (either Sequence or Timestamp-based), eliminating the need for custom resolution functions.
+
+[#overview-of-xdcr-conflict-logging]
+== Overview of the XDCR conflict logging process
+
+XDCR Conflict Logging feature enables you to detect and log true conflicts that occur during Active-Active XDCR replication, allowing you to manually resolve conflicts and prevent data loss.
+
+The conflict logging process involves the following steps:
+
+. **Prerequisites**: Enable conflict logging by configuring all replication clusters on Server 8.0.0 or a higher version, creating a conflict collection, and configuring replication settings.
+
+. **Conflict Detection**: During XDCR replication, XDCR detects conflicts by comparing the HLV (Hybrid Logical Vector) metadata of the source and target documents.
+
+. **Conflict Logging**: When a true conflict is detected, XDCR logs the conflict details into the designated conflict collection.
+
+. **Conflict Access and Management**: Administrators can access and review the logged conflicts. Then manually resolve them by selecting the appropriate mutations for replication and upsert the documents.
+
+. **Replication Continuation**: Once conflicts are resolved, the replication process can continue without data loss.
+
+An XDCR Active-Active setup can be configured for conflict logging through one of the following methods:
+
+* Greenfield deployment: Set up a new active-active conflict logging setup from the ground up.
+* Upgrading an existing active-passive XDCR setup: Configure an existing active-passive XDCR setup into an active-active XDCR setup for conflict logging.
 
 [#hlv]
 == Hybrid Logical Vectors (HLVs)
@@ -69,10 +78,8 @@ This is an example of HLV metadata.
 [source,json]
 {"_vv": {
 	"cvCAS": "0x00007dacae059a16",
-
      "src": "5pRi8Piv1yLcLJ1iVNJIsA",
      "ver": "0x00007dacae059a16",
-
      "pv": {
        "NqiIe0LekFPLeX4JvTO6Iw": "0x00008cd6ac059a16",
        "LhRPsa7CpjEvP5zeXTXEBA": "0x000006d7ac059a16"
@@ -83,13 +90,13 @@ This is an example of HLV metadata.
 The explanation for the HLV metadata example is as follows.
 
 * _vv: HLV metadata or Version Vector.
-* `cvCAS`: This is HLV version, which has the following 2 properties when being compared with the document CAS:
+* cvCAS: This is HLV version, which has the following 2 properties when being compared with the document CAS:
   * CAS == cvCAS: Indicates a replication (XDCR) mutation.
   * CAS > cvCAS: Indicates that HLV is out-of-date and an application mutation. XDCR will update cvCAS.
-    +
-    For more information, see cvCAS.
-    +
-    NOTE: KV (Key-Value) or SDK are not aware of HLV. Only XDCR updates HLV based on CAS and cvCAS.
+  +
+  For more information, see cvCAS.
+  +
+NOTE: KV (Key-Value) or SDK are not aware of HLV. Only XDCR updates HLV based on CAS and cvCAS.
 * Current Version (CV): The current or the latest version of the document (“ver”). The actor or source responsible for the latest version (“src”).
 * Previous Versions (PV): Indicates the causality (history) of a document. Document history must be tracked to detect conflicts when multiple clusters are involved; CV is insufficient. PV stores the highest CAS from all other sources (other than CV) in the replication topology that have updated this document.
     +
@@ -125,7 +132,7 @@ NOTE: In the future, to add a new cluster to the existing replication topology, 
 Once `enableCrossClusterVersioning` is enabled, it cannot be disabled.
 
 [#use-conflictlogging-and-loggingrules]
-=== Use conflict logging key and loggingRules value to create replication
+=== Use conflictLogging key and loggingRules value to create replication
 
 Create a replication by using the new replication setting, which accepts a key and a corresponding JSON object as the value.
 
@@ -143,7 +150,7 @@ NOTE: By default, conflicts are logged in the conflict collection of the conflic
 
 **Disabled**
 
-* Parameter: {}
+* Parameter: `{}`
 * Description: An empty JSON object value must be specified to disable the conflict logging feature.
 
 **Enabled for all conflicts**
@@ -243,66 +250,595 @@ This section explains conflict logs mapping. The value of `loggingRules` is a JS
 
 NOTE: The keys and their priorities of each KV pair are specified in the format similar to Rules for Explicit Mappings and also have the same priority as listed in the mapping rules. Similar to explicit mapping mode, if a source scope or collection is not specified, then the conflict from that source is ignored (not handled).
 
-
-
-
-
-
-
-
 |===
-| Name | Parameter/Example | Description |
+| Key | Value | Description 
 
-| Enabled for all conflicts 
+| _scope_
+| `{}`
+Empty JSON object.
+| All mutations from the specified scope will be logged in the conflict collection defined by bucket, scope, and collection in the ConflictLogging key.
+
+| _scope_
+| `null`
+| All mutations from the specified scope will not be logged.
+
+| _scope.collection_
+| `{}`
+| All mutations from the specified collection will be logged in the conflict collection defined by bucket, scope, and collection in the ConflictLogging key.
+
+| _scope.collection_
+| `null`
+| All mutations from the specified collection will not be logged.
+
+| _scope_
 |``
     {
-    “bucket”: [bucketName],
-    “collection”: [scope].[collection]”,
+   “bucket”: [otherBucket],
+   “collection”: [otherScope].[otherCollection]”
     }
     ``
+| All mutations from the chosen scope will be logged in the specific conflict collection defined by otherBucket, otherScope, and otherCollection; instead of the original location mentioned in the ConflictLogging key.
+
+| _scope.collection_
 |``
     {
-    “bucket”: “bucket1.prime”,
-    “collection”: “scope2.collection3”,
-    }
-
-    {
-    “bucket”: “b2.prime”,
-    “collection”: “_default.col4”,
+   “bucket”: [otherBucket],
+   “collection”: [otherScope].[otherCollection]”
     }
     ``
-| Description: The `bucket` key in the embedded object indicates the bucket in which the conflict collection is located. Periods (`.`) are allowed in bucket names.
+| All mutations from the chosen scope will be logged in the specific conflict collection defined by bucket, scope, and collection; instead of the original location mentioned in the ConflictLogging key.
+|===
+    
+XDCR verifies that the true conflict collection exists when the replication begins. 
+Any true conflicts that occur are stored in this conflict collection.
+
+XDCR examines logging rules to ensure that the specified rules fulfil the implicit or explicit mapping modes. If explicit mapping is used, XDCR ensures that the logging rules are considered equal or a subset of the explicit mapping rules.
+
+[#conflict-collection]
+== Conflict Collection
+
+Conflict collection is a grouping created by you to store XDCR conflict log messages and the conflicting document bodies from different clusters. You can store the conflict collection in any buckets that you create. It can be a specific collection in the source bucket of a replication or it can be a separate collection in a bucket that is not used in any XDCR replications.
+
+XDCR can write into conflict collections associated with the source cluster. XDCR cannot modify the conflict collections in any target clusters. You can use a conflict collection for one XDCR replication or for multiple XDCR replications. Use the same collection namespace specified by the replication setting (Use conflict logging key and loggingRules value to create replication) for the conflict collection.
+
+IMPORTANT: You must use the conflict collection only to store true conflict events and data exclusively.
+If applications write incompatible data to this collection, it may cause data inconsistencies, data loss or data modification, and potential feature failures. It's recommended that you create a conflict bucket only to store conflict scopes and collections.
+Additionally, external documents in the collection can interfere with event retrieval, as the feature relies on KV range scan.
+
+Consider the following operational and functional guidelines and best practices when configuring and managing conflict collections for XDCR conflict logging:
+
+* **Missing conflict collection**: If a conflict collection specified in the replication setting does not exist, XDCR shows errors on the UI, reports the error type for the pipeline, and continues to replicate so there is no High Availability issue.
+
+* **Manage memory quota**: As the conflict collection fills up with conflict log entries and copies of conflicting documents, the bucket quota increases accordingly.
+So you need to monitor the bucket quota regularly to ensure adequate system resources are available for XDCR to continue logging conflicts in the collection.
+To prevent memory sharing with application buckets, you can store conflict logs in a separate bucket.
 +
-The `collection` key in the embedded object indicates the scope and collection namespace for the conflict collection. This is required to enable the conflict logging feature.
+If the bucket quota is reached or if insufficient memory (see TemporaryFailure) prevents conflict records from being written, XDCR handles these error conditions.
+For more information, see Conflict collection usage quota in Error handling scenarios.
 
-|===
+* **RBAC for conflict collection**: You can create conflict collections using any role-based access control (RBAC) settings.
+XDCR doesn't require additional permissions; it can write to any user-created bucket or collection.
 
+* **Event audit logging**: Couchbase event auditing includes events 8261 and 8262 for creating a collection and removing a collection respectively.
+Enable auditing to support investigations if a collection or scope associated with the conflict collection is dropped.
+For information about enabling auditing and enabling event-auditing, see Manage Auditing.
+For more information about Event Auditing, see Audit Event Reference.
 
-|===
-| Name | Parameter/Example | Description |
+* **Replicas requirements**: XDCR uses Majority Durability to persist or maintain conflict records. For information about the required number of replicas and nodes for Majority Durability, see Majority. 
+If a majority cannot be achieved, XDCR cannot complete the transaction, which may result in replication congestion and an increase in the `changes_left` backlog.
 
-| **Enabled for all conflicts** 
-|```
-    {
-    “bucket”: [bucketName],
-    “collection”: [scope].[collection]”,
-    }
-    ```
-|```
-    {
-    “bucket”: “bucket1.prime”,
-    “collection”: “scope2.collection3”,
-    }
+* **Usable with multiple replications**: As long as document keys in the conflict collection remain unique, multiple replications can share a single conflict collection.
 
-    {
-    “bucket”: “b2.prime”,
-    “collection”: “_default.col4”,
-    }
-    ```
-| Description: The `bucket` key in the embedded object indicates the bucket in which the conflict collection is located. Periods (`.`) are allowed in bucket names.
+* **Replication prevention**: All documents added to a conflict collection by XDCR must be prevented from replication. To achieve this, XDCR adds a hidden system xattribute flag called _xdcr_conflict into each of the three documents (Conflict record document/CRD, Source document that caused the conflict, and Target document that caused the conflict) in a conflict record. This system xattr is not a part of the 20 MB limit of the document size.
+When resolving a conflict, you must re-insert your own copy of the document. You manually generate a new document with the same document key and upsert using the SDK, without including the system xattribute. For more information, see Retrieving and cleaning up true conflict record.
 +
-The `collection` key in the embedded object indicates the scope and collection namespace for the conflict collection. This is required to enable the conflict logging feature.
+Example of system xattribute:
+```
+{
+“_xdcr_conflict”: true,
+}
+```
+
+* **Outbound Conflict Record Replication Rules**: This behavior applies only to outbound conflict records.
++
+When XDCR replicates to a target bucket that includes a mapped conflict collection, the source XDCR blocks replication of Conflict Record Documents (CRDs) into the target conflict collection.
+XDCR’s replication prevention mechanism applies only to CRDs identified by system xattributes.
++
+It does not prevent non-CRD documents (documents without the xattribute) from being written to or replicated into the conflict collection.
+If you insert non-CRD documents into the conflict collection, XDCR replicates them because they do not have the system xattribute.
++
+By design, all documents in a conflict collection must include the system xattribute, preventing replication and ensuring CRDs in the target conflict collection are never overwritten.
++
+However, if you add non-compliant documents in conflict collection, XDCR will replicate those documents.
+No additional setup is necessary, except to avoid storing non-CRD data in conflict collections.
++
+IMPORTANT: This replication prevention works only if the source XDCR supports CRD and conflict collections. XDCR versions earlier than 8.0.0, which do not recognize conflict collections, cannot enforce this behavior and require separate documentation.
+
+* **Retrieving Conflicts**: Each true conflict event generates a single event document in the conflict collection, along with two documents representing the sources of the conflict.
+Users can retrieve all related information, perform manual conflict resolution, and write the resolved document back to the source bucket as needed.
++
+For more information, see Retrieving and cleaning up of true conflict record.
+
+[#prerequisites-for-enabling-xdcr-conflict-logging]
+== Prerequisites for enabling XDCR conflict logging
+
+Before using the XDCR conflict logging feature, it must be enabled. The prerequisites for enabling XDCR’s conflict logging capability are as follows in a sequence:
+
+* **Presence of conflict collection**: Ensure you have created a necessary conflict collection to store XDCR conflict log messages and the conflicting document bodies from different clusters.
+For more information, see conflict collection.
+
+* **Configure replication settings**: Enable HLV, conflictLogging key, and loggingRules JSON object.
+Hybrid Logical Vectors (HLV), also known as Version Vector, is a metadata stored as a system created extended attribute (xattr) in each document undergoing replication by XDCR.
+HLV must be enabled to use the XDCR conflict logging feature.
+For more information, see Enabling Hybrid Logical Vectors (HLVs).
+
+[#enable-xdcr-conflict-logging]
+== Enable XDCR conflict logging
+
+To log the document conflicts, you need to enable the conflict logging capability of XDCR.
+
+. All clusters in the XDCR topology must be on the Server 8.0.0 or a higher version.
+. Set the bucket property `enableCrossClusterVersioning` to `true` on all the buckets in the XDCR topology clusters.
+As a result, HLV is created.
++
+NOTE: Once you enable the bucket property `enableCrossClusterVersioning`, you cannot disable it. See XDCR enableCrossClusterVersioning.
++
+. Use the conflictLogging replication setting key to enable or disable conflict logging.
+. Use the loggingRules replication setting value to customize conflict logging at scope level and at collection level. Mention the conflict collection before the replication. 
+
+You control the RBAC for the conflict collection because the conflict collection consists of the conflicting documents (the document bodies).
+
+NOTE: The log messages and the conflicting documents, together called as Conflict Record Document (CRD), that are added in the conflict collection are not replicated because XDCR sets a system attribute (`_xdcr_conflict`) when creating CRDs, so that CRDs are not replicated.
+
+[#xdcr-conflict-detection]
+== Conflict Detection
+
+XDCR uses HLV (Hybrid Logical Vector) to detect true conflicts. During XDCR replication, XDCR detects conflicts by comparing the HLV metadata of the source and target documents.
+
+For illustration, consider that XDCR inspects and identifies the causality between two versions of the same document. Using HLV, XDCR detects if the document being replicated from source is:
+
+* Latest version than the one at target so XDCR can overwrite the target version. This is the most common case in a continuous replication.
+
+* Older version than the one at target so it can be skipped. This can happen when replication starts and you resend from the last checkpoint.
+
+* Identical to the one at the target. This can happen when resending a document, or it can happen after source and target both merged the same document (so they may have different CAS but the same content).
+
+* In conflict with the one at target, so a merge needs to be performed. This happens when the target has mutations in the document not included in the source document. This is true conflict detection.
+However, comparing documents’ CAS values is straightforward (by comparing integers), whereas comparing HLVs is complex. HLVs combine CAS with per-source version history, so clear HLV properties and rules are defined for “greater than” and “equal”.
+
+[#compare-hlvs-to-detect-conflicts]
+=== Comparing HLVs to detect true conflicts 
+
+For illustration, consider that HLV(M1) is the HLV metadata of a document in one cluster and HLV(M2) is the HLV metadata of a document in another cluster.
+Operators are defined as greater than (>) to represent the "happened-before" relationship and equality (==) for identical versions, and a conflict relationship when neither applies.
+
+HLVs are determining the relationship between two document mutations, M1 and M2, based on their causal history as follows:
+
+* If `HLV(M1) > HLV(M2)`, then M2 happened before M1.
+
+* If `HLV(M1) < HLV(M2)`, then M1 happened before M2.
+
+* If `HLV(M1) == HLV(M2)`, then M1 and M2 are the same version.
+
+* If none of these conditions hold, `HLV(M1) || HLV(M2)`, meaning M1 and M2 are concurrent and therefore in true conflict.
+
+
+The operator > (dominates) means that M1’s version includes and supersedes M2’s version through one of the following (Check if one document’s HLV dominates another document’s HLV):
+
+* `CV.source(M1) == CV.source(M2)` and `CV.version(M1) > CV.version(M2)`
+(Meaning, by having the same source with a higher version.)
+
+* Given that `CAS(M1) > CAS(M2)`, there exists `<source:version>`, which is a summation of `PV(M1)` such that at least one `source == CV.source(M2)` and `version > CV.version(M2)`.
+(Meaning, by having a higher CAS value and a version vector entry that surpasses M2’s version for the same source.)
+
+The operator == means M1 and M2 have identical source and source values, representing the same mutation as follows:
+
+* `CV.source(M1) == CV.source(M2)` and `CV.version(M1) == CV.version(M2)`
+
+[#conflict-logging-process]
+== Conflict Logging
+
+After detecting a conflict, XDCR logs the conflict and then proceeds with resolution. All conflict logs are stored in the conflict collection.
+For more information, see Conflict collection.
+
+NOTE: If logging fails, XDCR continues with conflict resolution to ensure high availability.
+
+[#conflict-record]
+=== Conflict Record
+
+XDCR defines each logging event as a conflict record in a conflict collection created by you.
+A conflict record consists of these three elements:
+
+* **Conflict Record Document (CRD):** It is a JSON record document that contains source and target document key-value pairs. CRD consists of the following elements:
+** Metadata document.
+** Document key: `crd_<timestamp>_<SHA>`.
+** Source document key and target document key. 
+
+* **Source document:** It is a copy of the source document that caused the conflict. This logged source document consists of the following elements:
+** Document body and xattrs of the source bucket from the conflict.
+** Document key: `src_<timestamp>_<SHA>`.
+* **Target document:** It is a copy of the target document that caused the conflict. This logged target document consists of the following elements:
+** Document body and xattrs of the target bucket from the conflict.
+** Document key: `tgt_<timestamp>_<SHA>`.
+
+The generated `<SHA>` ensures that each conflict for the same document is unique and logs each conflict for each document key.
+The `<SHA>` is created using a combination of the bucketUUID, vbno, seqno, and vbUUID.
+
+During the logging process, XDCR adds a hidden system xattribute flag called `_xdcr_conflict` into each of the three documents (Conflict record document/CRD, Source document that caused the conflict, and Target document that caused the conflict) in a conflict record.
+XDCR uses `_xdcr_conflict` to prevent documents in a conflict record from replicating to the target.
+If you are a DCP user, to skip the replication of the documents (CRD, Source document, Target document) present in a conflict record, identify by searching for `xdcr_conflict` xattr in the documents.
+
+[#unique-conflict-record-keys]
+=== Uniqueness of Conflict Record Keys
+
+CRD, Source document, and Target document, which form a conflict record, are stored as separate documents in the conflict collection.
+Each of these documents have a unique document key as follows:
+
+* `crd_<timestamp>_<SHA>` is the document key of CRD.
+
+* `src_<timestamp>_<SHA>` is the document key of the source document that caused the conflict.
+
+* `tgt_<timestamp>_<SHA>` is the document key of the target document that caused the conflict.
+
+All three document keys are used for logging a conflict in the conflict collection.
+XDCR generates a unique identifier, distinct from other goxdcr nodes, for each conflict record.
+This conflict record identifier is used to construct the document keys for all three documents (CRD, Source document, Target document) in the conflict record.
+XDCR ensures that each document key is unique within the conflict collection.
+
+You can see the details on how XDCR obtains a unique identifier in CRD Uniqueness.
+
+[#crd-uniqueness]
+=== CRD Uniqueness
+
+Each conflict record has a unique integer tag, which minimizes the possibility of key collisions in the conflict collection bucket.
+
+Two mutations are uniquely identified by the following properties:
+
+* Source bucket UUID
+* Source vbno
+* Source seqno
+* Source vb failover UUID
+* Target bucket UUID
+* Target vbno
+* Target seqno
+* Target vb failover UUID
+
+NOTE: Using SHA256 on these properties in strict order generates a 32-byte integer. SHA256 does not guarantee absolute uniqueness, however the probability of a collision is extremely low, about 1 in 1.16 x 10^77.
+
+[#conflict-record-format]
+=== Conflict Record Format
+
+This is an example of CRD.
+
+[source,json]
+{
+ "docId": "ae03ecde-203c-4a3b-a6d0-36b60f627c8a",
+ "id": "crd_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+ "replId": "d976db26a5ce512a243db65a3026073f/bucket1/bucket1-nhuUKw2mOVPRiDvcoF4hJg==",
+ "srcDoc": {
+   "bucketUUID": "fada12469f1027ecb078d2c19a2802fb",
+   "cas": 1749453999768928300,
+   "clusterUUID": "1bc375a26b7f822ebe91288c58a6c614",
+   "collection": "_default",
+   "expiry": 0,
+   "flags": 0,
+   "id": "src_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+   "isDeleted": false,
+   "nodeId": "127.0.0.1",
+   "revSeqno": 2,
+   "scope": "_default",
+   "xattrs": {
+     "_mou": "",
+     "_sync": "",
+     "_vv": ""
+   }
+ },
+ "tgtDoc": {
+   "bucketUUID": "6cd3a35ba2d337d84d4fcd30c3a46fb9",
+   "cas": 1749453999840231400,
+   "clusterUUID": "d976db26a5ce512a243db65a3026073f",
+   "collection": "_default",
+   "expiry": 0,
+   "flags": 0,
+   "id": "tgt_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+   "isDeleted": false,
+   "nodeId": "18.206.194.145",
+   "revSeqno": 2,
+   "scope": "_default",
+   "xattrs": {
+     "_mou": "",
+     "_sync": "",
+     "_vv": "{\"cvCas\":\"0x00003dca244f4718\",\"src\":\"ntR6bcR9VHcjcPpQ5osEiw\",\"ver\":\"0x00003dca244f4718\"}"
+   }
+ },
+ "timestamp": "2025-06-09T07:26:40.005Z"
+}
+
+Some of the key-value pairs in CRD document are as follows:
 
 |===
+| Key | Value
+
+| `timestamp`
+| Exact date and time of the event in UTC iso-8601 format -- which is YYYY-MM-DDThh:mm:ss:SSSZ
+https://www.w3.org/TR/NOTE-datetime
+
+The timestamp will be the wall clock of the node that noted the conflict.
+
+| `id`/`srcDoc.id`/`tgtDoc.id`
+| CRD document ID prefixed with `crd_`.
+
+A copy of conflict source document ID prefixed with `src_`.
+
+A copy of conflict target document ID prefixed with `tgt_`.
+
+| `docId`
+| document id of the actual document in conflict.
+
+| `replId`
+| Replication ID.
+
+| `srcDoc` and `tgtDoc`
+| Document ID of the “copy” of source document to look up in the conflict collection and the “copy” of the target document to look up in the conflict collection.
+
+| `nodeId`
+| Node identification, which can be the hostname or IP address and port.
+
+| `bucketUUID`
+| Source/target bucket unique ID.
+
+| `cas`
+| Source/target document CAS.
+
+| `clusterUUID`
+| Source/target cluster unique ID.
+
+| `isDeleted`
+| True or false for is the source/target document deleted?
+
+| `scope` and `collection`
+| Name of the scope and collection where the conflict source/target documents exist.
+
+| `revSeqno`
+| Source/target document’s revision sequence number.
+
+| `expiry`
+| Source/target document’s expiry time.
+
+| `flags`
+| Source/target document’s flag.
+
+| `xattrs`
+| System xattributes.
+
+| `_vv`
+| Document version vector.
+HLV metadata.
+|===
+
+[#copies-of-source-target-conflict-documents]
+==== Copies of Source/Target Conflict Documents
+
+The documents that caused the conflict are assigned new keys and inserted into the conflict collection.
+
+[#prometheus-stats-clog]
+=== Prometheus Stats
+
+New counters are added to Prometheus to track the number of logged conflicts.
+These metrics are available through the Prometheus endpoint.
+For more information, see XDCR Metrics.
+
+|===
+| Prometheus name | Definition
+
+| `xdcr_conflicts_logged`
+| Number of mutations that were detected as true conflicts and logged.
+
+| `xdcr_conflicts_logged_failed`
+| Number of mutations that were detected as true conflicts but failed to be logged due to issues with the conflict collection.
+|===
+
+[#retrieving-and-cleaning-up-true-conflict-record]
+== Retrieving and cleaning up true conflict record
+
+You can monitor and manage the conflict records Using KV Range Scan.
+
+The following is a high-level procedure about using conflict logs from a conflict collection:
+
+. Connect an SDK to the conflict collection.
+
+. Issue a KV range start with the following parameters:
+
+.. Start: crd_ (the prefix for conflict record document)
+.. End: Not specified
+
+. KV range scan returns an ID, which you use for the scan.
+
+. Issue a KV range scan continue command using the ID repeatedly.
+
+. Each `continue` command returns a single CRD document.
+
+. Examine the CRD document. Within the document, perform GET on source and target document ID. Open the document ID that matches your search with the following format.
+
+.. `src_<timestamp>_<SHA>` for source conflict document.
+.. `tgt_<timestamp>_<SHA>` for target conflict document.
+
+. Resolve conflicts manually and write back to the source bucket.
+
+. Optional step: Clean up by starting a transaction.
+
+.. Delete CRD.
+.. Delete the conflict source document.
+.. Delete the conflict target document.
+.. Commit transaction.
+
+The conflict record is now deleted.
+
+[#using-query-clog]
+=== Using Query
+
+KV range scan can work only using Data Service capability.
+You can also use query instead of KV range scan.
+However, this potentially requires creation of secondary indexes.
+Additionally, it requires Index service and Query service to be activated in the cluster.
+To access, view, and retrieve conflict logs using query, see Viewing and using conflict logs.
+
+[#conflict-access-and-management]
+== Conflict Access and Management
+
+XDCR conflict logs are your application documents, so they're added in regular collections called conflict collections specified by you.
+You can access, view, and process these documents programmatically, similar to your application documents, using the available utilities, features, and options.
+
+For example, you can use RBAC to manage access to conflict collections.
+You can also use Couchbase services and tools such as Eventing and Kafka Connect to process conflict log documents.
+
+A conflict record consists of the following three documents:
+
+* **Conflict Record Document (CRD):** It is a JSON record document that contains source and target document key-value pairs.
+This is an event log.
+CRD consists of the following elements:
+
+** Metadata document.
+
+** Document key: `crd_<timestamp>_<SHA>`.
+
+** Source document key and target document key.
+
+* **Source document:** It is a copy of the source document that caused the conflict.
+This logged source document consists of the following elements:
+
+** Document body and xattrs of the source bucket from the conflict.
+** Document key: `src_<timestamp>_<SHA>`.
+
+* **Target document:** It is a copy of the target document that caused the conflict
+This logged target document consists of the following elements:
+
+** Document body and xattrs of the target bucket from the conflict.
+** Document key: `tgt_<timestamp>_<SHA>`.
+
+[using-sdk-with-sqlpp-clog]
+=== Using Couchbase SDK with SQL++ for Conflict Logs
+
+The most common way to view these documents is by using the Couchbase SDK with SQL++.
+
+The following are a few examples.
+In the examples, the conflict logs are stored in the collection `conflictlogs.bucket1.app1logs`.
+
+[#sqlpp-examples-clog]
+==== SQL++ Examples
+
+For queries, you can create a custom index or a primary index.
+
+* Create a primary index as follows.
++
+[source,sqlpp]
+```
+CREATE PRIMARY INDEX `#primary` ON `conflictlogs`.`bucket1`.`app1logs`
+```
+
+* Create a custom index as follows.
++
+You can use the `WHERE` clause with `SUBSTR(META().id,0,3) = “crd”` by making it an indexed field instead of `WHERE META().id LIKE "crd%"`.
++
+For example:
++
+[source,sqlpp]
+```
+CREATE INDEX `idx_crd_timestamp_docId` ON `conflictlogs`.`bucket1`.`applogs`(SUBSTR(META().id,0,3), `timestamp`,`docId`)
+```
++
+NOTE: When creating custom indexes, `META().id` is already a part of the index key.
+When using `LIKE` in the queries, underscore is a wildcard. 
+If you use underscore in comparison strings, ensure you use the escape character, so that it's used as an exact comparison instead of a wildcard comparison.
+For example, `WHERE META().id LIKE “crd\\_%”`.
+
+**Query example 1:** List all `docId` that had conflicts between two time periods.
+
+[source,sqlpp]
+```
+SELECT META().id, b.docId, b.timestamp
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+```
+
+**Query example 2:** Number of conflicts logged between two time periods.
+
+[source,sqlpp]
+```
+SELECT count(*) AS num_conflicts
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+```
+
+**Query example 3:** Number of different `docIds` that had conflicts between two time periods.
+
+[source,sqlpp]
+```
+SELECT count (distinct b.docId) as num_different_docIds
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+```
+
+**Query example 4:** List all `docIds` and the number of times each `docId` had a logged conflict between two time periods.
+
+[source,sqlpp]
+```
+SELECT b.docId AS DOCID, COUNT(1) AS num_times_seen
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META(b).id LIKE "crd%" AND b.timestamp BETWEEN "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+GROUP BY b.docId
+ORDER BY num_times_seen DESC LIMIT 20
+```
+
+The query result is as follows:
+
+```
+[
+  {
+    "DOCID": "4d9d18e7-5fa2-4eae-b32b-60d3d369da94",
+    "num_times_seen": 2   
+  },
+  {
+    "DOCID": "ae03ecde-203c-4a3b-a6d0-36b60f627c8a",
+    "num_times_seen": 1   
+  }
+]
+```
+
+**Query example 5:** List all `docIds` and fields from the `src` and `tgt` documents that were in conflict, to view only the `docId` that had conflict with select fields from the `src` and `tgt` documents.
+
+[source,sqlpp]
+```
+SELECT b.docId, b.srcDoc.id AS srcDocId, b.tgtDoc.id AS tgtDocId,
+(SELECT b2.country, b2.note
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b2 USE KEYS b.srcDoc.id)[0] AS src_doc_fields,
+(SELECT b3.country, b3.note
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b3 USE KEYS b.tgtDoc.id)[0] AS tgt_doc_fields
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META(b).id LIKE "crd%" AND b.timestamp BETWEEN "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+```
+
+The query result is as follows:
+```
+[
+   {
+    "docId": "ae03ecde-203c-4a3b-a6d0-36b60f627c8a",
+    "srcDocId": "src_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+    "tgtDocId": "tgt_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+    "src_doc_fields": {
+        "country": "UK",
+        “note”: “need review”
+      },
+    "tgt_doc_fields": {
+        "country": "CA",
+        “note”: “ok”
+      } 
+   }
+]
+```
+
+
+
+NOTE: As the conflict log documents won’t be replicated, if you need to replicate them, copy them into a different document.
 
 
