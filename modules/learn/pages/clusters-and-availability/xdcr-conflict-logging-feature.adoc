@@ -1,255 +1,94 @@
 = XDCR Conflict Logging
-:description: pass:q[XDCR Conflict Logging feature allows you to detect and log true conflicts that occur during XDCR Active-Active replication, so you can manually resolve conflicts and prevent data loss.]
+:description: pass:q[XDCR detects and logs the concurrent conflicts occurring in different clusters during XDCR Active-Active replication, so you can manually resolve conflicts and prevent data loss.]
 
 [abstract]
 {description}
 
-In earlier Couchbase Server versions, XDCR detects and resolves each iteration of conflicts automatically during the comparison of source and target documents in the replication process, without notifying the user.
-However, a conflict can arise when an application connected to the source cluster modifies the source document while simultaneously another application connected to the target cluster modifies the target document, where both documents have the same document ID.
+During XDCR Active-Active replication, a conflict can occur if different applications, connected locally to two different clusters, independently modify the same version of the document at the same time.
+These simultaneous modifications happen within the convergence window*, so the changes made in one document are not reflected in the history of the other.
 
-The source and target documents are independently modified by different applications simultaneously within the convergence window*. As a result, the changes in one document are not recorded in the other document’s history.
-This is a true conflict occurring concurrently in both documents.
-
-Instead of automatically proceeding to the conflict resolution, the XDCR conflict logging feature, introduced in the Couchbase Server v8.0 release, detects the concurrent conflicts. Then logs conflict details so that you can manually review and proceed with resolution.
-
-The logged information allows you to address potential data loss or application design issues.
-True conflict logging uses existing XDCR conflict resolution methods, either Sequence or Timestamp-based, eliminating the need for custom resolution functions.
+XDCR detects and logs these mutations, which you can manually review, upsert, and continue with the resolution process.
 
 _*A convergence window is a period during which multiple actors, such as users, applications, or clusters, can modify the same document in an active-active topology, before the changes have fully converged across all clusters._
+
+== Adaptibility of XDCR Conflict Logging
+
+* Conflicts are expected to be rare during XDCR replication. Due to any reason, if there is an upsurge of conflicts, XDCR skips logging conflicts and prioritises replication.
+
+* Conflict logging is asynchronous and attempted on the best-effort basis, which makes it the lowest operational priority.
+If any error occurs, such as low memory quota or a lag in storing conflict logs, XDCR may pause or stop the logging process, reports the error type for the pipeline, and continues with replication so there is no High Availability issue.
+
+* xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[Conflict Resolution] process remains unchanged.
 
 [#overview-of-xdcr-conflict-logging]
 == Overview of the XDCR Conflict Logging Process
 
-A true conflict logging process has the following steps:
+A conflict logging process has the following steps:
 
-. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#xdcr-conflict-logging-prerequisites[Prerequisites]: Enable true conflict logging by configuring and deploying all replication clusters on Server 8.0.0 or a later version, creating a conflict collection, and configuring replication settings.
-Also see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#deploy-xdcr-conflict-logging[Deploying XDCR Active-Active Conflict Logging Setup].
+. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#xdcr-conflict-logging-prerequisites[Prerequisites]: Enable conflict logging by configuring and deploying all replication clusters on Server 8.0.0 or a later version, xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[creating a conflict collection], and configuring xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.#replication-settings-for-conflict-logging[replication settings].
+Also, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#deploy-xdcr-conflict-logging[Deploying XDCR Active-Active Conflict Logging Setup].
 
-. xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[Initiate Conflict Resolution]: XDCR uses existing conflict resolution policies, either Sequence or Timestamp-based, as the conflict resolution process.
+. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#xdcr-conflict-detection-logging[Conflict Detection and Logging]: Start the XDCR conflict resolution process.
+If the same version of the document is modified in the source and target clusters by locally connected different applications at around the same time, XDCR detects these conflicts using Hybrid Logical Vectors (HLVs).
+XDCR logs the conflict details such as document ID, document contents, and conflicting document histories, into a collection designated for conflict logging.
 
-. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#xdcr-conflict-detection[Conflict Detection]: During the replication, XDCR detects true conflicts by comparing the Hybrid Logical Vector (HLV) metadata of the source and target documents.
+. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-access-and-review[Conflict Access and Review]: You can access and review the logged conflicts.
+Then manually resolve the conflicts, upsert the documents, and contiue the  xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[replication process] without data loss.
 
-. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-logging-process[Conflict Logging]: When a true conflict is detected, XDCR logs the conflict details, such as document ID, document contents, and conflicting document histories, into the designated conflict collection.
+You can configure an XDCR Active-Active setup for logging conflicts through one of the following methods:
 
-. xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-access-and-management[Conflict Access and Management]: You can access and review the logged conflicts. Then manually resolve the conflicts by selecting the appropriate mutations for replication and upsert the documents.
+* xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#greenfield-deployment-conflict-logging[Greenfield Deployment]: Set up a new XDCR active-active setup compatible for conflict logging.
 
-. Replication Continuation: When conflicts are resolved, the replication process continues, through Sequence number-based conflict resolution or Timestamp-based conflict resolution, as selected at the beginning of the XDCR process, and without data loss. See xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution].
-
-You can configure an XDCR Active-Active setup for logging true conflicts through one of the following methods:
-
-* xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#greenfield-deployment-conflict-logging[Greenfield Deployment]: Set up a new active-active conflict logging setup.
-
-* xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#upgrade-xdcr-setup-conflict-logging[Upgrading an Existing Active-Passive XDCR Setup]: Configure an existing active-passive XDCR setup into an active-active XDCR setup.
-
-[#hlv]
-== Hybrid Logical Vectors (HLVs)
-
-Hybrid Logical Vectors (HLVs), also known as Version Vectors, are metadata stored as system created extended attributes (xattrs) by XDCR in each document undergoing replication.
-XDCR detects true conflicts using HLV metadata.
-
-HLV on each cluster stores, tracks, and compares the document IDs and the history (causality) of mutated documents.
-When a true conflict occurs due to mutations, XDCR uses HLV metadata to detect and log those true conflicts.
-The document ID, document contents, and conflicting document histories are logged into a pre-defined xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Conflict Collection] created by you.
-
-HLV includes a version vector, where the version information includes CAS (compare-and-swap, which is a Hybrid Logical Clock) and a md5 (bucketUUID and clusterUUID).
-You have the current and the previous versions, so you can compare the history of the documents.
-HLV forms a part of the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record Document] (CRD).
-
-HLV comprises of the following information:
-
-* Current Version (CV)
-* Merge Versions (MV)
-* Previous Versions (PV)
-
-HLV captures a document’s current version and causal history. As HLV is a strong clock, it uniquely identifies each mutation across multiple clusters, and detects true conflicts.
-
-In an HLV, CV takes precedence over the MV and PV, and the MV takes precedence over the PV.
-
-As a result, HLV supports the following functionalities:
-
-* As CV takes precedence over MV and PV, it is not necessary to check the full version vector for causality.
-If another document’s CV or MV dominates the current document’s CV, it also dominates the current document overall.
-
-* As a result, the PV can be safely pruned without the risk of data loss.
-
-You can use `versionPruningWindowHrs`, which is a bucket property, to prune the unwanted parts of HLV metadata. For more information about pruning, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc#version-pruning-window-hrs[versionPruningWindowHrs].
-
-[IMPORTANT]
-====
-* To use HLV for detecting true conflicts, as a prerequisite, the bucket property `enableCrossClusterVersioning` must be enabled for all buckets in the replication topology.
-
-* Once you enable `enableCrossClusterVersioning`, you cannot disable it. For more information, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
-
-* Only the documents mutated after the `enableCrossClusterVersioning` property is enabled on both the source and target clusters, are considered for true conflict logging.
-====
-
-[#hlv-metadata-format]
-=== HLV Metadata Format
-
-This is an example of the HLV metadata.
-
-[source,json]
-----
-{"_vv": {
-	"cvCAS": "0x00007dacae059a16",
-     "src": "5pRi8Piv1yLcLJ1iVNJIsA",
-     "ver": "0x00007dacae059a16",
-     "pv": {
-       "NqiIe0LekFPLeX4JvTO6Iw": "0x00008cd6ac059a16",
-       "LhRPsa7CpjEvP5zeXTXEBA": "0x000006d7ac059a16"
-     }
-   }
-}
-----
-
-The explanation for the HLV metadata example is as follows.
-
-* `_vv`: HLV metadata or Version Vector.
-* `cvCAS`: This is HLV version, which has the following 2 properties when being compared with the document CAS:
-** `CAS` == `cvCAS`: Indicates a replication (XDCR) mutation.
-** `CAS` > `cvCAS`: Indicates that HLV is out-of-date and an application mutation. XDCR will update `cvCAS`.
-+
-For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#cvcas-clog[cvCAS].
-+
-NOTE: KV (Key-Value) or SDK are not aware of HLV. Only XDCR updates HLV based on CAS and cvCAS.
-
-* Current Version (CV): `“ver”` is the current or the latest version of the document. `“src”` is the actor or source responsible for the latest version.
-* Previous Versions (PV): Indicates the causality (history) of a document. Document history must be tracked to detect conflicts when multiple clusters are involved; CV is insufficient. PV stores the highest CAS from all other sources (other than CV) in the replication topology that have updated the document.
-+
-For example, if the sources A, B and C are actively updating the document and A is in CV, then PV will have B and C.
-
-[#cvcas-clog]
-==== cvCAS
-
-A cvCAS is the timestamp of Hybrid Logical Vector (HLV).
-cvCAS represents the CAS (Compare-And-Swap) value of the source/target document from which the HLV was generated.
-If the HLV represents the current version of the source/target document, then the comparision of cvCAS and CAS can be as follows:
-
-* When `CAS` != `cvCAS`, it indicates that the document has been modified locally, so a new HLV must be generated to represent the updated document version. If `CAS` > `cvCAS`, it indicates that the local cluster has updated the document after replication.
-
-* When `CAS` == `cvCAS`, it indicates that the document was replicated from another cluster and not modified since replication. Replicating the document to a target cluster sets `cvCAS` to the `CAS` value of the source document’s metadata.
-
-* When `cvCAS` is missing, the `cvCAS` value of the document is 0. When a document is created, it does not contain a `cvCAS` value. This indicates that the mutation originated from the local cluster.
-
+* xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#upgrade-xdcr-setup-conflict-logging[Upgrading an Existing XDCR Active-Passive Setup]: Configure an existing XDCR active-passive setup into an XDCR active-active setup compatible for conflict logging.
 
 [#conflict-collection]
 == Conflict Collection
 
-Conflict collection is a grouping created by you to store true conflict log messages and the conflicting document bodies from different clusters during an XDCR.
-You can store the conflict collection in any buckets that you create.
-It can be a designated collection in the source bucket of a replication or it can be a separate collection in a bucket that's not used in any XDCR replications.
+Conflict collection is a regular collection created by you, which stores the conflict log messages, the metadata of conflicting documents, and the conflicting document bodies from the affected clusters of the XDCR topology.
 
-XDCR can write into conflict collections associated with the source cluster. 
-XDCR cannot modify the conflict collections in any target clusters.
+* A conflict collection is a regular collection, so you can use regular RBAC to control standard access and programmatic access to the documents in the collection.
 
-You can use a conflict collection for one XDCR replication or for multiple XDCR replications.
-Use the same collection namespace specified in the replication setting, xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#use-conflictlogging-and-loggingrules[Use conflictLogging Key and loggingRules Value in XDCR], to configure the conflict collection. 
-
-IMPORTANT: You must use the conflict collection only to store true conflict events and data exclusively.
-If applications write incompatible data to this collection, it may cause data inconsistencies, data loss or data modification, and potential feature failures.
-It's recommended that you create a conflict bucket only to store conflict scopes and collections.
-Additionally, external documents in the collection can interfere with event retrieval, as the feature relies on xref:8.0@server:howtos/kv-operations.adoc#scoped-kv-operations[KV Range Scan].
-
-[create-conflict-collection]
-=== Create Conflict Collection
-
-Create a regular collection to store true conflict logs.
-
-. Create a regular bucket and a regular collection in it. Designate these as conflict bucket and conflict collection for logging conflicts.
-+
-For procedures, see xref:manage:manage-buckets/create-bucket.adoc[Create a Bucket] and xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc[Manage Scopes and Collections].
-
-. Create a conflict collection for logging true conflicts in each participating cluster.
-** To set from UI, see xref:manage:manage-xdcr/create-xdcr-replication.adoc#xdcr-ui-settings-for-conflict-logging
-[Replication Settings for XDCR Conflict Logging].
-
-** To use REST API, see xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication].
-
-This conflict collection stores true conflict log messages, the metadata of conflicting documents, and the conflicting document bodies from different clusters.
-
-[NOTE]
-====
-* You control the RBAC for the conflict collection because the conflict collection consists of the conflicting documents.
-
-* See the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflictlogging-key[conflictLogging] replication setting key to learn the mechanism of enabling or disabling true conflict logging.
-
-* See the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#logging-rules[loggingRules] replication setting value to learn the mechanism of customizing true conflict logging at scope level and at collection level.
-====
-
-
-[#operational-guidelines-to-configure-conflict-collection]
-=== Operational Guidelines to Configure Conflict Collection
-
-Consider the following operational and functional guidelines, and best practices when configuring and managing conflict collections for true conflict logging:
-
-* *Missing conflict collection*: If a conflict collection specified in the replication setting does not exist, XDCR shows errors on the UI, reports the error type for the pipeline, and continues to replicate so there is no High Availability issue.
-
-* *Manage memory quota*: As the conflict collection fills up with true conflict log entries and copies of conflicting documents, the bucket quota increases accordingly.
-So you need to monitor the bucket quota regularly to ensure adequate system resources are available for XDCR to continue logging conflicts into the collection.
-To prevent memory sharing with application buckets, you can store true conflict logs in a bucket that is not a part of the replication.
-+
-If the bucket quota reaches its limit or if the system has insufficient memory (see xref:8.0@server:ref/error-codes.adoc#7-temporaryfailure[TemporaryFailure]), preventing conflict records from being written, XDCR handles these error conditions.
-For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#error-conflict-collection-quota[Conflict Collection Usage Quota] in xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-logging-errors[Conflict Logging Error Scenarios].
-
-* *RBAC for conflict collection*: You can create conflict collections using any role-based access control (RBAC) settings as XDCR doesn't require additional permissions. XDCR can write to any user-created bucket or collection.
-
-* *Event audit logging*: Couchbase event auditing includes events 8261 and 8262 for creating a collection and removing a collection respectively.
-Enable auditing to support investigations if a collection or scope associated with the conflict collection is dropped.
+* Supports enabling auditing for investigations if a collection or scope associated with the conflict collection is dropped.
 For information about enabling auditing and enabling event-auditing, see xref:manage:manage-security/manage-auditing.adoc[Manage Auditing].
 For more information about Event Auditing, see xref:audit-event-reference/audit-event-reference.adoc[Audit Event Reference].
 
-* *Replicas requirements*: XDCR uses Majority Durability to persist or maintain conflict records.
-For information about the required number of replicas and nodes for Majority Durability, see xref:learn:data/durability.adoc#majority[Majority].
+* You can store conflict collection in the source bucket or in a separate collection in a bucket that's not used in any XDCR replications.
 
-* *Usable with multiple replications*: As long as document keys in the conflict collection remain unique, multiple replications can share a single conflict collection.
+* You can use a conflict collection for a single or multiple XDCR replications while the document keys are unique.
 
-* *Replication prevention*: All documents added to a conflict collection by XDCR are prevented from replication.
-XDCR achieves this by adding a hidden system xattribute flag called `_xdcr_conflict` into each of the three documents (Conflict record document/CRD, Source document that caused the conflict, and Target document that caused the conflict) in a xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record].
-This system xattr is not a part of the 20 MB limit of the document size.
-+
-After resolving a conflict, you must re-insert your own copy of the document. You manually generate a new document with the same document key and xref:n1ql:n1ql-language-reference/upsert.adoc[upsert] using the SDK, without including the system xattribute.
-For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#retrieve-and-clean-up-conflict-record[Retrieve and Clean Up Conflict Record].
-+
-Example of system xattribute:
-+
-----
-“_xdcr_conflict”: true,
-----
+* XDCR can write into conflict collections associated with the source cluster, however, XDCR cannot modify the conflict collections in any target clusters.
 
-* *Outbound Conflict Record Replication Rules*: This behavior applies only to the outbound conflict records.
-+
-When XDCR replicates to a target bucket that includes a mapped conflict collection, the source XDCR blocks replication of Conflict Record Documents (CRDs) into the target conflict collection.
-XDCR’s replication prevention mechanism applies only to CRDs identified by system xattributes.
-+
-It does not prevent non-CRD documents (documents without the xattribute) from being written to or replicated into the conflict collection.
-If you insert non-CRD documents into the conflict collection, XDCR replicates them because they do not have the system xattribute.
-+
-By design, all documents in a conflict collection must include the system xattribute, preventing replication and ensuring CRDs in the target conflict collection are never overwritten.
-+
-No additional setup is necessary.
-+
-IMPORTANT: This replication prevention works only if the source XDCR supports CRD and conflict collections. XDCR versions earlier than 8.0.0, which do not recognize conflict collections, cannot enforce this functionality.
+[IMPORTANT]
+====
+* Use the conflict collection only for storing the conflict data to prevent applications from writing into this collection, and causing data inconsistency and feature issues.
 
-* *Retrieving Conflicts*: Each true conflict event generates a single event document in the conflict collection, along with two documents representing conflict sources (source document and target document).
-You can retrieve all related information, perform manual conflict resolution, and write the resolved document back to the source bucket as needed.
-+
-For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#retrieve-and-clean-up-conflict-record[Retrieve and Clean Up Conflict Record].
+* External documents in the collection can interfere with event retrieval because of the dependency on xref:8.0@server:howtos/kv-operations.adoc#scoped-kv-operations[KV Range Scan].
+====
 
+[#create-conflict-collection]
+=== Create Conflict Collection
+
+When xref:manage:manage-buckets/create-bucket.adoc[creating a bucket] and a collection (see  and xref:manage:manage-scopes-and-collections/manage-scopes-and-collections.adoc[Manage Scopes and Collections]), designate them as conflict bucket and conflict collection for logging conflicts by using: 
+
+** xref:manage:manage-xdcr/create-xdcr-replication.adoc#xdcr-ui-settings-for-conflict-logging
+[Replication Settings for XDCR Conflict Logging], to set from UI.
+
+** xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication], to set through REST API.
+
+NOTE: To configure the conflict collection, use the same collection namespace specified in the replication setting, xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#use-conflictlogging-and-loggingrules[Use conflictLogging Key and loggingRules Value in XDCR].
 
 [#replication-settings-for-conflict-logging]
 == Replication Settings for Conflict Logging
 
-To enable XDCR Conflict Logging, you must configure the replication settings for logging true conflicts.
+To enable XDCR conflict logging, you must configure the replication settings for logging conflicts.
 The replication settings are as follows:
 
 [#enable-hlv-conflict-logging]
 === Enable Hybrid Logical Vectors (HLVs)
 
-To enable the XDCR Conflict Logging feature, as a prerequisite, Hybrid Logical Vectors (HLVs) must be enabled on all buckets of all clusters participating in the replication topology. Only after enabling HLV, other secondary settings can be configured.
-This serves as an audit event log for debugging purposes.
+To enable XDCR conflict logging, as a prerequisite, Hybrid Logical Vectors (HLVs) must be enabled on all buckets of all clusters participating in the replication topology. 
 
-To enable HLV creation in the documents, set the bucket property `enableCrossClusterVersioning` to `true` in both source and target buckets.
-As a result, for each document processed by XDCR, HLV is created and stored in the document extended attributes (xattrs).
+XDCR uses HLV metadata to detect conflicts from different clusters and stores the document ID, document contents, and conflicting document histories into a pre-defined xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Conflict Collection] created by you.
 
 To enable the bucket property `enableCrossClusterVersioning`:
 
@@ -259,20 +98,22 @@ To enable the bucket property `enableCrossClusterVersioning`:
 
 [IMPORTANT]
 ====
-* Once `enableCrossClusterVersioning` is enabled, it cannot be disabled. As a result, HLV cannot be disabled.
+* Once `enableCrossClusterVersioning` is enabled, it cannot be disabled.
+As a result, HLV cannot be disabled.
 
-* You cannot enable the bucket property `enableCrossClusterVersioning` while creating the bucket. This property can be enabled only when editing the bucket.
+* `enableCrossClusterVersioning` can be enabled only when editing a bucket.
 
-* In the future, to add a new cluster to the existing replication topology, enable HLV on each new cluster to activate true conflict logging.
-Only the data that's modified, after enabling HLV, can participate in true conflict logging.
+* In the future, to add a new cluster to the existing replication topology, enable HLV on each new cluster to activate conflict logging. Because only the documents mutated after enabling the `enableCrossClusterVersioning` property on both the source and target clusters, are considered for conflict logging.
 ====
+
+Couchbase recommends to monitor bucket memory quota and storage usage after enabling HLV to ensure adequate resources are available.
 
 For more information about the bucket property `enableCrossClusterVersioning` and HLV, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
 
 [#use-conflictlogging-and-loggingrules]
 === Use conflictLogging Key and loggingRules Value in XDCR
 
-Create a XDCR replication by using the following replication settings, which accepts a key and a corresponding JSON object as the value.
+To log conflicts, create an XDCR replication by using the following replication settings, which accepts a key and a corresponding JSON object as the value.
 
 * `conflictLogging` is the replication setting key.
 * `loggingRules` is the JSON object as the value.
@@ -391,7 +232,7 @@ However, this value provides the additional benefit of saving the logging rules 
 [#logging-rules]
 ==== loggingRules
 
-This section explains the mapping of true conflict logs to their source. The value of `loggingRules` is a JSON object composed of any number of the following Key-Value (KV) formats.
+This section explains the mapping of conflict logs to their source. The value of `loggingRules` is a JSON object composed of any number of the following Key-Value (KV) formats.
 
 [NOTE]
 ====
@@ -438,21 +279,17 @@ Empty JSON object.
 | All mutations from the chosen scope will be logged in the specific conflict collection defined by bucket, scope, and collection; instead of the original location mentioned in the *ConflictLogging* key.
 |===
 
-When the replication begins, XDCR verifies the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#presence-of-conflict-collection[Presence of Conflict Collection].
-Any true conflicts that occur, are stored in this collection.
-
-XDCR examines logging rules to ensure that the specified rules fulfill the implicit or explicit mapping modes. If explicit mapping is used, XDCR ensures that the logging rules are considered equal or a subset of the  xref:manage:manage-xdcr/replicate-using-scopes-and-collections.adoc#rules-for-explicit-mappings[Rules for Explicit Mappings].
-
 [#tunable-replication-settings]
 ==== Tunable Replication Settings
 
-By default, the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-logger[Conflict Logger] is tuned to handle a low percentage of true conflicts. Use the following settings to tune the Conflict Logger.
+By default, the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-logger[Conflict Logger] is tuned to handle a low percentage of conflicts.
+Use the following settings to tune the Conflict Logger.
 
 |===
 | Setting | Description | Default
 
 | `conflictLogging`
-| The main setting which when non-empty and valid enables logging of true conflicts.
+| The main setting which when non-empty and valid enables logging of conflicts.
 
 For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflictlogging-key[conflictLogging Key].
 |
@@ -498,11 +335,10 @@ For information about hibernation, see xref:learn:clusters-and-availability/xdcr
 | 600000ms
 |===
 
-
 [#deploy-xdcr-conflict-logging]
 == Deploying XDCR Active-Active Conflict Logging Setup
 
-Deploy XDCR active-active setup and enable the Conflict Logging feature using one of the following procedures:
+Deploy XDCR active-active setup and enable logging of conflicts using one of the following procedures:
 
 * xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#greenfield-deployment-conflict-logging[Greenfield Deployment]: New installation of Couchbase Server 8.0.0 (or a later version) clusters. Then enable the Conflict Logging feature for each necessary bucket.
 
@@ -513,10 +349,10 @@ Then enable the Conflict Logging feature for each necessary bucket.
 === Prerequisites for XDCR Active-Active Conflict Logging
 
 To use the XDCR Conflict Logging feature, it must be enabled.
-The prerequisites for enabling XDCR’s true conflict logging capability are as follows:
+The prerequisites for enabling XDCR’s conflict logging capability are as follows:
 
 . *Bi-directional replication setup*: All clusters in the XDCR topology must be running Couchbase Server 8.0.0 or a later version.
-XDCR supports logging of true conflicts only in bi-directional replications.
+XDCR supports conflict logging only in bi-directional replications.
 In these replications, mutations from any cluster can be replicated to any other cluster.
 +
 [#presence-of-conflict-collection]
@@ -524,22 +360,18 @@ In these replications, mutations from any cluster can be replicated to any other
 +
 For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Create Conflict Collection].
 
-. *Hybrid Logical Vectors (HLVs) compatibility*: Set the bucket property `enableCrossClusterVersioning` to `true` on all the buckets in the XDCR topology clusters.
-As a result, HLV is created in each replication document. XDCR uses HLVs to detect conflicts.
+. *Hybrid Logical Vectors (HLVs) compatibility*: Set the bucket property `enableCrossClusterVersioning` to `true` on all the buckets in the XDCR topology clusters to enable HLV.
 +
 For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#enable-hlv-conflict-logging[Enable Hybrid Logical Vectors (HLVs)].
-+
-NOTE: Once the bucket property `enableCrossClusterVersioning` is enabled, it cannot be disabled.
-
 
 [#greenfield-deployment-conflict-logging]
 === Greenfield Deployment
 
-To configure a new active-active XDCR setup for logging true conflicts, do the following:
+To configure a new active-active XDCR setup for logging conflicts, do the following:
 
 . Create two clusters, A and B, with all the nodes of both the clusters on Server 8.0.0 (or a later) version.
 +
-IMPORTANT: Couchbase doesn’t recommend replicating data with Server versions earlier than 8.0.0 because true conflicts won’t be logged and HLV metadata won't update properly.
+IMPORTANT: Couchbase doesn’t recommend replicating data with Server versions earlier than 8.0.0 because conflicts won’t be logged and HLV metadata won't update properly.
 This can result in data loss and undetected conflicts.
 
 . Create buckets, for example, B1 and B2 in Cluster A and Cluster B respectively, between which XDCR will be set up.
@@ -562,27 +394,27 @@ NOTE: If the replication topology has more than two buckets, you must enable ECC
 [Replication Settings for XDCR Conflict Logging] from UI.
 ** xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API.
 +
-NOTE: Ensure to set a size enough to accommodate the expected volume of true conflicts.
+NOTE: Ensure to set a size enough to accommodate the expected volume of conflicts.
 
 . Create XDCR from B1 to B2 using xref:manage:manage-xdcr/create-xdcr-replication.adoc#xdcr-ui-settings-for-conflict-logging
-[Replication Settings for XDCR Conflict Logging] from UI or see xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API. Select the target(s) in A, where the true conflicts from A, detected by XDCR, must be logged.
+[Replication Settings for XDCR Conflict Logging] from UI or see xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API. Select the target(s) in A, where the conflicts from A, detected by XDCR, must be logged.
 
 . Create XDCR from B2 to B1 using xref:manage:manage-xdcr/create-xdcr-replication.adoc#xdcr-ui-settings-for-conflict-logging
-[Replication Settings for XDCR Conflict Logging] from UI or see xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API. Select the target(s) in B, where the true conflicts from B, detected by XDCR, must be logged.
+[Replication Settings for XDCR Conflict Logging] from UI or see xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API. Select the target(s) in B, where the conflicts from B, detected by XDCR, must be logged.
 
-. Fine tune the Conflict Logger on both clusters, A and B, depending on the percentage of expected true conflicts, using xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#tunable-replication-settings[Tunable Replication Settings].
+. Fine tune the Conflict Logger on both clusters, A and B, depending on the percentage of expected conflicts, using xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#tunable-replication-settings[Tunable Replication Settings].
 
 After the configuration, this setup is ready to process application traffic on both B1 and B2.
-When a document mutated at time t1 (in B1) and another document mutated at time t2 (in B2) are detected to be in true conflict, then:
+When a document mutated at time t1 (in B1) and another document mutated at time t2 (in B2) are detected to be in conflict, then:
 
 * Both documents are logged along with a conflict metadata document in respective conflict buckets.
 
 * Logging occurs only if t1 > T1 and t2 > T2.
 
 [#upgrade-xdcr-setup-conflict-logging]
-=== Upgrading an Existing Active-Passive XDCR Setup
+=== Upgrading an Existing XDCR Active-Passive Setup
 
-Convert an existing XDCR active-passive setup into XDCR active-active setup for logging true conflicts.
+Convert an existing XDCR active-passive setup into XDCR active-active setup for logging conflicts.
 
 For illustration, there are two clusters, A and B.
 Cluster A is active in the XDCR setup with bucket B1 connected to passive cluster B in the XDCR setup with bucket B2.
@@ -590,7 +422,7 @@ Currently, the application traffic will be only on bucket B1 of Cluster A.
 
 . Upgrade both clusters A and B with all the nodes of the clusters to Server 8.0.0 (or a later) version.
 +
-NOTE: Couchbase doesn’t recommend replicating data on Server versions earlier than 8.0.0 because true conflicts won’t be logged and HLV metadata won't update properly.
+NOTE: Couchbase doesn’t recommend replicating data on Server versions earlier than 8.0.0 because conflicts won’t be logged and HLV metadata won't update properly.
 This can result in data loss and undetected conflicts.
 
 . On B1 and B2, enable the `enableCrossClusterVersioning` (ECCV) setting.
@@ -610,113 +442,39 @@ Refer to this time as T1 and T2 for B1 and B2 respectively.
 [Replication Settings for XDCR Conflict Logging] from UI.
 ** xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API.
 +
-NOTE: Ensure to set a size enough to accommodate the expected volume of true conflicts.
+NOTE: Ensure to set a size enough to accommodate the expected volume of conflicts.
 
 . Update the existing XDCR replication setting from B1 to B2 by configuring xref:manage:manage-xdcr/create-xdcr-replication.adoc#xdcr-ui-settings-for-conflict-logging
 [Replication Settings for XDCR Conflict Logging] from UI or see xref:rest-api/rest-xdcr-create-replication.adoc[Creating a Replication] using REST API.
-Select the target(s) in A, where the true conflicts from A, detected by XDCR, must be logged.
+Select the target(s) in A, where th conflicts from A, detected by XDCR, must be logged.
 
 . Create XDCR from B2 to B1 using xref:manage:manage-xdcr/create-xdcr-replication.adoc#xdcr-ui-settings-for-conflict-logging
-[Replication Settings for XDCR Conflict Logging] from UI. Select the target(s) in B, where the true conflicts from B, detected by XDCR, must be logged.
+[Replication Settings for XDCR Conflict Logging] from UI. Select the target(s) in B, where the conflicts from B, detected by XDCR, must be logged.
 
-. Fine tune the Conflict Logger on both clusters, A and B, depending on the percentage of expected true conflicts, using xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#tunable-replication-settings[Tunable Replication Settings].
+. Fine tune the Conflict Logger on both clusters, A and B, depending on the percentage of expected conflicts, using xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#tunable-replication-settings[Tunable Replication Settings].
 
 . Enable application traffic on cluster B.
 
 After the configuration, this setup is ready to process application traffic on both B1 and B2.
-When a document mutated at time t1 (in B1) and another document mutated at time t2 (in B2) are detected to be in true conflict, then:
+When a document mutated at time t1 (in B1) and another document mutated at time t2 (in B2) are detected to be in conflict, then:
 
 * Both documents are logged along with a conflict metadata document in respective conflict buckets.
 
 * Logging occurs only if t1 > T1 and t2 > T2.
 
+[#xdcr-conflict-detection-logging]
+== Conflict Detection and Logging
 
-[#xdcr-conflict-detection]
-== Conflict Detection
+During XDCR replication, conflicts are supposed to be uncommon.
+If there are any, then XDCR detects conflicts by comparing the HLV (Hybrid Logical Vector) metadata of the source and target documents.
 
-XDCR uses HLV (Hybrid Logical Vector) to detect true conflicts. During XDCR replication, XDCR detects conflicts by comparing the HLV metadata of the source and target documents.
+After detecting conflicts, XDCR defines each logging event as a conflict record in a xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Conflict Collection].
 
-For more information about HLVs, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#hlv[Hybrid Logical Vectors (HLVs)].
-
-For illustration, consider that XDCR inspects and identifies the causality between two versions of the same document. Using HLV, XDCR detects if the document being replicated from source is:
-
-* Latest version than the one at target so XDCR can overwrite the target version. This is the most common case in a continuous replication.
-
-* Older version than the one at target so it can be skipped. This can happen when replication starts and you resend from the last checkpoint.
-
-* Identical to the one at the target. This can happen when resending a document, or it can happen after source and target both merged the same document (so they may have different CAS but the same content).
-
-* In conflict with the one at target, so a merge needs to be performed. This happens when the target has mutations in the document not included in the source document. This is true conflict detection.
-However, comparing documents’ CAS values is straightforward (by comparing integers), whereas comparing HLVs is complex. HLVs combine CAS with per-source version history, so clear HLV properties and rules are defined for “greater than” and “equal”.
-
-[#compare-hlvs-to-detect-conflicts]
-=== Mechanism of Comparing HLVs to Detect True Conflicts 
-
-For illustration, consider that `HLV(M1)` is the HLV metadata of a document in one cluster and `HLV(M2)` is the HLV metadata of a document in another cluster.
-Operators are defined as:
-
-* A greater than (>) to represent the "happened-before" relationship.
-
-* An equality (==) for identical versions.
-
-* A conflict relationship when neither applies.
-
-HLVs are determining the relationship between two document mutations, M1 and M2, based on their causal history as follows:
-
-* If `HLV(M1) > HLV(M2)`, then M2 happened before M1.
-
-* If `HLV(M1) < HLV(M2)`, then M1 happened before M2.
-
-* If `HLV(M1) == HLV(M2)`, then M1 and M2 are the same version.
-
-* If none of these conditions hold, `HLV(M1) || HLV(M2)`, meaning M1 and M2 are concurrent and therefore in *true conflict*.
-
-
-The operator ">" (dominates) means that M1’s version includes and supersedes M2’s version through one of the following (Check if one document’s HLV dominates another document’s HLV):
-
-* `CV.source(M1) == CV.source(M2)` and `CV.version(M1) > CV.version(M2)`.
-+
-(Meaning, by having the same source with a higher version.)
-
-* Given that `CAS(M1) > CAS(M2)`, there exists `<source:version>`, which is a summation of `PV(M1)` such that at least one `source == CV.source(M2)` and `version > CV.version(M2)`.
-+
-(Meaning, by having a higher CAS value and a version vector entry that surpasses M2’s version for the same source.)
-
-The operator == means M1 and M2 have identical sources and source values, representing the same mutation as follows:
-
-* `CV.source(M1) == CV.source(M2)` and `CV.version(M1) == CV.version(M2)`
-
-[#conflict-logging-process]
-== Conflict Logging
-
-After detecting a true conflict, XDCR logs the conflict before proceeding with resolution. All true conflict logs are stored in a conflict collection.
-For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#presence-of-conflict-collection[Presence of Conflict Collection].
-
-[NOTE]
-====
-* If logging fails, XDCR continues with conflict resolution to ensure High Availability.
-
-* Conflict logging does not change the process of resolving conflicts.
-The xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution] process remains the same.
-====
-
-[#types-of-conflicts-logged]
-=== Types of Conflicts Logged
-
-Different types of conflicts occur in an XDCR replication, such as conflicts because of resending documents after network issues or changes in the cluster topology.
-However, a true conflict occurs only when documents with the same document ID are modified independently on two different clusters simultaneously.
-XDCR logs the occurrences of such conflicts.
-
-Using the logged conflict, you can do the following:
-
-* Verify the possible data loss by comparing the source and the target mutations.
-
-* Enhance your local applications to prevent such conflicts in the future.
+IMPORTANT: If logging fails, XDCR continues with conflict resolution to ensure High Availability.
 
 [#conflict-record]
 === Conflict Record
 
-XDCR defines each logging event as a conflict record in a conflict collection created by you.
 A conflict record consists of these three elements:
 
 * *Conflict Record Document (CRD):* It is a JSON record document that contains source and target document key-value pairs. CRD consists of the following elements:
@@ -732,48 +490,8 @@ A conflict record consists of these three elements:
 ** Document key: `tgt_<timestamp>_<SHA>`.
 
 The generated `<SHA>` ensures that each conflict for the same document is unique and logs each conflict for each document key.
-The `<SHA>` is created using a combination of the bucketUUID, vbno, seqno, and vbUUID.
 
-During the logging process, XDCR adds a hidden system xattribute flag called `_xdcr_conflict` into each of the three documents (Conflict record document/CRD, Source document that caused the conflict, and Target document that caused the conflict) in a conflict record.
-XDCR uses `_xdcr_conflict` to prevent documents in a conflict record from replicating to the target.
-If you are a DCP user, to skip the replication of the documents (CRD, Source document, Target document) present in a conflict record, identify by searching for `_xdcr_conflict` xattr in the documents.
-
-[#unique-conflict-record-keys]
-=== Uniqueness of Conflict Record Keys
-
-CRD, Source document, and Target document, which form a conflict record, are stored as separate documents in the conflict collection.
-Each of these documents have a unique document key as follows:
-
-* `crd_<timestamp>_<SHA>` is the document key of CRD.
-
-* `src_<timestamp>_<SHA>` is the document key of the source document that caused the conflict.
-
-* `tgt_<timestamp>_<SHA>` is the document key of the target document that caused the conflict.
-
-All three document keys are used for logging a conflict in the conflict collection.
-XDCR generates a unique identifier, distinct from other goxdcr nodes, for each conflict record.
-This conflict record identifier is used to construct the document keys for all three documents (CRD, Source document, Target document) in the conflict record.
-XDCR ensures that each document key is unique within the conflict collection.
-
-You can see the details on how XDCR obtains a unique identifier in xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#crd-uniqueness[Uniqueness of Conflict Record Document].
-
-[#crd-uniqueness]
-==== Uniqueness of Conflict Record Document (CRD)
-
-Each conflict record has a unique integer tag, which minimizes the possibility of key collisions in the conflict collection bucket.
-
-Two mutations are uniquely identified by the following properties:
-
-* Source bucket UUID
-* Source vbno
-* Source seqno
-* Source vb failover UUID
-* Target bucket UUID
-* Target vbno
-* Target seqno
-* Target vb failover UUID
-
-NOTE: Using SHA256 on these properties in strict order generates a 32-byte integer. SHA256 does not guarantee absolute uniqueness, however the probability of a collision is extremely low, about 1 in 1.16 x 10^77.
+XDCR adds a hidden system xattribute flag called `_xdcr_conflict` into each of the three documents in a conflict record to prevent the documents from replicating to the target.
 
 [#conflict-record-document-format]
 === Conflict Record Document Format
@@ -888,83 +606,46 @@ A copy of conflict target document ID prefixed with `tgt_`.
 HLV metadata.
 |===
 
-[#copies-of-source-target-conflict-documents]
-==== Copies of Source/Target Conflict Documents
-
-The documents that caused the conflict are assigned new keys and inserted into the conflict collection.
-
 [#conflict-logger]
 === Conflict Logger
 
 The Logger in XDCR records conflict events detected during a replication.
-It operates as a decoupled, asynchronous component designed to minimize the impact on replication performance and system resources.
+It operates as an asynchronous component designed to minimize the impact on replication performance and system resources.
 
-NOTE: By default, the Conflict Logger is tuned to handle a low percentage of true conflicts. Use xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#tunable-replication-settings[Tunable Replication Settings] to tune the Conflict Logger.
+Conflict logging is attempted on the best-effort basis, which makes it the lowest operational priority.
+If any error occurs, such as low memory quota or a lag in storing conflict logs, XDCR may pause or stop the logging process, reports the error type for the replication pipeline, and continues with replication so there is no High Availability issue.
+See  xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-logging-errors[Conflict Logging Error Scenarios]
 
-Logger offers the following functionalities:
+By default, the Conflict Logger is tuned to handle a low percentage of conflicts. Use xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#tunable-replication-settings[Tunable Replication Settings] to change the default settings of the Conflict Logger.
 
-* *Per-Replication Configuration:* Each replication pipeline, main and backfill, shares a single logger instance, ensuring efficient resource usage.
+`xdcr_clog_status` indicates the status of the Conflict Logger. The status can be one of the following:
 
-* *Simplicity:* The logger exposes a single `log()` method, designed to have minimal impact on replication performance.
-This ensures that the business logic and logging mechanisms remain independent.
+* Hibernated: The logger is temporarily disabled due to persistent errors or resource constraints.
++
+NOTE: Hibernation prevents the degradation of the replication performance. Logging is re-enabled after a set interval, or after the errors are manually resolved and the logger is manually restarted.
 
-* *User-defined configuration:* Logging is configured via user-defined rules; these rules dictate target bucket, scope, collection, and any metadata filters.
+* Running: The logger is actively processing conflict events.
 
-* *Asynchronous Logging:* Logging operations are performed asynchronously.
-The replication pipeline does not wait for logging to complete and can continue processing, which improves overall throughput.
+* DNE: The logger does not exist.
 
-* *Best-Effort Logging:* Logging is attempted on a best-effort basis, reflecting the lowest operational priority compared to the main data transfer tasks.
+[#conflict-access-and-review]
+== Conflict Access and Review
 
-[#resource-management-logger]
-==== Resource Management
-
-The logger operates under the control of a resource manager that dynamically allocates resources (tokens) to replication tasks based on priority, observed performance, backlog, and throughput requirements.
-
-* *Token-Based Throttling:* Logging tasks receive a minimal percentage of tokens (default allocation: 89% high-priority replication, 8% low-priority, 3% for logging). If insufficient tokens are available, logging requests are throttled to avoid impacting replication performance.
-
-* *Dynamic Rebalancing:* You can temporarily increase the resource allocation for logging true conflicts using a dedicated “boost” option via curl command called `ClogBoost`, to handle an increased number of conflict events.
-
-[#conflict-logger-data-flow]
-==== Data Flow and Processing
-
-The following steps describe the data flow for the XDCR Conflict Logging process:
-
-. *Mutation Detection:* The pipeline detects mutations and routes them for conflict detection.
-
-. *Conflict Event:* If a conflict is detected, the pipeline retrieves the full source and target documents.
-
-. *Asynchronous Log Request:* The pipeline invokes the `logger.Log(conflictRecord)` method, which queues the log request for processing by worker routines.
-
-. *Worker Processing:* Logger workers write conflict records to the designated conflict collection(s), following configured rules.
-
-. *Notification:* After logging, the logger notifies the system for tracking and checkpointing purposes.
-
-[#reliability-components-logger]
-==== Reliability Components
-
-* *Sequence Number Tracking:* Logger tracks the sequence numbers for both data replicated and conflict events logged. This ensures that checkpointing and resuming from failure take into account both data transfer and logging progress.
-
-* *Hibernation Mechanism:* If the logger cannot process requests due to persistent errors, such as misconfiguration, slow IO, resource exhaustion, logging is temporarily disabled or hibernated. This prevents replication performance from being degraded. Logging is re-enabled after a set interval or once errors are resolved.
-
-
-[#conflict-access-and-management]
-== Conflict Access and Management
-
-XDCR true conflict logs are your application documents, so they're added in regular collections called xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Conflict Collection] designated by you.
+XDCR conflict logs are your application documents, so they're added in regular collections called xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Conflict Collection] designated by you.
 
 You can access, view, and process these documents programmatically, similar to your application documents, using the available utilities, features, and options.
 
 For example, you can use RBAC to manage access to conflict collections.
-You can also use Couchbase services and tools such as Eventing and Kafka Connect to process true conflict log documents.
+You can also use Couchbase services and tools such as Eventing and Kafka Connect to process conflict log documents.
 
 For information about the Conflict Record Document, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record].
 
 [#retrieve-and-clean-up-conflict-record]
 === Retrieve and Clean Up Conflict Record
 
-You can monitor and manage the true conflict records xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#using-kv-range-scan-clog[Using KV Range Scan].
+You can monitor and manage the conflict records xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#using-kv-range-scan-clog[Using KV Range Scan].
 
-The following is a high-level procedure about using true conflict logs from a conflict collection:
+The following is a high-level procedure about using conflict logs from a conflict collection:
 
 . Connect an SDK to the conflict collection.
 
@@ -999,7 +680,7 @@ KV range scan can work only using Data Service capability.
 You can also use query instead of KV range scan.
 However, this potentially requires creation of secondary indexes.
 Additionally, it requires Index service and Query service to be activated in the cluster.
-To access, view, and retrieve true conflict logs using query, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#using-sdk-sqlpp-for-conflict-logs[Using Couchbase SDK with SQL++ for Conflict Logs].
+To access, view, and retrieve conflict logs using query, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#using-sdk-sqlpp-for-conflict-logs[Using Couchbase SDK with SQL++ for Conflict Logs].
 
 [#using-sdk-sqlpp-for-conflict-logs]
 === Using Couchbase SDK with SQL++ for Conflict Logs
@@ -1007,7 +688,7 @@ To access, view, and retrieve true conflict logs using query, see xref:learn:clu
 The most common way to view these documents is by using the Couchbase SDK with SQL++.
 
 The following are a few examples.
-In the examples, the true conflict logs are stored in the collection `conflictlogs.bucket1.app1logs`.
+In the examples, the conflict logs are stored in the collection `conflictlogs.bucket1.app1logs`.
 
 [#sqlpp-examples-clog]
 ==== SQL++ Examples
@@ -1127,7 +808,7 @@ NOTE: As the conflict log documents won’t be replicated, if you need to replic
 [#using-eventing-for-conflict-logs]
 === Using Eventing for Conflict Logs
 
-The true conflict logs and conflict documents are not replicated as XDCR’s special attribute (system xattrs called `_xdcr_conflict`) prevents replication:
+The conflict logs and conflict documents are not replicated as XDCR’s special attribute (system xattrs called `_xdcr_conflict`) prevents replication:
 
 ----
 "xattrs": {
@@ -1135,7 +816,7 @@ The true conflict logs and conflict documents are not replicated as XDCR’s spe
     }
 ----
 
-To force replicate the true conflict logs and conflict documents, do the following:
+To force replicate the conflict logs and conflict documents, do the following:
 
 . Use Eventing to copy the document to a new collection along with other modifications.
 
@@ -1180,7 +861,7 @@ function OnUpdate(doc, meta, xattrs) {
 }
 ----
 
-Resulting document example:
+Resultant document example:
 
 NOTE: See xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record-document-format[Conflict Record Document Format] to understand the document format.
 
@@ -1338,30 +1019,19 @@ for crd in crd_list:
 
 After you resolve conflicts and xref:n1ql:n1ql-language-reference/upsert.adoc[upsert] the documents, you can continue the replication process without data loss, through xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc#revision-id-based-conflict-resolution[Sequence number-based Conflict Resolution] or xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc#timestamp-based-conflict-resolution[Timestamp-based Conflict Resolution].
 
-[#disable-true-conflict-logging]
+[#disable-conflict-logging]
 == Disable XDCR conflict logging
 
 This section explains disabling XDCR Conflict Logging feature.
 
-[#using-hlv-disable-clog]
-=== Using HLV
-
-The bucket property `enableCrossClusterVersioning` cannot be disabled once it is enabled.
+* *HLV*: The bucket property `enableCrossClusterVersioning` cannot be disabled once it is enabled.
 For more information, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
 Enabling HLV depends on `enableCrossClusterVersioning`, so HLV also cannot be disabled after it is enabled.
 
-This restriction exists because several current and future XDCR features rely on HLV. XDCR uses HLV as a core part of the replication process, and disabling it could impact replication functionality.
-
-[#set-replication-setting-off]
-=== Setting the replication setting off
-
-To disable the conflict logging setting, set the `conflictLogging` parameter to `<nil>`.
+* *Setting the replication setting off*: To disable the conflict logging setting, set the `conflictLogging` parameter to `<nil>`.
 When it is disabled, any conflict documents previously created by XDCR in the conflict collections remain in place.
 
-[#deleting-clog-replication]
-=== Deleting a Replication
-
-When you delete a replication, conflict record documents in the conflict collection remain until you manually delete them.
+* *Deleting a Replication*: When you delete a replication, conflict record documents in the conflict collection remain until you manually delete them.
 As you can change the conflict collection multiple times during the lifecycle of a replication, XDCR does not automatically clean up previously created conflict records.
 
 [#conflict-logging-errors]
@@ -1387,10 +1057,6 @@ However, certain features, such as Peer-to-Peer protocols used for checkpoint mi
 
 [#error-conflict-collection-quota]
 === Conflict Collection Usage Quota
-
-When the bucket containing the conflict collection is filled up and no more data can be written to it (which is, hit Resident Ratio guardrail), it’ll also lead to the XDCR unable to log but continue to replicate.
-This is to prevent replication changes from building up, leading to HA issues.
-The decision is to prioritize replication over accurate logging of events.
 
 If the bucket containing the conflict collection reaches its quota and cannot accept more data, for example, if the Resident Ratio guardrail is triggered, XDCR cannot log conflicts but the replication continues.
 This approach is intended to prioritize continued replication and maintain High Availability, even if some conflict events are not logged.
