@@ -8,8 +8,6 @@
 
 ----
 GET /xdcr/sourceClusters
-
-POST /xdcr/internalSettings
 ----
 
 == Description
@@ -24,18 +22,30 @@ It makes the current cluster the target cluster and remote cluster the source cl
 
 Being on the target cluster, you can query incoming replications and relevant heartbeat information.
 
-=== List the Source Clusters Replicating to the Target Cluster
+== Required Permissions
 
-Returns information about all source clusters that have a remote cluster reference pointing to the current cluster (target cluster). For each source cluster, the API returns replication specifications, current settings, source nodes, and heartbeat status.
+You must have Full Admin, Cluster Admin, or XDCR Admin role to call this API.
 
-==== Curl Syntax
+== curl Syntax
+
+This API call retrieves information about all source clusters that are replicating to the current cluster (target cluster).
+
+Run the following command on the target cluster.
 
 ----
-curl -X GET -u <user-name>:<password> http://<ip-address-or-domain-name>:8091/xdcr/sourceClusters | jq
+curl -X GET -u <user-name>:<password> http://<ip-address-or-domain-name>:<port-number>/xdcr/sourceClusters | jq
+----
+
+=== Response
+
+For each source cluster, the API returns replication specifications, current settings, source nodes, and heartbeat status as a JSON array, if the call is successful.
+
+[source,json]
+----
 [
   {
     "SourceClusterNodes": [
-      "http://<ip-address-or-domain-name-or-node-name>"
+      "http://<ip-address-or-domain-name-or-node-name>:<port-number>",
     ],
     "SourceClusterReplSpecs": "<list-of-replication-specifications-from-source-cluster-to-this-target>",
     "SourceClusterUUID": "<source-cluster-UUID>",
@@ -44,13 +54,52 @@ curl -X GET -u <user-name>:<password> http://<ip-address-or-domain-name>:8091/xd
     "SourceClusterHBExpiryTime": "<heartbeat-expiry-time>"
   }
 ]
+----
 
+[#responses]
+=== Other Responses
 
+|===
+|Value | Description  
 
+| `200 OK` and JSON array containing repository information depending on the specific endpoint.
+| Successful call.
 
+| `400`
+| Invalid parameter.
+
+| `400 Object Not found`
+| The repository in the endpoint URI does not exist.
+
+| `401 Unauthorized`
+|  Authorization failure due to incorrect username or password.
+
+| `403 Forbidden`, plus a JSON message explaining the minimum permissions.
+| The provided username has insufficient privileges to call this method.
+
+| `404 Object Not Found`
+| Error in the URI path.
+
+| `500 Could not retrieve the requested repository`
+| Error in Couchbase Server.
+
+|===
+
+== Examples
+
+The following examples demonstrate how to use the `xdcr/sourceClusters` API to identify the target cluster in a replication and inspect the incoming replication streams.
+
+[#example-source-without-replication-specs]
+=== A cluster without replication specifications
 
 ----
-curl -X GET -u <user-name>:<password> http://<ip-address-or-domain-name>:8091/xdcr/sourceClusters | jq
+curl -X GET -u Administrator:pw http://127.0.0.1:9000/xdcr/sourceClusters | jq
+----
+
+This call retrieves the following details of a source cluster with one node.
+This source cluster has created a remote cluster reference to a target cluster but has not yet created a replication specification.
+
+----
 [
   {
     "SourceClusterNodes": [
@@ -63,31 +112,54 @@ curl -X GET -u <user-name>:<password> http://<ip-address-or-domain-name>:8091/xd
     "SourceClusterHBExpiryTime": "2024-10-24T21:02:21.902848+05:30"
   }
 ]
-
-
-
-configure the Target Awareness feature on their Source & Target clusters
-
-
-curl -X POST -u <user-name>:<password> http://<ip-address-or-domain-name>:8091/xdcr/internalSettings | jq
--d SrcHeartbeatEnabled=[ true|false ]
--d SrcHeartbeatIgnoreIncoming=[ false|true ]
--d SrcHeartbeatMinInterval=<seconds>
--d SrcHeartbeatMaxIntervalFactor=<minutes>
 ----
 
+[#example-source-with-replication-specs]
+=== A cluster with replication specifications
 
-
-
-curl -X POST -u Administrator:pw http://127.0.0.1:9000/xdcr/internalSettings | jq
--d SrcHeartbeatEnabled=[ true|false ]
--d SrcHeartbeatIgnoreIncoming=[ false|true ]
--d SrcHeartbeatMinInterval=[ 60 seconds]
--d SrcHeartbeatMaxIntervalFactor=[ 5 minutes ]
+----
+curl -X GET -u Administrator:pw http://127.0.0.1:9002/xdcr/sourceClusters | jq
 ----
 
-In the `POST` statement, the `name` must be the name assigned locally to the target cluster.
-In the `GET` statement, the `taskID` specified as the query parameter is one previously returned from a successful `POST`.
+This source cluster has two nodes, has a reference established with the target cluster, and is replicating to the target cluster.
+This call retrieves source cluster information and its replication specifications to the target cluster.
 
-[#responses]
-== Responses
+----
+[
+  {
+    "SourceClusterNodes": [
+      "10.100.172.24:9000",
+      "127.0.0.1:9001"
+    ],
+    "SourceClusterReplSpecs": [
+      {
+        "id": "d4b15b1069e4aaac1d6d0cb7d15b1dde/B0/B1",
+        "internalId": "ZsrIjhmEaf9232WGyoSexg==",
+        "sourceBucketName": "B0",
+        "sourceBucketUUID": "64b784ca2b3e8df7ab1cbf70ab89772f",
+        "targetClusterUUID": "d4b15b1069e4aaac1d6d0cb7d15b1dde",
+        "targetBucketName": "B1",
+        "targetBucketUUID": "1d86409fe13ffbeb36ba3bf382005480",
+        "replicationSettings": {
+          "values": {
+            "CollectionsMgtMulti": 8,
+            "active": true,
+          ....
+          "Revision": null
+        },
+        "Revision": "g2gCYQBsAAAAAWgCbQAAACA2OGRiNmU0ZDE0YWQwNTFlODM3ZDM1N2FjYTYxMGIzZWgCYQNuBQAUvLneDmo="
+      }
+    ],
+    "SourceClusterUUID": "6aa2a7cc7d9a42c253e76f832055ccea",
+    "SourceClusterName": “m2”,
+    "SourceClusterHBReceiveTime": "2024-10-24T20:52:21.902848+05:30",
+    "SourceClusterHBExpiryTime": "2024-10-24T21:02:21.902848+05:30"
+  }
+]
+----
+
+== See Also
+
+* From the UI, to identify the target cluster in a replication and inspect its incoming replication streams, see xref:manage:manage-xdcr/create-xdcr-replication.adoc#identify-target-cluster-in-xdcr[Identify the Target Cluster in a Replication] in xref:manage:manage-xdcr/create-xdcr-replication.adoc[Create a Replication].
+
+* To learn about using REST API to create or edit an XDCR reference to a target cluster, see xref:rest-api/rest-xdcr-create-ref.adoc[Creating or Editing a Reference].
