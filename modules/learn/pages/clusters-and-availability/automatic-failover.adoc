@@ -21,10 +21,10 @@ _Automatic Failover_ — or _auto-failover_ — can be configured to fail over o
 Specifically, the Cluster Manager autonomously detects and verifies that the nodes are unresponsive, and then initiates the _hard_ failover process.
 Auto-failover does not fix or identify problems that may have occurred.
 Once appropriate fixes have been applied to the cluster by the administrator, a rebalance is required.
-Auto-failover is always _hard_ failover.
+Auto-failover is always a _hard_ failover.
 For information on how services are affected by hard failover, see xref:learn:clusters-and-availability/hard-failover.adoc[Hard Failover].
 
-As a reminder, failover is a mechanism in the Couchbase Server that allows a node to be taken out of the cluster so that applications no longer reference the services on the failed node and availability is maintained.  The failover is at the node level, and the automatic failover process for a non-responsive or an unhealthy node starts when the cluster manager detects, per the configured auto-failover settings, that the node is unresponsive (node ns-server process is not responding to the cluster manager) or the Data or the Index Service on a node is not healthy (the service heartbeat or process is not responding to the cluster manager).  Then, multiple safety checks are run to see if an auto-failover can be performed.  If all checks pass, the cluster manager performs the hard failover process.  
+As a reminder, failover is a mechanism in the Couchbase Server that allows a node to be taken out of the cluster so that applications no longer reference the services on the failed node and availability is maintained. The failover is at the node level, and the automatic failover process for a non-responsive or an unhealthy node starts when the cluster manager detects, per the configured auto-failover settings, that the node is unresponsive (the cluster manager of the node is not sending heartbeats to the cluster manager of other nodes) or the Data or the Index Service on a node is not healthy (the service heartbeat or process is not responding to the cluster manager). Then, multiple safety checks are run to see if an auto-failover can be performed. If all checks pass, the cluster manager performs the hard failover process.
 
 In the xref:learn:clusters-and-availability/automatic-failover.adoc#failover-events[Failover Events] section, the events that start the auto-failover process are described.  In the xref:learn:clusters-and-availability/automatic-failover.adoc#auto-failover-constraints[Auto-Failover Constraints] section, the safety checks done after an auto-failover triggering event are explained.  These safety checks are done to determine if an auto-failover should actually be performed. Checks required for service specific safety policies are described in the xref:learn:clusters-and-availability/automatic-failover.adoc#failover-policy[Service-Specific Auto-Failover Policy] section.
 
@@ -39,7 +39,7 @@ The constraints and policies checked after the triggering event are described in
 Below are the types of events that can trigger auto-failover processing on a node:
 
 * _Node failure_.
-A server-node within the cluster is unresponsive (due to a network failure, very high CPU utilization problem, out-of-memory problem, or other node-specific issue). This means that the ns-server process on the node has not responded to the cluster manager for the user-specified configured amount of time -- the health of the services running on the node is unknown.
+A server-node within the cluster is unresponsive (due to a network failure, very high CPU utilization problem, out-of-memory problem, or other node-specific issue). This means that the the cluster manager of the node has not sent heartbeats in the configured timeout period, and therefore, the health of the services running on the node is unknown.
 
 ** Multiple node failure.
 Concurrent correlated failure of multiple nodes such as physical rack of machines or multiple virtual machines sharing a host.
@@ -53,18 +53,18 @@ Index Service running on a node sends heartbeat messages to the cluster manager 
 ** Data Service is unhealthy.  
 Besides the Data Service disk read/write issues configured monitoring for auto-failover, the Data Service running on a node can be deemed unhealthy per various other internal monitoring. If the Data Service stays unhealthy for the user-specified threshold time for auto-failover, the cluster manager will start the auto-failover checks for the node that the data service is on.
 
-Note that the Data Service and Index Service health for auto-failover uses the same Timeout value set for node unresponsiveness (see xref:learn:clusters-and-availability:automatic-failover.adoc[Configuring Auto-Failover] -- this is the user-specified threshold time for auto-failover mentioned in the Data Service and Index Service monitoring.
+Note that the Data Service and Index Service health for auto-failover uses the same Timeout value set for node unresponsiveness (see xref:learn:clusters-and-availability:automatic-failover.adoc[Configuring Auto-Failover]) -- this is the user-specified threshold time for auto-failover mentioned in the Data Service and Index Service monitoring.
 
-Note that on a node where there are only Search, Eventing, Query, or Analytics services running, the services could become unhealthy, but as long as the node ns-server process is responding to the cluster manager, an auto-failover of the node will not be attempted -- this is because only the Data and Index Services health are monitored for auto-failover.
+Note that on a node where there are only Search, Eventing, Query, Analytics, or Backup services running, the services could become unhealthy, but as long as the cluster manager heartbeats are sent and processed by the rest of the cluster, an auto-failover of the node will not be attempted -- this is because only the Data and Index Services health are monitored for node auto-failover.
 
 [#auto-failover-constraints]
 == Auto-Failover Constraints
 
 If a monitored or configured auto-failover event occurs, an auto-failover will not be performed if all the safety checks do not pass. These checks are explained in this section and the xref:learn:clusters-and-availability:automatic-failover.adoc#failover-policy[Service-Specific Auto-Failover Policy] section.
 
-The xref:install:deployment-considerations-lt-3nodes.adoc#quorum-arbitration[quorum constraint] is a critical part of auto-failover since the cluster must be able to form a quorum to initiate a failover, following the failure of one of the nodes. For Server Groups, this means that if you have two server groups with equal number of nodes, for auto-failover of all nodes in one server group to be able to occur, you could deploy an xref:learn:clusters-and-availability:nodes.adoc#adding-arbiter-nodes[arbiter node] (or another) in a third physical server group which will allow the remaining nodes to form a quorum.
+The xref:install:deployment-considerations-lt-3nodes.adoc#quorum-arbitration[quorum constraint] is a critical part of auto-failover since the cluster must be able to form a quorum to initiate a failover, following the failure of some of the nodes. For Server Groups, this means that if you have two server groups with equal number of nodes, for auto-failover of all nodes in one server group to be able to occur, you could deploy an xref:learn:clusters-and-availability:nodes.adoc#adding-arbiter-nodes[arbiter node] (or another node) in a third physical server group which will allow the remaining nodes to form a quorum.
 
-Another critical auto-failover constraint for Server Groups is the maximum number of nodes to be automatically failed over (`maxCount` in `/settings/autoFailover`) before administrator-intervention is required.  If you want one entire server group of nodes to be able to be all automatically failed over, then the `maxCount` value should be at least the number of nodes in the server group.  You can check the value of `maxCount` in `GET /settings/autoFailover` to see what the `maxCount` setting is.  The value of `count` in the same `GET /settings/autoFailover` output tells you how many node auto-failovers have occurred since the parameter was last reset.  Running a rebalance will reset the count value back to 0.  You can also reset the count back to 0 using `POST /settings/autoFailover/resetCount`, but it is rare that you would need to manually reset the count.
+Another critical auto-failover constraint for Server Groups is the maximum number of nodes to be automatically failed over (`maxCount` in `/settings/autoFailover`) before administrator-intervention is required.  If you want one entire server group of nodes to be able to be all automatically failed over, then the `maxCount` value should be at least the number of nodes in the server group.  You can check the value of `maxCount` in `GET /settings/autoFailover` to see what the `maxCount` setting is.  The value of `count` in the same `GET /settings/autoFailover` output tells you how many node auto-failovers have occurred since the parameter was last reset.  Running a rebalance will reset the count value back to 0. Running a rebalance will reset the count value back to 0. The count should not be reset manually unless guided by Support, since resetting manually will cause you to lose track of the number of auto-failovers that have already occurred without the cluster being rebalanced.
 
 The list below describes other conditions that must be met for an auto-failover to be executed even after a monitored or configured auto-failover event has occurred.
 
@@ -92,7 +92,7 @@ Now that you know the constraints that must be met for auto-failover to occur (a
 
 * The auto-failover should be configured only when the cluster contains sufficient resources to handle all possible consequences: workload-intensity on remaining nodes may increase significantly. The maxCount parameter of the auto-failover settings can be used to avoid this sort of thundering herd problem by limiting the number of nodes that can be automatically failed over. However, remember that if you want all of the nodes in a server group to be able to be auto-failed over, maxCount should at least be the number of nodes in the server group.
 
-* Auto-failover may take significantly longer if the unresponsive node is that on which the _orchestrator_ is running; since _time-outs_ must occur, before available nodes can elect a new orchestrator-node and thereby continue.
+* Auto-failover may take significantly longer if the unresponsive node is that on which the _orchestrator_ is running; since _time-outs_ must occur, before available nodes can elect a new orchestrator-node and thereby continue. Faster failover can be achieved by deploying an arbiter node, which is a node that hosts no Couchbase service. See xref:learn:clusters-and-availability/nodes.adoc#fast-failover[Fast Failover].
 
 * Auto-failover is for intra-cluster use only: it does not work with xref:learn:clusters-and-availability/xdcr-overview.adoc[Cross Data Center Replication (XDCR)].
 
@@ -107,7 +107,8 @@ See xref:learn:clusters-and-availability/cluster-manager.adoc[Cluster Manager] f
 [#failover-policy]
 == Service-Specific Auto-Failover Policy
 
-When a monitored or configured auto-failover event occurs on a node, there are constraints that need to be checked to determine if the node can be automatically failed-over. An example of such an event is the node ns-server not responding to the cluster manager. In such instances, one of the constraints is the policies or rules specific to the services that are running on the unresponsive node. Since a number of different service configurations are possible, below is information about the auto-failover policy for Couchbase Services, followed by specific examples.
+When a monitored or configured auto-failover event occurs on a node, there are constraints that need to be checked to determine if the node can be automatically failed-over. An example of such an event is the node cluster manager not being responsive. In such instances, one of the constraints is the policies or rules specific to the services that are running on the unresponsive node. Since a number of different service configurations are possible, below is information about the auto-failover policy for Couchbase Services, followed by specific examples.
+
 
 The auto-failover policy for Couchbase Services is as follows:
 
@@ -127,7 +128,7 @@ The node-minimum for each service is provided in the following table:
 | Service | Nodes Required
 
 | Data
-| 3
+| 2
 
 | Query
 | 2
@@ -176,7 +177,7 @@ If node #4 becomes unresponsive, auto-failover can be triggered, since prior to 
 However, if instead, node #5 becomes unresponsive, auto-failover is not triggered; since prior to unavailability, the Analytics Service was running only on one node (#5), which is below the auto-failover policy requirement for the Analytics Service (which is 2).
 
 [#data-service-preference]
-* A cluster has the following three nodes:
+* A cluster has the following two nodes:
 +
 [cols="1,2"]
 |===
@@ -189,12 +190,10 @@ However, if instead, node #5 becomes unresponsive, auto-failover is not triggere
 | Data
 
 | #3
-| Data
+| Arbiter Node, no services
 |===
 +
-If node #1 becomes unresponsive, auto-failover can be triggered.
-This is due to _Data Service Preference_, which applies auto-failover based on the policy for the Data Service, irrespective of other services on the unresponsive node.
-In this case, even though the Query and Search Services were both running on only a single node (#1), which is below the auto-failover policy requirement for each of those services (2), the Data Service was running on three nodes (#1, #2, and #3), which meets the auto-failover policy requirement for the Data Service (3).
+In this case, even though the Query and Search Services were both running on only a single node (#1), which is below the auto-failover policy requirement for each of those services (2), the Data Service was running on two nodes (#1 and #2), which meets the auto-failover policy requirement for the Data Service (2).
 
 [#data-service-preference-with-index-service]
 * A cluster has the following four nodes:
@@ -232,10 +231,7 @@ Auto-failover is configured by means of parameters that include the following.
 * _Timeout_.
 The number of seconds that must elapse, after a node or group has become unresponsive, before auto-failover is triggered. The default is 120 seconds, the minimum permitted is 1 second and the maximum is 3600 seconds. Note that a low number reduces the potential time-period during which a consistently unresponsive node remains unresponsive before auto-failover is triggered; but may also result in auto-failover being unnecessarily triggered, in consequence of short, intermittent periods of node unavailability.
 
-Note that the monitoring for the Data Service and Index Service health for auto-failover uses the same Timeout value set for node unresponsiveness.  For example, if the Index Service is deemed unhealthy (because of Index Service failure to send heartbeats to the cluster manager) for the Timeout amount of time, then the node that the Index Service is on will be considered for auto-failover (despite the fact that that the node ns-server may be responding to the cluster manager).
-
-WARNING: Care must be taken when running an un-replicated Index Service and a Data Service configured for fast failover (i.e., 1 second) on the same node.
-If the failover is triggered, unnecessarily or otherwise, then the index service will be lost.
+Note that the monitoring for the Data Service and Index Service health for auto-failover uses the same Timeout value set for node unresponsiveness. For example, if the Index Service is deemed unhealthy (because of Index Service failure to send heartbeats) for the Timeout amount of time, then the node that the Index Service is on will be considered for auto-failover (despite the fact that the node cluster manager may be responding and sending heartbeats)
 
 * _Maximum count_.
 The maximum number of nodes that can fail (either concurrently or sequentially in one or more events) and be handled by auto-failover.
@@ -244,7 +240,8 @@ This parameter is available in Enterprise Edition only: in Community Edition, th
 * _Count_.
 The number of nodes that have already failed over.
 The default value is 0.
-The value is incremented by 1 for every node that has an automatic-failover that occurs, up to the defined maximum count: beyond this point, no further automatic failover can be triggered until the count is reset to 0 through administrator-intervention.
+The value is incremented by 1 for every node that has an automatic-failover that occurs, up to the defined maximum count: beyond this point, no further automatic failover can be triggered until the count is reset to 0. Running a rebalance will reset the count value back to 0.
+
 * _Enablement of disk-related automatic failover; with corresponding time-period_.
 Whether automatic failover is enabled to handle continuous read-write failures.
 If it is enabled, a number of seconds can also be specified: this is the length of a constantly recurring time-period against which failure-continuity on a particular node is evaluated.
