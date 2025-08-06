@@ -1,0 +1,214 @@
+= Modify Services and Rebalance
+:description: pass:q[]
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+Dynamically add or remove the following Multi-Dimensional Scaling (MDS) services on existing nodes in a cluster from the Couchbase xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-from-ui[UI], xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-from-rest-api[REST API], or xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-using-cli[CLI]:
+
+* Index Service is represented by *index*.
+* Query Service is represented by *n1ql*.
+* Search Service is represented by *fts*.
+* Analytics Service is represented by *cbas*.
+* Eventing Service is represented by *eventing*.
+* Backup Service is represented by *backup*.
+
+Then a rebalance operation is automatically triggered to evenly distribute the service workload across the nodes.
+
+You do not have to add or remove a node to add or remove a service on a node in a cluster.
+
+NOTE: You cannot add or remove the Data Service, which is represented by *kv*.
+
+== Prerequisites
+
+Before modifying MDS services on nodes, ensure you have the following:
+
+* Administrator access.
+* A clear understanding of the current service distribution across the nodes.
+* Service Memory Quota:
+When you add a service that wasn’t earlier present in the cluster, the new service uses the service-specific default memory quota.
+This applies to the Index, Search, Eventing, and Analytics services.
++
+Verify that the memory quota for the new service meets your requirements using one of the following:
+
+** The REST API from xref:rest-api:rest-get-memory-information.adoc[Getting Memory Information].
+** The UI from xref:manage:manage-settings/general-settings.adoc#configure-general-settings-with-the-ui[Configure General Settings with the UI].
++
+NOTE: The default service memory quota is set per server node and is reflected in the `GET /pools/default` REST API response.
+ 
+[#modify-mds-services-from-ui]
+== Modify Services from the UI
+
+To manage MDS services from the UI, follow these steps:
+
+. Open Couchbase Web Console.
+
+. Click [.ui]*Servers*.
+
+. Click btn:[Modify Services].
++
+The [.ui]*Modify Cluster Services* dialog appears, which lists all the nodes in all the clusters and their current services.
++
+Services that can be modified are *index*, *n1ql*, *fts*, *cbas*, *eventing*, and *backup*.
++
+*kv*, which is the Data Service, cannot be modified.
+
+. Select the services you want to add for each node and deselect the services you want to remove from each node.
++
+NOTE: Adding or removing any service triggers a rebalance operation.
+
+. Click btn:[Rebalance and Change Services].
++
+If you're only removing services, then rebalancing is triggered immediately.
+
+. If you are adding services, then the *New Service Settings* dialog appears.
+This dialog lists the services you selected to add, the existing active services, and their current memory quotas.
+
+.. Enter the memory quota for each service you're adding.
+You can also edit the memory quota for existing services.
++
+For Index Service, choose either *Standard Global Secondary* or *Memory-Optimized*. For more information about index storage, see xref:learn:services-and-indexes:indexes/storage-modes.adoc[Index Storage Settings].
++
+For information about managing memory quotas for services from the UI, see xref:manage:manage-settings/general-settings.adoc#memory-quotas[Memory Quotas].
+
+.. Click btn:[Save Settings].
+
+The rebalancing operation is automatically triggered, which evenly distributes the service workload across the nodes.
+Status progress is displayed on the UI.
+
+When the rebalance operation is successful, an acknowledgment message appears on the UI and an option to download the rebalance report using btn:[Download Report].
+
+[#modify-mds-services-from-rest-api]
+== Modify Services from the REST API
+
+To modify MDS services on the existing nodes of a cluster using the REST API, use syntax in the following sections.
+
+=== HTTP Method and URI
+
+----
+POST /controller/rebalance
+----
+
+=== curl Syntax
+
+You must specify all known nodes and the nodes to be ejected.
+
+----
+curl -v -X POST -u [admin]:[password] \
+http://[localhost]:8091/controller/rebalance \
+[-d knownNodes | -d ejectedNodes | -d topology]
+----
+
+These are the services related parameters:
+
+* `knownNodes`: The value is a list containing all nodes that are in the cluster at the start of the rebalance process.
+
+* `ejectedNodes`: The value is a list containing all nodes that are to be ejected from the cluster during the rebalance process.
+
+* `topology`: The value is a list of services and the nodes in which services must reside, after the rebalance operation completes.
++
+The value is `topology[<service>]=<list of nodes>`.
++
+Where,
+
+** `<service>` can be one of the following services:
+
+*** `fts` for the Search Service.
+*** `index` for the Index Service.
+*** `n1ql` for the Query Service.
+*** `backup` for the Backup Service.
+*** `cbas` for the Analytics Service.
+
+** `<list of nodes>` indicate the nodes the `<service>` must reside in after the rebalance operation completes.
+
+** For example, `-d topology[<service>]=otp_node1,otp_node2`.
+
+=== Required Permissions
+
+`Full Admin` role.
+
+=== Example
+
+For illustration, consider 5 nodes in the cluster with the following services:
+
+* 172.23.108.69 – Data, Index, Query
+* 172.23.108.70 – Data, Search, Query
+* 172.23.108.71 – Query
+* 172.23.108.72 – Backup
+* 172.23.108.73 – Analytics
+
+Reconfigure the services on the existing nodes so that the following is the desired output of services on each of the 5 nodes:
+
+* 172.23.108.69 – Data, Query
+* 172.23.108.70 – Data, Index
+* 172.23.108.71 – Index, Query
+* 172.23.108.72 – Search, Query
+* 172.23.108.73 – Analytics
+
+Run the following command to reconfigure the services on the existing nodes and get the desired output.
+
+----
+curl -u Administrator:password -X POST 172.23.108.69:8091/controller/rebalance \
+-d "knownNodes=ns_1@172.23.108.69,ns_1@172.23.108.70,ns_1@172.23.108.71,ns_1@172.23.108.72,ns_1@172.23.108.73"  \
+-d "topology[index]=ns_1@172.23.108.70,ns_1@172.23.108.71"  \
+-d "topology[fts]=ns_1@172.23.108.72"  \
+-d "topology[n1ql]=ns_1@172.23.108.69,ns_1@172.23.108.71,ns_1@172.23.108.72" \
+-d "topology[cbas]=ns_1@172.23.108.73"
+---- 
+
+[#modify-mds-services-using-cli]
+== Modify Services Using CLI
+
+To modify MDS services on the existing nodes of a cluster using the CLI, use the following `couchbase-cli rebalance` command.
+
+----
+couchbase-cli rebalance -c <network_address> \
+--username <username> \
+--password <password> \
+--update-services [--index-[add|remove] <list-of-nodes>] [--n1ql-[add|remove] <list-of-nodes>] [--fts-[add|remove] <list-of-nodes>] [--cbas-[add|remove] <list-of-nodes>] [--eventing-[add|remove] <list-of-nodes>] [--backup-[add|remove] <list-of-nodes>]
+----
+
+These are the options for modifying MDS services:
+
+* `--update-services`: Indicates that the rebalance will make changes to the services on the cluster.
+
+* `--<service>-add <node>`: Adds the specified service to the specified node.
+`<service>` can be one of the following:
+
+** `index` for the Index Service.
+** `n1ql` for the Query Service.
+** `fts` for the Search Service.
+** `cbas` for the Analytics Service.
+** `eventing` for the Eventing Service.
+** `backup` for the Backup Service.
+
+* `--<service>-remove <node>`: Removes the specified service from the specified node.
+
+=== Examples
+
+* The `–fts-add` argument adds the full-text search service to the list of nodes.
+
+* The `–index-remove` argument removes the index service from the list of nodes.
+
+
+* To add the index service to `node2`, use the following command.
++
+----
+couchbase-cli rebalance -c 127.0.0.1 -u Administrator -p password --update-services --index-add node2
+----
+
+* To remove the index service from `node3`, use the following command.
++
+----
+couchbase-cli rebalance -c 127.0.0.1 -u Administrator -p password --update-services --index-remove node3
+----
+
+* Trying to remove a service that's not present on the node results in an error.
+From the previous example, if `node3` was not running the index service, the following error occurs.
++
+----
+ERROR: Node ns_1@node3 does not provide the index service
+----
+
+For more information about the `couchbase-cli rebalance` command, see xref:cli:cbcli/couchbase-cli-rebalance.adoc[rebalance].
