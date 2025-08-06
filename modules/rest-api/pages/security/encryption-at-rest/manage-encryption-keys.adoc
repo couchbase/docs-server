@@ -10,7 +10,7 @@
 
 == Description
 
-These APIs let you list, create, change, and delete encryption-at-rest keys.
+These APIs let you list, create, change, test, and delete encryption-at-rest keys.
 See xref:learn:security/native-encryption-at-rest-overview.adoc[] for more information about encryption at rest.
 
 == HTTP Methods 
@@ -19,9 +19,9 @@ This API endpoint supports the following methods:
 
 * <<#list-keys>>
 * <<#create-key>>
+* <<#test-key>>
+* <<#test-key-changes>>
 * <<#delete-key>>
-
-
 
 [#list-keys]
 == List Encryption-at-Rest Keys
@@ -30,12 +30,12 @@ List one or all encryption-at-rest keys defined in the cluster.
 
 .List All Keys
 ----
-GET /settings/encryptionKey/
+GET /settings/encryptionKeys/
 ----
 
 .Get details of a specific key
 ----
-GET /settings/encryptionKey/{KEY_ID}
+GET /settings/encryptionKeys/{KEY_ID}
 ----
 
 .Path Parameters
@@ -62,13 +62,47 @@ The id of the single encryption-at-rest key whose details you want to retrieve.
 [[get-privs]]
 === Required Privileges
 
-You must have at least on one of the following roles:
+The role you need to view specific keys depends on their use.
 
-* xref:learn:security/roles.adoc#security_admin_external[External User Admin]
+The following roles let you view all keys, including keys that can encrypt other keys (KEKs), audit, logs, and configuration data:
+
 * xref:learn:security/roles.adoc#admin[Full Admin]
-* xref:learn:security/roles.adoc#security_admin_local[Local User Admin]
 * xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]
 * xref:learn:security/roles.adoc#security_admin[Security Admin]
+
+The following roles let you view keys that can encrypt data in buckets. 
+Some of the role's ability to read keys depends on whether you have rights to access the bucket.
+For example, the Data Reader role only grants you access to keys that can encrypt data in buckets you have read access to.
+
+* xref:learn:security/roles.adoc#admin[Full Admin]
+* xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]
+* xref:learn:security/roles.adoc#security-admin[Security Admin]
+* xref:learn:security/roles.adoc#local-user-security-admin[Local User Admin]
+* xref:learn:security/roles.adoc#external-user-security-admin[External User Admin]
+* xref:learn:security/roles.adoc#cluster-admin[Cluster Admin]
+* xref:learn:security/roles.adoc#eventing-full-admin[Eventing Full Admin]
+* xref:learn:security/roles.adoc#admin[Backup Full Admin]
+* xref:learn:security/roles.adoc#backup-full-admin[Bucket Admin]
+* xref:learn:security/roles.adoc#application-access[Application Access]
+* xref:learn:security/roles.adoc#views-admin[Views Admin]
+* xref:learn:security/roles.adoc#xdcr-admin[XDCR Admin]
+* xref:learn:security/roles.adoc#data-reader[Data Reader]
+* xref:learn:security/roles.adoc#data-writer[Data Writer]
+* xref:learn:security/roles.adoc#data-dcp-reader[Data DCP Reader]
+* xref:learn:security/roles.adoc#data-backup-and-restore[Data Backup & Restore]
+* xref:learn:security/roles.adoc#data-monitor[Data Monitor]
+* xref:learn:security/roles.adoc#search-admin[Search Admin]
+* xref:learn:security/roles.adoc#search-reader[Search Reader]
+* xref:learn:security/roles.adoc#query-select][Query Select]
+* xref:learn:security/roles.adoc#query-update[Query Update]
+* xref:learn:security/roles.adoc#query-insert[Query Insert]
+* xref:learn:security/roles.adoc#query-delete[Query Delete]
+* xref:learn:security/roles.adoc#query-manage-index[Query Manage Index]
+* xref:learn:security/roles.adoc#query-list-index[Query List Index]
+* xref:learn:security/roles.adoc#query-system-catalog[Query System Catalog]
+* xref:learn:security/roles.adoc#query-curl-access[Query CURL Access]
+* xref:learn:security/roles.adoc#xdcr-inbound[XDCR Inbound]
+* xref:learn:security/roles.adoc#sync-gateway[Sync Gateway]
 
 === Responses
 
@@ -89,7 +123,7 @@ The following example gets all of the encryption-at-rest keys defined in the sys
 
 [source,bash]
 ----
- curl -v -u Administrator:password \
+ curl -sS -u Administrator:password \
       -X GET 'http://127.0.0.1:8091/settings/encryptionKeys/' | jq
 ----
 
@@ -108,13 +142,13 @@ An example of running the previous command:
           "keyMaterial": "******"
         }
       ],
-      "encryptWith": "nodeSecretManager",
+      "encryptionApproach": "nodeSecretManager",
       "canBeCached": true,
       "autoRotation": false
     },
     "id": 7,
     "name": "data-one-buckey-key",
-    "type": "auto-generated-aes-key-256",
+    "type": "cb-server-managed-aes-key-256",
     "usage": [
       "bucket-encryption-beer-sample",
       "bucket-encryption-test"
@@ -131,14 +165,14 @@ An example of running the previous command:
       "encryptionApproach": "useGet",
       "certPath": "/scripts/certs/cb_cert.pem",
       "caSelection": "useSysAndCbCa",
-      "encryptWith": "nodeSecretManager",
+      "encryptionApproach": "nodeSecretManager",
       "historicalKeys": [],
       "activeKey": {
         "id": "0788edb1-1418-4225-903b-bc1f9f59aa4d",
         "kmipId": "550e8400-e29b-41d4-a716-446655440000",
         "creationDateTime": "2025-04-23T14:44:20Z"
       },
-      "encryptWithKeyId": -1
+      "encryptionApproachKeyId": -1
     },
     "id": 2,
     "name": "kmip-key",
@@ -169,7 +203,7 @@ An example of running the previous command:
     },
     "id": 6,
     "name": "Example AWS key",
-    "type": "awskms-aes-key-256",
+    "type": "awskms-symmetric-key",
     "usage": [
       "KEK-encryption"
     ],
@@ -215,15 +249,14 @@ These values are empty when Couchbase Server uses IAM to authenticate with AWS i
 
 You can create or update an encryption-at-rest-key key using the REST API.
 
-
 .Create an Encryption Key
 ----
-POST /settings/encryptionKey/
+POST /settings/encryptionKeys/
 ----
 
 .Update a Key
 ----
-PUT /settings/encryptionKey/{KEY_ID}
+PUT /settings/encryptionKeys/{KEY_ID}
 ----
 
 .Path Parameters
@@ -256,7 +289,7 @@ EOF
 [source,bash]
 ----
 curl -sS -u $USER:$PASSWORD \
-  -X PUT http://{HOST}:{PORT}/settings/encryptionKeys/<KEY_ID> \
+  -X PUT http://{HOST}:{PORT}/settings/encryptionKeys/{KEY_ID} \
   --data-binary @- <<EOF | jq
 {
   "name": "<keyname>",
@@ -284,238 +317,15 @@ include::partial$user-pw-host-port-params.adoc[]
  The `id` attribute of the key you want to update.
 
 .Fields
-
-`name`::
-A name to give to the key. 
-This name must be different from any other encryption-at-rest key.
-
-[#usage]
-`usage`::
-A comma-separated list of what this key can encrypt.
-Allowed values for this list are:
-
-+
-* `"KEK-encryption"`: Can encrypt other encryption-at-rest keys (KEK).
-* `"bucket-encryption"`: Can encrypt any bucket in the cluster.
-* `"bucket-encryotion-<bucket-name>"`: Can encrypt the bucket named `bucket-name`.
-You can have multiple entries so the key can encrypt multiple buckets.
-* `"config-encryption"`: Can encrypt configuration information.
-* `"log-encryption"`: Can encrypt logs.
-* `"audit-encryption"`: Can encrypt audit data.
-
-`type`::
-Defines the encryption standard and the key management system for the key.
-All encryption-at-rest keys use AES 256 encryption.
-Allowed values are:  
-
-+
-* `"awskms-aes-key-256"`: AWS KMS manages the key.
-* `"kmip-aes-key-256"`: A KMIP-compatible KMS manages the key.
-* `"auto-generated-aes-key-256"`: Couchbase Server manages the key.
-
-`data`::
-The contents of the `data` object depend on the KMS set in the `type` field because each KMS has unique settings.
-
-
-[{tabs}]
-====
-AWS::
-+
---
-
-When using the AWS KMS, the `data` object has the following schema:
-
-[source,json]
-----
-  "data": {
-    "keyARN": "<arn>",
-    "region": "<region>",
-    "useIMDS": <true|false>,
-    "profile": "<profile-file-path>",
-    "credentiials-file": "<credential-file-path>",
-    "configFile": "<config-file-path>"
-  }
-----
-
-.Fields
-
-* `keyARN`: The https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html[Amazon Resource Name (ARN)^] that identifies the encryption key in the AWS KMS. 
-* `region` (optional): The region hosting your AWS KMS.
-* `useIMDS` (Boolean, optional): Whether to use Amazon's https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html[Instance Metadata Service (IMD)^] when contacting  the AWS KMS. 
-Set this to `true` when your cluster runs on AWS EC2 instances.
-Defaults to `false`.
-
-
-You must give Couchbase Server a way to authenticate with the AWS KMS. 
-See Amazon's https://docs.aws.amazon.com/kms/latest/developerguide/control-access.html[KMS key access and permissions] for details of configuring authentication. 
-
-You can use https://docs.aws.amazon.com/kms/latest/developerguide/iam-policies.html[IAM policies^] to allow Couchbase Server to transparently connect to the AWS KMS.
-If you configure IAM, you do not need any additional authentication configuration within Couchbase Server.
-Always use this method if your database runs on an AWS EC2 cluster.
-It's also possible to configure IAM for your cluster when it's not running in AWS.
-See the AWS documentation for using https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_non-aws.html[IAM Roles Anywhere^].
-
-The other authentication method is to use three optional parameters to pass Couchbase Server the necessary credentials in several files.
-These files must exist on all servers in your cluster.
-
-Use the following parameters to tell Couchbase Server where these files are located:
-
-* `credentials-file` the absolute path to a file containing the AWS credentials to use when authenticating with the AWS KMS.
-When you supply this path, the file must exist on all nodes.
-This file often stored at `~/.aws/credentials` on Linux systems.
-For example:
-
-+
-[source,ini]
-----
-[my-profile]
-aws_access_key_id = ABCDE...
-aws_secret_access_key = xyz123...
-----
-
-* `configFile`: the absolute path to a file that defines one or more profiles for accessing AWS.
- This file is often stored in `~/.aws/config` on Linux systems.
- The format of 
-
-+
-[source,ini]
-----
-[profile profile-name]
-region = us-east-1
-output = json
-role_arn = arn:aws:iam::123456789012:role/RoleName
-source_profile = base
-----
-
-* `profile`: Path to a file containing the name of the profile defined in the `credentials-file` to use when authenticating with AWS KMS.
-
-NOTE: Couchbase Server does not verify the information you give it during key creation. 
-It only attempts to connect to AWS when you select the key to encrypt data or another key. 
---
-
-KMIP KMS::
-+
---
-When using a KMIP-compatible KMS, the `data` object has the following schema:  
-
-[source,json]
-----
-"data": {
-      "port": <kms-port>,
-      "host": "<kms-host-url>",
-      "reqTimeoutMs": <timeout-ms>,
-      "keyPath": "<path-to-key-pem>",
-      "keyPassphrase": "<passphrase>",
-      "encryptionApproach": "<local-or-kms>",
-      "certPath": "<certificate-path>",
-      "caSelection": "<trust-store>",
-      "encryptWith": "<password-or-key>",
-      "activeKey": {
-        "kmipId": "<kmip-KEY_ID>"
-      },
-      "encryptWithKeyId": <local-KEY_ID>
-    }
-----
-
-.Fields
-
-* `port`: Integer port number for the KMS server. 
-Most KMS servers use port 5696.
-* `host`: The URL for the KMS.
-* `reqTimeoutMs` (integer, optional): The timeout for network communication with the KMS in milliseconds.
-Defaults to 1000.
-* `keyPath`: Absolute path on each server to the private key Couchbase Server uses to authenticate with the KMS.
-This key file must be in PEM format.
-* `keyPassphrase` (optional): The private key's passphrase, if it has one.
-* `encryptWith`: Controls which system performs the decryption of keys.
-Can be one of the following values:
-
-** `"useGet"`: Couchbase Server retrieves the encryption key from the KMS and uses it to decrypt local DEKs and encryption keys.
-** `"useEncryptDecrypt"`: Send local DEKs and encryption keys to the KMS.
-The KMS decrypts the keys locally and returns the decrypted keys back to Couchbase Server.
-
-* `certPath`: The absolute path on all servers to the certificate to use when authenticating with the KMS.  
-The certificate file must be in PEM format.
-* `caSelection` (optional): Where to look for certificates when verifying the identity of the KMS.
-Can be one of the following values:
-
-** `"useSysAndCbCa"` (default): Use the certificates in both the operating system's and Couchbase Server's trust stores.
-** `"useSysCa"`: Use the certificates in the operating system's trust store.
-** `"useCbCa"`: Use the certificates in Couchbase Server's trust store.
-** `"skipServerCertVerification"`: Skip verification of the KMS.
-+
-CAUTION: Not verifying the identity of the KMS is insecure. 
-
-* `encryptWith` (optional): controls how the passphrase for the private key is encrypted for local storage. 
-The two options are:
-
-** `"nodeSecretManager"` (default): Couchbase Server encrypts the passphrase using the database's master password.
-** `"encryptionKey"`: Use a KEK-enabled encryption key to encrypt the passphrase.
-If you choose this option, you must also supply the `encryptWithKeyId` parameter.
-
-* `activeKey.kmipId`: The ID of the encryption key stored in the KMS.
-The format of this value depends on the KMS.
-It's often in the form of a UUID or a friendly name.
-
-* `encryptWithKeyId` (integer): The `id` attribute of the encryption key Couchbase Server uses to encrypt the private key's passphrase when storing it locally. 
-See <<#list-keys>> to learn how to get an encryption key's `id`.
-Required if you set `encryptWith` to `encryptionKey`. 
-
-NOTE: Couchbase Server does not verify the information you give it during key creation. 
-It only attempts to connect to the KMS when you assign the key to encrypt something. 
---
-
-Couchbase Server::
-+
---
-
-When having Couchbase Server manage the key, the `data` object has the following schema:
-
-[source,json]
-----
-    "data": {
-      "autoRotation": <true|false>,
-      "encryptWith": "<key-or-secrets-manager>",
-      "encryptWithKeyId": <KEY_ID>
-      "canBeCached": <true|false>
-      "nextRotationTime": "<iso-8601-date",
-      "rotationIntervalInDays": <days>
-    }
-----
-
-.Fields
-
-* `autoRotation` (Boolean, optional):  Controls whether Couchbase Server automatically rotates the key.
-See xref:learn:security/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration] for more information about key rotation.
-Defaults to `true`, which means that Couchbase Server automatically rotates  the key. 
-In this case, you must supply both the `nextRotationTime` and `rotationIntervalInDays` fields as well.
-* `encryptWith` (optional): How Couchbase Server should encrypt this key for storage.
-The two options are:
-
-** `"nodeSecretManager"`: (default): Couchbase Server encrypts the key using the database's master password.
-** `"encryptionKey"`: Couchbase Server uses a KEK-enabled encryption key to encrypt the key.
-If you choose this option, you must also supply the `encryptWithKeyId` field.
-
-* `encryptWithKeyId` (integer): The `id` attribute of an existing encryption-at-rest key to use to encrypt this key. 
-The key you select must have `KEK-encryption` in its `usage` list.
-* `canBeCached` (Boolean, optional): Determines if Couchbase Server is allowed to cache the decrypted key in memory. 
-Setting this to `true` (the default) makes using the key more efficient because Couchbase Server does not have to decrypt it each time it needs to use it. 
-Disabling caching by setting this value to `false` slightly increases the overhead of using encryption at rest but helps reduce the chance of in-memory key exposure attacks. 
-* `nextRotationTime`: A date and time string in https://en.wikipedia.org/wiki/ISO_8601[ISO 8601 format^] that sets when Couchbase Server must rotate this key.   
-This value is required if you set `autoRotation` to `true`.
-* `rotationIntervalInDays` (integer): How often, in days, Couchbase Server rotates this key. 
-This field is required if you set `autoRotation` to `true`.
---
-====
+:field-use: create 
+include::partial$encryption-at-rest-post-put-fields.adoc[]
 
 [#create-privs]
 === Required Privileges
 
-You must have at least on one of the following roles:
+The role you need to create or update keys depends on what the key you're creating or updating can encrypt:
 
-* xref:learn:security/roles.adoc#admin[Full Admin]
-* xref:learn:security/roles.adoc#security_admin[Security Admin]
-
+include::rest-api:partial$encryption-at-rest-key-write-roles.adoc[]
 
 === Responses
 
@@ -526,7 +336,7 @@ See <<#create-examples>> for examples of the returned JSON.
 `400 Bad Request`::
 Returned when errors occur, such as leaving out a required setting or invalid JSON. 
 Also returns a descriptive JSON message.
-For example, if you set `encryptWith` to `encryptionKey` but do not set `encryptWithKeyID`, you receive this message:
+For example, if you set `encryptionApproach` to `encryptionKey` but do not set `encryptionApproachKeyID`, you receive this message:
 
 +
 [source,json]
@@ -534,7 +344,7 @@ For example, if you set `encryptWith` to `encryptionKey` but do not set `encrypt
 {
   "errors": {
     "data": {
-      "encryptWith": "encryptWithKeyId must be set when 'encryptionKey' is used"
+      "encryptionApproach": "encryptionApproachKeyId must be set when 'encryptionKey' is used"
     }
   }
 }
@@ -545,7 +355,7 @@ Returned if you do not have the proper roles to call this API.
 See <<#create-privs>>.
 
 `404 Object Not Found`::
-Returned if you specified a `encryptWithKeyId` field or a `KEY_ID` path parameter which does not match the `id` field of an existing encryption-at-rest key.
+Returned if you specified a `encryptionApproachKeyId` field or a `KEY_ID` path parameter which does not match the `id` field of an existing encryption-at-rest key.
 
 
 [#create-examples]
@@ -581,7 +391,7 @@ curl -sS -u Administrator:password \
   --data-binary @- <<EOF | jq
 {
   "name": "Example AWS key",
-  "type": "awskms-aes-key-256",
+  "type": "awskms-symmetric-key",
   "usage": [
     "KEK-encryption"
   ],
@@ -615,7 +425,7 @@ The following example shows the result of running the command from the previous 
   },
   "id": 14,
   "name": "Example AWS key",
-  "type": "awskms-aes-key-256",
+  "type": "awskms-symmetric-key",
   "usage": [
     "KEK-encryption"
   ],
@@ -623,31 +433,32 @@ The following example shows the result of running the command from the previous 
 }
 ----
 
+[#create-kmip-example]
 .Create a KMIP-compatible KMS Managed Key
 
 [source,bash]
 ----
-curl -v -u Administrator:password  \
+curl -sS -u Administrator:password  \
      -X POST   http://127.0.0.1:8091/settings/encryptionKeys   \
        --data-binary @- <<EOF | jq
 {
-  "name": "Example KMIP key",
+  "name": "Example KMIP Key",
   "type": "kmip-aes-key-256",
   "usage": [
     "KEK-encryption"
   ],
-  "data": {
-    "port": 5696,
-    "host": "https://kms.example.com",
-    "reqTimeoutMs": 1000,
-    "keyPath": "/scripts/certs/cb_key.pem",
-    "encryptionApproach": "useEncryptDecrypt",
-    "certPath": "/scripts/certs/cb_cert.pem",
-    "keyPassphrase": "Password1234",
-    "caSelection": "useSysAndCbCa",
-    "encryptWith": "nodeSecretManager",
-    "activeKey": {
-      "kmipId": "0788edb1-1418-4225-903b-bc1f9f59aa4d"
+"data": {
+      "port": 5696,
+      "host": "https://kms.example.com",
+      "reqTimeoutMs": 1000,
+      "keyPath": "/scripts/certs/cb_key.pem",
+      "keyPassphrase": "Passwprd1234",
+      "encryptionApproach": "useGet",
+      "certPath": "/scripts/certs/cb_cert.pem",
+      "caSelection": "skipServerCertVerification",
+      "encryptionApproach": "nodeSecretManager",
+      "activeKey": {
+        "kmipId": "0788edb1-1418-4225-903b-bc1f9f59aa4d"
     }
   }
 }
@@ -665,24 +476,24 @@ The following example shows the output from running the previous example.
     "reqTimeoutMs": 1000,
     "keyPath": "/scripts/certs/cb_key.pem",
     "keyPassphrase": "******",
-    "encryptionApproach": "useEncryptDecrypt",
+    "encryptionApproach": "useGet",
     "certPath": "/scripts/certs/cb_cert.pem",
-    "caSelection": "useSysAndCbCa",
-    "encryptWith": "nodeSecretManager",
+    "caSelection": "skipServerCertVerification",
+    "encryptionApproach": "nodeSecretManager",
     "historicalKeys": [],
     "activeKey": {
-      "id": "52ab2528-ab90-4d6e-a523-cf42c2d64b50",
+      "id": "11c9195b-0d20-41c4-9f3c-550cb5d2c5f3",
       "kmipId": "0788edb1-1418-4225-903b-bc1f9f59aa4d",
-      "creationDateTime": "2025-05-06T12:58:04Z"
+      "creationDateTime": "2025-08-05T14:32:21Z"
     }
   },
-  "id": 15,
-  "name": "Example KMIP key",
+  "id": 1,
+  "name": "Example KMIP Key",
   "type": "kmip-aes-key-256",
   "usage": [
     "KEK-encryption"
   ],
-  "creationDateTime": "2025-05-06T12:58:04Z"
+  "creationDateTime": "2025-08-05T14:32:21Z"
 }
 ----
 
@@ -694,13 +505,13 @@ The update makes the key able to encrypt any bucket and sets the next rotation t
 
 [source,bash]
 ----
-curl -v -u Administrator:password \
+curl -sS -u Administrator:password \
   -X PUT \
   http://127.0.0.1:8091/settings/encryptionKeys/13 \
   --data-binary @- <<EOF | jq
 {
   "name": "Example Auto-Generated Key2",
-  "type": "auto-generated-aes-key-256",
+  "type": "cb-server-managed-aes-key-256",
   "usage": [
     "bucket-encryption", "config-encryption", "log-encryption" 
   ],
@@ -726,7 +537,7 @@ The output from the previous example looks like this:
         "keyMaterial": "******"
       }
     ],
-    "encryptWith": "nodeSecretManager",
+    "encryptionApproach": "nodeSecretManager",
     "canBeCached": true,
     "nextRotationTime": "2025-07-31T19:27:19Z",
     "autoRotation": true,
@@ -734,7 +545,7 @@ The output from the previous example looks like this:
   },
   "id": 13,
   "name": "Example Auto-Generated Key",
-  "type": "auto-generated-aes-key-256",
+  "type": "cb-server-managed-aes-key-256",
   "usage": [
     "bucket-encryption",
     "config-encryption",
@@ -744,11 +555,224 @@ The output from the previous example looks like this:
 }
 ----
 
+
+[#test-key]
+== Test Existing Encryption-at-Rest Key
+
+Test an encryption-at-rest keys defined in the cluster.
+Couchbase Server does not verify that a key is valid when creating it.
+You can use this call to verify that the key is valid and can encrypt data before you assign it to encrypt data or another key.
+
+
+.Test a Key
+----
+POST /settings/encryptionKeys/{KEY_ID}/test
+----
+
+.Path Parameters
+`KEY_ID` (integer)::
+The `id` attribute of the key you want to test. 
+See the <<#gey-keys-example,example>> for an explanation of getting this value.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -sS -u $USER:$PASSWORD \
+     -X POST 'http[s]://<hostname>:{PORT}/settings/encryptionKeys/{KEY_ID}/test' 
+----
+
+.Path Parameters
+:priv-link: test-privs
+include::partial$user-pw-host-port-params.adoc[]
+
+`KEY_ID`::
+The `id` attribute of the encryption-at-rest key that you want to test.
+
+[#test-privs]
+=== Required Privileges
+
+You must have at least one of the following roles:
+
+* xref:learn:security/roles.adoc#security_admin_external[External User Admin]
+* xref:learn:security/roles.adoc#admin[Full Admin]
+* xref:learn:security/roles.adoc#security_admin_local[Local User Admin]
+* xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]
+* xref:learn:security/roles.adoc#security_admin[Security Admin]
+
+=== Responses
+
+`200 OK`::
+If Couchbase Server was able to use the key to encrypt and decrypt some sample data, it just returns this return code and nothing else.
+
+`404 Object Not Found`::
+Returned if you specified a `KEY_ID` path parameter which does not match the ID of an encryption-at-rest key.
+
+`400 Bad Request`::
+Returned if the key you tried to test is misconfigured or cannot access the remote KMS.
+You also receive an error message in JSON format describing the problem.  
+
+
+[#gey-keys-example]
+=== Examples
+
+The following example tests the encryption-at-rest key with `id` 2.
+
+[source,bash]
+----
+ curl -v -u Administrator:password \
+      -X POST 'http://127.0.0.1:8091/settings/encryptionKeys/2/test'
+----
+
+If successful, the previous example just returns the `200 OK` status code and nothing else.
+The verbose output of the `curl` command looks like this (notice the `HTTP/1.1 200 OK` indicating the successful call):
+
+[source,console]
+----
+*   Trying 127.0.0.1:8091...
+* Connected to 127.0.0.1 (127.0.0.1) port 8091
+* Server auth using Basic with user 'Administrator'
+> POST /settings/encryptionKeys/2/test HTTP/1.1
+> Host: 127.0.0.1:8091
+> Authorization: Basic QWRtaW5pc3RyYXRvcjpwYXNzd29yZA==
+> User-Agent: curl/8.7.1
+> Accept: */*
+> 
+* Request completely sent off
+< HTTP/1.1 200 OK
+< Cache-Control: no-cache,no-store,must-revalidate
+< Content-Length: 0
+< Date: Tue, 05 Aug 2025 14:42:23 GMT
+< Expires: Thu, 01 Jan 1970 00:00:00 GMT
+< Pragma: no-cache
+< Server: Couchbase Server
+< X-Content-Type-Options: nosniff
+< X-Frame-Options: DENY
+< X-Permitted-Cross-Domain-Policies: none
+< X-XSS-Protection: 1; mode=block
+< 
+* Connection #0 to host 127.0.0.1 left intact
+----
+
+[#test-key-changes]
+== Test Possible Changes to an Encryption-at-Rest Key
+
+You can test changes you want to make to an encryption-at-rest key managed by a remote KMS before you actually make them.
+Calling this REST API method does not actually make the changes to the key. 
+It just tests an altered copy of the key to determine if it able to encrypt and decrypt data.
+The call to this API method is the same as altering the key using the xref:rest-api:security/encryption-at-rest/manage-encryption-keys.adoc#create-key[Create or Update an Encryption-at-Rest Key] API method, except it adds a `/test` suffix to the URL.
+
+NOTE: This endpoint only works for AWS and KMIP keys.
+It does not work for Couchbase Server managed keys.
+
+.Test Possible CHanges to a Key
+----
+PUT /settings/encryptionKeys/{KEY_ID}/test
+----
+
+.Path Parameters
+`KEY_ID` (integer)::
+The `id` attribute of the key you want to test. 
+See the <<#gey-keys-example,example>> for an explanation of getting this value.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -sS -u $USER:$PASSWORD \
+     -X PUT 'http[s]://<hostname>:{PORT}/settings/encryptionKeys/{KEY_ID}/test' 
+{
+  "name": "<keyname>",
+  "usage": [
+    "<usage>"[."<usage>"...]
+  ],
+  "type": "<KMS>",
+  "data": {
+    <KMS-specific-fields>
+  }
+}
+EOF
+----
+
+.Path Parameters
+:priv-link: test-changes-privs
+include::partial$user-pw-host-port-params.adoc[]
+
+`KEY_ID`::
+The id of the single encryption-at-rest key that you want to test.
+
+.Fields
+// Variable to hide the CB managed key fields because they do not apply for this APi call
+:field-use: test  
+include::partial$encryption-at-rest-post-put-fields.adoc[]
+
+[[test-changes-privs]]
+=== Required Privileges
+
+The role you need to test changes to a key depends on what the key you're testing can encrypt:
+
+include::rest-api:partial$encryption-at-rest-key-write-roles.adoc[]
+
+=== Responses
+
+`200 OK`::
+Couchbase Server returns this status and nothing else if it was able encrypt and decrypt some sample data with your changes applied to the key.
+
+`404 Object Not Found`::
+Returned if you specified a `KEY_ID` path parameter which does not match the ID of an encryption-at-rest key.
+
+`400 Bad Request`::
+Returned if the key you tried to test is misconfigured or cannot access the remote KMS.
+Couchbase Server also returns an error message in JSON format describing the problem.
+For example, the following error message occurs when Couchbase Server cannot unlock the key file specified in the `keyPath` field:
+
++
+[source,json]
+----
+{
+  "errors": {
+    "_": "Encryption key test failed on node1.:8091, node2.:8091, node3.:8091: encryption failed: incorrect password for private key: full error: x509KeyPair: parsePrivateKey returned err: parsePrivateKey: failed to parse private key. Error: asn1: structure error: tags don't match (2 vs {class:0 tag:16 length:95 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} int @2; pkcs8: incorrect password; x509: failed to parse EC private key: asn1: structure error: tags don't match (2 vs {class:0 tag:16 length:95 isCompound:true}) {optional:false explicit:false application:false private:false defaultValue:<nil> tag:<nil> stringType:0 timeType:0 set:false omitEmpty:false} int @2"
+  }
+}
+----
+
+[#test-changes-example]
+=== Example
+
+The following example tests changing the hostname of the KMIP key created in <<#create-kmip-example>>.
+
+[source,bash]
+----
+ curl -v -u Administrator:password  \
+     -X PUT   http://127.0.0.1:8091/settings/encryptionKeys/1/test \
+       --data-binary @- <<EOF | jq
+{
+  "name": "Example KMIP Key",
+  "type": "kmip-aes-key-256",
+  "usage": [
+    "KEK-encryption"
+  ],
+"data": {
+      "port": 5696,
+      "host": "https://kms2.example.com",
+      "keyPath": "/scripts/certs/cb_key.pem",
+      "certPath": "/scripts/certs/cb_cert.pem",
+      "activeKey": {
+        "kmipId": "0788edb1-1418-4225-903b-bc1f9f59aa4d"
+      }
+  }
+}
+EOF
+----
+
+The previous example returns the code `200 OK` if the test was successful with no further output. 
+
+
 [#delete-key]
 == Delete an Encryption-at-Rest Key
 
 You can delete an encryption-at-rest key as long as Couchbase Server is not using it to encrypt data or another encryption key.
-See XXX for more formation about deleting keys.
+// See  for more formation about deleting keys.
 
 .Delete an Encryption Key
 ----
@@ -761,10 +785,10 @@ The `id` attribute of the key you want to delete.
 
 
 === curl Syntax
-[source,bash.]
+[source,bash]
 ----
 curl -sS -u $USER:$PASSWORD   -X DELETE \
-     http://{HOST}:{PORT}/settings/encryptionKeys/<KEY_ID>
+     'http://{HOST}:{PORT}/settings/encryptionKeys/{KEY_ID}'
 ----
 
 .Path Parameters
@@ -778,10 +802,9 @@ include::partial$user-pw-host-port-params.adoc[]
 [[del-privs]]
 === Required Privileges
 
-You must have at least on one of the following roles:
+The role you need to delete a key depends on what the key you're deleting can encrypt:
 
-* xref:learn:security/roles.adoc#admin[Full Admin]
-* xref:learn:security/roles.adoc#security_admin[Security Admin]
+include::rest-api:partial$encryption-at-rest-key-write-roles.adoc[]
 
 === Responses
 

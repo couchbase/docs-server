@@ -1,0 +1,228 @@
+`name` (required)::
+A name to give to the key. 
+This name must be different from any other encryption-at-rest key.
+
+[#usage-{field-use}]
+`usage`::
+A comma-separated list of what this key can encrypt.
+Allowed values for this list are:
+
++
+* `"KEK-encryption"`: Can encrypt other encryption-at-rest keys (KEK).
+* `"bucket-encryption"`: Can encrypt any bucket in the cluster.
+* `"bucket-encryotion-<bucket-name>"`: Can encrypt the bucket named `bucket-name`.
+You can include multiple instances of this value to list specific buckets the key can encrypt.
+* `"config-encryption"`: Can encrypt configuration information.
+* `"log-encryption"`: Can encrypt logs.
+* `"audit-encryption"`: Can encrypt audit data.
+
+`type`::
+Defines the encryption standard and the key management system for the key.
+All encryption-at-rest keys use AES 256 encryption.
+Allowed values are:  
+
++
+* `"awskms-symmetric-key"`: AWS KMS manages the key.
+* `"kmip-aes-key-256"`: A KMIP-compatible KMS manages the key.
+* `"cb-server-managed-aes-key-256"`: Couchbase Server manages the key.
+
+`data`::
+The contents of the `data` object depend on the KMS set in the `type` field because each KMS has unique settings.
+
+
+[{tabs}]
+====
+AWS::
++
+--
+
+When using the AWS KMS, the `data` object has the following schema:
+
+[source,json]
+----
+  "data": {
+    "keyARN": "<arn>",
+    "region": "<region>",
+    "useIMDS": <true|false>,
+    "profile": "<profile-file-path>",
+    "credentiials-file": "<credential-file-path>",
+    "configFile": "<config-file-path>"
+  }
+----
+
+.Fields
+
+* `keyARN`: The https://docs.aws.amazon.com/IAM/latest/UserGuide/reference-arns.html[Amazon Resource Name (ARN)^] that identifies the encryption key in the AWS KMS. 
+* `region` (optional): The region hosting your AWS KMS.
+* `useIMDS` (Boolean, optional): Whether to use Amazon's https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html[Instance Metadata Service (IMD)^] when contacting  the AWS KMS. 
+Set this to `true` when your cluster runs on AWS EC2 instances.
+Defaults to `false`.
+
+
+You must give Couchbase Server a way to authenticate with the AWS KMS. 
+See Amazon's https://docs.aws.amazon.com/kms/latest/developerguide/control-access.html[KMS key access and permissions] for details of configuring authentication. 
+
+You can use https://docs.aws.amazon.com/kms/latest/developerguide/iam-policies.html[IAM policies^] to allow Couchbase Server to transparently connect to the AWS KMS.
+If you configure IAM, you do not need any additional authentication configuration within Couchbase Server.
+Always use this method if your database runs on an AWS EC2 cluster.
+It's also possible to configure IAM for your cluster when it's not running in AWS.
+See the AWS documentation for using https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_common-scenarios_non-aws.html[IAM Roles Anywhere^].
+
+The other authentication method is to use three optional parameters to pass Couchbase Server the necessary credentials in several files.
+These files must exist on all servers in your cluster.
+
+Use the following parameters to tell Couchbase Server where these files are located:
+
+* `credentials-file` the absolute path to a file containing the AWS credentials to use when authenticating with the AWS KMS.
+When you supply this path, the file must exist on all nodes.
+This file often stored at `~/.aws/credentials` on Linux systems.
+For example:
+
++
+[source,ini]
+----
+[my-profile]
+aws_access_key_id = ABCDE...
+aws_secret_access_key = xyz123...
+----
+
+* `configFile`: the absolute path to a file that defines one or more profiles for accessing AWS.
+ This file is often stored in `~/.aws/config` on Linux systems.
+ The format of 
+
++
+[source,ini]
+----
+[profile profile-name]
+region = us-east-1
+output = json
+role_arn = arn:aws:iam::123456789012:role/RoleName
+source_profile = base
+----
+
+* `profile`: The name of the profile defined in the configuration file to use when authenticating with AWS KMS.
+
+NOTE: Couchbase Server does not verify the information you give it during key creation. 
+It only attempts to connect to AWS when you select the key to encrypt data or another key. 
+See xref:rest-api:security/encryption-at-rest/manage-encryption-keys.adoc#test-key[Test an Encryption-at-Rest Key] to learn how to test the key.
+--
+
+KMIP KMS::
++
+--
+When using a KMIP-compatible KMS, the `data` object has the following schema:  
+
+[source,json]
+----
+"data": {
+      "port": <kms-port>,
+      "host": "<kms-host-url>",
+      "reqTimeoutMs": <timeout-ms>,
+      "keyPath": "<path-to-key-pem>",
+      "keyPassphrase": "<passphrase>",
+      "encryptionApproach": "<local-or-kms>",
+      "certPath": "<certificate-path>",
+      "caSelection": "<trust-store>",
+      "encryptionApproach": "<password-or-key>",
+      "activeKey": {
+        "kmipId": "<kmip-KEY_ID>"
+      },
+      "encryptionApproachKeyId": <local-KEY_ID>
+    }
+----
+
+.Fields
+
+* `port`: Integer port number for the KMS server. 
+Most KMS servers use port 5696.
+* `host`: The URL for the KMS.
+* `reqTimeoutMs` (integer, optional): The timeout for network communication with the KMS in milliseconds.
+Defaults to 1000.
+* `keyPath`: Absolute path on each server to the private key Couchbase Server uses to authenticate with the KMS.
+This key file must be in PEM format.
+* `keyPassphrase` (optional): The private key's passphrase, if it has one.
+* `encryptionApproach`: Controls which system performs the decryption of keys.
+Can be one of the following values:
+
+** `"useGet"`: Couchbase Server retrieves the encryption key from the KMS and uses it to decrypt local DEKs and encryption keys.
+** `"useEncryptDecrypt"`: Send local DEKs and encryption keys to the KMS.
+The KMS decrypts the keys locally and returns the decrypted keys back to Couchbase Server.
+
+* `certPath`: The absolute path on all servers to the certificate to use when authenticating with the KMS.  
+The certificate file must be in PEM format.
+* `caSelection` (optional): Where to look for certificates when verifying the identity of the KMS.
+Can be one of the following values:
+
+** `"useSysAndCbCa"` (default): Use the certificates in both the operating system's and Couchbase Server's trust stores.
+** `"useSysCa"`: Use the certificates in the operating system's trust store.
+** `"useCbCa"`: Use the certificates in Couchbase Server's trust store.
+** `"skipServerCertVerification"`: Skip verification of the KMS.
++
+CAUTION: Not verifying the identity of the KMS is insecure. 
+
+* `encryptionApproach` (optional): controls how the passphrase for the private key is encrypted for local storage. 
+The two options are:
+
+** `"nodeSecretManager"` (default): Couchbase Server encrypts the passphrase using the xref:manage:manage-security/manage-system-secrets.adoc#setting-the-master-password[master password].
+** `"encryptionKey"`: Use a KEK-enabled encryption key to encrypt the passphrase.
+If you choose this option, you must also supply the `encryptionApproachKeyId` parameter.
+
+* `activeKey.kmipId`: The ID of the encryption key stored in the KMS.
+The format of this value depends on the KMS.
+It's often in the form of a UUID or a friendly name.
+
+* `encryptionApproachKeyId` (integer): The `id` attribute of the encryption key Couchbase Server uses to encrypt the private key's passphrase when storing it locally. 
+See <<#list-keys>> to learn how to get an encryption key's `id`.
+Required if you set `encryptionApproach` to `encryptionKey`. 
+
+NOTE: Couchbase Server does not verify the information you give it during key creation. 
+It only attempts to connect to the KMS when you assign the key to encrypt something. 
+See xref:rest-api:security/encryption-at-rest/manage-encryption-keys.adoc#test-key[Test an Encryption-at-Rest Key] to learn how to test the key.
+--
+
+ifeval::['{field-use}' == 'create'] 
+Couchbase Server::
++
+--
+
+When having Couchbase Server manage the key, the `data` object has the following schema:
+
+[source,json]
+----
+    "data": {
+      "autoRotation": <true|false>,
+      "encryptionApproach": "<key-or-secrets-manager>",
+      "encryptionApproachKeyId": <KEY_ID>
+      "canBeCached": <true|false>
+      "nextRotationTime": "<iso-8601-date",
+      "rotationIntervalInDays": <days>
+    }
+----
+
+.Fields
+
+* `autoRotation` (Boolean, optional):  Controls whether Couchbase Server automatically rotates the key.
+See xref:learn:security/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration] for more information about key rotation.
+Defaults to `true`, which means that Couchbase Server automatically rotates  the key. 
+In this case, you must supply both the `nextRotationTime` and `rotationIntervalInDays` fields as well.
+* `encryptionApproach` (optional): How Couchbase Server should encrypt this key for storage.
+The two options are:
+
+** `"nodeSecretManager"`: (default): Couchbase Server encrypts the key using the xref:manage:manage-security/manage-system-secrets.adoc#setting-the-master-password[master password].
+** `"encryptionKey"`: Couchbase Server uses a KEK-enabled encryption key to encrypt the key.
+If you choose this option, you must also supply the `encryptionApproachKeyId` field.
+
+* `encryptionApproachKeyId` (integer): The `id` attribute of an existing encryption-at-rest key to use to encrypt this key. 
+The key you select must have `KEK-encryption` in its `usage` list.
+* `canBeCached` (Boolean, optional): Set this value to `true` (the default) to allow Couchbase Server to cache the decrypted key in memory. 
+The default `true` value makes using the key more efficient because Couchbase Server does not have to decrypt it each time it needs to use it. 
+Disabling caching by setting this value to `false` can significantly increase node start time because the node  decrypts all of its DEKs on startup.
+It can also increase the time it takes for operations that re-encrypts DEKs, such as key rotation or changing encryption at rest settings.
+The `false` setting can reduce the chance of in-mmeory key exposure attacks.
+* `nextRotationTime`: A date and time string in https://en.wikipedia.org/wiki/ISO_8601[ISO 8601 format^] that sets when Couchbase Server must rotate this key.
+You must set this value if you set `autoRotation` to `true`.
+* `rotationIntervalInDays` (integer): How often, in days, Couchbase Server rotates this key. 
+You must set this value if you set `autoRotation` to `true`.
+--
+endif::[]
+====
