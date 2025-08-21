@@ -13,16 +13,15 @@ You may want to change the ejection policy when migrating a bucket's xref:learn:
 For example, when migrating a bucket from Couchstore to Magma, you should consider changing the bucket's ejection policy to Full Ejection.
 This policy works well for Magma buckets that have a low memory to storage ratio.
 You can change both the storage backend and the jection policy at the same time.
-See xref:migrate-bucket.adoc[] for steps to perform both operations.
+See xref:manage:manage-buckets/migrate-bucket.adoc[] for steps to perform both operations.
 
 == Changing the Ejection Policy Using the Couchbase Server Web Console
 
 You can edit a Couchbase bucket's ejection policy using the Couchbase Server Web Console.
 
 IMPORTANT: When you change the ejection policy of a bucket using the Couchbase Server Web Console, Couchbase Server automatically restarts the bucket.
-Restarting the bucket causes Couchbase Server to disconnect all client connections.
-It's unavailable for the duration of the restart.
-Do not change the ejection policy of a bucket in production unless you are prepared for downtime.
+Restarting the bucket closes all open connections and results in some downtime.
+Do not change the ejection policy of a bucket in production unless you're prepared this downtime.
 You can also change the ejection policy using REST API which lets you avoid downtime.
 See <<rest-api> for more details.
 
@@ -43,7 +42,6 @@ This expands the row to display additional information:
 image::manage-buckets/bucketsViewWithExpandedBucketRow.png[]
 
 . Click btn:[Edit] to edit the bucket's settings.
-The [.ui]*Edit Bucket Settings* dialog appears.
 
 +
 image::manage-buckets/bucket-edit-dialog-initial.png[,400]
@@ -53,11 +51,11 @@ image::manage-buckets/bucket-edit-dialog-initial.png[,400]
 +
 image::manage-buckets/bucket-edit-dialog-expanded.png[,400]
 
-. Change the [.ui]*Ejection policy* setting to the desired value:
+. Change the [.ui]*Ejection Method* setting the new value you want:
 
 +
 * *Value-only*: Couchbase Server removes a document's data, but keeps its keys and metadata in memory.
-Keeping these values in data helps lessen the performance overhead of removing the document from memory.
+Keeping these values in memory helps lessen the performance overhead of removing the document from memory.
 * *Full*: Couchbase Server removes the entire document from memory.
 
 +
@@ -69,14 +67,106 @@ Couchbase Server restarts the bucket to apply the new ejection policy.
 [#rest-api]
 == Changing the Ejection Policy Using the REST API
 
-When you use the REST API to change a bucket's ejection policy, you can avoid the downtime associated with changing the ejection policy using the Couchbase Server Web Console.
-Once you change the ejection poilcy using a REST-API call, you must take an additional step to apply the change:
+You can use the REST API to change a bucket's ejection policy without the downtime caused by the Couchbase Server Web Console restarting the bucket.
 
-* Restart the bucket.
-* Perform a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on  all nodes in the cluster running the data service.
-* Perform a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] for all nodes running the data service in the cluster.
+You change the ejection policy by sending a POST request to the `/pools/default/buckets/<bucketname>` endpoint and changing the `evictionPolicy` setting. 
+Couchbase Server automatically restarts the bucket after you make this call unless you also set the `noRestart` parameter to `true`.
+
+If you change the rejection policy and prevent Couchbase Server from restarting the bucket, the new setting does not take effect until you perform one of the following procedures:
+
+* a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on  all nodes in the cluster running the data service.
+* a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] for all nodes running the data service in the cluster.
 
 The following procedure shows you how to change the ejection policy of a bucket using the REST API.
 It then demonstrates performing a graceful failover followed by a full recovery and rebalance to apply the change.
 
-. 
+. Send a POST request to the `/pools/default/buckets/<bucketname>` REST API endpoint to edit the bucket, and change the `evictionPolicy` parameter to the new ejection policy that you want. 
+Also set the `noRestart` parameter to `true` to prevent Couchbase Server from restarting the bucket immediately.
+For example, the following command changes the ejection policy of the `travel-sample`` bucket to Full Ejection without restarting the bucket:
+
++
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=change-ejection-no-restart]
+----
+
++ 
+. At this point, the bucket's ejection policy has changed in the bucket.
+However, each node has an override setting that has them use the old ejection policy.
+You can compare the bucket's setting and see which nodes have an override by sending a GET request to the `/pools/default/buckets/<bucketname>` REST API endpoint.
+For example, the following command calls the REST API to get the configuration of the `travel-sample` bucket.
+It filters the result through the `jq` command to show just the `evictionPolicy` values from at the bucket level and the individual nodes:
+
++
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=show-policy-overrides]
+----
+
++
+The result of the previous command shows that the bucket's `evictionPolicy` parameter has changed to `fullEviction`, but the nodes are still using the old `valueOnly` ejection policy:
+
++
+[source,json]
+----
+[
+  {
+    "node3.:8091": "valueOnly"
+  },
+  {
+    "node2.:8091": "valueOnly"
+  },
+  {
+    "node1.:8091": "valueOnly"
+  },
+  {
+    "travel-sample": "fullEviction"
+  }
+]
+----
+
++
+[NOTE] 
+====
+While you're changing the ejection policy for a bucket, you can only change the bucket's `evictionPolicy`, `ramQuota`, and `storageBackend` settings. 
+Couchbase Server prevents you from making changes to the bucket’s other parameters. 
+Because you can change the `evictionPolicy`, you can back out of the change by changing the `evictionPolicy` back to its original value.
+If you have already performed a graceful failover followed by a full recovery and rebalance on any nodes, you must repeat the process on those nodes.
+====
+
+. Send a POST request to the `/controller/startGracefulFailover` REST API endpoint to perform a graceful failover on one of the nodes running the data service. 
+See xref:rest-api:rest-failover-graceful.adoc[] for more information about performing a graceful failover.
+
++
+The following calls the REST API to perform a graceful failover on a node named `node3`:
++
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=failover-node]
+----
+
+. Wait until the failover completes.
+Then send a POST request to the `/controller/setRecoveryType` REST API endpoint to set the type of recovery for the node to full.
+See xref:rest-api:rest-node-recovery-incremental.adoc[] for more information about setting the recovery type.
+
++
+The following calls the REST API to set the recovery type for `node3` to full:
++
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=recover-node]
+----
+
+. When the recovery completes, send a POST request to the `/controller/rebalance` REST API endpoint to rebalance the cluster.
+See xref:rest-api:rest-cluster-rebalance.adoc[] for more information about rebalancing a cluster.
+
++
+The following calls the REST API to rebalance a three-node cluster containing the nodes named `node1`, `node2`, and `node3`:
+
++
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=rebalance-cluster]
+----
+
+. After the rebalance completes, repeat steps 3 through 5 for the rest of the data nodes in the cluster.

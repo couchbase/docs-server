@@ -16,6 +16,14 @@ curl -X POST -u Administrator:password \
   -d 'storageBackend=magma'
 # end::change-backend[]
 
+# tag::change-backend-and-ejection[]
+curl -X POST -u Administrator:password \
+  http://localhost:8091/pools/default/buckets/travel-sample \
+  -d 'storageBackend=magma' \
+  -d 'evictionPolicy=fullEviction' \
+  -d 'noRestart=true'
+# end::change-backend-and-ejection[]
+
 # tag::get-backend[]
 curl -s GET -u Administrator:password \
       http://localhost:8091/pools/default/buckets/travel-sample  \
