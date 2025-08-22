@@ -27,7 +27,7 @@ These endpoints create a new bucket and edit an existing bucket.
 You can create two types of buckets: Couchbase or Ephemeral.
 
 When you create a bucket, you must assign it a name that is unique across all buckets on the cluster. You cannot change the name after creation.
-Bucket names must not exceed 100 bytes (i.e., 100 characters).
+Bucket names must not exceed 100 bytes (100 characters in most cases).
 
 A single cluster can contain up to 30 buckets.
 
@@ -55,6 +55,7 @@ curl -X POST -u <administrator>:<password>
           [ valueOnly | fullEviction ] |
           [ noEviction | nruEviction ]
         ]
+  -d noRestart=[true|false]
   -d durabilityMinLevel=[
           [ none | majority | majorityAndPersistActive | persistToMajority ] |
           [ none | majority ]
@@ -336,25 +337,29 @@ No object is returned.
 [#evictionpolicy]
 === evictionPolicy
 
-The ejection policy to be assigned to and used by the bucket.
-(Note that eviction is, in the current release, referred to as ejection; and this revised naming will continue to be used in future releases.)
-Policy-assignment depends on bucket type.
+Sets the ejection policy for the bucket.
+You can change the eviction policy after bucket creation.
+See xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection] for more information about ejection policies.
 
-For a Couchbase bucket, the policy can be `valueOnly` (which is the default) or `fullEviction`.
-For an Ephemeral bucket, the policy can be `noEviction` (which is the default) or `nruEviction`.
+Each type of bucket has its own set of ejection policies:
 
-This value can be modified, following bucket-creation.
-If such modification occurs, the bucket is restarted with the new setting: this may cause inaccessibility of data, during the bucket's warm-up period.
+* Couchbase bucket: `valueOnly` (which is the default) or `fullEviction`.
+* Ephemeral bucket: `noEviction` (which is the default) or `nruEviction`.
 
-Incorrect specification of an ejection policy returns an error-notification, such as `{"evictionPolicy":"Eviction policy must be either 'valueOnly' or 'fullEviction' for couchbase buckets"}`.
+Before the change takes effect, you must perform one of the following actions:
 
-For information on ejection policies, see xref:learn:buckets-memory-and-storage/buckets.adoc#bucket-types[Bucket Types].
-For general information on memory management in the context of ejection, see xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection].
+* Allow Couchbase Server to restart the bucket automatically.
+It does so automatically unless you set <<norestart,`noRestart`>> to `true`.
+When Couchbase Server restarts the bucket, it closes connections and makes the bucket unavailable temporarily. 
+* Perform a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on all nodes in the cluster running the data service.
+* Perform a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] for all nodes running the data service in the cluster.
+
+For more information about changing the ejection policy of a bucket, including the steps to take to change the policy without downtime, see xref:manage:manage-buckets/change-ejection-policy.adoc[].
 
 [#example-evictionpolicy-create]
-==== Example: Specifying an Eviction Policy, when Creating
+==== Example: Specifying an Ejection Policy, when Creating
 
-The following example creates a new bucket, named `testBucket`, which is a Couchbase bucket by default; and assigns it the `fullEviction` policy.
+The following example creates a new bucket named `testBucket` which is a Couchbase bucket by default; and assigns it the `fullEviction` policy.
 
 [source,bash]
 ----
@@ -368,7 +373,7 @@ If successful, the call returns a `202 Accepted` notification.
 No object is returned.
 
 [#example-evictionpolicy-edit]
-==== Example: Specifying a New Eviction Policy, when Editing
+==== Example: Specifying a New Ejection Policy, when Editing
 
 The following example modifies the eviction policy of the existing bucket `testBucket`, specifying that it should be `valueOnly`.
 
@@ -379,8 +384,33 @@ curl -v -X POST http://127.0.0.1:8091/pools/default/buckets/testBucket \
 -d evictionPolicy=valueOnly
 ----
 
-If successful, the call returns a `200 OK` notification.
-No object is returned.
+If successful, the call returns a `200 OK` notification with no other value returned.
+Couchbase Server also starts the process of restarting the bucket.
+
+[#norestart]
+=== noRestart
+
+Set this parameter to `true` to prevent Couchbase Server from automatically restarting the bucket when you change the ejection policy using <<evictionpolicy>>.
+It only has an effect if you're also set a value in the `evictionPolicy` parameter.
+
+This parameter defaults to `false`, meaning Couchbase Server automatically restarts the bucket after you change the ejection policy.
+
+When set to `true`, the new ejection policy does not take effect until you perform further steps (see <<evictionpolicy>> for details). 
+
+[#example-evictionpolicy-edit]
+==== Example: Set a New Ejection Policy Without Bucket Restart
+
+The following example set the eviction policy of the bucket `travel-sample` to `fullEviction` and prevents the restart of the bucket:
+
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=change-ejection-no-restart]
+----
+
+If successful, the call returns a `200 OK` notification with no other value returned.
+Couchbase Server does not restart the bucket.
+The new ejection policy does not take effect until you perform one of the procedures described in <<evictionpolicy>>.
+
 
 [#durabilityminlevel]
 === durabilityMinLevel
