@@ -12,11 +12,11 @@ These requirements make sure that Couchbase Server updates data in memory, on di
 The more replicas of data that Couchbase Server writes, the greater the level of data durability.
 
 After a write meets its durability requirements, Couchbase Server notifies the client of success. 
-If the write does not meet the durability requirements, Couchbase Server notifies the client that the write failed.
+If the write cannot meet the durability requirements, Couchbase Server notifies the client that the write failed.
 In this case, the original data remains unchanged throughout the cluster.
 
 Couchbase Server supports durability for up to two replicas.
-It does not support durability for buckets with three replicas.
+It does not support durability for buckets with three or more replicas.
 
 Durability is essential for features like xref:learn:data/transactions.adoc[] that require atomicity across multiple document mutations.
 
@@ -35,7 +35,7 @@ Durability lets you choose between regular and durable writes.
 This type of write may be suitable for data where occasional loss is acceptable, such as a single sensor reading among thousands collected continuously.
 
 * A durable write is synchronous and provides durability guarantees. 
-Use this type of write for data where loss could have significant negative consequences, such as financial transactions.
+Use this type of write for data where the loss could have significant negative consequences, such as financial transactions.
 
 Durable writes typically take longer to complete than regular writes because they require additional replication or persistence steps. 
 When deciding whether to use durability, consider the trade-off between higher throughput with regular writes and stronger data protection with durable writes.
@@ -44,9 +44,9 @@ When deciding whether to use durability, consider the trade-off between higher t
 == Majority
 
 For a write to be durable, it must meet a majority requirement.
-The majority requirement is based on the number of replicas defined for the bucket.
+The majority requirement depends on the number of replicas defined for the bucket.
 
-The following table shows the  majority requirement for each replica setting:
+The following table shows the majority requirement for each replica setting:
 
 [cols="2,2"]
 |===
@@ -61,14 +61,14 @@ The following table shows the  majority requirement for each replica setting:
 | 2
 | 2
 
-| 3
+| 3 or more
 | Not supported
 |===
 
 [WARNING]
 ====
 
-As shown by the table, if you configure a bucket with one replica and a node fails, you cannot perform durable write for any vBucket whose data was on the failed node.
+As shown by the table, if you configure a bucket with one replica and a node fails, you cannot perform a durable write to any vBucket that has data on the failed node.
 ====
 
 [#durability-requirements]
@@ -77,7 +77,7 @@ As shown by the table, if you configure a bucket with one replica and a node fai
 When enabling durability, you set two parameters:
 
 Level::
- This setting controls what Couchbase Server considers a successful durable write.
+This setting controls what Couchbase Server considers a successful durable write.
 The valid settings are: 
 
 +
@@ -116,9 +116,9 @@ image::data/durabilityDiagram.png[,780,align=left]
 
 The key points in the write sequence are:
 
-. Client 1 specifies durability requirements for a durable write to change a key's value from `a` to `b`.
+. Client 1 sets durability requirements for a durable write to change a key's value from `a` to `b`.
 
-. The Active Node receives the request and starts the durable write process.
+. The Active Node (the node that Client 1 is connected to) receives the request and starts the durable write process.
 Couchbase Server tries to meet the durability requirements Client 1 specified.
 
 . During the durable write process, Client 2 reads the value that's undergoing the durable write.
@@ -127,7 +127,7 @@ Couchbase Server returns the previous value, `a`.
 . During the durable write process, Client 3 tries to perform either a durable write or a regular write on the value that's already undergoing a durable write.
 Couchbase Server returns a `SYNC_WRITE_IN_PROGRESS` message telling Client 3 that its write attempt cannot occur.
 
-. When the mutation meets the specified durability requirements, the Active Node commits the durable write and sends a `SUCCESS` status response to Client 1.
+. When the mutation meets the durability requirements, the Active Node commits the durable write and sends a `SUCCESS` status response to Client 1.
 
 . After the durable write process, Client 2 reads the value again.
 Couchbase Server returns the new value, `b`, committed by the durable write.
@@ -178,12 +178,16 @@ Depending on how advanced the durable write was at the time of failure, the dura
 
 A client tries to write while SyncWrite is pending::
 If a client attempts a durable or regular write on a key that's undergoing a durable write, Couchbase Server returns a `SYNC_WRITE_IN_PROGRESS` message to indicate that the new write cannot proceed.
-The client can retry the writer operation.
+The client can retry the write operation.
+
+During a rebalance, Couchbase Server moves the active vBucket to a different node::
+If a durable write is taking place on the active vBucket as Couchbase Server moves it to a new node, it reports the write as ambiguous.
+
 
 [#handling-ambiguous-results]
 == Handling Ambiguous Results
 
-Couchbase Server informs the client of an ambiguous result whenever it cannot confirm that a durable writer was successful.
+Couchbase Server informs the client of an ambiguous result whenever it cannot confirm that a durable write was successful.
 A node or network failure or a timeout can cause this issue.
 
 If a client receives an ambiguous result notification, it can choose to retry the durable write.
@@ -201,6 +205,10 @@ If the saved values are not what it attempted to write, then the client can choo
 The rebalance process moves active and replica vBuckets between nodes to maintain optimal data availability.
 During rebalance, clients can read and mutate data without interruption.
 Durable writes also continue without interruption during the rebalance process.
+
+In rare circumstances, a durable write can return an ambiguous result during rebalance.
+This can happen if Couchbase Server moves an active vBucket to a new node while a durable write is in progress on that vBucket.
+If this happens, Couchbase Server returns an ambiguous result to the client.
 
 [#performance]
 == Performance
@@ -334,7 +342,7 @@ For example, suppose you want to perform an upgrade using the xref:install:upgra
 If you have a bucket with a single replica, performing the graceful failover causes durable writes to fail.
 This is because some vBuckets only have a single copy available in the cluster during the failover, so the write cannot achieve majority.
 
-In cases where you want Couchbase Server to report durable writes succeeded even if the majority of nodes are unavailable, you can enable the `durabilityImpossibleFallback` setting for the bucket. 
+In cases where you want Couchbase Server to report that durable writes succeeded even if the majority of nodes are unavailable, you can enable the `durabilityImpossibleFallback` setting for the bucket. 
 This setting has Couchbase Server report a success for a durable write, even if the majority of nodes are unavailable.
 
 include::partial$maintain-durability-warning.adoc[]
