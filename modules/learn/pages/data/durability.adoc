@@ -165,7 +165,7 @@ The durable write timeout elapses::
 If a timeout occurs, the active node aborts the durable write.
 It also instructs all replica nodes to stop the pending write.
 Then it notifies the client that the durable write had an ambiguous result.
-See xref:<<handling-ambiguous-results>>.
+See <<handling-ambiguous-results>>.
 
 A replica node fails during a pending Synchronous Write (SyncWrite) and before the active node can identify if it hosted a replica::
 If enough alternative replica nodes exist, the durable write can proceed.
@@ -182,6 +182,7 @@ The client can retry the write operation.
 
 During a rebalance, Couchbase Server moves the active vBucket to a different node::
 If a durable write is taking place on the active vBucket as Couchbase Server moves it to a new node, it reports the write as ambiguous.
+See <<#rebalance>> for more information.
 
 
 [#handling-ambiguous-results]
@@ -207,8 +208,9 @@ During rebalance, clients can read and mutate data without interruption.
 Durable writes also continue without interruption during the rebalance process.
 
 In rare circumstances, a durable write can return an ambiguous result during rebalance.
-This can happen if Couchbase Server moves an active vBucket to a new node while a durable write is in progress on that vBucket.
+This can happen if Couchbase Server moves an active vBucket to a new node while a durable write is taking place to that vBucket.
 If this happens, Couchbase Server returns an ambiguous result to the client.
+See <<#handling-ambiguous-results>> for possible steps your application can take in this case.
 
 [#performance]
 == Performance
@@ -239,7 +241,8 @@ When Couchbase Server fails over a node, it promotes replica vBuckets on survivi
 You can configure the maximum number of sequential automatic failovers.
 
 Automatic failovers can cause the loss of a durable write.
-If you perform a successful durable write using `persistToMajority` but the data has not yet propagated in the cluster beyond the majority, automatic failover of the majority nodes causes data loss.
+Loss can happen if you perform a successful durable write using `persistToMajority`.
+If an automatic failover of all the majority nodes happens before the data can propigate to other nodes beyond the majority, the durably written data can be lost.
 This loss happens because there is no updated replica vBucket in the cluster.
 
 For example, suppose you configure a bucket with two replicas.
@@ -249,33 +252,39 @@ If the two nodes making up the majority for a durable write become unresponsive 
 The failover can happen before the durable write has persisted on the third node.
 In this case, Couchbase Server loses the durable write, and the application receives a false success message.
 
-To prevent this potential loss of data, do not allow automatic failover of all nodes that contain the new data.
-Set the maximum number of sequential automatic failovers to a value that protects at least one node with the new data.
-The following section explains how to do this.
+You have ways to limit the possibility of automatic failovers causing the loss of durably written data:
+
+* Set the maximum number of sequential automatic failovers to be less than the majority needed to write data durably.
+In the previous example, you would set the maximum number of sequential automatic failovers to 1 to prevent both majority nodes from failing over automatically.
+
++
+This setting prevents all of the nodes that contain the newly written durable  data from failing over automatically.
+It affects the entire cluster, including any nodes that do not run the Data Service.
+Adjusting this setting to be below the majority does have a drawback.
+It can prevent auto failovers from occurring in cases when they would be helpful and do not threaten durably-written data.
 
 [#preserving-durable-writes]
-In Couchbase Enterprise Server, you can configure auto-failover to prevent it from causing the loss of durably written data.
+* In Couchbase Server Enterprise Edition], you can configure auto-failover to prevent it from causing the loss of durably written data.
 This is a global setting that affects all buckets, regardless of their durability settings.
 When you enable this setting, Couchbase Server performs a test on a non-communicative node before allowing auto-failover.
-If the node passes the test, Couchbase Server allows it to auto-failover.
-For auto-failover to occur, you must also meet the additional requirements in xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover].
+If the node passes the test, Couchbase Server can allow it to auto-failover.
+The node must also meet other criteria, as described elsewhere in this page.
+This setting's effect depends on the number of replicas the bucket has:
 
-The setting to preserve durable writes when you enable auto failover has a different effect depending on the number of replicas:
-
-* If you configure a bucket with one replica and run the Data Service on two nodes, only one node (either the active or the replica) can be a candidate for auto-failover.
-
-* If you configure a bucket with two replicas and run the Data Service on three nodes, only one node (either the active or one of the replicas) can be a candidate for auto-failover.
++
+--
+** If you configure a bucket with one replica and run the Data Service on two nodes, only one node (either the active or the replica) can be a candidate for auto-failover.
+** If you configure a bucket with two replicas and run the Data Service on three nodes, only one node (either the active or one of the replicas) can be a candidate for auto-failover.
 Two nodes cannot auto-failover because data may exist only on the required majority, which is two nodes.
 Couchbase Server must protect one of these nodes from auto-failover.
-
-* If you configure a bucket with three replicas and run the Data Service on four nodes, only two nodes (either the active and a replica, or two replicas) can be candidates for auto-failover.
+** If you configure a bucket with three replicas and run the Data Service on four nodes, only two nodes (either the active and a replica, or two replicas) can be candidates for auto-failover.
 Couchbase Server applies this constraint even though durability is not supported for buckets with three replicas.
+--
++ 
+You enable this setting in the Couchbase Server Web Console's see xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability] settings.
+You can also enable it using the REST API. 
+See xref:rest-api:rest-cluster-autofailover-enable.adoc[] for more information.
 
-To configure auto-failover to preserve durable writes:
-
-* For Couchbase Server Web Console, see xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability].
-
-* For the REST API, see xref:rest-api:rest-cluster-autofailover-enable.adoc[Enabling and Disabling Auto-Failover].
 
 [#protection-guarantees-1-replica]
 == Protection Guarantees: One Replica
@@ -331,10 +340,11 @@ If you configure two replicas, set the maximum number of sequential automatic fa
 This setting makes sure auto-failover does not conflict with the durable write's guaranteed protection.
 
 [[maintaining-durable-writes]]
-== Maintaining Durable Writes During Single Replica Failovers
+== Maintaining Durable Writes During Replica Failovers
 
-As described in <<#majority>>, a bucket with one replicas must meet a majority requirement of two nodes for a durable write to succeed.
-Two nodes must acknowledge writing the data to either memory or disk (depending on the durability level) before Couchbase Server considers the write successful.
+As described in <<#majority>>, a bucket must meet a majority requirement for a durable write to succeed.
+For example, suppose a bucket has a single replica.
+Then two nodes must acknowledge writing the data to either memory or disk (depending on the durability level) before Couchbase Server considers the write successful.
 If one node fails over, durable writes fail until the failed node rejoins the cluster.
 
 In some cases, this restriction can be inconvenient.
@@ -342,7 +352,8 @@ For example, suppose you want to perform an upgrade using the xref:install:upgra
 If you have a bucket with a single replica, performing the graceful failover causes durable writes to fail.
 This is because some vBuckets only have a single copy available in the cluster during the failover, so the write cannot achieve majority.
 
-In cases where you want Couchbase Server to report that durable writes succeeded even if the majority of nodes are unavailable, you can enable the `durabilityImpossibleFallback` setting for the bucket. 
+In these cases, you can have Couchbase Server report that durable writes succeeded even if the majority of nodes are unavailable.
+To enable this behavior, set the `durabilityImpossibleFallback` setting for the bucket to `true`. 
 This setting has Couchbase Server report a success for a durable write, even if the majority of nodes are unavailable.
 
 include::partial$maintain-durability-warning.adoc[]
@@ -359,10 +370,10 @@ The following table shows the effects of the setting on durable writes in a thre
 
 | One node fails over
 | Durable writes fail due to lack of majority
-| Durable writes succeed
+| Couchbase Server reports the durable write succeeded without replication
 
 | Two nodes fail over
-| Durable writes fail 
+| Durable writes fail to vBuckets on failed-over nodes
 | Durable writes fail 
 
 |===
