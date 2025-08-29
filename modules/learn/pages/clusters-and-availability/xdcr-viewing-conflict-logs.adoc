@@ -5,25 +5,38 @@
 [abstract]
 {description}
 
-XDCR conflict logs are your application documents, so they're added in regular collections called xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#create-conflict-collection[Conflict Collection] designated by you.
+When enabling XDCR conflict logging, you must specify the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-collection[Conflict Log Collection] or conflict collection.
+Conflict logs or conflict records are stored as documents within these collections.
+As conflict collections are regular collections, you can use RBAC to control access to the conflict logs, which include copies of your application data.
+You can also programmatically process and view the conflict records and documents.
 
-You can access, view, and process these documents programmatically, similar to your application documents, using the available utilities, features, and options.
+The following sections have examples of how to access, process, or locate information within conflict log documents using {sqlpp} queries, an Eventing function, and a KV Range Scan.
+While these are some common methods, other options exist for viewing or processing conflict log records, such as using Couchbase Kafka Connect to stream these documents to an application for further processing.
 
-For example, you can use RBAC to manage access to conflict collections.
-You can also use Couchbase services and tools such as Eventing and Kafka Connect to process conflict log documents.
+After XDCR logs a conflict, it does not modify or remove the conflict records.
+You're responsible for managing and deleting them when no longer needed.
+Each conflict record has 3 documents.
+You can find the following in the conflict collection:
+
+* A conflict event record in `docId` with the prefix `crd_`.
+* A copy of the source document in `docId` with the prefix `src_`.
+* A copy of the target document in `docId` with the prefix `tgt_`.
+
+In the conflict event record, the field `docId` is the ID or key of the conflicting document in the replication.
+The documents in the conflict collection that have IDs with prefixes `src_` and `tgt_` are copies of the versions of `docId` that were in conflict.
 
 For information about the Conflict Record Document, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record].
 
 [#using-sdk-sqlpp-for-conflict-logs]
-== Using Couchbase SDK with SQL++ for Conflict Logs
+== Using {sqlpp} to Query Conflict Logs
 
-The most common way to view these documents is by using the Couchbase SDK with SQL++.
+The most common way to view these documents is by using {sqlpp}.
 
 The following are a few examples.
 In the examples, the conflict logs are stored in the collection `conflictlogs.bucket1.app1logs`.
 
 [#sqlpp-examples-clog]
-=== SQL++ Examples
+=== {sqlpp} Examples
 
 For queries, you can create a custom index or a primary index.
 
@@ -45,12 +58,14 @@ For example:
 CREATE INDEX `idx_crd_timestamp_docId` ON `conflictlogs`.`bucket1`.`applogs`(SUBSTR(META().id,0,3), `timestamp`,`docId`)
 ----
 +
-NOTE: When creating custom indexes, `META().id` is already a part of the index key.
-When using `LIKE` in the queries, underscore is a wildcard. 
-If you use underscore in comparison strings, ensure you use the escape character, so that it's used as an exact comparison instead of a wildcard comparison.
+[NOTE]
+====
+* When creating custom indexes, `META().id` is already a part of the index key.
+* When querying, if you use underscore in comparison strings, make sure you use the escape character, so that it's used as an exact comparison instead of a wildcard comparison.
 For example, `WHERE META().id LIKE “crd\\_%”`.
+====
 
-*Query example 1:* List all `docId` that had conflicts between two time periods.
+*Query example 1*: List all `docId` that had conflicts between two time periods.
 
 [source,sqlpp]
 ----
@@ -59,7 +74,7 @@ FROM `conflictlogs`.`bucket1`.`app1logs` AS b
 WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
 ----
 
-*Query example 2:* Number of conflicts logged between two time periods.
+*Query example 2*: Number of conflicts logged between two time periods.
 
 [source,sqlpp]
 ----
@@ -68,7 +83,7 @@ FROM `conflictlogs`.`bucket1`.`app1logs` AS b
 WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
 ----
 
-*Query example 3:* Number of different `docIds` that had conflicts between two time periods.
+*Query example 3*: Number of different `docIds` that had conflicts between two time periods.
 
 [source,sqlpp]
 ----
@@ -77,7 +92,9 @@ FROM `conflictlogs`.`bucket1`.`app1logs` AS b
 WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
 ----
 
-*Query example 4:* List all `docIds` and the number of times each `docId` had a logged conflict between two time periods.
+*Query example 4*: List all `docIds` and the number of times each `docId` had a logged conflict between 2 time periods.
+
+The following query may be used if you suspect that the same few documents are being updated multiple times concurrently in two different clusters, generating conflicts.
 
 [source,sqlpp]
 ----
@@ -103,7 +120,9 @@ The query result is as follows:
 ]
 ----
 
-*Query example 5:* List all `docIds` and fields from the `src` and `tgt` documents that were in conflict, to view only the `docId` that had conflict with select fields from the `src` and `tgt` documents.
+*Query example 5*: In the following example, for each `docId`, you can see selected fields from the source and target documents.
+Also, the `docId` of the copies of the source and target documents in the conflict collection, if you want to retrieve the entire document.
+The only fields that you want to see from the documents that were in conflict are `country` and `note`.
 
 [source,sqlpp]
 ----
@@ -135,28 +154,17 @@ The query result is as follows:
 ]
 ----
 
-NOTE: As the conflict log documents won’t be replicated, if you need to replicate them, copy them into a different document.
-
 [#using-eventing-for-conflict-logs]
-== Using Eventing for Conflict Logs
+== Using Eventing to Process Conflict Logs
 
-The conflict logs and conflict documents are not replicated as XDCR’s special attribute (system xattrs called `_xdcr_conflict`) prevents replication:
+If you do not like the 3 documents format of the conflict record, then you can create a single document from the 3 documents (`crd_`, `src_`, `tgt_`) for easier processing by using Eventing.
+Here, it's assumed that the documents are small.
+If the documents are large such that the combined 3 documents are larger than the maximum xref:learn:clusters-and-availability/size-limitations.adoc[size limit].
+Then you can copy only a subset of the fields from the `src_` and `tgt_` documents to the custom single document.
 
-----
-"xattrs": {
-    "_xdcr_conflict": true
-    }
-----
-
-To force replicate the conflict logs and conflict documents, do the following:
-
-. Use Eventing to copy the document to a new collection along with other modifications.
-
-. Replicate the new document from the new collection.
-
-You cannot update system xattrs, however, following is an example of an Eventing function you can deploy to combine the `crd_`, `src_`, and `tgt_` documents into one new document that does not have the system attribute.
-Here, it is assumed that the documents are small.
-If the documents are large, then you can copy only the relevant fields from the `src` and `tgt` documents to a single document.
+Another effect of creating your own conflict document as shown in the Eventing example is that the new document that you create will not have the system extended attribute (`{"_xdcr_conflict": true}`).
+This system extended attribute is what prevents the conflict documents created by XDCR from being replicated.
+As a result, the new combined conflict log document will have the `docId` (or doc key) of your preference, and if needed, it can be replicated.
 
 [#eventing-example-clog]
 === Eventing example
@@ -205,7 +213,7 @@ NOTE: See xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.ado
   "replId": "1bc375a26b7f822ebe91288c58a6c614/bucket1/bucket1-PN8-oFADADCOe6S6A8YuIw==",
   "srcDoc": {
     "id": "src_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
-    "nodeId": "127.0.0.1",
+    "nodeId": "10.0.13.10",
     "bucketUUID": "6cd3a35ba2d337d84d4fcd30c3a46fb9",
     "clusterUUID": "d976db26a5ce512a243db65a3026073f",
     "isDeleted": false,
@@ -223,7 +231,7 @@ NOTE: See xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.ado
   },
   "tgtDoc": {
     "id": "tgt_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
-    "nodeId": "34.213.22.102",
+    "nodeId": "10.0.22.102",
     "bucketUUID": "fada12469f1027ecb078d2c19a2802fb",
     "clusterUUID": "1bc375a26b7f822ebe91288c58a6c614",
     "isDeleted": false,
@@ -239,17 +247,17 @@ NOTE: See xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.ado
       "_mou": ""
     }
   },
-  "src_doc": {
-    "author": "Unknown",
-    "create_date_utc": "2025-05-20T07:56:26",
-    "res_from": "WEST",
-    "res_name": "Harry West",
-    "res_note": "visitor -- HJV NOTE EAST",
-    "reserved": true,
-    "title": "Ashmole 782",
-    "type": "book",
-    "unix_time": "1747768801",
-    "update_date_utc": "2025-05-20T19:20:01"
+"src_doc": {  
+    "author": "Unknown",  
+    "create_date_utc": "2025-05-20T07:56:26",  
+    "res_from": "WEST",  
+    "res_name": "Harry West",  
+    "res_note": "visitor",  
+    "reserved": true,  
+    "title": "Ashmole History",  
+    "type": "book",  
+    "unix_time": "1747768801",  
+    "update_date_utc": "2025-05-20T19:20:01"  
   },
   "tgt_doc": {
     "author": "Unknown",
