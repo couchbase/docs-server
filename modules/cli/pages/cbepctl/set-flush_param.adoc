@@ -20,22 +20,14 @@ cbepctl [hostname]:11210 -b [bucket-name] -u [administrator-name] -p [administra
 cbepctl [hostname]:11210 -b [bucket-name] -u [administrator-name] -p [administrator-password] set flush_param alog_task_time [value]
 ----
 
-The syntax for disk cleanup is:
-
-----
-cbepctl [host]:11210 -b [bucket-name] -u [administrator-name] -p [administrator-password] set flush_param exp_pager_stime [value]
-----
-
 The syntax for ejection is:
 
 ----
 cbepctl [host]:11210 -b [bucket-name] -u [administrator-name] -p [administrator-password] set flush_param [parameter] [value]
 ----
 
-Parameters used for changing ejection thresholds:
+Parameter used for changing ejection thresholds:
 
-* `mem_low_wat`
-* `mem_high_wat`
 * `pager_active_vb_pcnt`
 
 The syntax to set the out of memory threshold is:
@@ -50,11 +42,19 @@ Tune the dynamic shared thread pool performance by changing the thread types ins
 The command [.cmd]`set flush_param` adjusts the number of threads that prioritize read, write, non-i/o and auxiliary-i/o operations.
 These settings take effect immediately and do not require that the bucket be restarted.
 
-NOTE: The settings for threads number take effect only if the underlying operating system has a sufficient number of CPU cores.
+[NOTE]
+====
+* The settings for threads number take effect only if the underlying operating system has a sufficient number of CPU cores.
 The minimum number of CPU cores is four (4), but  three (3) additional cores are required for each additional writer thread.
 For example, five (5) writer threads is a valid setting if the underlying hardware has at least sixteen (16) cores.
 
-NOTE: Changes of thresholds are NOT persistent and must be reapplied after the bucket warmup.
+* Changes of thresholds are NOT persistent and must be reapplied after the bucket warmup.
+
+* The settings `warmup_min_items_threshold`, `warmup_min_memory_threshold`, `exp_pager_stime`, `mem_high_wat`, and `mem_low_wat` are removed, and no longer supported through `cbepctl`.
++
+These settings are replaced by new settings `expiryPagerSleepTime`, `warmupBehavior`, `memoryLowWatermark`, and `memoryHighWatermark`, which can be configured using REST APIs.
+See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
+====
 
 alog_sleep_time, alog_task_time::
 Couchbase Server has an optimized xref:learn:buckets-memory-and-storage/memory.adoc#initialization-and-warmup[disk warmup].
@@ -69,20 +69,10 @@ The scanner is highly CPU-intensive: therefore, to reduce the cluster-wide impac
 Note also that if the scanner runs at the same time that index updates are being made (either on the current node, or on one or more other nodes) by the Index Service, the performance of the index updates may be adversely affected.
 The scanner should be configured to minimize the likelihood of this problem.
 
-exp_pager_stime::
-The `cbepctl flush_param exp_pager_stime` command sets the time interval for disk cleanup.
-Couchbase Server does lazy xref:learn:buckets-memory-and-storage/memory.adoc#expiry-pager[expiration], that is, expired items are flagged as deleted rather than being immediately erased.
-Couchbase Server has a maintenance process that periodically looks through all information and erases expired items.
-By default, this maintenance process runs every 10 minutes, but it can be configured to run at a different interval.
-+
-NOTE: The compaction process will also remove expired items.
-
-mem_low_wat, mem_high_wat, pager_active_vb_pcnt::
+pager_active_vb_pcnt::
 xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection] means that documents are removed from RAM but the key and metadata remain.
-If the amount of RAM used by items reaches the high water mark (upper threshold), both active and replica data are ejected until the memory usage (amount of RAM consumed) reaches the low water mark (lower threshold).
-The server determines that items are not recently used based on a not-recently-used (NRU) value.
 +
-Use the `mem_low_wat`, `mem_high_wat`, and `pager_active_vb_pcnt` settings to change the server thresholds for ejection.
+Use `pager_active_vb_pcnt` settings to change the server thresholds for ejection.
 +
 WARNING: Do not change the ejection defaults unless required by Couchbase Support.
 
@@ -116,11 +106,6 @@ The following are the command options:
 | `couch_response_timeout`
 | timeout in receiving a response from CouchDB.
 
-| `exp_pager_stime`
-| Expiry Pager interval.
-Time interval that Couchbase Server waits before it performs cleanup and removal of expired items from disk.
-Setting this value to `0` will disable the Expiry Pager from running.
-
 | `flushall_enabled`
 | Deprecated.
 Enable flush operation.
@@ -131,23 +116,11 @@ Enable flush operation.
 | `max_size`
 | Maximum memory used by the server.
 
-| `mem_high_wat`
-| High water mark in bytes.
-
-| `mem_low_wat`
-| Low water mark in bytes.
-
 | `mutation_mem_threshold`
 | Amount of RAM that can be consumed in that caching layer before clients start receiving temporary out of memory messages.
 
 | `timing_log`
 | Path to log detailed timing stats.
-
-| `warmup_min_memory_threshold`
-| Memory threshold (%) during warmup to enable traffic.
-
-| `warmup_min_items_threshold`
-| Item number threshold (%) during warmup to enable traffic.
 
 | `klog_compactor_queue_cap`
 | Queue cap to throttle the log compactor.
@@ -218,23 +191,6 @@ setting param: alog_task_time 23
 set alog_task_time to 23
 ----
 
-*Examples for setting the disk cleanup*
-
-The following example sets the cleanup process to run every 600 seconds (10 minutes).
-This is the interval that Couchbase Server waits before it tries to remove expired items from disk.
-
-----
-cbepctl 10.5.2.117:11210 -b foo-bucket -u Administrator -p password \
-set flush_param exp_pager_stime 600
-----
-
-The following example response shows the cleanup process set to 600 seconds.
-
-----
-setting param: exp_pager_stime 600
-set exp_pager_stime to 600
-----
-
 *Examples for setting the out-of-memory error message*
 
 In this example, the threshold is reduced to 65% of RAM.
@@ -249,30 +205,6 @@ The following example response shows the RAM threshold set to 65%.
 ----
 setting param: mutation_mem_threshold 65
 set mutation_mem_threshold to 65
-----
-
-*Example for setting the low water mark*
-
-The low water mark sets the lower threshold of RAM for a specific bucket on a node.
-The item pager stops ejecting items once the low water mark is reached.
-
-The following example sets the low water mark percentage to 70% of RAM.
-
-----
-cbepctl 10.5.2.117:11210 -b foo-bucket -u Administrator -p password \
-set flush_param mem_low_wat 70%
-----
-
-*Example for setting the high water mark*
-
-The high water mark set the amount of RAM consumed by items that must be breached before infrequently used active and replica items are ejected.
-
-The following example sets the high water mark percentage to 80% of RAM for a specific bucket on a node.
-This means that items in RAM on this node can consume up to 80% of RAM before the item pager begins ejecting items.
-
-----
-cbepctl 10.5.2.117:11210 -b foo-bucket -u Administrator -p password \
-set flush_param mem_high_wat 80%
 ----
 
 *Examples for setting percentage of ejected items*
@@ -293,15 +225,9 @@ By doing so, active data from a source node is maximized while maintaining incom
 However, if the server is ejecting a very large percentage of replica data and a node fails, the replica data is not immediately available.
 In this case, the items are retrieved from disk and put back into RAM before the request is fulfilled.
 
-The following example response shows the low water mark, high water mark, and percentage of ejected items being set.
+The following example response shows the percentage of ejected items being set.
 
 ----
-setting param: mem_low_wat 70
-set mem_low_wat to 70
-
-setting param: mem_high_wat 80
-set mem_high_wat to 80
-
 setting param: pager_active_vb_pcnt 50
 set pager_active_vb_pcnt to 50
 ----
