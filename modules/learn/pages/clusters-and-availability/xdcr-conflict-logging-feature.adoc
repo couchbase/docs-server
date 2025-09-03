@@ -12,7 +12,7 @@ If conflict logging is enabled, XDCR logs these conflict events in a conflict lo
 The conflict logging does not change conflict resolution.
 
 XDCR performs conflict resolution and replicates the documents whether conflicts are logged or not.
-Conflict logging is informational only, so that you can review the conflict log message documents and the copies of the documents that were in conflict, to help you design application systems that avoid conflicts.
+Conflict logging is informational only, so that you can review the conflict log record documents and the copies of the documents that were in conflict, to help you design application systems that avoid conflicts.
 
 _*A convergence window is a period during which multiple actors, such as users, applications, or clusters, can modify the same document in an active-active topology, before the changes have fully converged across all clusters._
 
@@ -33,6 +33,20 @@ Conflict logging is informational only.
 
 [#using-of-xdcr-conflict-logging]
 == Using the XDCR Conflict Logging Feature
+
+This section summarizes the prerequisites, and how to enable, configure, and use conflict logging in an XDCR replication.
+
+[CAUTION]
+====
+Before enabling conflict logging, make sure that Eventing functions deployed in replicated buckets do not cause excessive conflicts in an Active-Active environment.
+Conflicts can occur if one of the following occurs:
+
+* If you're using Eventing functions triggered by both replicated and local mutations, and then the functions update the same document.
+* If the same functions are deployed in other replication environments.
+
+To prevent conflicts caused by Eventing updates into replicated documents, design Eventing functions with appropriate logic.
+Make sure the Eventing functions avoid updating the same documents (document IDs) at around the same time in different replication locations.
+====
 
 To log conflicts during an XDCR, follow these steps:
 
@@ -55,8 +69,8 @@ As a result, HLV also cannot be disabled.
 Make sure you set `enableCrossClusterVersioning` to `true` in the bucket properties when adding new buckets or new clusters to the existing replication topology.
 ====
 
-. When creating the XDCR replication, configure and enable conflict logging.
-You configure conflict logging by specifying the conflict log collections to store the conflict logs and documents, and the conflict logging rules.
+. When creating or updating the XDCR replication, configure and enable conflict logging.
+You configure conflict logging by specifying the conflict log collections to store the conflict logs and the conflict logging rules.
 You must specify at least 1 conflict log collection, which is the default.
 +
 When you do not specify any conflict logging rules, all conflicts detected during the replication are logged into the default conflict log collection.
@@ -69,7 +83,19 @@ For detailed information about how to enable and configure the conflict logging 
 [Replication Settings for XDCR Conflict Logging], to set from UI.
 
 ** xref:rest-api:rest-xdcr-create-replication.adoc[Creating a Replication] by xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#configure-conflictlogging-settings[Enabling and Configuring Conflict Logging], to set through REST API.
++
+--
+[NOTE]
+====
+Because conflicts result from race conditions, you must enable conflict logging on all legs of the replications in an XDCR topology.
+This ensures that at least 1 leg detects and logs the conflict.
 
+* In a bi-directional replication, configure and enable conflict logging on both legs.
+
+* In a 3-cluster XDCR ring topology, configure and enable conflict logging on all 6 legs.
+====
+--
++
 . When XDCR logs a conflict, it creates 3 related documents in the conflict log collection specified by you.
 The 3 documents together is referred to as the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record].
 As the conflict log collections are regular collections, you can programmatically access and review the documents.
@@ -82,17 +108,17 @@ A conflict log collection, or conflict collection, is the collection you specify
 Each conflict event creates 3 documents in the conflict log collection; 1 conflict event message document and 2 conflicting documents.
 Together, these 3 documents form a xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record].
 
-For information about configuring a collection to log conflicts, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#configure-conflictlogging-settings[Enabling and Configuring Conflict Logging].
+For information about how to configure conflict collections, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#configure-conflictlogging-settings[Enabling and Configuring Conflict Logging].
 
-You can specify a regular collection as a conflict log collection in the cluster, where you're creating the replication.
-You can also name the source collection, which is a part of the replication process, as a conflict log collection.
+You can specify any regular collection in the cluster as a conflict log collection, including a collection in the bucket that's being replicated.
 The conflict record documents are not replicated.
 
-After the XDCR conflict logger creates the conflict log collection, you can manage the conflict record documents in them.
-As these documents are also copies of your application documents, you must use RBAC to make sure appropriate access to the documents.
+After XDCR creates conflict record documents in the conflict collection, you are responsible for managing them.
+XDCR does not update or remove these documents.
+As these documents are also copies of your application documents, you must use RBAC to make sure of appropriate access to the documents.
 Make sure to monitor the disk storage use for the conflict log collections and delete documents when they're no longer needed.
 
-NOTE: XDCR adds a system extended attribute (xattr) called `_xdcr_conflict` into each of the 3 documents in the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record], which prevents XDCR from replicating these conflict log documents.
+NOTE: XDCR adds a system extended attribute (xattrs) called `_xdcr_conflict` into each of the 3 documents in the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record], which prevents XDCR from replicating them.
 
 [#conflict-record]
 === Conflict Record
@@ -104,17 +130,17 @@ The CRD document ID is in the format `crd_<unix_timestamp>_<SHA>`.
 
 * *Source document*: This is a copy (body and xattrs) of the source document that caused the conflict.
 The Source document ID is in the format `src_<unix_timestamp>_<SHA>`.
-You can find this document ID in the `srcDoc.id` value of the CRD document.
+You can find this document ID in the `srcDoc.id` path of the CRD document.
 
 * *Target document*: This is a copy (body and xattrs) of the target document that caused the conflict.
 The Target document ID is in the format `tgt_<unix_timestamp>_<SHA>`.
-You can find this document ID in the `tgtDoc.id` value of the CRD document.
+You can find this document ID in the `tgtDoc.id` path of the CRD document.
 
 In the description of the conflict record documents, the source and the target mean replication direction.
 
 The generated `<SHA>` in the ID of the conflict record documents ensures that each conflict event, for the same document or the same document ID, is logged uniquely.
 
-XDCR adds a system extended attribute (xattr) called `_xdcr_conflict` into each of the 3 documents in the Conflict Record, which prevents XDCR from replicating these conflict log documents.
+XDCR adds a system extended attribute (xattrs) called `_xdcr_conflict` into each of the 3 documents in the Conflict Record, which prevents XDCR from replicating them.
 
 For query examples to view the conflict record documents, see xref:learn:clusters-and-availability/xdcr-viewing-conflict-logs.adoc[Viewing Conflict Logs].
 
@@ -194,8 +220,8 @@ A copy of conflict target document ID prefixed with `tgt_`.
 | Replication ID.
 
 | `srcDoc` and `tgtDoc`
-These JSON Objects have the IDs of the source and target document copies in the conflict collection.
-The document IDs are indicated by `srcDoc.id` and `tgtDoc.id`.
+| These JSON Objects have the IDs of the source and target document copies in the conflict collection.
+The document IDs are located by `srcDoc.id` and `tgtDoc.id`.
 
 | `nodeId`
 | Node identification, which can be the Hostname or IP address and a port.
@@ -239,7 +265,7 @@ The XDCR Conflict Logger logs conflicts continuously and is designed to minimize
 
 Conflict logging is performed on a best-effort basis.
 If system resources are limited or errors occur while writing to the conflict log collection, XDCR prioritizes replication and High Availability.
-In these cases, temporarily the conflict logging may be skipped or the conflict logs are dropped.
+In these cases, conflict logging may be stopped temporarily, meaning that some conflicts will not be logged.
 
 By default, the Conflict Logger is tuned to handle a low percentage of conflicts.
 
@@ -322,11 +348,10 @@ For information about hibernation, see xref:learn:clusters-and-availability/xdcr
 == Enabling and Configuring Conflict Logging
 
 The XDCR Conflict Logging feature can be configured and enabled per replication using the advanced replication setting `conflictLogging`.
-You can use the `conflictLogging` key to mention the storage location for conflict records, and to enable or disable conflict logging.
+You can use the `conflictLogging` key to specify the storage location for conflict records, and to enable or disable conflict logging.
 
-It allows you to define a default conflict collection and, optionally, granular logging rules for scopes and collections via the `loggingRules` object.
-By configuring `conflictLogging`, you control whether conflicts are logged, and if so, in which bucket and collection the conflict records are saved.
-For more information, see the examples and formats below.
+Configuring `conflictLogging` allows you to define a default conflict collection and, optionally, granular logging rules for scopes and collections via the `loggingRules` object.
+For more information, see the examples and formats in this section.
 
 To log conflicts, when creating an XDCR replication use the following settings, which accepts a key and a corresponding JSON object as the value.
 
@@ -437,20 +462,20 @@ The `conflictLogging` setting defines the following rules:
 [source,json]
 ----
 --data-urlencode conflictLogging= '{
-"disabled": false,
-"bucket": "conflictlogsbucket1",
-"collection": "myappscope.log1collection"
-"loggingRules": {
-      "agents.partners": {
-        "bucket": "conflictlogsbucket2",
-        "collection": "myappscope.partnerlogs"
-      },
-      "agents.retailers": null,
-      "inventory": {
-        "bucket": "conflictlogsbucket2",
-        "collection": "myappscope.inventorylogs"
-      }
-    }
+                    "disabled": false,
+                    "bucket": "conflictlogsbucket1",
+                    "collection": "myappscope.log1collection",
+                    "loggingRules": {
+                          "agents.partners": {
+                                  "bucket": "conflictlogsbucket2",
+                                  "collection": "myappscope.partnerlogs"
+                                            },
+                          "agents.retailers": null,
+                          "inventory": {
+                                  "bucket": "conflictlogsbucket2",
+                                  "collection": "myappscope.inventorylogs"
+                                      }
+                      }
 }'
 ----
 
@@ -502,7 +527,7 @@ When you set `"disabled": true` and have specified other configurations, then th
 
 Use `loggingRules` to override the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#enabled-for-all-conflicts[default conflict logging settings].
 
-NOTE: Conflict logging rules can be saved without enabling the Conflict Logging setting, however, the logging rules come into effect when the Conflict Logging setting is enabled.
+NOTE: Conflict logging rules can be saved without enabling the `conflictLogging` setting, however, the logging rules come into effect when the `conflictLogging` setting is enabled.
 
 You can use the `loggingRules` JSON object to define granular conflict logging rules for specific scopes and collections within a replication.
 
