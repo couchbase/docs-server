@@ -1,6 +1,6 @@
 = Durability
 :description: pass:q[Durability improves the chances that data mutations are saved even if nodes fail.]
-
+:toclevels: 3
 [abstract]
 {description}
 
@@ -219,7 +219,7 @@ You can optimize the performance of durable writes by allocating enough writer t
 For more information, see xref:learn:buckets-memory-and-storage/storage.adoc#threading[Threading] for concepts and xref:manage:manage-settings/general-settings.adoc#data-settings[Data Settings] for configuration steps.
 
 [#protection-guarantees-overview]
-== Protection Guarantees: Overview
+== Protection Guarantees
 
 After Couchbase Server commits the durable write, it notifies clients that the write succeeded.
 From the point of commitment until the new data has fully propagated throughout the cluster, Couchbase Server guarantees protection from data loss within some constraints.
@@ -227,64 +227,97 @@ These constraints depend on the durability level you set, the type of outage, an
 You can find the guarantees and related constraints in the following sections.
 
 [#replica-count-restriction]
-=== Replica-Count Restriction
+== Replica-Count Restriction
 
 Couchbase Server supports durability for buckets with up to two replicas.
 You cannot use durability with buckets that have three replicas.
 If you try to perform a durable write on a bucket with three replicas, Couchbase Server returns an `EDurabilityImpossible` error.
 
 [#protection-guarantees-and-automatic-failover]
-=== Protection Guarantees and Automatic Failover
+== Protection Guarantees and Failover
 
-xref:learn:clusters-and-availability/automatic-failover.adoc[Automatic Failover] removes a non-responsive node from the cluster after a configurable timeout.
-When Couchbase Server fails over a node, it promotes replica vBuckets on surviving nodes to replace the lost active vBuckets.
-You can configure the maximum number of sequential automatic failovers.
+Failover removes a node from the cluster.
+You can manually failover a node through either a graceful failover (when the node is responsive) or a hard failover (when the node is unresponsive). 
+See xref:learn:clusters-and-availability/failover.adoc[] for more information about these types of failvoers.
 
-Automatic failovers can cause the loss of a durable write.
-Loss can happen if you perform a successful durable write using `persistToMajority`.
-If an automatic failover of all the majority nodes happens before the data can propigate to other nodes beyond the majority, the durably written data can be lost.
+You can also configure Couchbase Server to perform xref:learn:clusters-and-availability/automatic-failover.adoc[automatic failovers] to remove a node that has been unresponsive longer than a configurable timeout period. 
+You can configure the maximum number of sequential automatic failovers using the .
+
+When a node fails, Couchbase Server promotes replica vBuckets on surviving nodes to replace the lost active vBuckets.
+
+Both manual and automatic failovers can cause the loss of durably written data.
+This loss can happen if you perform a successful durable write using `persistToMajority`.
+If all of the majority nodes are failed over either manually or automatically before the data can propagate to other nodes beyond the majority, the durably written data can be lost.
 This loss happens because there are not enough up to date replica vBuckets in the cluster.
 
 For example, suppose you configure a bucket with two replicas.
-Also, you allow up to two automatic failovers.
 The data resides on three nodes and the majority for persistence is two nodes.
-If the two nodes making up the majority for a durable write become unresponsive after the write commits, Couchbase Server fails over both nodes.
+If the two nodes making up the majority for a durable write are failed over either automatically or manually after the write commits, the durable write can be lost.
 The failover can happen before the durable write has been replicated to the third node.
 In this case, Couchbase Server loses the durable write, and the application receives a false success message.
 
-You have ways to limit the possibility of automatic failovers causing the loss of durably written data:
+When performing manual failovers, you should be aware of the chance of losing durably written data.
+When possible, avoid manually failing over more data nodes at the same time than are required for the durable write's majority.
 
-* Set the maximum number of sequential automatic failovers to be less than the majority needed to write data durably.
-In the previous example, you would set the maximum number of sequential automatic failovers to 1 to prevent both majority nodes from failing over automatically.
+For automatic failovers in Couchbase Server Enterprise Edition, you have ways to limit the possibility of failovers causing the loss of durably written data:
 
-+
-This setting prevents all of the nodes that contain the newly written durable  data from failing over automatically.
-It affects the entire cluster, including any nodes that do not run the Data Service.
-Adjusting this setting to be below the majority does have a drawback.
-It can prevent auto failovers from occurring in cases when they would be helpful and do not threaten durably-written data.
+* You can set the maximum number of sequential automatic failovers (`maxCount`) to be less than the majority needed to write data durably.
+* You can configure auto-failover to prevent it from causing the loss of durably written data.
+
+The following sections explain these two options.
+
+NOTE: In Couchbase Server Community Edition, you cannot configure either of these settings.
+The `maxCount` setting is always `1`, and the setting to preserve durable writes is not available.
+
+
+[#max-sequential-failovers]
+=== Limiting Sequential Automatic Failovers
+The number of sequential automatic failovers Couchbase Server allows is controlled by the `maxCount` setting.
+See xref:rest-api:rest-cluster-autofailover-enable.adoc#maxcount[maxCount] in xref:rest-api:rest-cluster-autofailover-enable.adoc[] for more information about this setting. 
+
+To prevent auto-failovers jeopardizing durable writes, set `maxCount` to less than the majority needed to write data durably.
+In the previous example, you would set the maximum number of sequential automatic failovers to 1 (the default value) to prevent both majority nodes from failing over automatically.
+
+Benefits:: 
+This setting prevents all of the majority nodes that contain the newly written durable data from failing over automatically.
+It's less restrictive than the setting to preserve durable writes because it does not block failover in cases where a node could possibly be involved in a durable write.
+Therefore, can allow Couchbase Server to perform failovers in cases where the auto-failover preserve durable writes setting does not.
+This option may be better for you if you value node availability as highly as you do data durability.
+
+Drawbacks:: 
+Changing `maxCount` affects all nodes in the cluster, including nodes that do not run the Data Service.
+This setting can prevent automatic failover of non-data nodes such as index nodes where durability is not an issue.
 
 [#preserving-durable-writes]
-* In Couchbase Server Enterprise Edition, you can configure auto-failover to prevent it from causing the loss of durably written data.
+=== Auto-failover's Preserve of Durable Writes Setting
+In Couchbase Server Enterprise Edition, you can configure auto-failover to prevent it from causing the loss of durably written data.
 This is a global setting that affects all buckets, regardless of their durability settings.
-When you enable this setting, Couchbase Server performs a test on a non-communicative node before allowing auto-failover.
-If the node passes the test, Couchbase Server can allow it to auto-failover.
-The node must also meet other criteria, as described elsewhere in this page.
+When you enable this setting, Couchbase Server performs a test on a non-communicative node to determine if it could possibly be involved in a durable write.
+If the node passes the test, Couchbase Server allows the auto-failover to proceed. 
+The node must still meet other criteria, as described elsewhere in this page.
+If Couchbase Server determines that the node could be involved in a durable write, it prevents the auto-failover from proceeding.
+
 This setting's effect depends on the number of replicas the bucket has:
 
-+
---
-** If you configure a bucket with one replica and run the Data Service on two nodes, only one node (either the active or the replica) can be a candidate for auto-failover.
-** If you configure a bucket with two replicas and run the Data Service on three nodes, only one node (either the active or one of the replicas) can be a candidate for auto-failover.
+* If you configure a bucket with one replica and run the Data Service on two nodes, only one node (either the active or the replica) can be a candidate for auto-failover.
+* If you configure a bucket with two replicas and run the Data Service on three nodes, only one node (either the active or one of the replicas) can be a candidate for auto-failover.
 Two nodes cannot auto-failover because data may exist only on the required majority, which is two nodes.
 Couchbase Server must protect one of these nodes from auto-failover.
-** If you configure a bucket with three replicas and run the Data Service on four nodes, only two nodes (either the active and a replica, or two replicas) can be candidates for auto-failover.
+* If you configure a bucket with three replicas and run the Data Service on four nodes, only two nodes (either the active and a replica, or two replicas) can be candidates for auto-failover.
 Couchbase Server applies this constraint even though durability is not supported for buckets with three replicas.
---
-+ 
-You enable this setting in the Couchbase Server Web Console's see xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability] settings.
+
+You enable this setting in the Couchbase Server Web Console's xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability] settings.
 You can also enable it using the REST API. 
 See xref:rest-api:rest-cluster-autofailover-enable.adoc[] for more information.
 
+Benefits:: 
+Enabling the preserve durable writes setting is easier than setting the maximum number of sequential automatic failovers.
+This setting is more targeted because it applies to just the nodes running the Data Service.
+This means Couchbase Server could allow automatic failover of multiple non-data nodes which would not threaten durability, such as index nodes.
+In most cases, this is the best option to protect durably written data.
+
+Drawbacks::
+ This setting is more restrictive, and can prevent automatic failover in some cases where adjusting the `maxCount` setting would allow it.
 
 [#protection-guarantees-1-replica]
 == Protection Guarantees: One Replica
