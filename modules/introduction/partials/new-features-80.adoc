@@ -2,11 +2,10 @@
 === Couchbase Cluster
 
 
-
+[#anchor-61457]
 https://jira.issues.couchbase.com/browse/MB-61457[MB-61457]::
 The following settings have been added to the `/pools/default/buckets` REST APIs.
 +
-
 |===
 |Argument Name |Type |Valid values |Default
 
@@ -35,6 +34,13 @@ The following settings have been added to the `/pools/default/buckets` REST APIs
 |51 to 90
 |85
 |===
++
+The above new settings are added and made accessible through the REST API.
+For more information, see the xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets] and xref:learn:buckets-memory-and-storage/memory.adoc[Memory].
+The settings `warmup_min_items_threshold`, `warmup_min_memory_threshold`, `exp_pager_stime`, `mem_high_wat`, and `mem_low_wat` are removed from `cbepctl`.
++
+The same changes in the warmup behavior settings are applicable to the Data Services.
+For more information, see xref:anchor-9418[MB-9418].
 
 https://jira.issues.couchbase.com/browse/MB-61946[MB-61946]::
 The `/pools/default/nodeServices` endpoint results now include the UUID and name of the cluster.
@@ -59,31 +65,62 @@ curl --get -u <username:password> \
     -d clusterLabels=none|uuidOnly|uuidAndName
 ----
 
+[#section-new-feature-800-services]
+=== Services
+
+https://jira.issues.couchbase.com/browse/MB-60349[MB-60349]::
+Now you can add or remove non-Data Services dynamically on existing nodes in a cluster, without adding or removing nodes.
+Rebalancing is automatically triggered to distribute service workloads and complete the modification.
+These are the services that can be modified:
+
+** `index` (Index Service)
+** `n1ql` (Query Service)
+** `fts` (Search Service)
+** `cbas` (Analytics Service)
+** `eventing` (Eventing Service)
+** `backup` (Backup Service)
+
+You can modify these services using the Couchbase xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-from-ui[UI], xref:rest-api:rest-set-up-services-existing-nodes.adoc[REST API], or xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-using-cli[CLI].
+
 [#section-new-feature-data-service]
 === Data Service
 
+https://jira.issues.couchbase.com/browse/MB-38452[MB-38452] Memcached buckets have been removed::
+Couchbase Server 8.0 has removed support for Memcached buckets.
+They were deprecated in version 6.5.1.
+Before upgrading to Couchbase Server 8.0, you must remove any Memcached buckets from your cluster.
+You can replace them with ephemeral buckets which are similar to Memcached buckets but support features such as rebalance, backup, query, and eventing.
+See the https://docs-archive.couchbase.com/server/6.6/learn/buckets-memory-and-storage/buckets.html#bucket-capabilities[Bucket Capabilities in the Version 6.6 documentation] for a summary of the differences between Memcached and ephemeral buckets.
+If you do not remove your Memcached buckets, the upgrade process reports an error message telling you to remove the Memcached buckets before proceeding.
 
+[#anchor-9418]
 https://jira.issues.couchbase.com/browse/MB-9418[MB-9418]::
-The previous warmup behavior was to load values and not complete warmup until the Bucket reaches one of:
+**Configurable Warmup Behavior (Background Warmup):**
++
+The new `warmup_behavior` setting, configured using `warmupBehavior` in the REST API, controls when a persistent bucket becomes fully available for `read` and `write` operations after a bucket restart.
+This setting replaces multiple warmup threshold parameters with a single configuration point:
 +
 --
-* `warmup_min_memory_threshold` — defaults to 100%.
-* `warmup_min_items_threshold` — defaults to 100%.
-* The bucket low watermark (i.e., 75% of the Bucket quota)
+* **background** (default): The bucket becomes fully available as soon as required metadata is loaded from storage.
+The bucket’s cache is then filled in the background until memory usage reaches the low watermark (memoryLowWatermark).
+* **blocking**: This is the original behaviour.
+The bucket becomes read-available as soon as required metadata is loaded from storage, then continues filling the cache until memory usage reaches the low watermark (`memoryLowWatermark`).
+The bucket becomes fully available only after this point.
+* **none**: Disables warmup.
+The bucket becomes fully available as soon as required metadata is loaded from storage.
+The cache remains empty.
++
+For more information, see xref:learn:buckets-memory-and-storage/memory.adoc#initialization-and-warmup[Initialization and Warmup].
 --
 +
-*Resolution:* Couchbase Server adds a new parameter, `warmup_behavior`. 
-This new parameter can be used to change the thresholds using a single command. 
+**API Changes:**
 +
-`warmup_behavior` takes one of three settings:
+The REST API now includes the per-bucket setting `warmupBehavior`.
+The previous advanced tuning settings `warmup_min_items_threshold` and `warmup_min_memory_threshold` have been removed from the `cbepctl` interface.
+For the REST API information, see xref:rest-api:rest-bucket-create.adoc#warmupbehavior[warmupBehavior].
 +
-[horizontal]
-`blocking`:::
-Warmup behaves the same as it did before with no background warmup
-`background`:::
-Warmup now loads items in the background, allowing the bucket to have write availability much quicker than blocking.
-`none`:::
-Warmup is disabled; the bucket comes online with no items loaded.
+The same changes in the warmup behavior settings are applicable to the Couchbase Cluster.
+For more information, see xref:anchor-61457[MB-61457].
 
 https://jira.issues.couchbase.com/browse/MB-64071[MB-64071]::
 Couchbase Server has a new metric
@@ -116,10 +153,66 @@ https://jira.issues.couchbase.com/browse/MB-59113[MB-59113] Prevent buckets from
  See xref:learn:buckets-memory-and-storage/storage-settings.adoc#filesystem-free-space-and-usage-limits[Filesystem Free Space and Usage Limits] for more information.
 
 
+[#section-new-feature-800-backup-service]
+=== Backup and Restore
+https://jira.issues.couchbase.com/browse/MB-44863[MB-44863]::
+Backup Service now supports configurable retention periods for repositories and pruning of old backups from the UI and REST API.
+A default retention period can be set or overridden for individual backups as needed.
+Pruning can be scheduled to run automatically, or it can be run manually.
+For more information, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#backup-retention[Retain Backups] and xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#schedule-backup-pruning[Schedule Pruning].
+
+https://jira.issues.couchbase.com/browse/MB-60337[MB-60337]::
+Incremental backups now keep track of which backups they depend on.
+You cannot delete a backup if another incremental backup needs it, however, you can choose to override this protection from the UI and REST API.
+For more information, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#delete-backups[Delete Backups].
+
+
 [#section-new-feature-800-XDCR]
 === XDCR
-https://jira.issues.couchbase.com/browse/MB-61048[MB-61048]::
-Once faulty remote cluster credentials are fixed, XDCR will now be able to more quickly restart replications that depend on the repaired references.
+
+https://jira.issues.couchbase.com/browse/MB-62564[MB-62564]::
+
+`xdcrDiffer` is a diagnostic utility included in the Couchbase Server package.
+This utility verifies data consistency between XDCR clusters.
+It identifies missing or mismatched documents by comparing metadata and content hashes across source and target clusters.
++
+For more information, see xref:manage:pages/manage-xdcr/xdcr-differ.adoc[xdcrDiffer Utility].
+
+
+https://jira.issues.couchbase.com/browse/MB-62507[MB-62507]::
+XDCR supports Generic Services Log Level configuration using the REST API through the `genericServicesLogLevel` settings.
+For more information, see xref:rest-api:rest-xdcr-adv-settings.adoc[XDCR Advanced Settings].
+
+[#section-new-features-800-security-authentication]
+=== Security and Authentication
+
+https://jira.issues.couchbase.com/browse/MB-16143[MB-16143]::
+Couchbase Server Enterprise now supports native encryption at rest.
+You can encrypt bucket data, audits, and most logging and configuration information.
+You choose which buckets to encrypt and which remain unencrypted.
+See xref:learn:security/native-encryption-at-rest-overview.adoc[] for more information.
+
+https://jira.issues.couchbase.com/browse/MB-50939[MB-50939]::
+Added support for the Hybrid authentication mode in the certificate-based client authentication.
+When Hybrid is selected:
++
+--
+* Clients can authenticate using either certificates or username/password credentials.
+* All nodes must use mutual TLS (mTLS) for inter-node communication.
+* The prerequisite is that the property `clusterEncryptionLevel` be set to `all` or `strict`.
+--
++
+This mode enhances flexibility for clients while enforcing strict security for node-to-node communication.
++
+For more information, see xref:manage:manage-security/enable-client-certificate-handling.adoc[Enable Client Certificate Handling].
+
+
+https://jira.issues.couchbase.com/browse/MB-11575[MB-11575]::
+XDCR now supports the identification of Incoming Replications on a cluster.
+The Incoming Replications can be:
+
+* Viewed on the XDCR tab of the UI. See xref:manage:manage-xdcr/incoming-xdcr-replications.adoc#view-incoming-replications[View Incoming Replications] in xref:manage:manage-xdcr/incoming-xdcr-replications.adoc[Incoming Replications].
+* Retrieved by using the REST API command `GET /xdcr/sourceClusters`. See xref:rest-api:rest-xdcr-list-incoming-replications.adoc[Listing Incoming Replications].
 
 [#section-new-feature-800-query-service]
 === Query Service
@@ -234,4 +327,7 @@ https://jira.issues.couchbase.com/browse/MB-61073[MB-61073]::
 It is now possible to change the plan used by a repository.
 The repository first needs to be paused, and then the plan can be changed,
 and the repository resumed, where it will now execute the tasks from its new plan.
+
+
+
 
