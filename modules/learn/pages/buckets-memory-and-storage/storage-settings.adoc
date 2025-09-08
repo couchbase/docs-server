@@ -19,21 +19,17 @@ For more details, see xref:buckets-memory-and-storage/buckets.adoc[Buckets].
 
 Couchbase Server compresses the data it writes to disk.
 Compression reduces the amount of disk space used which can help reduce costs.
-It also makes the backup and restore procedures easier.
 In addition to compressing data written to disk, Couchbase Server can also compress data in memory.
 See xref:buckets-memory-and-storage/compression.adoc[Compression] for more information.
 
-Disk access does not interrupt most client interactions.
-However, if a client requests an item that's on disk, it must wait while Couchbase Server reads, decompresses, and copies the data into memory. 
 
 You can remove items from disk based on a configured expiration time, called time to live.
 See xref:data/expiration.adoc[Expiration] for details.
 
-To see how Couchbase Server saves new items and updates existing items in Couchbase buckets, using both memory and storage, seexref:buckets-memory-and-storage/memory-and-storage.adoc[Memory and Storage].
+See xref:buckets-memory-and-storage/memory-and-storage.adoc[Memory and Storage] for information about how Couchbase Server uses memory and storage to save new data.
 
 [#threading]
 == Threading
-
 
 Couchbase Server uses synchronized, multi-threaded readers and writers to provide high-performance, simultaneous operations for data on disk.
 Readers and writers each have their own set of threads.
@@ -42,8 +38,9 @@ To prevent conflicts, each thread is responsible for reading or writing a subset
 You can control the number of reader and writer threads. 
 In the Couchbase Server Web Console, you can have Couchbase Server automatically choose a default value or a value that optimizes disk I/O. 
 You can also manually set the number of threads per node to a value between 1 and 64.
-Using a higher number of threads may improve performance if your hardware supports it, such as when your CPU has a high large of cores.
-Increasing the number of writer threads helps optimize durable writes.
+Using a higher number of threads may improve performance if your hardware supports it, such as when your CPU has a larger of cores.
+
+You can optimize durable writes by increasing the number of writer threads.
 For more information, see xref:learn:data/durability.adoc[Durability].
 
 Setting the number of threads higher than your hardware supports can reduce performance.
@@ -57,16 +54,7 @@ The NonIO thread pool runs in-memory tasks, such as the durability timeout task.
 The AuxIO thread pool runs auxiliary I/O tasks, such as the access log task.
 Set the thread count for each between 1 and 64.
 
-To view thread status, use the [.cmd]`cbstats` command with the [.param]`raw workload` option.
-For more information, see xref:cli:cbstats-intro.adoc[cbstats].
-
-* The NonIO thread pool is used to run in memory tasks--for example, the durability timeout task.
-
-* The AuxIO thread pool is used to run auxiliary I/O tasks--for example, the _access log_ task.
-
-Again, the maximum thread-allocation that can be specified for each is _64_, the minimum is _1_.
-
-Thread-status can be viewed, by means of the [.cmd]`cbstats` command, specified with the [.param]`raw workload` option.
+Use [.cmd]`cbstats` command line tool with the [.param]`raw workload` option to view the thread status.
 See xref:cli:cbstats-intro.adoc[cbstats] for information.
 
 For information on using the REST API to manage thread counts, see xref:rest-api:rest-reader-writer-thread-config.adoc[Setting Thread Allocations].
@@ -137,43 +125,29 @@ Running out of disk space on any filesystem can cause errors.
 In particular, running out of disk space on the filesystem containing the Data Service storage path can make recovery difficult.
 Recovery problems could lead to data loss.
 
-By default, Couchbase Server alerts you if the filesystem containing the following storage paths becomes more than 90% full:
-
-* Data Service
-* Index Service
-* `ns_log` and `audit_log` paths`
-
+By default, Couchbase Server alerts you if the filesystem containing the data service's storage path becomes 75% full.
+It begin alerting you when disk containing this path reaches within 10% of the threshold set by the `maxDataDiskUsedPerc` setting, which defaults to 85%. 
 
 See xref:manage:manage-settings/configure-alerts.adoc[] for more information about alerts.
-You can change how full the disk becomes before triggering this alert by changing the  xref:rest-api:rest-cluster-email-notifications.adoc#maxdatadiskusedperc[maxDiskUsedPerc] alert limit.
+You can change how full the disk becomes before triggering this alert by changing the xref:rest-api:rest-cluster-email-notifications.adoc#maxdatadiskusedperc[`maxDataDiskUsedPerc`] alert limit.
 
-Couchbase Server only appends to files.
-Appending-only helps to ensure the internal consistency of the files and reduces the risk of corruption.
-However, this means that every change made to a file&#8212;whether an addition, a mutation,
-or a deletion&#8212; results in a new entry being appended to the file.
-Therefore, even if you delete data from a file, the result is that the file size grows larger.
-The deletion just appends a record to the file indicating that the data was deleted.
-
-To reduce file size, enable compaction.
-This operation can be performed either manually, on a specified bucket; or on an automated, scheduled basis, either for specified buckets or for all buckets.
-
-For all information on using the REST API for compaction, see the xref:rest-api:rest-autocompact-global.adoc[Global Compaction API] 
-or xref:rest-api:rest-autocompact-per-bucket.adoc[Per-bucket Compaction API].
-
-You can enable a feature to have Couchbase Server stop writing to the Data Service storage path when it reaches a certain percentage of disk usage.
-The default (and recommended) limit is 85% full which means Couchbase Server stops writing data if the filesystem is 85% or more full. 
+You can also have the Data Service stop writing to its storage path when it reaches a percentage of disk usage.
+The default (and recommended) limit is 85% full which means the Data Service stops writing data if the filesystem is 85% or more full. 
 Enabling this limit helps avoid potential issues with recovery.
 
-When you set a disk usage limit, Couchbase Server starts alerting you when the filesystem fills to within 10% of the threshold you set.
+When you set a data disk usage limit, Couchbase Server starts alerting you when the filesystem fills to within 10% of the threshold you set.
 This alert is in addition to the default alert when the filesystem is 90% full. 
 For example, if you use the default limit of 85%, Couchbase Server alerts you when the filesystem reaches 75% full.
 
-When the filesystem reaches the limit, Couchbase Server stops writing to the Data Service storage path.
+When the filesystem reaches the limit, the Data Service stops writing to the Data Service storage path.
 Any attempts to write to the Data Service storage path results in an `EBucketDiskSpace` error. 
 To re-enable writes, you must reduce the disk usage below the limit you set.
 
 To learn how to set the disk usage limit using the Couchbase Server Web Console, see xref:manage:manage-settings/general-settings.adoc#data-settings[Data Settings].
 To set the limits using the REST API, see xref:rest-api:disk-usage-limits.adoc[].
+
+NOTE: This limit applies only to the Data Service. 
+If other service's data paths share the same filesystem, they can continue to write to it even if the Data Service stops writing.
 
 [#append-only-writes-and-auto-compaction]
 == Append-Only Writes and Auto-Compaction
@@ -216,7 +190,6 @@ In Couchbase buckets, data is removed from memory but still exists on disk.
 If the data is needed again, Couchbase Server can reload the data from disk back into memory.
 
 The available ejection policies depend on the bucket type, as shown in the following table.
-
 
 .Ejection policies
 |===
