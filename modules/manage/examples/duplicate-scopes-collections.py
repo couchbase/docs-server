@@ -34,7 +34,6 @@ for scope in scopes:
     for collection in scope.collections:
         try:
             print(f"Creating collection: {collection.name} in scope: {scope_name}")
-            # tgt_coll_mgr.create_collection(CollectionSpec(collection.name, scope_name=scope_name))
             tgt_coll_mgr.create_collection(scope_name, collection.name)
         except CollectionAlreadyExistsException:
             pass
