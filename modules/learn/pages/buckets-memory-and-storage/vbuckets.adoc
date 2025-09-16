@@ -1,5 +1,5 @@
 = vBuckets
-:description: pass:q[_vBuckets_ are virtual buckets that help distribute data effectively across a cluster, and support replication across multiple nodes.]
+:description: pass:q[vBuckets are virtual buckets that break bucket data into smaller pieces to make distributing and replicating data across multiple nodes easier.]
 :page-aliases: understanding-couchbase:buckets-memory-and-storage/vbuckets,architecture:core-data-access-bucket-disk-storage,architecture:core-data-access-vbuckets-bucket-partition
 
 [abstract]
@@ -8,40 +8,69 @@
 [#understanding-vbuckets]
 == Understanding vBuckets
 
-Couchbase Server allows users and applications to save data, in binary or JSON format, in named _buckets_.
-Each bucket therefore contains _keys_ and associated _values_.
-See xref:buckets-memory-and-storage/buckets.adoc[Buckets], for detailed information.
+Couchbase Server lets users and applications save data in binary or JSON format in named buckets.
+Each bucket contains keys and their associated values.
+See xref:buckets-memory-and-storage/buckets.adoc[Buckets] for detailed information about buckets.
 
-Within the memory and storage management system of Couchbase Server, both Couchbase and Ephemeral buckets are implemented as _vBuckets_, 1024 of which are created for every bucket (except on MacOS, where the number is 64).
-vBuckets are distributed evenly across the memory and storage facilities of the cluster; and the bucket's items are distributed evenly across its vBuckets.
-This evenness of distribution ensures that all instances of the xref:services-and-indexes/services/data-service.adoc[Data Service] take an approximately equal share of the workload, in terms of numbers of documents to maintain, and operations to handle.
+Couchbase Server breaks the data in buckets into smaller units called vBuckets (short for virtual buckets).
+Some people refer to vBuckets as shards.
+The vBuckets let Couchbase Server work with smaller chunks of data to ease distributing work around the cluster and maintaining data availability through replication.
 
-The 1024 vBuckets that implement a defined bucket are referred to as _active_ vBuckets.
-If a bucket is replicated, each replica is implemented as a further 1024 (or 64) vBuckets, referred to as _replica_ vBuckets.
-Thus, a bucket configured on Linux to be replicated twice results in a total of 3072 vBuckets, distributed across the cluster.
-_Write_ operations are performed only on _active_ vBuckets.
-Most _read_ operations are performed on _active_ vBuckets, though items can also be read from _replica_ vBuckets when necessary.
+When it creates the bucket, Couchbase Server breaks it into a fixed number of vBuckets .
+Once created, the number of vBuckets in a bucket does not change.
+The number of vBuckets depends on the bucket's storage backend (the system that manages the data storage) and the operating system running Couchbase Server:
 
-Note that vBuckets are sometimes referred to as _shards_.
+* On MacOS, Couchbase Server creates 64 vBuckets for each bucket, no matter what the storage engine is.
+* Buckets that use the Couchstore storage engine use 1024 vBuckets on Linux and Windows.
+* Buckets that use Magma storage engine can use either 128 or 1024 vBuckets on Linux and Windows.
+You choose the number of vBuckets when you create the bucket.
 
-Items are written to and retrieved from vBuckets by means of a _CRC32_ hashing algorithm, which is applied to the item's key, and so produces the number of the vBucket in which the item resides.
-vBuckets are mapped to individual nodes by the Cluster Manager: the mapping is constantly updated and made generally available to SDK and other clients.
+The system distributes vBuckets evenly across the memory and storage resources of nodes that run the xref:services-and-indexes/services/data-service.adoc[Data Service].
+The bucket's data is distributed evenly across its vBuckets.
+This even distribution balances the workload of processing and maintaining data across all of the Data Service  instances in the cluster.
 
-The relationships between a bucket, its keys (and their associated values), the hashing algorithm, vBuckets, server-mappings, and servers, is illustrated below:
+=== Accessing Data in vBuckets 
+
+When reading or writing data, Couchbase Server uses a CRC32 hashing algorithm to map items to vBuckets.
+It hashes the item's key, to determine which vBucket stores the item.
+
+The Cluster Manager tracks which nodes contain each vBucket.
+It also determines which vBuckets are active vs which are replicas (see <<active-vs-replica>>).
+When the mapping changes, the Cluster Manager updates the vBucket map and notifies clients of the change.
+
+The following diagram shows the relationships between a bucket, its keys and values, the hashing algorithm, vBuckets, server mappings, and servers:
 
 [#vbucket_to_node_mapping]
 image::buckets-memory-and-storage/vbucketToNodeMapping.png[,820,align=left]
 
-Thus, an authorized client attempting to access data performs a hash operation on the appropriate key, and thereby calculates the number of the vBucket that owns the key.
-The client then examines the vBucket map to determine the server-node on which the vBucket resides; and finally performs its operation directly on that server-node.
+When accessing data via keys, a client hashes the key to calculate which vBucket contains the data.
+It checks the vBucket map it got from the Cluster Manager to find the node containing the active vBucket.
+Then the client directly connects to the node to read or modify the data.
 
-In Couchbase Server Version 7.0+, documents within a bucket are organized into xref:learn:data/scopes-and-collections.adoc[Scopes and Collections].
-Scopes and collections do _not_ affect the way in which keys are allocated to vBuckets.
-However, each vBucket _is_ aware, for each of its allocated keys, of the scope and collection with which that particular key is associated.
+Buckets organize their documents into xref:learn:data/scopes-and-collections.adoc[Scopes and Collections].
+Scopes and collections do not affect the way in which keys are allocated to vBuckets.
+However, each vBucket is aware of the scope and collection containing each of its keys. 
 
-When a cluster-configuration changes — due to rebalance, failover, or node-addition — replica buckets are promoted to primaries if appropriate, and both primaries and replicas are redistributed across the available nodes of the modified cluster.
-The vBucket map is duly updated by the Cluster Manager.
-The updated map is then sent to all cluster-participants.
-For additional information on the distribution of vBuckets across the cluster, see xref:clusters-and-availability/replication-architecture.adoc[Availability].
+[[active-vs-replica]]
+=== Active and Replica vBuckets
 
-Note that this use of client-side hashing for access to Couchbase and Ephemeral bucket-data contrasts with the Memcached data-access method; which requires active management of the server-list, and a specific hashing algorithm, such as Ketama, to handle topology-changes.
+The vBuckets that Couchbase Server uses to access and store data in a bucket are called active vBuckets.
+If you enable replicas for a bucket, each replica uses another set of vBuckets, called replica vBuckets.
+These replicas are stored across the cluster, similar to active vBuckets.
+The active vBucket and its replicas are always on different nodes in the cluster to protect against data loss from node failovers.
+
+For example, suppose you have a Magma bucket configured with 1024 vBuckets and two replicas on Linux.
+Then, Couchbase Server has a total of 3072 vBuckets distributed across the cluster for the bucket.
+In most cases, replica vBuckets are not actively used for data access.
+Most data read operations use active vBuckets, but the system can read items from replica vBuckets when needed.
+Data write operations write only to active vBuckets.
+However, durable writes can require that data be replicated from an active vBucket to a replica vBucket before Couchbase Server considers the write operation a success.
+See xref:learn:data/durability.adoc[] for more information about durable writes.
+
+When the configuration of the cluster changes due to rebalance, failover, or node-addition, Couchbase Server promotes replica buckets to active if necessary.
+For example, if a node fails over, any active vBuckets on it becomes unavailable. 
+Couchbase Server promotes replicas of the lost vBuckets to active to maintain data availability.
+
+During a rebalance, Couchbase Server redistributes active and replica vBuckets across the available nodes.
+For additional information about the distribution of vBuckets across the cluster, see xref:clusters-and-availability/replication-architecture.adoc[Availability].
+
