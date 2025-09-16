@@ -51,6 +51,7 @@ curl -X POST -u <administrator>:<password>
   -d bucketType=[ couchbase | ephemeral ]
   -d ramQuota=<integer>
   -d storageBackend=[ couchstore | magma ]
+  -d numVBuckets=[ 128 | 1024 ]
   -d evictionPolicy=[
           [ valueOnly | fullEviction ] |
           [ noEviction | nruEviction ]
@@ -60,6 +61,7 @@ curl -X POST -u <administrator>:<password>
           [ none | majority | majorityAndPersistActive | persistToMajority ] |
           [ none | majority ]
         ]
+  -d durabilityImpossibleFallback= [ disabled | fallbackToActiveAck ]
   -d threadsNumber=[ 3 | 8 ]
   -d rank=<integer>
   -d replicaNumber=[ 1 | 2 | 3 ]
@@ -87,7 +89,11 @@ curl -X POST -u <administrator>:<password>
   -d allowedTimePeriod[toHour]=<integer>
   -d allowedTimePeriod[toMinute]=<integer>
   -d allowedTimePeriod[abortOutside]=[ true | false ]
-
+  -d accessScannerEnabled=[ true | false ]
+  -d expiryPagerSleepTime=<integer>
+  -d warmupBehavior=[ background | blocking | none ]
+  -d memoryLowWatermark=<integer>
+  -d memoryHighWatermark=<integer>
 ----
 
 All parameters are described in the following subsections.
@@ -125,6 +131,11 @@ The following parameters can be edited after bucket creation:
 * <<encryptionAtRestKeyId>>
 * <<encryptionAtRestDekRotationInterval>>
 * <<encryptionAtRestDekLifetime>>
+
+** Parameters that _can_ be edited after bucket creation; these being xref:rest-api:rest-bucket-create.adoc#evictionpolicy[evictionPolicy], xref:rest-api:rest-bucket-create.adoc#durabilityminlevel[durabilityMinLevel], xref:rest-api:rest-bucket-create.adoc#threadsnumber[threadsNumber], xref:rest-api:rest-bucket-create.adoc#rank[rank], xref:rest-api:rest-bucket-create.adoc#replicanumber[replicaNumber], xref:rest-api:rest-bucket-create.adoc#compressionmode[compressionMode], xref:rest-api:rest-bucket-create.adoc#maxttl[maxTTL], xref:rest-api:rest-bucket-create.adoc#flushenabled[flushEnabled], xref:rest-api:rest-bucket-create.adoc#magmaseqtreedatablocksize[magmaSeqTreeDataBlockSize],
+xref:rest-api:rest-bucket-create.adoc#historyretentioncollectiondefault[historyRetentionCollectionDefault],
+xref:rest-api:rest-bucket-create.adoc#historyretentionbytes[historyRetentionBytes], xref:rest-api:rest-bucket-create.adoc#storagebackend[storageBackend],
+xref:rest-api:rest-bucket-create.adoc#historyretentionseconds[historyRetentionSeconds], xref:rest-api:rest-bucket-create.adoc#accessscannerenabled[accessScannerEnabled], xref:rest-api:rest-bucket-create.adoc#expirypagersleeptime[expiryPagerSleepTime], xref:rest-api:rest-bucket-create.adoc#warmupbehavior[warmupBehavior], xref:rest-api:rest-bucket-create.adoc#memorylowwatermark[memoryLowWatermark], and xref:rest-api:rest-bucket-create.adoc#memoryhighwatermark[memoryHighWatermark].
 
 You cannot edit these parameters after bucket creation:
 
@@ -308,31 +319,66 @@ No object is returned.
 [#storagebackend]
 === storageBackend
 
-The storage backend to be assigned to and used by the bucket.
-This can be either `couchstore` (which is the default) or `magma`.
-For information, see xref:learn:buckets-memory-and-storage/storage-engines.adoc[Storage Engines].
+The storage backend to use for the new bucket.
+In Enterprise Edition, this value can be set to either `couchstore` or `magma` (the default).
+In Couchbase Server Community Edition, the default and only valid value is `couchstore`.
+For more information, see xref:learn:buckets-memory-and-storage/storage-engines.adoc[Storage Engines].
 
-NOTE: You can edit this value after initially creating the bucket. Couchbase Server sets the new backend value globally. 
+NOTE: You can edit this value after initially creating the bucket. 
+Couchbase Server sets the new backend value globally. 
 However, this change does not convert the bucket to the new backend storage engine. 
-Instead, Couchbase Server adds overrides to every node containing the bucket to indicate that their vBuckets are still in the old format. You must take additional steps to complete the migration to the new storage backend. 
+Instead, Couchbase Server adds overrides to every node containing the bucket to indicate that their vBuckets are still in the old format. 
+You must take additional steps to complete the migration to the new storage backend. 
 See xref:manage:manage-buckets/migrate-bucket.adoc[] for more information.
 
 [#example-storage-backend]
 ==== Example: Specifying the Storage Backend
 
-A minimum of 1024 MiB is required if the `magma` option is used; a minimum of 100 MiB if the default `couchstore` is used.
+The following example creates a new bucket, named `testBucket`, with the Magma storage backend.
 
 [source,bash]
 ----
 curl -v -X POST http://127.0.0.1:8091/pools/default/buckets \
 -u Administrator:password \
--d ramQuota=1024 \
+-d ramQuota=300 \
 -d storageBackend=magma \
 -d name=testBucket
 ----
 
 If successful, the call returns a `202 Accepted` notification.
 No object is returned.
+
+
+[#numvbuckets]
+=== numVBuckets
+
+Sets the number of vBuckets for a Magma bucket.
+The possible values are `128` or `1024`.
+If you do not supply this value (or if you supply a value other than `128` or `1024`), Couchbase Server uses the default value of `128`.
+
+If you set `storageBackend` to `couchstore`, the number of vBuckets is always 1024, and Couchbase Server ignores this parameter if you provide it.
+
+NOTE: You cannot change the number of vBuckets for a bucket after creating it.
+If you need a bucket with a different number of vBuckets, you must create a new bucket with the desired number of vBuckets and then migrate your data to it.
+See xref:manage:manage-buckets/migrate-bucket.adoc#xdcr-migration[XDCR Storage Backend Migration] for more information.
+
+[#example-numvbuckets-create]
+==== Example: Setting the Number of vBuckets
+
+The following example creates a new bucket named `testBucket` with the Magma stage backend assigns it `1024` vBuckets. 
+It also sets the `ramQuota` to `1024`, which is the minimum value allowed for a Magma bucket with 1024 vBuckets.
+
+[source,console]
+----
+curl -X POST http://127.0.0.1:8091/pools/default/buckets \
+     -u Administrator:password \
+     -d name=testBucket \
+     -d storageBackend=magma \
+     -d numVBuckets=1024 \
+     -d ramQuota=1024 
+----
+
+This example returns the status code `202 Accepted` and no additional output.
 
 [#evictionpolicy]
 === evictionPolicy
@@ -420,7 +466,7 @@ Level-assignment depends on bucket type.
 For a Couchbase bucket, the level can be `none`, `majority`, `majorityAndPersistActive`, or `persistToMajority`.
 For an Ephemeral bucket, the level can be `none` or `majority`.
 
-This parameter can be modified, following bucket-creation.
+You can modify this parameter for existing buckets.
 
 For information about durability and levels, see xref:learn:data/durability.adoc[Durability].
 
@@ -455,6 +501,56 @@ curl -v -X POST http://127.0.0.1:8091/pools/default/buckets/testBucket \
 
 If successful, the call returns a `200 OK` notification.
 No object is returned.
+
+
+[[durabilityImpossibleFallback]]
+=== durabilityImpossibleFallback
+
+Overrides Couchbase Server's default behavior when it cannot meet a durable write's majority requirement.
+When set to the default `disabled` setting, Couchbase Server reports to clients that a durable write that cannot meet its majority requirement has failed.
+
+If you set this value to `fallbackToActiveAck`, Couchbase Server reports the write as successful if the write succeeds to the active vBucket.
+It reports it as a successful durable write even if it could not meet the majority requirement.
+
+include::learn:partial$maintain-durability-warning.adoc[]
+
+Use this setting only in special cases.
+For example, use it when you're performing a graceful failover and you still want durable writes to succeed for a bucket with a single replica.
+
+For information about the `durabilityImpossibleFallback` setting, see xref:learn:data/durability.adoc#maintaining-durable-writes[Maintaining Durable Writes During Single Replica Failovers].
+
+You can modify this parameter for existing buckets.
+
+[NOTE]
+====
+Each time Couchbase Server reports success for a durable write that does meet its majority requirement, it increments the stat named `sync_write_committed_not_durable_count` on the vBucket.
+====
+
+==== Example: Allow Durable Writes to Succeed During a Node Failover
+
+This example enables `durabilityImpossibleFallback` for the single-replica bucket named `testBucket` allowing durable writes to succeed even if there are not enough nodes for a majority.
+
+[source,bash]
+----
+curl -X POST -u Administrator:password \
+       http://localhost:8091/pools/default/buckets/testBucket \
+       -d "durabilityImpossibleFallback=fallbackToActiveAck"
+----
+
+If successful, the call returns a `200 OK` notification.
+
+==== Example: Restore Default Durable Write Behavior
+
+This example restores the default behavior for the bucket `testBucket` so that durable writes fail if Couchbase Server cannot fulfill the majority requirement.
+
+[source,bash]
+----
+curl -v -X POST -u Administrator:password \
+       http://localhost:8091/pools/default/buckets/testBucket \
+       -d "durabilityImpossibleFallback=disabled"
+----
+
+If successful, the call returns a `200 OK` notification.
 
 [#threadsnumber]
 === threadsNumber
@@ -718,7 +814,7 @@ The value can be `seqno` (which is the default), specifying sequence-number base
 This parameter cannot be modified, following bucket-creation.
 If modification is attempted, the following error-notification is returned: `{"conflictResolutionType":"Conflict resolution type not allowed in update bucket"}`.
 
-For information on conflict resolution, see: xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution].
+For information on conflict resolution, see xref:learn:clusters-and-availability/xdcr-conflict-resolution.adoc[XDCR Conflict Resolution].
 
 [#example-conflictresolutiontype-create]
 ==== Example: Specifying a Conflict Resolution Policy, when Creating
@@ -943,6 +1039,218 @@ curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
 
 Success returns `200 OK`.
 
+[#accessscannerenabled]
+=== accessScannerEnabled
+
+Specifies whether the Access Scanner is enabled for the bucket.
+The value can be either `true` (which is the default) or `false`.
+
+The access scanner periodically logs the most frequently used keys, allowing the Server to prioritize loading these documents into memory during warmup.
+
+For information on the Access Scanner, see xref:learn:buckets-memory-and-storage/memory.adoc#initialization-and-warmup[Initialization and Warmup].
+
+This parameter can be modified after a bucket is created.
+
+[#example-accessscannerenabled-create]
+==== Example: Enable Access Scanner, when Creating
+
+The following example creates a new bucket, named `testBucket`, and enables the Access Scanner.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d accessScannerEnabled=true
+----
+
+Success returns `202 Accepted`.
+
+[#example-accessscannerenabled-edit]
+==== Example: Modify Access Scanner Enablement, when Editing
+
+The following example changes the Access Scanner setting for the existing bucket `testBucket`. It sets `accessScannerEnabled` to `false`, which disables the Access Scanner.
+
+----
+curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d accessScannerEnabled=false
+----
+
+If successful, the call returns a `200 OK` notification.
+No object is returned.
+
+[#expirypagersleeptime]
+=== expiryPagerSleepTime
+
+Specifies the sleep time for the expiry pager in seconds.
+The default value is `600` (10 minutes).
+
+This parameter can be modified after a bucket is created.
+
+[#example-expirypagersleeptime-create]
+==== Example: Set Expiry Pager Sleep Time, when Creating
+
+The following example creates a new bucket, named `testBucket`, and sets the expiry pager sleep time to `300` seconds (5 minutes).
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d expiryPagerSleepTime=300
+----
+
+Success returns `202 Accepted`.
+
+[#example-expirypagersleeptime-edit]
+==== Example: Modify Expiry Pager Sleep Time, when Editing
+
+The following example changes the expiry pager sleep time for the existing bucket `testBucket`. It sets `expiryPagerSleepTime` to `360` seconds (6 minutes).
+
+----
+curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d expiryPagerSleepTime=360
+----
+
+If successful, the call returns a `200 OK` notification.
+No object is returned.
+
+[#warmupbehavior]
+=== warmupBehavior
+
+Specifies the warmup behavior for the bucket.
+
+Warmup behavior in Server is the process that loads data from disk into memory when a bucket or node starts up.
+For more information, see xref:learn:buckets-memory-and-storage/memory.adoc#initialization-and-warmup[Initialization and Warmup].
+
+The values can be:
+
+* `background` (default, Warmup now loads items in the background, allowing the bucket to have write availability much quicker than blocking.)
+* `blocking` (to block all operations and load all data until warmup is complete, before the bucket becomes available)
+* `none` (to disable completely)
+
+[#example-warmupbehavior-create]
+==== Example: Set Warmup Behavior, when Creating
+
+The following example creates a new bucket, named `testBucket`, and sets the warmup behavior to `blocking`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d warmupBehavior=blocking
+----
+
+If successful, the call returns `202 Accepted`.
+
+[#example-warmupbehavior-edit]
+==== Example: Modify Warmup Behavior, when Editing
+
+The following example changes the warmup behavior for the existing bucket `testBucket`. It sets `warmupBehavior` to `none`.
+
+----
+curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d warmupBehavior=none
+----
+
+If successful, the call returns a `200 OK` notification.
+No object is returned.
+
+[#memorylowwatermark]
+=== memoryLowWatermark
+
+If a bucket’s memory quota is exceeded, items may be ejected from the bucket by the Data Service.
+
+The `memoryLowWatermark` value defines the low memory watermark for a bucket.
+When item ejection is triggered by reaching the high watermark, data is removed until the memory usage falls back to the `memoryLowWatermark` threshold, ensuring efficient memory management.
+For more information, see xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection].
+
+The value is an integer between `50` to `89`.
+`75` is the default value.
+
+This parameter can be modified after a bucket is created.
+
+[#example-memorylowwatermark-create]
+==== Example: Set Memory Low Watermark, when Creating
+
+The following example creates a new bucket, named `testBucket`, and sets the memory low watermark to `60`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d memoryLowWatermark=60
+----
+
+Success returns `202 Accepted`.
+
+[#example-memorylowwatermark-edit]
+==== Example: Modify Memory Low Watermark, when Editing
+
+The following example changes the memory low watermark for the existing bucket `testBucket`. It sets `memoryLowWatermark` to `70`.
+
+----
+curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d memoryLowWatermark=70
+----
+
+If successful, the call returns a `200 OK` notification.
+No object is returned.
+
+[#memoryhighwatermark]
+=== memoryHighWatermark
+
+If a bucket’s memory quota is exceeded, items may be ejected from the bucket by the Data Service.
+
+The `mem_high_wat` value defines the high memory watermark for a Couchbase bucket.
+When memory usage reaches this threshold, the Data Service begins ejecting items to reduce memory consumption, or stops ingesting data if enough space cannot be freed.
+For more information, see xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection].
+
+The value is an integer between `51` to `90`.
+`85` is the default value.
+
+This parameter can be modified after a bucket is created.
+
+[#example-memoryhighwatermark-create]
+==== Example: Set Memory High Watermark, when Creating
+
+The following example creates a new bucket, named `testBucket`, and sets the memory high watermark to `80`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets \
+-u Administrator:password \
+-d name=testBucket \
+-d ramQuota=1100 \
+-d storageBackend=magma \
+-d memoryHighWatermark=80
+----
+
+If successful, the call returns `202 Accepted`.
+
+[#example-memoryhighwatermark-edit]
+==== Example: Modify Memory High Watermark, when Editing
+
+The following example changes the memory high watermark for the existing bucket `testBucket`. It sets `memoryHighWatermark` to `75`.
+
+----
+curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d memoryHighWatermark=75
+----
+
+If successful, the call returns a `200 OK` notification.
+No object is returned.
+=======
 
 [[encryptionAtRestKeyId]]
 === encryptionAtRestKeyId
@@ -1007,7 +1315,6 @@ For more information about key lifetime, see xref:learn:security/native-encrypti
 
 The following example sets the DEK lifetime to 90 days (7,776,000 seconds):
 include::example$encryption-at-rest/bucket-encryption-examples.adoc[tag=set-dek-lifetime]
-
 
 [#auto-compaction-parameters]
 == Auto-Compaction Parameters
@@ -1274,6 +1581,52 @@ This parameter is ignored if `autoCompactionDefined` is `false` (which is its de
 
 See the examples provided above, in xref:rest-api:rest-bucket-create.adoc#example-databasefragmentationthresholdpercentage-create[Example: Specifying a Data Fragmentation Threshold as a Percentage, when Creating] and xref:rest-api:rest-bucket-create.adoc#example-databasefragmentationthresholdpercentage-edit[Example: Specifying a Data Fragmentation Threshold as a Percentage, when Editing].
 
+
+[#enablecrossclusterversioning]
+=== enableCrossClusterVersioning
+
+Enabling Cross Cluster Versioning is a pre-requisite to a few XDCR features.
+The bucket property `enableCrossClusterVersioning` can only be set to true after a bucket has been created.
+When enabled, for each document processed by XDCR, XDCR stores additional metadata, called the Hybrid Logical Vector (HLV), in the document extended attributes (xattrs).
+For more information, see xref:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
+
+See the example provided in xref:rest-api:rest-bucket-create.adoc#example-enablecrossclusterversioning-edit[Example: Turning on enableCrossClusterVersioning, when Editing]
+
+CAUTION: The default value is `false`. Do not change the value of this property unless instructed by a feature configuration. Once enabled, you cannot turn off the `enableCrossClusterVersioning` property. The only way for you to undo setting this value to `true` is to backup your data, create a new bucket, and restore the data, using the option `cbbackupmgr restore --disable-hlv` to remove the HLV info in the xattrs.
+
+[#example-enablecrossclusterversioning-edit]
+==== Example: Turning on enableCrossClusterVersioning, when Editing
+
+The following example modifies the value of the bucket property `enableCrossClusterVersioning` to `true`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d enableCrossClusterVersioning=true
+----
+
+[#version-pruning-window-hrs-property]
+=== versionPruningWindowHrs
+
+Controls the pruning frequency of the Hybrid Logical Vector (HLV) metadata.
+The default value of versionPruningWindowHrs is 720 hours (30 days), which means that any HLV data older than 720 hours is pruned to remove the outdated entries.
+For more information, see xref:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[versionPruningWindowHrs] in xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc#version-pruning-window-hrs[XDCR enableCrossClusterVersioning].
+
+See the example provided in xref:rest-api:rest-bucket-create.adoc#example-versionpruningwindowhrs-edit[Example: Specifying time value for versionPruningWindowHrs, when Editing]
+
+NOTE: `versionPruningWindowHrs` must be set to the same value for all buckets in an XDCR replication topology.
+
+[#example-versionpruningwindowhrs-edit]
+==== Example: Specifying time value for versionPruningWindowHrs, when Editing
+
+The following example sets the time duration value for the bucket property `versionPruningWindowHrs`.
+
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+-u Administrator:password \
+-d versionPruningWindowHrs=120
+----
+
 == Responses
 
 If bucket-creation is successful, HTTP response `202 Accepted` is returned, with empty content.
@@ -1282,15 +1635,6 @@ If the bucket cannot created due to a missing or incorrect parameter, a `400` re
 
 If the URL is incorrectly specified a `404 (Object Not Found)` error is returned.
 Failure to authenticate gives `401 Unauthorized`.
-
-[#notes]
-== Notes
-
-Couchbase Server 7.6.2 added a property named `enableCrossClusterVersioning` to support a future feature. 
-Do not change the value of this property.
-
-CAUTION: Once enabled, you cannot turn off the `enableCrossClusterVersioning` property. 
-The only way for you to undo setting this value to `true` is to backup your data, create a new bucket, and reload the data into it.
 
 == See Also
 
