@@ -1,5 +1,7 @@
 = Change a Bucket's Ejection Policy
 :description: You can change the ejection method of a Couchbase bucket. 
+:toclevels: 3
+
 
 [abstract]
 {description}
@@ -7,7 +9,7 @@ The bucket's ejection policy (also known as its eviction method) controls how Co
 See xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection] for more information about ejection policies.
 
 NOTE: You cannot change the eviction policy of an existing Ephemeral bucket. 
-If want an Ephemeral bucket to have a different ejection policy, you must drop and recreate it.
+If you want an Ephemeral bucket to have a different ejection policy, you must drop and recreate it.
 
 You may want to change the ejection policy when migrating a bucket's xref:learn:buckets-memory-and-storage/storage-engines.adoc[storage engine].
 For example, when migrating a bucket from Couchstore to Magma, you should consider changing the bucket's ejection policy to Full Ejection.
@@ -23,12 +25,12 @@ IMPORTANT: When you change the ejection policy of a bucket using the Couchbase S
 Restarting the bucket closes all open connections and results in some downtime.
 Do not change the ejection policy of a bucket in production unless you're prepared this downtime.
 You can also change the ejection policy using REST API which lets you avoid downtime.
-See <<rest-api> for more details.
+See <<rest-api>> for more details.
 
 To change the ejection policy of a bucket, follow these steps:
 
 . In the Web Console, click btn:[Buckets].
-The [.ui]*Buckets* page opens, listing al of the buckets in the cluster.
+The [.ui]*Buckets* page opens, listing all of the buckets in the cluster.
 
 +
 [#buckets_view_initial]
@@ -66,26 +68,63 @@ Couchbase Server restarts the bucket to apply the new ejection policy.
 [#rest-api]
 == Changing the Ejection Policy Using the REST API
 
-You can use the REST API to change a bucket's ejection policy without the downtime caused by the Couchbase Server Web Console restarting the bucket.
+You can change a bucket's ejection policy using the Couchbase Server REST API.
+Unlike the Couchbase Server Web Console, using the REST API lets you avoid the downtime caused by restarting the bucket. 
+You change the ejection policy by sending a POST request to the `/pools/default/buckets/<bucketname>` endpoint and changing the `evictionPolicy` setting.
+Setting the `noRestart` parameter to `true` prevents Couchbase Server from restarting the bucket immediately after you make the change.
+If you do not allow Couchbase Server to restart the bucket, you must take additional steps to apply the change.
 
-You change the ejection policy by sending a POST request to the `/pools/default/buckets/<bucketname>` endpoint and changing the `evictionPolicy` setting. 
-Couchbase Server automatically restarts the bucket after you make this call unless you also set the `noRestart` parameter to `true`.
+How you apply the change depends on whether you're changing the ejection policy during a backend storage migration or not.
 
-If you change the rejection policy and prevent Couchbase Server from restarting the bucket, the new setting does not take effect until you perform one of the following procedures:
+[#change-during-migration]
+=== Change Ejection Policy During a Backend Storage Migration
 
-* a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on  all nodes in the cluster running the data service.
+You can change the ejection policy while you're migrating the storage engine a bucket uses.
+You often want to change the ejection policy during migration because the Couchstore and Magma storage engines work best with different ejection policies.
+See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for information about storage engines and xref:manage:manage-buckets/migrate-bucket.adoc[] for information about migrating a bucket's storage backend.
+
+If you choose to change the ejection policy while migrating the storage backend, you must set `noRestart` to `true` to prevent Couchbase Server from restarting the bucket.
+If you set this option to `false` or do not include it from your REST API call to change the ejection policy, Couchbase Server does not change the ejection policy.
+
+After you change the ejection policy while migrating the storage backend, the policy does not take effect until you complete the migration.
+You complete the migration by performing 1 of the following procedures:
+
+* a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on all nodes in the cluster running the data service.
 * a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] for all nodes running the data service in the cluster.
 
-You can perform these procedures using the Couchbase Server Web Console, command line interface, or the REST API.
+See xref:manage:manage-buckets/migrate-bucket.adoc[] for information about migrating a bucket's storage backend and complete steps to change the ejection policy while performing a migration.
+
+=== Standalone Ejection Policy Change
+
+You can change a bucket's ejection policy when you're not migrating its storage backend using the REST API.
+In this case, you can choose whether to have Couchbase Server restart the bucket after you change the ejection policy or not.
+You control this behavior using the `noRestart` parameter in the REST API POST method to `/pools/default/buckets/<bucketname>`:
+
+* To trigger the automatic bucket restart, set the `noRestart` parameter to `false` or not supply it in the REST API call.
+Couchbase Server automatically restart the bucket once the REST API call completes.
+Restarting the bucket is disruptive--it closes all open connections and results in some downtime.
+Do not change the ejection policy of a bucket in production unless you're prepared this downtime.
+
+* To prevent the automatic bucket restart, set the `noRestart` parameter to `true`.
+The new ejection setting does not take effect until you perform one of the following procedures:
+
+** a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on  all nodes in the cluster running the data service.
+** the following steps for all nodes running the data service in the cluster:
++
+--
+. A  xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover]
+. A  xref:learn:clusters-and-availability/recovery.adoc#delta-recovery[delta recovery] or a xref:learn:clusters-and-availability/recovery.adoc#full-recovery[full recovery]
+. A xref:learn:clusters-and-availability/rebalance.adoc[rebalance]
+--
 
 The following procedure shows you how to change the ejection policy of a bucket using the REST API.
-It then demonstrates performing a graceful failover followed by a full recovery and rebalance to apply the change.
+It then demonstrates performing a graceful failover followed by a delta recovery and rebalance to apply the change.
 
 . Send a POST request to the `/pools/default/buckets/<bucketname>` REST API endpoint to edit the bucket, and change the `evictionPolicy` parameter to the new ejection policy that you want. 
 Also set the `noRestart` parameter to `true` to prevent Couchbase Server from restarting the bucket immediately.
 
 +
-The following command changes the ejection policy of the `travel-sample`` bucket to Full Ejection without restarting the bucket:
+The following command changes the ejection policy of the `travel-sample` bucket to Full Ejection without restarting the bucket:
 
 +
 [source,console]
@@ -130,16 +169,7 @@ The output of the previous command shows that the bucket's `evictionPolicy` para
 ]
 ----
 
-+
-[NOTE] 
-====
-While you're changing the ejection policy for a bucket, you can only change the bucket's `evictionPolicy`, `ramQuota`, and `storageBackend` settings. 
-Couchbase Server prevents you from making changes to the bucket’s other parameters. 
-Because you can change the `evictionPolicy`, you can back out of the change by changing the `evictionPolicy` back to its original value.
-If you have already performed a graceful failover followed by a full recovery and rebalance on any nodes, you must repeat the process on those nodes.
-====
-
-. Send a POST request to the `/controller/startGracefulFailover` REST API endpoint to perform a graceful failover on one of the nodes running the data service. 
+. Send a POST request to the `/controller/startGracefulFailover` REST API endpoint to perform a graceful failover on 1 of the nodes running the data service. 
 See xref:rest-api:rest-failover-graceful.adoc[] for more information about performing a graceful failover.
 
 +
@@ -151,11 +181,11 @@ include::manage:example$change-ejection-policy.sh[tag=failover-node]
 ----
 
 . Wait until the failover completes.
-Then send a POST request to the `/controller/setRecoveryType` REST API endpoint to set the type of recovery for the node to full.
+Then send a POST request to the `/controller/setRecoveryType` REST API endpoint to set the type of recovery for the node to delta.
 See xref:rest-api:rest-node-recovery-incremental.adoc[] for more information about setting the recovery type.
 
 +
-The following calls the REST API to set the recovery type for `node3` to full:
+The following calls the REST API to set the recovery type for `node3` to delta:
 +
 [source,console]
 ----

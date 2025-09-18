@@ -26,12 +26,12 @@ curl -X POST -u Administrator:password \
      -d 'otpNode=ns_1@node3.'
 # end::failover-node[]
 
-# Full recovery of node 3
+# Delta recovery of node 3
 # tag::recover-node[]
 curl -X POST -u Administrator:password \
     http://localhost:8091/controller/setRecoveryType \
     -d 'otpNode=ns_1@node3.' \
-    -d 'recoveryType=full'
+    -d 'recoveryType=delta'
 # end::recover-node[]
 
 # Rebalance
