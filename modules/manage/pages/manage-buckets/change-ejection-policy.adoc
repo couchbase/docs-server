@@ -1,5 +1,5 @@
 = Change a Bucket's Ejection Policy
-:description: You can change the ejection method of a Couchbase bucket. 
+:description: You can change the ejection method of a bucket using theCouchbase Server Web Console or the REST API. 
 :toclevels: 3
 
 
@@ -8,24 +8,30 @@
 The bucket's ejection policy (also known as its eviction method) controls how Couchbase Server removes documents from memory as the bucket approaches its memory quota.
 See xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection] for more information about ejection policies.
 
-NOTE: You cannot change the eviction policy of an existing Ephemeral bucket. 
-If you want an Ephemeral bucket to have a different ejection policy, you must drop and recreate it.
+You initially set the ejection policy when you create a Couchbase bucket.
+However, you can change the ejection policy of an existing bucket using either the Couchbase Server Web Console or the Couchbase Server REST API.
 
-You may want to change the ejection policy when migrating a bucket's xref:learn:buckets-memory-and-storage/storage-engines.adoc[storage engine].
+You may want to change the ejection policy of a Couchbase bucket when migrating its xref:learn:buckets-memory-and-storage/storage-engines.adoc[storage engine].
 For example, when migrating a bucket from Couchstore to Magma, you should consider changing the bucket's ejection policy to Full Ejection.
 This policy works well for Magma buckets that have a low memory to storage ratio.
 You can change both the storage backend and the ejection policy at the same time.
 See xref:manage:manage-buckets/migrate-bucket.adoc[] for steps to perform both operations.
 
-== Changing the Ejection Policy Using the Couchbase Server Web Console
+== Change the Ejection Policy Using the Couchbase Server Web Console
 
-You can edit a Couchbase bucket's ejection policy using the Couchbase Server Web Console.
+You can edit a bucket's ejection policy using the Couchbase Server Web Console.
 
-IMPORTANT: When you change the ejection policy of a bucket using the Couchbase Server Web Console, Couchbase Server automatically restarts the bucket.
+[IMPORTANT]
+====
+When you change the ejection policy of a Couchbase bucket using the Couchbase Server Web Console, Couchbase Server automatically restarts the bucket.
 Restarting the bucket closes all open connections and results in some downtime.
 Do not change the ejection policy of a bucket in production unless you're prepared this downtime.
 You can also change the ejection policy using REST API which lets you avoid downtime.
 See <<rest-api>> for more details.
+
+Changing the ejection policy of an ephemeral bucket does not require a bucket restart or other additional steps.
+The new setting takes effect immediately.
+====
 
 To change the ejection policy of a bucket, follow these steps:
 
@@ -52,27 +58,87 @@ image::manage-buckets/bucket-edit-dialog-initial.png[,400]
 +
 image::manage-buckets/bucket-edit-dialog-expanded.png[,400]
 
-. Change the [.ui]*Ejection Method* setting the new value you want:
-
+. Change the [.ui]*Ejection Method* setting the new value you want. 
+The available settings depend on the bucket's type:
 +
+--
+Couchbase buckets::
 * *Value-only*: Couchbase Server removes a document's data, but keeps its keys and metadata in memory.
 Keeping these values in memory helps lessen the performance overhead of removing the document from memory.
 * *Full*: Couchbase Server removes the entire document from memory.
 
 +
-When you change the setting, the Couchbase Server Web Console warns you of the consequences of changing the ejection policy.
+Ephemeral buckets::
+* *No ejection*: If the bucket reaches its memory quota, the Data Service does not eject data.
+Instead, it refuses to load any new data until memory becomes available.
+* *Eject data when RAM is full*: If the bucket approaches its memory quota, the Data Service ejects the least-recently used documents to make space for new data.
+--
++
+If you change the setting of a Couchbase bucket, the Couchbase Server Web Console warns you of the consequences of changing the ejection policy.
 
 . Click btn:[Save] to save the changes.
-Couchbase Server restarts the bucket to apply the new ejection policy.
+If you changed the ejection policy of a Couchbase bucket, Couchbase Server restarts the bucket to apply the new ejection policy.
+If you changed the ejection policy of an ephemeral bucket, the new setting takes effect immediately.
+
+[#ephemeral-rest-api]
+== Change Ephemeral Bucket Ejection Policy Using the REST API
+
+You can change the ejection policy for an ephemeral bucket by sending a POST request to the `/pools/default/buckets/<bucketname>` endpoint to change the `evictionPolicy` setting.
+Unlike changing a Couchbase bucket's ejection policy, changing the ejection policy of an ephemeral bucket does not require a bucket restart or other additional steps.
+The new setting takes effect immediately.
+
+The following steps demonstrate how to change the ejection policy of an ephemeral bucket named `sample-ephemeral` to `nruEviction` using the REST API.
+
+. View the current ejection policy of the bucket by sending a GET request to the `/pools/default/buckets/<bucketname>` endpoint.
+The following command calls the REST API to get the configuration of the `sample-ephemeral` bucket.
+It filters the result through the `jq` command to show just the `evictionPolicy` value:
+
++
+[source,console]
+----    
+include::manage:example$change-ejection-policy.sh[tag=show-ephemeral-policy]
+----
+
++
+The output of the previous command shows that the `evictionPolicy` of the `sample-ephemeral` bucket is set to `noEviction`:
++
+[source,json]
+----
+{
+  "sample-ephemeral": "noEviction"
+}
+----
+
+. Send a POST request to the `/pools/default/buckets/<bucketname>` endpoint to change the `evictionPolicy` setting to the new ejection policy that you want. 
+The following command changes the ejection policy of the `sample-ephemeral` bucket to `nruEviction`:
++
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=change-ephemeral-policy]
+----
++
+The call to the REST API returns no output if it succeeds.
+. Verify that the ejection policy has changed by sending another GET request to `/pools/default/buckets/<bucketname>` as shown in step 1.
+The the output shows the new `evictionPolicy` value:
++
+[source,json]
+----
+{
+  "sample-ephemeral": "nruEviction"
+}
+----
+
+See xref:rest-api:rest-bucket-create.adoc[] for more information about changing a bucket's settings.
 
 [#rest-api]
-== Changing the Ejection Policy Using the REST API
+== Change Couchbase Bucket Ejection Policy Using the REST API
 
-You can change a bucket's ejection policy using the Couchbase Server REST API.
-Unlike the Couchbase Server Web Console, using the REST API lets you avoid the downtime caused by restarting the bucket. 
-You change the ejection policy by sending a POST request to the `/pools/default/buckets/<bucketname>` endpoint and changing the `evictionPolicy` setting.
+Unlike the Couchbase Server Web Console, using the REST API to change a Couchbase buclet's ejection policy lets you avoid the downtime caused by restarting the bucket. 
+You change the ejection policy by sending a POST request to the `/pools/default/buckets/<bucketname>` endpoint to change the `evictionPolicy` setting.
 Setting the `noRestart` parameter to `true` prevents Couchbase Server from restarting the bucket immediately after you make the change.
 If you do not allow Couchbase Server to restart the bucket, you must take additional steps to apply the change.
+
+If you do not set the `noRestart` parameter or set it to `false`, Couchbase Server automatically restarts the bucket after you change the ejection policy.
 
 How you apply the change depends on whether you're changing the ejection policy during a backend storage migration or not.
 

@@ -1,4 +1,4 @@
-
+# Change ejection policy of Couchbase bucket
 # tag::change-ejection-no-restart[]
 curl -v -X POST http://localhost:8091/pools/default/buckets/travel-sample \
      -u Administrator:password \
@@ -40,4 +40,18 @@ curl -X POST -u Administrator:password  \
     http://localhost:8091/controller/rebalance \
     -d 'knownNodes=ns_1@node1.,ns_1@node2.,ns_1@node3.'
 # end::rebalance-cluster[]
+
+# Show setting of ejection policy on empehermal bucket
+# tag::show-ephemeral-policy[]
+curl -s GET -u Administrator:password \
+     http://localhost:8091/pools/default/buckets/sample-ephemeral \
+     | jq '{ (.name): .evictionPolicy }'
+# end::show-ephemeral-policy[]
+
+# Change Ephemeral bucet ejection policy
+# tag::change-ephemeral-policy[]
+curl -s -X POST http://localhost:8091/pools/default/buckets/sample-ephemeral \
+     -u Administrator:password \
+     -d evictionPolicy="nruEviction"
+# end::change-ephemeral-policy[]
 
