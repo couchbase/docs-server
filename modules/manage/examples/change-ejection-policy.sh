@@ -48,7 +48,7 @@ curl -s GET -u Administrator:password \
      | jq '{ (.name): .evictionPolicy }'
 # end::show-ephemeral-policy[]
 
-# Change Ephemeral bucet ejection policy
+# Change Ephemeral bucket ejection policy
 # tag::change-ephemeral-policy[]
 curl -s -X POST http://localhost:8091/pools/default/buckets/sample-ephemeral \
      -u Administrator:password \
