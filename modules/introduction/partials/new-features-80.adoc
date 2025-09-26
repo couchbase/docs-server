@@ -1,12 +1,35 @@
+[#section-new-feature-800-platform-support]
+=== Platform Support
+
+Couchbase Server 8.0 adds support for the following operating systems:
+
+* Alma Linux 10
+* Debian Linux 13
+* macOS 15 "Sequoia" (for development and testing only)
+* Oracle Linux 10
+* RHEL 10
+* Rocky Linux 10
+* Windows Server 2025
+
+Couchbase Server 8.0 no longer supports the following operating systems:
+
+* Amazon Linux 2
+* macOS 12 "Monterey"
+* SUSE Linux Enterprise Server (SLES) 12
+* Ubuntu 20.04 LTS
+* Windows 10
+* Windows Server 2019
+
+For more information about supported operating systems, see xref:install:install-platforms.adoc[].
+
 [#section-new-feature-800-couchbase-cluster]
 === Couchbase Cluster
 
 
-
+[#anchor-61457]
 https://jira.issues.couchbase.com/browse/MB-61457[MB-61457]::
 The following settings have been added to the `/pools/default/buckets` REST APIs.
 +
-
 |===
 |Argument Name |Type |Valid values |Default
 
@@ -35,6 +58,13 @@ The following settings have been added to the `/pools/default/buckets` REST APIs
 |51 to 90
 |85
 |===
++
+The above new settings are added and made accessible through the REST API.
+For more information, see the xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets] and xref:learn:buckets-memory-and-storage/memory.adoc[Memory].
+The settings `warmup_min_items_threshold`, `warmup_min_memory_threshold`, `exp_pager_stime`, `mem_high_wat`, and `mem_low_wat` are removed from `cbepctl`.
++
+The same changes in the warmup behavior settings are applicable to the Data Services.
+For more information, see xref:anchor-9418[MB-9418].
 
 https://jira.issues.couchbase.com/browse/MB-61946[MB-61946]::
 The `/pools/default/nodeServices` endpoint results now include the UUID and name of the cluster.
@@ -59,8 +89,69 @@ curl --get -u <username:password> \
     -d clusterLabels=none|uuidOnly|uuidAndName
 ----
 
+[#section-new-feature-800-services]
+=== Services
+
+https://jira.issues.couchbase.com/browse/MB-60349[MB-60349]::
+Now you can add or remove non-Data Services dynamically on existing nodes in a cluster, without adding or removing nodes.
+Rebalancing is automatically triggered to distribute service workloads and complete the modification.
+These are the services that can be modified:
+
+** `index` (Index Service)
+** `n1ql` (Query Service)
+** `fts` (Search Service)
+** `cbas` (Analytics Service)
+** `eventing` (Eventing Service)
+** `backup` (Backup Service)
+
+You can modify these services using the Couchbase xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-from-ui[UI], xref:rest-api:rest-set-up-services-existing-nodes.adoc[REST API], or xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-using-cli[CLI].
+
 [#section-new-feature-data-service]
 === Data Service
+
+[#mb-62777]
+https://jira.issues.couchbase.com/browse/MB-62777[MB-62777] Magma with 128 vBuckets is now the default storage engine::
+In earlier versions of Couchbase Server, if you did not specify which storage engine to use when creating a new bucket, it would use Couchstore.
+Once you upgrade your entire cluster to Couchbase Server Enterprise 8.0, the default storage engine for new buckets is Magma with 128 vBuckets.
+
++
+Magma buckets with 128 vBuckets is a new feature that provides the advantages of the Magma storage engine while reducing the minimum memory quota. 
+Before Couchbase Server 8.0, Magma only supported using 1024 vBuckets and had a minimum memory quota of 1{nbsp}GiB per node.
+Buckets that use Magma with 128 vBuckets have a minimum memory quota of 100{nbsp}MiB per node, which is the same as Couchstore.
+
++
+NOTE: These changes do not affect Couchbase Server Community Edition because it does not support the Magma storage engine.
+
++
+This change in the default storage engine does not affect existing buckets.
+You can still create buckets that use the Couchstore storage engine or the Magma storage engine with 1024 vBuckets by explicitly specifying them when you create the bucket.
+
++
+See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for more information about storage engines.
+
++
+.default behavior change
+[IMPORTANT] 
+====
+The new default storage backend for buckets is a behavior change that may cause issues if you rely on the previous behavior.
+
+Before upgrading to Couchbase Server 8.0, consider the following:
+
+* If you have deployment scripts that create buckets without specifying the storage engine, those scripts create Magma buckets with 128 vBuckets instead of Couchstore buckets after the upgrade.
+This may affect your deployment if you depend on buckets using the Couchstore storage engine.
+* If you have existing deployment scripts that create Magma buckets, in Couchbase Server 8.0 they create buckets with 128 vBuckets instead of the 1024 vBuckets they did previously. 
+To have them create the same Magma buckets with 1024 vBuckets they did prior to 8.0, set the number of vBuckets when creating the bucket using the `numVBuckets` parameter in xref:rest-api:rest-bucket-create.adoc#numvbuckets[the REST API] or `--num-vbuckets` in the xref:cli:cbcli/couchbase-cli-bucket-create.adoc[couchbase-cli command line tool]. 
+If you can allocate at least 1 GiB of memory for the Magma bucket, you should create a Magma bucket with 1024 vBuckets for better performance at scale.
+* You cannot use XDCR to replicate from Magma buckets on pre-8.0 clusters to Magma buckets using 128 vBuckets. 
+XDCR in pre-8.0 clusters only supports replication between buckets that contain the same number of vBuckets.
+Pre-8.0 versions of Couchbase Server only support Couchstore and Magma buckets with 1024 vBuckets (or 64 vBuckets on macOS).
+
++
+If you're manually deploying a new cluster, set the number of vBuckets to 1024 for any Magma bucket that is the target of a replication from a pre-8.0 cluster.
+See xref:manage:manage-buckets/create-bucket.adoc[] for more information about creating buckets.
+If you have a deployment script that creates Magma buckets that are an XDCR target for a pre-8.0 cluster, have it set the number of vBuckets to 1024.
+To set this value, use the `numVBuckets` parameter in xref:rest-api:rest-bucket-create.adoc#numvbuckets[the REST API] or `--num-vbuckets` in the xref:cli:cbcli/couchbase-cli-bucket-create.adoc[`couchbase-cli` command line tool].
+====
 
 https://jira.issues.couchbase.com/browse/MB-38452[MB-38452] Memcached buckets have been removed::
 Couchbase Server 8.0 has removed support for Memcached buckets.
@@ -70,27 +161,34 @@ You can replace them with ephemeral buckets which are similar to Memcached bucke
 See the https://docs-archive.couchbase.com/server/6.6/learn/buckets-memory-and-storage/buckets.html#bucket-capabilities[Bucket Capabilities in the Version 6.6 documentation] for a summary of the differences between Memcached and ephemeral buckets.
 If you do not remove your Memcached buckets, the upgrade process reports an error message telling you to remove the Memcached buckets before proceeding.
 
+[#anchor-9418]
 https://jira.issues.couchbase.com/browse/MB-9418[MB-9418]::
-The previous warmup behavior was to load values and not complete warmup until the Bucket reaches one of:
+**Configurable Warmup Behavior (Background Warmup):**
++
+The new `warmup_behavior` setting, configured using `warmupBehavior` in the REST API, controls when a persistent bucket becomes fully available for `read` and `write` operations after a bucket restart.
+This setting replaces multiple warmup threshold parameters with a single configuration point:
 +
 --
-* `warmup_min_memory_threshold` — defaults to 100%.
-* `warmup_min_items_threshold` — defaults to 100%.
-* The bucket low watermark (i.e., 75% of the Bucket quota)
+* **background** (default): The bucket becomes fully available as soon as required metadata is loaded from storage.
+The bucket’s cache is then filled in the background until memory usage reaches the low watermark (memoryLowWatermark).
+* **blocking**: This is the original behaviour.
+The bucket becomes read-available as soon as required metadata is loaded from storage, then continues filling the cache until memory usage reaches the low watermark (`memoryLowWatermark`).
+The bucket becomes fully available only after this point.
+* **none**: Disables warmup.
+The bucket becomes fully available as soon as required metadata is loaded from storage.
+The cache remains empty.
++
+For more information, see xref:learn:buckets-memory-and-storage/memory.adoc#initialization-and-warmup[Initialization and Warmup].
 --
 +
-*Resolution:* Couchbase Server adds a new parameter, `warmup_behavior`. 
-This new parameter can be used to change the thresholds using a single command. 
+**API Changes:**
 +
-`warmup_behavior` takes one of three settings:
+The REST API now includes the per-bucket setting `warmupBehavior`.
+The previous advanced tuning settings `warmup_min_items_threshold` and `warmup_min_memory_threshold` have been removed from the `cbepctl` interface.
+For the REST API information, see xref:rest-api:rest-bucket-create.adoc#warmupbehavior[warmupBehavior].
 +
-[horizontal]
-`blocking`:::
-Warmup behaves the same as it did before with no background warmup
-`background`:::
-Warmup now loads items in the background, allowing the bucket to have write availability much quicker than blocking.
-`none`:::
-Warmup is disabled; the bucket comes online with no items loaded.
+The same changes in the warmup behavior settings are applicable to the Couchbase Cluster.
+For more information, see xref:anchor-61457[MB-61457].
 
 https://jira.issues.couchbase.com/browse/MB-64071[MB-64071]::
 Couchbase Server has a new metric
@@ -114,6 +212,43 @@ The metric includes the first 32 characters sent by any clients up to the first 
 and limits the number of metrics to 100. 
 Additional information sent by clients at connection time can be found in the logs.
 
+[#section-new-feature-800-disk-limits]
+https://jira.issues.couchbase.com/browse/MB-59113[MB-59113] Prevent buckets from causing nodes to run out of disk space::
+You can configure Couchbase Server to prevent the Data Service from writing to the data service path once the filesystem has filled to a configurable threshold.
+This limit can help avoid problems during recovery caused by a full filesystem.
+If the filesystem fills to the limit, Couchbase Server stops writing to the data storage path, returning an error instead.
+This limit is off by default.
+
++
+In addition, Couchbase Server has added a new alert named `maxDataDiskUsedPerc` that warns you when the filesystem containing the data storage path is becoming full. 
+On the Couchbase Server Web Console's *Alerts* page, this alert appears as *Disk usage is within 10% of maximum for data service mutations*.
+This alert is enabled by default and it defaults to alerting you when the filesystem containing the data storage path is 75% full.
+If you enable the data disk usage limit setting, Couchbase Server ignores the `maxDataDiskUsedPerc` alert setting, and instead warns you when the filesystem containing the data storage path is within 10% of the data disk usage limit you set.
+
++
+This alert is in addition to the existing alert named `disk` that warns you when disk use on a node has exceeded 90% of 
+capacity.
+
++
+See xref:learn:buckets-memory-and-storage/storage-settings.adoc#filesystem-free-space-and-usage-limits[Filesystem Free Space and Usage Limits] for more information.
+
+[[new-feature-800-maintain-durable-writes]]
+https://jira.issues.couchbase.com/browse/MB-43068[MB-43068] Optionally Maintain Durable Write Availability Without Majority After Failover::
+You can enable a cluster-level option named `durabilityImpossibleFallback` that allows durable writes to succeed even when they cannot meet their majority requirements.
+This option is off by default.
+Use this setting to allow clients to continue to perform successful durable writes when nodes are unavailable due to failovers.  
+For example, suppose you have a bucket with a single replica that clients write to using durable writes.
+You can enable this option while you're performing an upgrade using the graceful failover followed by a delta recovery method.
+Without this option, the client's durable writes fail until the nodes finish recovery, disrupting your applications.
+When you finish the upgrade, turn off this option to restore the normal durability requirements.
+
++
+include::learn:partial$maintain-durability-warning.adoc[]
+
++ 
+See xref:learn:data/durability.adoc#maintaining-durable-writes[Maintaining Durable Writes During Single Replica Failovers] for more information about this feature.
+
+
 [#section-new-feature-800-backup-service]
 === Backup and Restore
 https://jira.issues.couchbase.com/browse/MB-44863[MB-44863]::
@@ -127,17 +262,30 @@ Incremental backups now keep track of which backups they depend on.
 You cannot delete a backup if another incremental backup needs it, however, you can choose to override this protection from the UI and REST API.
 For more information, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc#delete-backups[Delete Backups].
 
+
+
+
 [#section-new-feature-800-XDCR]
 === XDCR
 
-https://jira.issues.couchbase.com/browse/MB-62564[MB-62564]::
+https://jira.issues.couchbase.com/browse/MB-58989[MB-58989]::
+XDCR detects and logs concurrent conflicts that occur in different clusters but on the same document version due to independent modifications by locally connected applications during Active-Active replication.
+The conflict logs are for your information only.
+For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc[XDCR Conflict Logging Feature].
 
+https://jira.issues.couchbase.com/browse/MB-11575[MB-11575]::
+XDCR now supports the identification of Incoming Replications on a cluster.
+The Incoming Replications can be:
+
+* Viewed on the XDCR tab of the UI. See xref:manage:manage-xdcr/incoming-xdcr-replications.adoc#view-incoming-replications[View Incoming Replications] in xref:manage:manage-xdcr/incoming-xdcr-replications.adoc[Incoming Replications].
+* Retrieved by using the REST API command `GET /xdcr/sourceClusters`. See xref:rest-api:rest-xdcr-list-incoming-replications.adoc[Listing Incoming Replications].
+
+https://jira.issues.couchbase.com/browse/MB-62564[MB-62564]::
 `xdcrDiffer` is a diagnostic utility included in the Couchbase Server package.
 This utility verifies data consistency between XDCR clusters.
 It identifies missing or mismatched documents by comparing metadata and content hashes across source and target clusters.
 +
 For more information, see xref:manage:pages/manage-xdcr/xdcr-differ.adoc[xdcrDiffer Utility].
-
 
 https://jira.issues.couchbase.com/browse/MB-62507[MB-62507]::
 XDCR supports Generic Services Log Level configuration using the REST API through the `genericServicesLogLevel` settings.
@@ -145,6 +293,13 @@ For more information, see xref:rest-api:rest-xdcr-adv-settings.adoc[XDCR Advance
 
 [#section-new-features-800-security-authentication]
 === Security and Authentication
+
+https://jira.issues.couchbase.com/browse/MB-16143[MB-16143]::
+Couchbase Server Enterprise now supports native encryption at rest.
+You can encrypt bucket data, audits, and most logging and configuration information.
+You choose which buckets to encrypt and which remain unencrypted.
+See xref:learn:security/native-encryption-at-rest-overview.adoc[] for more information.
+
 https://jira.issues.couchbase.com/browse/MB-50939[MB-50939]::
 Added support for the Hybrid authentication mode in the certificate-based client authentication.
 When Hybrid is selected:
@@ -158,7 +313,6 @@ When Hybrid is selected:
 This mode enhances flexibility for clients while enforcing strict security for node-to-node communication.
 +
 For more information, see xref:manage:manage-security/enable-client-certificate-handling.adoc[Enable Client Certificate Handling].
-
 
 https://jira.issues.couchbase.com/browse/MB-11575[MB-11575]::
 XDCR now supports the identification of Incoming Replications on a cluster.
@@ -197,12 +351,151 @@ For more information, see xref:learn:security/auditing.adoc#audit-user-activity[
 [#section-new-feature-800-query-service]
 === Query Service
 
+https://jira.issues.couchbase.com/browse/MB-51668[MB-51668]::
+You can now use optimizer hints with `DELETE`, `UPDATE`, and `MERGE` statements.
++
+For more information, see xref:n1ql:n1ql-language-reference/optimizer-hints.adoc[Optimizer Hints].
+
+https://jira.issues.couchbase.com/browse/MB-51737[MB-51737]::
+Couchbase Server 8.0 now supports negative keyspace hints.
+A negative hint is a type of optimizer hint that instructs the optimizer not to use certain indexes or join methods.
+The hints are `NO_INDEX`, `NO_INDEX_FTS`, `NO_USE_NL`, and `NO_USE_HASH`.
++
+For more information, see xref:n1ql:n1ql-language-reference/negative-keyspace-hints.adoc[Negative Keyspace Hints].
+
+https://jira.issues.couchbase.com/browse/MB-51965[MB-51965]::
+`system:completed_requests` now supports two new logging qualifiers:
++
+--
+[horizontal]
+Statement:::
+Logs requests that match the specified LIKE search pattern in the query text.
+
+Plan:::
+Logs requests where the specified plan field values appear in the query plan.
+--
++
+For more information, see xref:n1ql:n1ql-manage/monitoring-n1ql-query.adoc#sys-completed-config[Completed Requests].
+
+https://jira.issues.couchbase.com/browse/MB-59400[MB-59400]::
+
+{sqlpp} now supports the following new statements to improve user, group, and bucket management:
++
+--
+* `CREATE USER`
+* `ALTER USER`
+* `DROP USER`
+* `CREATE GROUP`
+* `ALTER GROUP`
+* `DROP GROUP`
+* `CREATE BUCKET`
+* `ALTER BUCKET`
+* `DROP BUCKET`
+--
++
+For more information, see xref:n1ql:n1ql-language-reference/createuser.adoc[SQL++ Statements].
++
+In addition, there are also two new system keyspaces for group and bucket management:
++
+--
+[horizontal]
+`system:group_info`:::
+Provides information about all groups on the cluster.
+//For more information, see xref:n1ql:n1ql-intro/sysinfo.adoc#querying-groups[Get Group Information].
+
+`system:bucket_info`:::
+Provides information about all buckets on the cluster.
+This includes their metadata, configuration settings, memory usage, and other details.
+//For more information, see xref:n1ql:n1ql-intro/sysinfo.adoc#querying-bucket-info[Get Bucket Information].
+--
+For more information, see xref:n1ql:n1ql-intro/sysinfo.adoc[Get System Information].
+
+https://jira.issues.couchbase.com/browse/MB-62471[MB-62471]::
+Auto Update Statistics is a new feature that keeps the optimizer statistics up to date by automatically identifying and refreshing outdated statistics.
+These statistics help the Cost-Based Optimizer generate accurate and cost-effective query plans.
++
+For more information, see xref:n1ql:n1ql-language-reference/auto-update-statistics.adoc[Auto Update Statistics].
+
+https://jira.issues.couchbase.com/browse/MB-62653[MB-62653]::
+Automatic Workload Repository is a new feature that captures and maintains performance statistics for queries executed on a Couchbase cluster.
+It acts as a centralized repository for query performance data, enabling you to track query activity, analyze workload trends,
+and identify performance bottlenecks.
+You can also generate reports to compare query performance over time and optimize your queries based on historical data.
++
+For more information, see xref:n1ql:n1ql-manage/query-awr.adoc[Automatic Workload Repository].
+
+https://jira.issues.couchbase.com/browse/MB-63204[MB-63204]::
+There is a new auto-reprepare feature for PREPARE statements.
+When enabled, a prepared statement automatically updates its plan whenever the GSI metadata version changes.
+This happens when users create or drop an index,
+allowing prepared statements to use newer, more efficient indexes as they become available.
++
+For more information, see xref:n1ql:n1ql-language-reference/prepare.adoc[PREPARE].
+
 https://jira.issues.couchbase.com/browse/MB-63459[MB-63459]::
-New to `8.0.0` is the ability to manipulate document extended attributes (xattrs) via a common SQL++ statement.
+You can now manipulate extended attributes (XATTRs) of documents directly through {sqlpp} statements.
+You can include up to 15 XATTRs per query.
 +
-`INSERT` and `UPSERT` statement options may now include a “xattrs” object element detailing additions and changes to the xattrs (omissions do not delete xattrs).
+--
+* The `INSERT` and `UPSERT` statements now have an `xattrs` object that enable you to add and modify XATTRs, without deleting the existing ones.
 +
-The `UPDATE` statement now supports `SET` and `UNSET` of `meta().xattrs.+{attribute}+ elements.`
+* The `UPDATE` statement now supports `SET` and `UNSET` of `meta().xattrs.+{attribute}+ elements.`
+--
++
+For more information, see xref:n1ql:n1ql-language-reference/insert.adoc[INSERT], xref:n1ql:n1ql-language-reference/upsert.adoc[UPSERT], and xref:n1ql:n1ql-language-reference/update.adoc[UPDATE] statements.
+
+https://jira.issues.couchbase.com/browse/MB-63659[MB-63659]::
+{sqlpp} now supports a new statement `USING AI`, that leverages AI capabilities to generate {sqlpp} queries from natural language prompts.
++
+For more information, see xref:n1ql:n1ql-language-reference/using-ai.adoc[USING AI].
+
+https://jira.issues.couchbase.com/browse/MB-67450[MB-67450], https://jira.issues.couchbase.com/browse/MB-30815[MB-30815]::
+The `INFER` statement now supports the following options: `array_sample_size`, `max_nesting_depth`, and `flags`.
++
+This statement also now automatically returns the `meta.id()` attribute, which provides the document keys in the output.
+You can control this behavior using the `flags` option.
++
+For more information, see xref:n1ql:n1ql-language-reference/infer.adoc[INFER].
+
+[#section-new-feature-800--search-service]
+=== Search Service
+
+https://jira.issues.couchbase.com/browse/MB-31981[MB-31981]::
+
+New to `8.0.0`, you can use the `partition_selection` property to choose how the Search Service selects the partitions for your Search query.
++
+For more details, see the section on xref:search:search-request-params.adoc#partition_selection[Search partition selection] on the xref:search:search-request-params.adoc[] page.
+
+
+https://jira.issues.couchbase.com/browse/MB-35347[MB-35347]::
+
+New to `8.0.0`, the Search Service now supports searching for synonyms in search queries.
++
+For more information, see xref:search:synonyms/synonyms-search.adoc[]
+
+
+https://jira.issues.couchbase.com/browse/MB-46977[MB-46977]::
+
+New to `8.0.0`, you can now add custom document filters to a Search index, to customize how documents are added to your type mappings.
++
+You can now create the following types of document filters:
+
+* xref:search:search-index-params.adoc#boolean_filter[Boolean Document Filters]
+* xref:search:search-index-params.adoc#date_range_filter[Date Range Document Filters]
+* xref:search:search-index-params.adoc#numeric_range_filter[Numeric Range Document Filters]
+* xref:search:search-index-params.adoc#term_filter[Term Document Filters]
+* xref:search:search-index-params.adoc#conjunct_filter[Conjunct Document Filters]
+* xref:search:search-index-params.adoc#disjunct_filter[Disjunct Document Filters]
+
++
+For more information about creating these new document filters, see xref:search:set-type-identifier.adoc[]
+
+https://jira.issues.couchbase.com/browse/MB-58901[MB-58901]::
+
+Couchbase Server version `8.0.0` now supports the bm25 algorithm for ranking search results, as an alternative to tf-idf on Search Vector indexes.
++
+See xref:search:run-searches.adoc#bm25[bm25 Search Scoring] for details.
+
 
 [#section-new-feature-800-vector-search]
 === Vector Search
@@ -307,4 +600,7 @@ https://jira.issues.couchbase.com/browse/MB-61073[MB-61073]::
 It is now possible to change the plan used by a repository.
 The repository first needs to be paused, and then the plan can be changed,
 and the repository resumed, where it will now execute the tasks from its new plan.
+
+
+
 

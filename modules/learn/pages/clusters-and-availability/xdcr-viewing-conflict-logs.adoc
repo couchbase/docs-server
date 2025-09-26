@@ -1,0 +1,351 @@
+= Viewing Conflict Logs
+:description: pass:q[View and access conflict logs from the conflict collection.]
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+When enabling XDCR conflict logging, you must specify the xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-collection[Conflict Log Collection] or conflict collection.
+Conflict logs or conflict records are stored as documents within these collections.
+As conflict collections are regular collections, you can use RBAC to control access to the conflict logs, which include copies of your application data.
+You can also programmatically process and view the conflict records and documents.
+
+The following sections have examples of how to access, process, or locate information within conflict log documents using {sqlpp} queries, an Eventing function, and a KV Range Scan.
+While these are some common methods, other options exist for viewing or processing conflict log records, such as using Couchbase Kafka Connect to stream these documents to an application for further processing.
+
+After XDCR logs a conflict, it does not modify or remove the conflict records.
+You're responsible for managing and deleting them when no longer needed.
+Each conflict record has 3 documents.
+You can find the following in the Conflict Record Document (CRD) of the conflict collection:
+
+* A conflict event record in the CRD `id` with the prefix `crd_`.
+* A copy of the source document in the CRD `srcDoc.id` with the prefix `src_`.
+* A copy of the target document in the CRD `tgtDoc.id` with the prefix `tgt_`.
+
+In the conflict event record, the field `docId` is the ID or key of the conflicting document in the replication.
+The documents in the conflict collection that have IDs with prefixes `src_` and `tgt_` are copies of the versions of `docId` that were in conflict.
+
+For more information about the Conflict Record Document, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record[Conflict Record].
+
+[#using-sdk-sqlpp-for-conflict-logs]
+== Using {sqlpp} to Query Conflict Logs
+
+The common way to view conflict logs or conflict record documents is by using {sqlpp}.
+
+The following are a few examples.
+In the examples, the conflict logs are stored in the collection `conflictlogs.bucket1.app1logs`.
+
+[#sqlpp-examples-clog]
+=== {sqlpp} Examples
+
+For queries, you can create a custom index or a primary index.
+
+* Create a primary index as follows.
++
+[source,sqlpp]
+----
+CREATE PRIMARY INDEX `#primary` ON `conflictlogs`.`bucket1`.`app1logs`
+----
+
+* Create a custom index as follows.
++
+You can use the `WHERE` clause with `SUBSTR(META().id,0,3) = “crd”` by making it an indexed field instead of `WHERE META().id LIKE "crd%"`.
++
+For example:
++
+[source,sqlpp]
+----
+CREATE INDEX `idx_crd_timestamp_docId` ON `conflictlogs`.`bucket1`.`applogs`(SUBSTR(META().id,0,3), `timestamp`,`docId`)
+----
++
+[NOTE]
+====
+* When creating custom indexes, `META().id` is already a part of the index key.
+* When querying, if you use underscore in comparison strings, make sure you use the escape character, so that it's used as an exact comparison instead of a wildcard comparison.
+For example, `WHERE META().id LIKE “crd\\_%”`.
+====
+
+.Query example 1: List all `docId` that had conflicts between 2 time periods
+[source,sqlpp]
+----
+SELECT META().id, b.docId, b.timestamp
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+----
+
+.Query example 2: Number of conflicts logged between 2 time periods
+[source,sqlpp]
+----
+SELECT count(*) AS num_conflicts
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+----
+
+.Query example 3: Number of different `docIds` that had conflicts between 2 time periods
+[source,sqlpp]
+----
+SELECT count (distinct b.docId) as num_different_docIds
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META().id LIKE "crd%" and b.timestamp between "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+----
+
+.Query example 4: List all `docIds` and the number of times each `docId` had a logged conflict between 2 time periods
+
+The following query may be used if you suspect that the same few documents are being updated multiple times concurrently in two different clusters, generating conflicts.
+
+[source,sqlpp]
+----
+SELECT b.docId AS DOCID, COUNT(1) AS num_times_seen
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META(b).id LIKE "crd%" AND b.timestamp BETWEEN "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+GROUP BY b.docId
+ORDER BY num_times_seen DESC LIMIT 20
+----
+
+The query result is as follows:
+
+----
+[
+  {
+    "DOCID": "4d9d18e7-5fa2-4eae-b32b-60d3d369da94",
+    "num_times_seen": 2   
+  },
+  {
+    "DOCID": "ae03ecde-203c-4a3b-a6d0-36b60f627c8a",
+    "num_times_seen": 1   
+  }
+]
+----
+
+.Query example 5: In the following example, for each `docId`, you can see selected fields from the source and target documents.
+Also, the `docId` of the copies of the source and target documents in the conflict collection, if you want to retrieve the entire document.
+The only fields that you want to see from the documents that were in conflict are `country` and `note`.
+
+[source,sqlpp]
+----
+SELECT b.docId, b.srcDoc.id AS srcDocId, b.tgtDoc.id AS tgtDocId,
+(SELECT b2.country, b2.note
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b2 USE KEYS b.srcDoc.id)[0] AS src_doc_fields,
+(SELECT b3.country, b3.note
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b3 USE KEYS b.tgtDoc.id)[0] AS tgt_doc_fields
+FROM `conflictlogs`.`bucket1`.`app1logs` AS b
+WHERE META(b).id LIKE "crd%" AND b.timestamp BETWEEN "2025-06-04T18:15:16.363Z" AND "2025-06-09T07:26:40.326Z"
+----
+
+The query result is as follows:
+----
+[
+   {
+    "docId": "ae03ecde-203c-4a3b-a6d0-36b60f627c8a",
+    "srcDocId": "src_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+    "tgtDocId": "tgt_1749454000005461807_e2f416ed317beb4f16a3587656b3d3450e1bec893cabebd3b9bb857d63824da4",
+    "src_doc_fields": {
+        "country": "UK",
+        “note”: “need review”
+      },
+    "tgt_doc_fields": {
+        "country": "CA",
+        “note”: “ok”
+      } 
+   }
+]
+----
+
+[#using-eventing-for-conflict-logs]
+== Using Eventing to Process Conflict Logs
+
+If you do not like the 3 documents format of the conflict record, then you can create a single document from the 3 documents (`crd_`, `src_`, `tgt_`) for easier processing by using Eventing.
+Here, it's assumed that the documents are small.
+If the documents are large such that the combined 3 documents are larger than the maximum xref:learn:clusters-and-availability/size-limitations.adoc[size limit], you can copy only a subset of the fields from the `src_` and `tgt_` documents to the custom single document.
+
+Another effect of creating your own conflict document as shown in the Eventing example is that the new document that you create will not have the system extended attribute (`{"_xdcr_conflict": true}`).
+This system extended attribute is what prevents the conflict documents, created by XDCR, from being replicated.
+As a result, the new combined conflict log document will have the `docId` (or doc key) of your preference, and if needed, it can be replicated.
+
+[#eventing-example-clog]
+=== Eventing example
+
+This is an Eventing function example to copy the conflict log documents into a single new document.
+
+Eventing bucket alias:  `src` for `conflictlogs._default.bucket1logs` with read only access.
+
+Eventing bucket alias: `copy` for `conflictlogs._default.bucket1logs_copy` with read/write access.
+
+[source,javascript]
+----
+function OnUpdate(doc, meta, xattrs) {
+    if (meta.id.startsWith("crd_") === true)
+    {
+    log("crd doc created/updated", meta.id);
+
+    //get the conflict source and target document id's
+    var suffix = (meta.id).substring(4);
+    var srcId = "src_" + suffix;
+    var tgtId = "tgt_" + suffix;
+
+    //read the conflicting source and target documents
+    var src_doc = src[srcId];
+    var tgt_doc = src[tgtId];
+
+    //add the conflicting source and target documents to the crd doc
+    doc["src_doc"] = src_doc;
+    doc["tgt_doc"] = tgt_doc;
+
+    //copy the resulting new crd doc to a different collection
+    copy[meta.id] = doc;
+    }
+}
+----
+
+Resultant document example:
+
+NOTE: See xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#conflict-record-document-format[Conflict Record Document Format] to understand the document format.
+
+----
+{
+  "timestamp": "2025-05-20T19:25:55.308Z",
+  "id": "crd_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
+  "docId": "ASHUNK100",
+  "replId": "1bc375a26b7f822ebe91288c58a6c614/bucket1/bucket1-PN8-oFADADCOe6S6A8YuIw==",
+  "srcDoc": {
+    "id": "src_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
+    "nodeId": "10.0.13.10",
+    "bucketUUID": "6cd3a35ba2d337d84d4fcd30c3a46fb9",
+    "clusterUUID": "d976db26a5ce512a243db65a3026073f",
+    "isDeleted": false,
+    "collection": "_default",
+    "scope": "_default",
+    "expiry": 0,
+    "flags": 33554438,
+    "cas": 1747769124557291500,
+    "revSeqno": 4,
+    "xattrs": {
+      "_vv": "{\"cvCas\":\"0x00002a1777524118\",\"src\":\"ntR6bcR9VHcjcPpQ5osEiw\",\"ver\":\"0x00002a1777524118\",\"pv\":[\"000018fe76524118@8DdrZBqHaACpmDeYJIv+kg\"]}",
+      "_sync": "",
+      "_mou": ""
+    }
+  },
+  "tgtDoc": {
+    "id": "tgt_1747769155308581666_c0468a42632daabce649b1fb7e174a530946c04b1dde75218290c4885ad11669",
+    "nodeId": "10.0.22.102",
+    "bucketUUID": "fada12469f1027ecb078d2c19a2802fb",
+    "clusterUUID": "1bc375a26b7f822ebe91288c58a6c614",
+    "isDeleted": false,
+    "collection": "_default",
+    "scope": "_default",
+    "expiry": 0,
+    "flags": 33554438,
+    "cas": 1747769104359030800,
+    "revSeqno": 4,
+    "xattrs": {
+      "_vv": "{\"cvCas\":\"0x000018fe76524118\",\"src\":\"8DdrZBqHaACpmDeYJIv+kg\",\"ver\":\"0x000018fe76524118\"}",
+      "_sync": "",
+      "_mou": ""
+    }
+  },
+"src_doc": {  
+    "author": "Unknown",  
+    "create_date_utc": "2025-05-20T07:56:26",  
+    "res_from": "WEST",  
+    "res_name": "Harry West",  
+    "res_note": "visitor",  
+    "reserved": true,  
+    "title": "Ashmole History",  
+    "type": "book",  
+    "unix_time": "1747768801",  
+    "update_date_utc": "2025-05-20T19:20:01"  
+  },
+  "tgt_doc": {
+    "author": "Unknown",
+    "create_date_utc": "2025-05-20T07:56:26",
+    "res_from": "EAST",
+    "res_name": "John East",
+    "res_note": "employee",
+    "reserved": true,
+    "title": "Ashmole History",
+    "type": "book",
+    "unix_time": "1747768801",
+    "update_date_utc": "2025-05-20T19:20:01"
+  }
+}
+----
+
+[#using-kv-range-scan-clog]
+== Using KV Range Scan
+
+To use only KV, use Couchbase SDK with KV APIs including xref:8.0@server:howtos/kv-operations.adoc#kv-range-scan[KV Range Scan].
+
+For example, to get a list of all `crd` prefix documents (CRD documents) using the KV Range Scan xref:8.0@server:howtos/kv-operations.adoc#kv-range-scan-prefix[PrefixScan], use KV `collection.get` to get the conflicting `src` and `tgt` docs.
+You can also use KV sub-document API `lookupIn` to retrieve only the selected fields.
+After processing the documents, you can remove the conflict log documents using the KV `collection.remove`.
+
+For more information about KV Range Scan operations and data operations, see xref:8.0@server:howtos/kv-operations.adoc[Data Operations]. For more information about data operations on sub-documents, see xref:8.0@server:howtos/subdocument-operations.adoc[Sub-Document Operations].
+
+[#xdcr-kv-range-scan-examples]
+=== KV Range Scan examples
+
+The following example uses Couchbase Python SDK.
+
+[source,python]
+----
+from datetime import timedelta
+import json
+
+from couchbase.auth import PasswordAuthenticator
+from couchbase.cluster import Cluster
+from couchbase.collection import (GetOptions, RemoveOptions)
+from couchbase.collection import DeltaValue, SignedInt64
+from couchbase.exceptions import (
+    CouchbaseException,
+    PathNotFoundException,
+    SubdocPathMismatchException)
+from couchbase.options import ScanOptions
+from couchbase.kv_range_scan import PrefixScan
+import couchbase.subdocument as SD
+
+# connection info
+connection_string = "couchbase://localhost"
+username = "username1"
+password = "Some!password"
+
+# conflict logs collection location
+bucket_name = "conflictlogs"
+scope_name = "bucket1"
+collection_name = "app1logs"
+
+cluster = Cluster(
+    connection_string,
+    authenticator=PasswordAuthenticator(username, password));
+
+cluster.wait_until_ready(timedelta(seconds=5))
+cb = cluster.bucket(bucket_name);
+logs_coll = cb.scope(scope_name).collection(collection_name)
+
+# Using KV PrefixScan to get list of crd doc ids
+# Get crd document ids only
+crd_list = logs_coll.scan(PrefixScan('crd'), ScanOptions(ids_only=True))
+
+# For each crd document, get the docId, timestamp, srcDoc.id, tgtDoc.id
+# Then, get the src and tgt docs from the conflict log collection
+for crd in crd_list:
+ crdlookup = logs_coll.lookup_in(crd.id,
+                    [ SD.get("docId"),
+                      SD.get("timestamp"),
+                      SD.get("srcDoc.id"),
+                      SD.get("tgtDoc.id") ])
+
+ doc_id = crdlookup.content_as[str](0)
+ timestamp = crdlookup.content_as[str](1)
+ src_doc_id = crdlookup.content_as[str](2)
+ tgt_doc_id = crdlookup.content_as[str](3)
+
+ # Get the src and tgt documents in conflict
+ src_doc = logs_coll.get(src_doc_id);
+ tgt_doc = logs_coll.get(tgt_doc_id);
+
+ # Print the info as json
+ output = { "docId": doc_id, "log_timestamp": timestamp,
+            "src_doc": src_doc.content_as[dict],
+            "tgt_doc": tgt_doc.content_as[dict] }
+ print (json.dumps(output))
+----
