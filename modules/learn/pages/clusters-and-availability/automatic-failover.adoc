@@ -33,7 +33,7 @@ For information on managing auto-failover, see the information provided for Couc
 == Failover Events
 
 Auto-failover occurs in response to failed/failing events.
-There are three types of event that can trigger auto-failover:
+The following events can trigger auto-failover:
 
 * _Node failure_.
 A server-node within the cluster is unresponsive (due to a network failure, very high CPU utilization problem, out-of-memory problem, or other node-specific issue). This means that the the cluster manager of the node has not sent heartbeats in the configured timeout period, and therefore, the health of the services running on the node is unknown.
@@ -42,7 +42,16 @@ A server-node within the cluster is unresponsive (due to a network failure, very
 Concurrent correlated failure of multiple nodes such as physical rack of machines or multiple virtual machines sharing a host.
 
 * _Data Service disk read/write issues_.
-Data Service disk read/write errors. Attempts by the Data Service to read from or write to disk on a particular node have resulted in a significant rate of failure (errors returned), for longer than a specified time-period.
+Data Service disk read/write errors. 
+Attempts by the Data Service to read from or write to disk on a particular node have resulted in a significant rate of failure (errors returned), for longer than a specified time-period.
+
+[#failover-on-data-disk-non-responsiveness]
+* _Data Disk non-responsiveness_.
+You can configure a timeout period for the Data Service's disk read/write threads to complete an operation.
+When you enable this setting, if the period elapses and the thread has not completed the operation, Couchbase Server can auto-fail over the node.
+This setting differs from the disk error timeout because the data disk does not have to return errors.
+Instead, if the disk is so slow that it cannot complete the operation or is hanging, Couchbase Server can take action even when it does not receive an error.
+
 
 * _Index or Data Service running on the mode is non-responsive or unhealthy_.
 ** Index Service non-responsiveness.  
@@ -61,7 +70,12 @@ If a monitored or configured auto-failover event occurs, an auto-failover will n
 
 The xref:install:deployment-considerations-lt-3nodes.adoc#quorum-arbitration[quorum constraint] is a critical part of auto-failover since the cluster must be able to form a quorum to initiate a failover, following the failure of some of the nodes. For Server Groups, this means that if you have two server groups with equal number of nodes, for auto-failover of all nodes in one server group to be able to occur, you could deploy an xref:learn:clusters-and-availability:nodes.adoc#adding-arbiter-nodes[arbiter node] (or another node) in a third physical server group which will allow the remaining nodes to form a quorum.
 
-Another critical auto-failover constraint for Server Groups is the maximum number of nodes to be automatically failed over (`maxCount` in `/settings/autoFailover`) before administrator-intervention is required.  If you want one entire server group of nodes to be able to be all automatically failed over, then the `maxCount` value should be at least the number of nodes in the server group.  You can check the value of `maxCount` in `GET /settings/autoFailover` to see what the `maxCount` setting is.  The value of `count` in the same `GET /settings/autoFailover` output tells you how many node auto-failovers have occurred since the parameter was last reset.  Running a rebalance will reset the count value back to 0. Running a rebalance will reset the count value back to 0. The count should not be reset manually unless guided by Support, since resetting manually will cause you to lose track of the number of auto-failovers that have already occurred without the cluster being rebalanced.
+Another critical auto-failover constraint for Server Groups is the maximum number of nodes to be automatically failed over (`maxCount` in `/settings/autoFailover`) before administrator-intervention is required.
+If you want one entire server group of nodes to be able to be all automatically failed over, then the `maxCount` value should be at least the number of nodes in the server group. 
+You can check the value of `maxCount` in `GET /settings/autoFailover` to see what the `maxCount` setting is.
+The value of `count` in the same `GET /settings/autoFailover` output tells you how many node auto-failovers have occurred since the parameter was last reset.
+Running a rebalance will reset the count value back to 0.
+The count should not be reset manually unless guided by Support, since resetting manually will cause you to lose track of the number of auto-failovers that have already occurred without the cluster being rebalanced.
 
 The list below describes other conditions that must be met for an auto-failover to be executed even after a monitored or configured auto-failover event has occurred.
 
@@ -72,8 +86,10 @@ For example, given a cluster of 18 nodes, _10_ nodes are required for the quorum
 After this maximum number of auto-failovers has been reached, no further auto-failover occurs, until the count is manually reset by the administrator, or until a rebalance is successfully performed.
 Note, however, that the count can be manually reset, or a rebalance performed, prior to the maximum number being reached.
 
-* In no circumstances where data-loss might result: for example, when a bucket has no replicas.
-Therefore, even a single event may not trigger a response; and an administrator-specified maximum number of failed nodes may not be reached.
+* By default, Couchbase Server does not allow an auto-failover if it may result in data loss.  
+For example, with default settings Couchbase Server does not allow the auto-failover of a node that contains a bucket with no replicas.
+This restriction includes ephemeral buckets as well as Couchbase buckets.
+See <<#auto-failover-and-ephemeral-buckets>> for more information on auto-failover and ephemeral buckets.
 
 * Only in accordance with the xref:learn:clusters-and-availability/automatic-failover.adoc#failover-policy[Service-Specific Auto-Failover Policy] for the service or services on the unresponsive node.
 
@@ -89,7 +105,58 @@ Auto-failover is for intra-cluster use only: it does not work with xref:learn:cl
 See xref:manage:manage-settings/configure-alerts.adoc[Alerts], for
 details on configuring email alerts related to failover.
 
-See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness], for information on server groups.
+See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness], for information about server groups.
+
+[#auto-failover-and-ephemeral-buckets]
+== Auto-Failover and Ephemeral Buckets
+Couchbase Server supports ephemeral buckets, which are buckets that it stores only in memory. 
+Their data is never persisted to disk.
+This lack of persistence poses several challenges when it comes to node failure.
+
+If an ephemeral bucket lacks replicas, it loses the data in vBuckets on any node that fails and restarts.
+To prevent this data loss, by default Couchbase Server does not allow auto-failover of a node that contains vBuckets for an unreplicated ephemeral bucket.
+In this case, you must manually fail over the node if it's unresponsive. 
+However, all of the ephemeral bucket's data on the node is lost.
+
+Couchbase Server provides two settings that affect how node failures work with ephemeral buckets:
+
+Auto-reprovisioning for Ephemeral Buckets::
+This setting helps avoid data loss in cases where a node fails and restarts before Couchbase Server can begin an auto-failover for it. 
+This setting defaults to enabled.
+When it's enabled, Couchbase Server automatically activates the replicas of any ephemeral vBuckets that are active on the restarting node.
+If you turn off this setting, there's a risk that the restarting node could cause data loss.
+It could roll back asynchronous writes that the replica vBuckets have but its vBuckets are missing. 
+
+[#ephemeral-buckets-with-no-replicas]
+Auto-failover for Ephemeral Buckets with No Replicas [.edition]#{enterprise}#::
+When enabled, this setting allows Couchbase Server to auto-failover a node that contains vBuckets for an ephemeral bucket with no replicas.
+When Couchbase Server fails over a node with an unreplicated ephemeral bucket, the data in the vBuckets on the node is lost.
+Couchbase Server creates empty vBuckets on the remaining nodes to replace the missing vBuckets on the failed node.
+When the failed node rejoins the cluster, Couchbase Server moves the replacement vBuckets back to it.
+
++
+This setting is off by default. 
+When it's off, Couchbase Server does not auto-failover a node that contains an unreplicated ephemeral bucket's vBuckets.
+If one of these nodes becomes unresponsive, you must manually fail over the node.
+
++
+Enable this setting when preserving the data in the ephemeral bucket is not critical for your application.
+For example, suppose you use the unreplicated ephemeral bucket for caching data.
+In this case, consider enabling this setting to allow Couchbase Server to auto-failover nodes containing its vBuckets.
+Losing the data in the cache is not critical, because your application can repopulate the cache with minimal performance cost.
+
++
+NOTE: If the data in the ephemeral bucket is critical for your application, enable one or more replicas for it. 
+See xref:manage:manage-buckets/create-bucket.adoc#ephemeral-bucket-settings[Ephemeral Bucket Settings] for more information about adding replicas for an ephemeral bucket.
+
++
+If the unreplicated ephemeral bucket is indexed, Couchbase Server rebuilds the index after it auto-fails over the node even if the index is not on the failed node.
+After this type of failover, the index must be rebuilt because it indexes data lost in the failed node's vBuckets.
+For more information, see xref:learn:services-and-indexes/indexes/index-replication.adoc#index-rollback-after-failover[Index Rollback After Failover].
+
++
+See xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability] to learn how to change these settings via the Couchbase Server Web Console.
+See xref:rest-api:rest-cluster-autofailover-settings.adoc[] for information about changing these settings via the REST API.
 
 [#failover-policy]
 == Service-Specific Auto-Failover Policy
@@ -231,7 +298,8 @@ This parameter is available in Enterprise Edition only: in Community Edition, th
 * _Count_.
 The number of nodes that have already failed over.
 The default value is 0.
-The value is incremented by 1 for every node that has an automatic-failover that occurs, up to the defined maximum count: beyond this point, no further automatic failover can be triggered until the count is reset to 0. Running a rebalance will reset the count value back to 0.
+The value is incremented by 1 for every node that has an automatic-failover that occurs, up to the defined maximum count: beyond this point, no further automatic failover can be triggered until the count is reset to 0. 
+Run a rebalance to reset the count value back to 0.
 
 * _Enablement of disk-related automatic failover; with corresponding time-period_.
 Whether automatic failover is enabled to handle continuous read-write failures.
