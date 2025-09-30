@@ -41,7 +41,7 @@ curl -X POST -u Administrator:password  \
     -d 'knownNodes=ns_1@node1.,ns_1@node2.,ns_1@node3.'
 # end::rebalance-cluster[]
 
-# Show setting of ejection policy on empehermal bucket
+# Show setting of ejection policy on ephemeral bucket
 # tag::show-ephemeral-policy[]
 curl -s GET -u Administrator:password \
      http://localhost:8091/pools/default/buckets/sample-ephemeral \
