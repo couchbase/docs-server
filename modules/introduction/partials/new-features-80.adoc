@@ -95,6 +95,33 @@ Similarly, to retrieve statistics for multiple metrics, the REST API `POST /pool
 +
 For more information, see xref:rest-api:rest-statistics-single.adoc[Getting a Single Statistic] and xref:rest-api:rest-statistics-multiple.adoc[Getting Multiple Statistics].
 
+https://jira.issues.couchbase.com/browse/MB-33315[MB-33315] Allow auto-failover for ephemeral buckets without a replica::
+Previously, Couchbase Server always prevented auto-failover on nodes containing an ephemeral bucket that does not have replicas.
+You can now configure Couchbase Server Enterprise Edition to allow a node to auto-failover even if it has an ephemeral bucket without a replica.
+You can enable this setting using the Couchbase Server Web Console or through the REST API using the `allowFailoverEphemeralNoReplicas` auto-failover setting.
+This option defaults to off.
+When you enable it, Couchbase Server creates empty vBuckets on other nodes to replace the lost ephemeral vBuckets on the failed over node.
+If the failed over node rejoins the cluster, Couchbase Server moves the replacement vBuckets back to rejoining node.
+This option is useful if your application uses ephemeral buckets for data that's not irreplaceable, such as caches.
+This setting is not available in Couchbase Server Community Edition.
++
+See xref:learn:clusters-and-availability/automatic-failover.adoc#auto-failover-and-ephemeral-buckets[Auto-Failover and Ephemeral Buckets] and xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability]  for more information.
+
+https://jira.issues.couchbase.com/browse/MB-34155[MB-34155] Support Auto-failover for exceptionally slow/hanging disks::
+You can now configure Couchbase Server to trigger an auto-failover on a node if its data disk is slow to respond or is hanging. 
+Before version 8.0, you could only configure Couchbase Server to auto-failover a node if the data disk returned errors for a set period of time.
+The new `failoverOnDataDiskNonResponsiveness` setting and corresponding settings in the Couchbase Web Console *Settings* page sets the nuber of seconds allowed for read or write operations to complete.
+If this period elapses before the operation completes, Couchbase Server triggers an auto-failover for the node.
+This setting is off by default.
++
+See xref:learn:clusters-and-availability/automatic-failover.adoc#failover-on-data-disk-non-responsiveness[Failover on Data Disk Non-Responsiveness] to learn more about this feature. 
+See xref:manage:manage-settings/general-settings.adoc#node-availability[Node Availability] and xref:rest-api:rest-cluster-autofailover-enable.adoc[] to learn how to enable it.
+
+https://jira.issues.couchbase.com/browse/MB-65779[MB-65779]::
+Couchbase supports the REST API `DELETE pools/default/settings/memcached/global/setting/[setting_name]` for some of the settings that are not always passed from the Cluster Manager to memcached.
++
+For more information, see xref:rest-api:rest-manage-cluster-connections.adoc[Managing Cluster Connections].
+
 [#section-new-feature-800-services]
 === Services
 
@@ -111,6 +138,7 @@ These are the services that can be modified:
 ** `backup` (Backup Service)
 
 You can modify these services using the Couchbase xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-from-ui[UI], xref:rest-api:rest-set-up-services-existing-nodes.adoc[REST API], or xref:manage:manage-nodes/modify-services-on-nodes-and-rebalance.adoc#modify-mds-services-using-cli[CLI].
+
 
 [#section-new-feature-data-service]
 === Data Service
@@ -218,6 +246,32 @@ The metric includes the first 32 characters sent by any clients up to the first 
 and limits the number of metrics to 100. 
 Additional information sent by clients at connection time can be found in the logs.
 
+[#ejection-policy-without-restart]
+https://jira.issues.couchbase.com/browse/MB-67082[MB-67082] Allow eviction policy to be changed without bucket restart::
+The new `noRestart` parameter for the `/pools/default/buckets/{BUCKET-NAME}` REST API lets you change the ejection policy of a Couchbase bucket without automatically restarting it.
+If you prevent the restart, perform one of the following:
++
+--
+* A swap rebalance 
+* On each data node, perform a graceful failover, then either a delta (when not performing a storage backend migration) or full recovery followed by a rebalance.
+--
++
+Either of these procedures lets you avoid the downtime associated with restarting the bucket.
+For more information, see xref:manage:manage-buckets/change-ejection-policy.adoc[].
+
++
+This setting is useful when you migrate a bucket to a new storage engine that would benefit from a new ejection policy.
+For example, you should consider changing a bucket's ejection policy to Full Ejection when migrating a bucket  to the xref:learn:buckets-memory-and-storage/storage-engines.adoc#storage-engine-magma[Magma storage engine].
+Using the `noRestart` parameter, you can change the ejection policy at the same time you migrate the bucket to the new storage engine.
+See xref:manage:manage-buckets/migrate-bucket.adoc[] for more information.
+
+[#ejection-ephemeral-buckets]
+https://jira.issues.couchbase.com/browse/MB-64104[MB-64104] Allow changing the ejection policy of ephemeral buckets::
+You can now change the ejection policy of an ephemeral bucket using the Couchbase Server Web Console and the REST API. 
+Unlike Couchstore buckets, changing the ejection policy of an ephemeral bucket does not require a bucket restart or other additional steps.
+For more information, see xref:manage:manage-buckets/change-ejection-policy.adoc[].
+
+
 [#section-new-feature-800-disk-limits]
 https://jira.issues.couchbase.com/browse/MB-59113[MB-59113] Prevent buckets from causing nodes to run out of disk space::
 You can configure Couchbase Server to prevent the Data Service from writing to the data service path once the filesystem has filled to a configurable threshold.
@@ -255,6 +309,7 @@ include::learn:partial$maintain-durability-warning.adoc[]
 See xref:learn:data/durability.adoc#maintaining-durable-writes[Maintaining Durable Writes During Single Replica Failovers] for more information about this feature.
 
 
+
 [#section-new-feature-800-backup-service]
 === Backup and Restore
 https://jira.issues.couchbase.com/browse/MB-44863[MB-44863]::
@@ -274,14 +329,24 @@ For more information, see xref:manage:manage-backup-and-restore/manage-backup-an
 [#section-new-feature-800-XDCR]
 === XDCR
 
-https://jira.issues.couchbase.com/browse/MB-62564[MB-62564]::
+https://jira.issues.couchbase.com/browse/MB-58989[MB-58989]::
+XDCR detects and logs concurrent conflicts that occur in different clusters but on the same document version due to independent modifications by locally connected applications during Active-Active replication.
+The conflict logs are for your information only.
+For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc[XDCR Conflict Logging Feature].
 
+https://jira.issues.couchbase.com/browse/MB-11575[MB-11575]::
+XDCR now supports the identification of Incoming Replications on a cluster.
+The Incoming Replications can be:
+
+* Viewed on the XDCR tab of the UI. See xref:manage:manage-xdcr/incoming-xdcr-replications.adoc#view-incoming-replications[View Incoming Replications] in xref:manage:manage-xdcr/incoming-xdcr-replications.adoc[Incoming Replications].
+* Retrieved by using the REST API command `GET /xdcr/sourceClusters`. See xref:rest-api:rest-xdcr-list-incoming-replications.adoc[Listing Incoming Replications].
+
+https://jira.issues.couchbase.com/browse/MB-62564[MB-62564]::
 `xdcrDiffer` is a diagnostic utility included in the Couchbase Server package.
 This utility verifies data consistency between XDCR clusters.
 It identifies missing or mismatched documents by comparing metadata and content hashes across source and target clusters.
 +
 For more information, see xref:manage:pages/manage-xdcr/xdcr-differ.adoc[xdcrDiffer Utility].
-
 
 https://jira.issues.couchbase.com/browse/MB-62507[MB-62507]::
 XDCR supports Generic Services Log Level configuration using the REST API through the `genericServicesLogLevel` settings.
@@ -316,7 +381,6 @@ This mode enhances flexibility for clients while enforcing strict security for n
 +
 For more information, see xref:manage:manage-security/enable-client-certificate-handling.adoc[Enable Client Certificate Handling].
 
-
 https://jira.issues.couchbase.com/browse/MB-11575[MB-11575]::
 XDCR now supports the identification of Incoming Replications on a cluster.
 The Incoming Replications can be:
@@ -324,20 +388,141 @@ The Incoming Replications can be:
 * Viewed on the XDCR tab of the UI. See xref:manage:manage-xdcr/incoming-xdcr-replications.adoc#view-incoming-replications[View Incoming Replications] in xref:manage:manage-xdcr/incoming-xdcr-replications.adoc[Incoming Replications].
 * Retrieved by using the REST API command `GET /xdcr/sourceClusters`. See xref:rest-api:rest-xdcr-list-incoming-replications.adoc[Listing Incoming Replications].
 
-https://jira.issues.couchbase.com/browse/MB-58989[MB-58989]::
-XDCR detects and logs concurrent conflicts that occur in different clusters but on the same document version due to independent modifications by locally connected applications during Active-Active replication.
-The conflict logs are for your information only.
-For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc[XDCR Conflict Logging Feature].
+https://jira.issues.couchbase.com/browse/MB-30260[MB-30260]::
+You can lock user accounts to prevent them from authenticating with Couchbase Server.
++
+--
+* Locking an account terminates all active UI sessions and long-running connections such as Memcached or streaming connections.
+* This feature is useful for preventing users from connecting to the database during maintenance.
+* This feature is applicable to local domain user accounts only.
+* This is an Enterprise Edition feature, and only available after the entire cluster is upgraded to the Couchbase Server 8.0 or a later version.
+--
++
+For more information, xref:learn:security/authentication-overview.adoc#blocking-user-authentication[Blocking User Authentication].
+
+https://jira.issues.couchbase.com/browse/MB-31823[MB-31823]::
+As an administrator, you can force a local domain user account to change their password when they next authenticate with Couchbase Server.
+This feature is useful for assigning a temporary password to new user accounts by selecting the option to force the user to change their password when creating a new user.
++
+For more information, see xref:learn:security/usernames-and-passwords.adoc#force-password-change[Force Password Change].
+
+https://jira.issues.couchbase.com/browse/MB-63755[MB-63755]::
+You can track the user activity, such as the last time a user made a request to the Cluster Manager, through user auditing.
+It's useful in locating users whose accounts are no longer active.
+You select which roles or groups a user must belong to for their last activity time to be saved.
+This feature is only available for users in the local domain.
+The activity of externally authenticated users cannot be tracked using this feature.
++
+For more information, see xref:learn:security/auditing.adoc#audit-user-activity[Audit User Activity].
 
 [#section-new-feature-800-query-service]
 === Query Service
 
+https://jira.issues.couchbase.com/browse/MB-51668[MB-51668]::
+You can now use optimizer hints with `DELETE`, `UPDATE`, and `MERGE` statements.
++
+For more information, see xref:n1ql:n1ql-language-reference/optimizer-hints.adoc[Optimizer Hints].
+
+https://jira.issues.couchbase.com/browse/MB-51737[MB-51737]::
+Couchbase Server 8.0 now supports negative keyspace hints.
+A negative hint is a type of optimizer hint that instructs the optimizer not to use certain indexes or join methods.
+The hints are `NO_INDEX`, `NO_INDEX_FTS`, `NO_USE_NL`, and `NO_USE_HASH`.
++
+For more information, see xref:n1ql:n1ql-language-reference/negative-keyspace-hints.adoc[Negative Keyspace Hints].
+
+https://jira.issues.couchbase.com/browse/MB-51965[MB-51965]::
+`system:completed_requests` now supports two new logging qualifiers:
++
+--
+[horizontal]
+Statement:::
+Logs requests that match the specified LIKE search pattern in the query text.
+
+Plan:::
+Logs requests where the specified plan field values appear in the query plan.
+--
++
+For more information, see xref:n1ql:n1ql-manage/monitoring-n1ql-query.adoc#sys-completed-config[Completed Requests].
+
+https://jira.issues.couchbase.com/browse/MB-59400[MB-59400]::
+
+{sqlpp} now supports the following new statements to improve user, group, and bucket management:
++
+--
+* `CREATE USER`
+* `ALTER USER`
+* `DROP USER`
+* `CREATE GROUP`
+* `ALTER GROUP`
+* `DROP GROUP`
+* `CREATE BUCKET`
+* `ALTER BUCKET`
+* `DROP BUCKET`
+--
++
+For more information, see xref:n1ql:n1ql-language-reference/createuser.adoc[SQL++ Statements].
++
+In addition, there are also two new system keyspaces for group and bucket management:
++
+--
+[horizontal]
+`system:group_info`:::
+Provides information about all groups on the cluster.
+//For more information, see xref:n1ql:n1ql-intro/sysinfo.adoc#querying-groups[Get Group Information].
+
+`system:bucket_info`:::
+Provides information about all buckets on the cluster.
+This includes their metadata, configuration settings, memory usage, and other details.
+//For more information, see xref:n1ql:n1ql-intro/sysinfo.adoc#querying-bucket-info[Get Bucket Information].
+--
+For more information, see xref:n1ql:n1ql-intro/sysinfo.adoc[Get System Information].
+
+https://jira.issues.couchbase.com/browse/MB-62471[MB-62471]::
+Auto Update Statistics is a new feature that keeps the optimizer statistics up to date by automatically identifying and refreshing outdated statistics.
+These statistics help the Cost-Based Optimizer generate accurate and cost-effective query plans.
++
+For more information, see xref:n1ql:n1ql-language-reference/auto-update-statistics.adoc[Auto Update Statistics].
+
+https://jira.issues.couchbase.com/browse/MB-62653[MB-62653]::
+Automatic Workload Repository is a new feature that captures and maintains performance statistics for queries executed on a Couchbase cluster.
+It acts as a centralized repository for query performance data, enabling you to track query activity, analyze workload trends,
+and identify performance bottlenecks.
+You can also generate reports to compare query performance over time and optimize your queries based on historical data.
++
+For more information, see xref:n1ql:n1ql-manage/query-awr.adoc[Automatic Workload Repository].
+
+https://jira.issues.couchbase.com/browse/MB-63204[MB-63204]::
+There is a new auto-reprepare feature for PREPARE statements.
+When enabled, a prepared statement automatically updates its plan whenever the GSI metadata version changes.
+This happens when users create or drop an index,
+allowing prepared statements to use newer, more efficient indexes as they become available.
++
+For more information, see xref:n1ql:n1ql-language-reference/prepare.adoc[PREPARE].
+
 https://jira.issues.couchbase.com/browse/MB-63459[MB-63459]::
-New to `8.0.0` is the ability to manipulate document extended attributes (xattrs) via a common SQL++ statement.
+You can now manipulate extended attributes (XATTRs) of documents directly through {sqlpp} statements.
+You can include up to 15 XATTRs per query.
 +
-`INSERT` and `UPSERT` statement options may now include a “xattrs” object element detailing additions and changes to the xattrs (omissions do not delete xattrs).
+--
+* The `INSERT` and `UPSERT` statements now have an `xattrs` object that enable you to add and modify XATTRs, without deleting the existing ones.
 +
-The `UPDATE` statement now supports `SET` and `UNSET` of `meta().xattrs.+{attribute}+ elements.`
+* The `UPDATE` statement now supports `SET` and `UNSET` of `meta().xattrs.+{attribute}+ elements.`
+--
++
+For more information, see xref:n1ql:n1ql-language-reference/insert.adoc[INSERT], xref:n1ql:n1ql-language-reference/upsert.adoc[UPSERT], and xref:n1ql:n1ql-language-reference/update.adoc[UPDATE] statements.
+
+https://jira.issues.couchbase.com/browse/MB-63659[MB-63659]::
+{sqlpp} now supports a new statement `USING AI`, that leverages AI capabilities to generate {sqlpp} queries from natural language prompts.
++
+For more information, see xref:n1ql:n1ql-language-reference/using-ai.adoc[USING AI].
+
+https://jira.issues.couchbase.com/browse/MB-67450[MB-67450], https://jira.issues.couchbase.com/browse/MB-30815[MB-30815]::
+The `INFER` statement now supports the following options: `array_sample_size`, `max_nesting_depth`, and `flags`.
++
+This statement also now automatically returns the `meta.id()` attribute, which provides the document keys in the output.
+You can control this behavior using the `flags` option.
++
+For more information, see xref:n1ql:n1ql-language-reference/infer.adoc[INFER].
 
 [#section-new-feature-800--search-service]
 === Search Service

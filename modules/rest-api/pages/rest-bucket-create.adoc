@@ -27,7 +27,7 @@ These endpoints create a new bucket and edit an existing bucket.
 You can create two types of buckets: Couchbase or Ephemeral.
 
 When you create a bucket, you must assign it a name that is unique across all buckets on the cluster. You cannot change the name after creation.
-Bucket names must not exceed 100 bytes (i.e., 100 characters).
+Bucket names must not exceed 100 bytes (100 characters in most cases).
 
 A single cluster can contain up to 30 buckets.
 
@@ -56,12 +56,12 @@ curl -X POST -u <administrator>:<password>
           [ valueOnly | fullEviction ] |
           [ noEviction | nruEviction ]
         ]
+  -d noRestart=[true|false]
   -d durabilityMinLevel=[
           [ none | majority | majorityAndPersistActive | persistToMajority ] |
           [ none | majority ]
         ]
   -d durabilityImpossibleFallback= [ disabled | fallbackToActiveAck ]
-  -d threadsNumber=[ 3 | 8 ]
   -d rank=<integer>
   -d replicaNumber=[ 1 | 2 | 3 ]
   -d compressionMode=[ off | passive | active ]
@@ -97,9 +97,12 @@ curl -X POST -u <administrator>:<password>
 
 All parameters are described in the following subsections.
 
+NOTE: The `threadsNumber` parameter, which sets the number of threads for the bucket, has not had any effect since version Couchbase Server 7.0.0. 
+It's deprecated and is no longer listed in the syntax.
+
 == Parameter Groups
 
-Parameters that support the creation and editing of buckets can be broken into two groups: Genera and Auto-compaction.
+Parameters that support the creation and editing of buckets can be broken into two groups: General and Auto-compaction.
 
 === General
 
@@ -116,7 +119,6 @@ The following parameters can be edited after bucket creation:
 
 * <<evictionpolicy,evictionPolicy>>
 * <<durabilityminlevel,durabilityMinLevel>>
-* <<threadsnumber,threadsNumber>>
 * <<rank,rank>>
 * <<replicanumber,replicaNumber>>
 * <<compressionmode,compressionMode>>
@@ -131,7 +133,7 @@ The following parameters can be edited after bucket creation:
 * <<encryptionAtRestDekRotationInterval>>
 * <<encryptionAtRestDekLifetime>>
 
-** Parameters that _can_ be edited after bucket creation; these being xref:rest-api:rest-bucket-create.adoc#evictionpolicy[evictionPolicy], xref:rest-api:rest-bucket-create.adoc#durabilityminlevel[durabilityMinLevel], xref:rest-api:rest-bucket-create.adoc#threadsnumber[threadsNumber], xref:rest-api:rest-bucket-create.adoc#rank[rank], xref:rest-api:rest-bucket-create.adoc#replicanumber[replicaNumber], xref:rest-api:rest-bucket-create.adoc#compressionmode[compressionMode], xref:rest-api:rest-bucket-create.adoc#maxttl[maxTTL], xref:rest-api:rest-bucket-create.adoc#flushenabled[flushEnabled], xref:rest-api:rest-bucket-create.adoc#magmaseqtreedatablocksize[magmaSeqTreeDataBlockSize],
+** Parameters that _can_ be edited after bucket creation; these being xref:rest-api:rest-bucket-create.adoc#evictionpolicy[evictionPolicy], xref:rest-api:rest-bucket-create.adoc#durabilityminlevel[durabilityMinLevel], xref:rest-api:rest-bucket-create.adoc#rank[rank], xref:rest-api:rest-bucket-create.adoc#replicanumber[replicaNumber], xref:rest-api:rest-bucket-create.adoc#compressionmode[compressionMode], xref:rest-api:rest-bucket-create.adoc#maxttl[maxTTL], xref:rest-api:rest-bucket-create.adoc#flushenabled[flushEnabled], xref:rest-api:rest-bucket-create.adoc#magmaseqtreedatablocksize[magmaSeqTreeDataBlockSize],
 xref:rest-api:rest-bucket-create.adoc#historyretentioncollectiondefault[historyRetentionCollectionDefault],
 xref:rest-api:rest-bucket-create.adoc#historyretentionbytes[historyRetentionBytes], xref:rest-api:rest-bucket-create.adoc#storagebackend[storageBackend],
 xref:rest-api:rest-bucket-create.adoc#historyretentionseconds[historyRetentionSeconds], xref:rest-api:rest-bucket-create.adoc#accessscannerenabled[accessScannerEnabled], xref:rest-api:rest-bucket-create.adoc#expirypagersleeptime[expiryPagerSleepTime], xref:rest-api:rest-bucket-create.adoc#warmupbehavior[warmupBehavior], xref:rest-api:rest-bucket-create.adoc#memorylowwatermark[memoryLowWatermark], and xref:rest-api:rest-bucket-create.adoc#memoryhighwatermark[memoryHighWatermark].
@@ -382,25 +384,33 @@ This example returns the status code `202 Accepted` and no additional output.
 [#evictionpolicy]
 === evictionPolicy
 
-The ejection policy to be assigned to and used by the bucket.
-(Note that eviction is, in the current release, referred to as ejection; and this revised naming will continue to be used in future releases.)
-Policy-assignment depends on bucket type.
+Sets the ejection policy for the bucket.
+You can change the eviction policy after bucket creation.
+See xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection] for more information about ejection policies.
 
-For a Couchbase bucket, the policy can be `valueOnly` (which is the default) or `fullEviction`.
-For an Ephemeral bucket, the policy can be `noEviction` (which is the default) or `nruEviction`.
+Each type of bucket has its own set of ejection policies:
 
-This value can be modified, following bucket-creation.
-If such modification occurs, the bucket is restarted with the new setting: this may cause inaccessibility of data, during the bucket's warm-up period.
+* Couchbase bucket: `valueOnly` (the default for buckets using the xref:learn:buckets-memory-and-storage/storage-engines.adoc#couchstore[Couchstore] storage engine) or `fullEviction` (the default for buckets using xref:learn:buckets-memory-and-storage/storage-engines.adoc#storage-engine-magma[Magma]).
+* Ephemeral bucket: `noEviction` (which is the default) or `nruEviction`.
 
-Incorrect specification of an ejection policy returns an error-notification, such as `{"evictionPolicy":"Eviction policy must be either 'valueOnly' or 'fullEviction' for couchbase buckets"}`.
+Changes to the ejection policy of an ephemeral bucket take effect without requiring any further steps.
+Before the change takes effect on a Couchbase bucket, you must perform 1 of the following actions:
 
-For information on ejection policies, see xref:learn:buckets-memory-and-storage/buckets.adoc#bucket-types[Bucket Types].
-For general information on memory management in the context of ejection, see xref:learn:buckets-memory-and-storage/memory.adoc#ejection[Ejection].
+* Allow Couchbase Server to restart the bucket automatically.
+It does so automatically unless you set <<norestart,`noRestart`>> to `true`.
+When Couchbase Server restarts the bucket, it closes connections and makes the bucket unavailable temporarily. 
+* Perform a xref:install:upgrade-procedure-selection.adoc#swap-rebalance[swap rebalance] on all nodes in the cluster running the data service.
+* Perform a xref:learn:clusters-and-availability/graceful-failover.adoc[graceful failover] followed by a xref:learn:clusters-and-availability/recovery.adoc#delta-recovery[delta recovery] and xref:learn:clusters-and-availability/rebalance.adoc[rebalance] for all nodes running the data service in the cluster.
++
+NOTE: If you're performing a storage backend migration (see xref:manage:manage-buckets/migrate-bucket.adoc[]) while you're changing the ejection policy, you must set `noRestart` to `true`.
+You must also perform a full recovery instead of a delta recovery after the graceful failover because the migration process requires it.
+
+For more information about changing the ejection policy of a bucket, including the steps to take to change the policy without downtime, see xref:manage:manage-buckets/change-ejection-policy.adoc[].
 
 [#example-evictionpolicy-create]
-==== Example: Specifying an Eviction Policy, when Creating
+==== Example: Specifying an Ejection Policy, when Creating
 
-The following example creates a new bucket, named `testBucket`, which is a Couchbase bucket by default; and assigns it the `fullEviction` policy.
+The following example creates a new bucket named `testBucket` which is a Couchbase bucket and assigns it the `fullEviction` policy.
 
 [source,bash]
 ----
@@ -414,7 +424,7 @@ If successful, the call returns a `202 Accepted` notification.
 No object is returned.
 
 [#example-evictionpolicy-edit]
-==== Example: Specifying a New Eviction Policy, when Editing
+==== Example: Specifying a New Ejection Policy, when Editing
 
 The following example modifies the eviction policy of the existing bucket `testBucket`, specifying that it should be `valueOnly`.
 
@@ -425,8 +435,33 @@ curl -v -X POST http://127.0.0.1:8091/pools/default/buckets/testBucket \
 -d evictionPolicy=valueOnly
 ----
 
-If successful, the call returns a `200 OK` notification.
-No object is returned.
+If successful, the call returns a `200 OK` notification with no other value returned.
+Couchbase Server also starts the process of restarting the bucket.
+
+[#norestart]
+=== noRestart
+
+Set this parameter to `true` to prevent Couchbase Server from automatically restarting the bucket when you change the ejection policy using <<evictionpolicy>>.
+It only has an effect if you've also set a value in the `evictionPolicy` parameter.
+
+This parameter defaults to `false`, meaning Couchbase Server automatically restarts the bucket after you change the ejection policy.
+
+When set to `true`, the new ejection policy does not take effect until you perform further steps (see <<evictionpolicy>> for details). 
+
+[#example-evictionpolicy-edit]
+==== Example: Set a New Ejection Policy Without Bucket Restart
+
+The following example set the eviction policy of the bucket `travel-sample` to `fullEviction` and prevents the restart of the bucket:
+
+[source,console]
+----
+include::manage:example$change-ejection-policy.sh[tag=change-ejection-no-restart]
+----
+
+If successful, the call returns a `200 OK` notification with no other value returned.
+Couchbase Server does not restart the bucket.
+The new ejection policy does not take effect until you perform one of the procedures described in <<evictionpolicy>>.
+
 
 [#durabilityminlevel]
 === durabilityMinLevel
@@ -521,53 +556,6 @@ curl -v -X POST -u Administrator:password \
 ----
 
 If successful, the call returns a `200 OK` notification.
-
-[#threadsnumber]
-=== threadsNumber
-
-The priority for the bucket, as described in xref:manage:manage-buckets/create-bucket.adoc#bucket-priority[Create a Bucket].
-Priority can be established as either Low or High.
-To establish priority as Low (which is the default), the value of `threadsNumber` must be `3`.
-To establish priority as High, the value must be `8`.
-If any other value is used, the value is ignored; and the bucket's priority remains low.
-
-If this parameter is incorrectly specified, an error-notification such as the following is returned: `{"threadsNumber":"The number of threads must be an integer between 2 and 8"}`.
-(Note that, as indicated above, all values other than `3` and `8` are ignored.)
-
-This parameter can be modified, following bucket-creation.
-If such modification occurs, the bucket is restarted with the new setting: this may cause inaccessibility of data, during the bucket's warm-up period.
-
-[#example-threadsnumber-create]
-==== Example: Specifying a Bucket Priority, when Creating
-
-The following example creates a new bucket, named `testBucket`, which is a Couchbase bucket by default; and assigns it a High priority, by specifying `8` as the value to the `threadsNumber` parameter.
-
-[source,bash]
-----
-curl -v -X POST http://127.0.0.1:8091/pools/default/buckets \
--u Administrator:password \
--d name=testBucket \
--d ramQuota=256 \
--d threadsNumber=8
-----
-
-If successful, the call returns a `202 Accepted` notification.
-No object is returned.
-
-[#example-threadsnumber-edit]
-==== Example: Specifying a New Bucket Priority, when Editing
-
-The following example modifies the priority of the existing bucket `testBucket`, changing the level to Low, by establishing `3` as the value of the `threadsNumber` parameter.
-
-[source,bash]
-----
-curl -v -X POST http://127.0.0.1:8091/pools/default/buckets/testBucket \
--u Administrator:password \
--d threadsNumber=3
-----
-
-If successful, the call returns a `200 OK` notification.
-No object is returned.
 
 [#rank]
 === rank
@@ -1222,7 +1210,6 @@ curl -v -X POST http://10.143.201.101:8091/pools/default/buckets/testBucket \
 
 If successful, the call returns a `200 OK` notification.
 No object is returned.
-=======
 
 [[encryptionAtRestKeyId]]
 === encryptionAtRestKeyId
