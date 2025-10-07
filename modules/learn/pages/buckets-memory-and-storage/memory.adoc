@@ -133,42 +133,92 @@ For more information, see xref:rest-api:rest-bucket-create.adoc#warmupbehavior[w
 [#ejection]
 == Ejection
 
-If a bucket's memory quota is exceeded, items may be _ejected_ from the bucket by the Data Service.
+If a bucket's memory use gets close to its memory quota, the Data Service may eject data from memory.
+See <<#watermarks>> for more information about how Couchbase Server manages memory use.
+You assign an ejection policy (also known as an eviction method) to each bucket that determines if and how the Data Service ejects data from memory.
+Couchbase and Ephemeral buckets each have their own ejection policies.
 
-Different ejection methods are available, and are configured per bucket. 
-Note that in some cases, ejection is configured _not_ to occur.
+NOTE: Capella refers to Couchbase buckets as Memory and Disk buckets, and Ephemeral buckets as Memory Only buckets.
 
-For a Couchbase bucket, you can choose betweeen a *Value-only* or *Full* ejection method: 
+The two ejection policies available for Couchbase buckets are: 
 
-* *Value-only*: The bucket only ejects data when it removes a document from memory. 
+Value-only::
+The Data Service only ejects a document's data when it ejects it from memory. 
+It keeps the document's keys and metadata in memory.
+Retaining the keys and metadata help limit the performance impact of ejecting the document from memory.
+This is the default policy for Couchbase buckets.
 Choose this method if you need better performance, but be aware that it uses more system memory. 
-* *Full*: The bucket ejects data, metadata, keys, and values when it removes a document from memory. 
+Full::
+The Data Service removes the entire document, including its metadata and keys, when it ejects a document from memory. 
 Choose this method if you want to reduce your memory overhead requirement. 
 
-For an Ephemeral bucket, you can choose between a *No ejection* or *Eject data when RAM is full* ejection policy: 
+include::partial$full-ejection-note.adoc[]
 
-* *No ejection*: If the bucket reaches its memory quota, the bucket doesn't eject any existing data and attempts to cache new data fail. 
-* *Eject data when RAM is full*: If the bucket reaches its memory quota, the bucket ejects older documents from RAM to make space for new data. 
+For more information about Couchbase bucket ejection policies, see the blog post https://blog.couchbase.com/a-tale-of-two-ejection-methods-value-only-vs-full/[A Tale of Two Ejection Methods: Value-only vs. Full^]
 
-NOTE: Ejection from Ephemeral buckets removes data without persistence because Ephemeral buckets have no presence on disk. 
+The two ejection methods available for Ephemeral buckets are:
 
-For more information about buckets and bucket types, see xref:buckets-memory-and-storage/buckets.adoc[Buckets].
+No ejection::
+If the bucket reaches its memory quota, the Data Service does not eject data.
+Instead, it refuses to load any new data until memory becomes available.
+Memory can become available when users delete documents or documents expire because of xref:learn:data/expiration.adoc[expiration settings]). 
+
+Eject data when RAM is full::
+If the bucket approaches its memory quota, the Data Service ejects documents to make space for new data. 
+It chooses the documents to eject based on the Not Recently Used (NRU) algorithm.
+This algorithm uses metadata to determine which documents have not been accessed recently.
+
+[IMPORTANT]
+====
+Data ejected from an Ephemeral bucket is lost because it's never persisted to disk.
+
+Ejecting data from a Couchbase bucket does not remove the data from disk, so it's still available. 
+The only effect is that the next access to the data is slower because the Data Service has to read it from disk instead of from memory.
+====
+
+[#changing-ejection-policy]
+
+### Changing the Ejection Policy of a Couchbase Bucket
+
+You can change the ejection policy of an existing bucket. 
+When you change the ejection policy for an ephemeral bucket, the change takes effect immediately. 
+When you change the ejection policy for a Couchbase bucket, the change does not take effect until you perform one of the following procedures:
+
+* Restart the bucket, which is the default behavior unless you set the `noRestart` parameter to `true` in the REST API call to change the ejection policy.
+* If you set the `noRestart` parameter to `true`, you must perform one of the following processes:
+** Swap rebalance each node in the cluster running the Data Service.
+** Perform a graceful failover followed by a delta or full recovery and rebalance of each node running the Data Service.
+
+You may want to change the ejection policy of a bucket if you're changing the storage engine it uses. 
+For example, suppose you're changing a bucket from using the xref:learn:buckets-memory-and-storage/storage-engines.adoc#storage-engine-couchstore[Couchstore] to the xref:learn:buckets-memory-and-storage/storage-engines.adoc#storage-engine-magma[Magma].
+Then you should consider changing the ejection policy to Full Ejection, which is better for buckets with low memory to storage ratios.
+See xref:manage:manage-buckets/migrate-bucket.adoc[] for more information about migrating a bucket to a different storage engine.
+
+NOTE: If you change the ejection policy while performing a backend storage migration, you must use a full recovery when you recover a node after a graceful failover.
+The storage migration requires the full recovery to complete its migration.
+You also cannot allow Couchbase Server to restart the bucket after changing the ejection policy during a migration.
+
+See xref:manage:manage-buckets/change-ejection-policy.adoc[] for more information about changing a bucket's ejection policy.
+
+[#watermarks]
+=== Memory Watermarks
+For each bucket, Couchbase Server manages available memory using two watermarks: `memoryLowWatermark` and `memoryHighWatermark`.
+The `memoryHighWatermark` watermark is the threshold where Couchbase Server takes action to prevent the bucket from exceeding its memory allocation.
+When memory use reaches this watermark, the Data Service ejects items if the bucket's ejection policy allows item ejection.
+It continues ejecting items until the bucket's memory use drops to the `memoryLowWatermark` watermark.
+If ejection cannot free enough space, the Data Service stops ingesting data, sends error messages to clients, and displays an insufficient memory notification.
+When enough memory becomes available, data ingestion resumes.
 
 NOTE: The settings `mem_high_wat`, and `mem_low_wat` are no longer supported through `cbepctl`.
 These settings are replaced by new settings `memoryLowWatermark` and `memoryHighWatermark`, which can be configured using REST APIs.
 
-For each bucket, available memory is managed according to two _watermarks_, which are `memoryLowWatermark` and `memoryHighWatermark`.
-If data is continuously loaded into the bucket, its quantity eventually increases to the value indicated by the `memoryLowWatermark` watermark.
-At this point, no action is taken.
-Then, as still more data is loaded, the data's quantity increases to the value indicated by the `memoryHighWatermark` watermark.
-If, based on the bucket's configuration, items can be ejected from the bucket, the Data Service ejects items from the bucket until the quantity of data has decreased to the `memoryLowWatermark` watermark.
-In cases where ejection cannot free enough space to support continued data-ingestion, the Data Service stops ingesting data, error messages are sent to clients, and the system displays an _insufficient memory_ notification.
-When sufficient memory is again available, data-ingestion resumes.
+Couchbase Server selects items for ejection based on metadata that shows whether the item is Not Recently Used (NRU).
+If an item was not used recently, it becomes a candidate for ejection.
 
-Items are selected for ejection based on metadata that each contains, indicating whether the item can be classified as _Not Recently Used_ (NRU).
-If an item has not been recently used, it is a candidate for ejection.
+The following diagram shows how `mem_low_wat` and `mem_high_wat` relate to the bucket's overall memory quota:
 
 The relationship of `memoryLowWatermark` and `memoryHighWatermark` to the bucket's overall memory quota is illustrated as follows:
+
 
 [#tunable_memory]
 image::buckets-memory-and-storage/tunableMemory.png[,416]
@@ -176,7 +226,7 @@ image::buckets-memory-and-storage/tunableMemory.png[,416]
 The default setting for `memoryLowWatermark` is 75%.
 The default setting for `memoryHighWatermark` is 85%.
 The default settings can be changed using the REST API.
-See xref:rest-api:rest-bucket-create.adoc#memorylowwatermark[memoryLowWatermark] and xref:rest-api:rest-bucket-create.adoc#memoryhighwatermark[memoryHighWatermark].
+See xref:cli:cbepctl/set-flush_param.adoc[set flush_param] for more information about changing these values.
 
 [#expiry-pager]
 == Expiry Pager
