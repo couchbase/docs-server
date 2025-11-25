@@ -1,5 +1,5 @@
-= Rebalance and Index Service
-:description: pass:q[This page describes how rebalance operations impact the Index Service in Couchbase Server, covering file-based rebalance, shard affinity, index redistribution, and node failover.]
+= Index Rebalance
+:description: pass:q[This page explains how rebalance operations impact the Index Service in Couchbase Server, covering file-based rebalance, shard affinity, index redistribution, and node failover.]
 :page-aliases: clusters-and-availability:rebalance
 :page-toclevels: 3
 
@@ -11,7 +11,7 @@ The following sections explain how rebalance operation affects the Index Service
 
 == Index Service
 
-The Index Service maintains cluster-wide index definitions and metadata to redistribute indexes and replicas during rebalance operations.
+The Index Service maintains cluster-wide index definitions and metadata to <<#index-redistribution,redistribute indexes and replicas>> during rebalance operations.
 
 The rebalance operation evaluates each node's CPU, RAM, and disk bandwidth to minimize effects on database performance.
 
@@ -19,9 +19,9 @@ The rebalance operation evaluates each node's CPU, RAM, and disk bandwidth to mi
 
 Couchbase Server defines how Global Secondary Indexes (GSI) stores and manages its underlying data structures using the following Index Storage Modes:
 
-* Standard GSI Storage, which stores index data on disk required for File-Based Rebalance (FBR).
+* xref:learn:services-and-indexes/indexes/storage-modes.adoc#standard-index-storage[Standard GSI Storage], which stores index data on disk required for File-Based Rebalance (FBR).
 
-* Memory-Optimized GSI Storage, which stores most index structures in-memory and does not support file-based operations.
+* xref:learn:services-and-indexes/indexes/storage-modes.adoc#memory-optimized-index-storage[Memory Optimized GSI Storage], which stores most index structures in-memory and does not support file-based operations.
 
 Plasma, the storage engine for GSI, stores index data in shards.
 Each shard is a set of on-disk files that can contain one or more index partitions, allowing multiple indexes to share the same physical storage.
@@ -62,6 +62,8 @@ Couchbase Server provides the following index rebalance methods:
 * *Standard Rebalance*: This is the default method, which is the DCP-based method.
 This method reads data from the Data Service and rebuilds indexes on the destination node.
 Couchbase Server uses this method when File-Based Rebalance (FBR) is disabled, which is the default for self-managed clusters.
++
+For an example of DCP-based rebalance operation, see <<#full-swap-rebalance,Full Swap Rebalance (DCP-based Rebuild)>>.
 
 * *<<#file-based-rebalance-fbr,File-Based Rebalance (FBR) or Shard Based Rebalance>>*: This is the relocation method.
 In this method, Couchbase Server moves index files between nodes instead of rebuilding them during a rebalance.
@@ -86,6 +88,8 @@ FBR is composed of the following features:
 * You cannot use FBR if you have enabled xref:learn:services-and-indexes/indexes/storage-modes.adoc#memory-optimized-index-storage[Memory Optimized Index Storage] in the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] settings on your cluster because it does not store index metadata in files.
 * Shard Based Rebalance and Rebalance Based on File Transfer are synonyms for File-Based Rebalance.
 ====
+
+For examples of Index Rebalance and FBR in action, see <<#fbr-all-examples,Understanding Index Rebalance with Examples>>.
 
 [#shard-affinity-and-fbr]
 ==== Relationship Between Shard Affinity and FBR
@@ -144,12 +148,11 @@ A swap rebalance removes one or more source nodes and adds the same number of de
 During the swap rebalance operation, indexes move only between those source and destination nodes.
 All other nodes continue supporting Query Service and no indexes relocate between them.
 
-You can enable index movements across any index node during a rebalance in the cluster through the following ways:
+For examples of how swap rebalance works for Index Service using DCP-method, see <<#examples-of-swap-rebalance,Example of Swap Rebalance>>.
 
-* From the UI, enable Optimize Index Placement in the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] section.
+For an example of how swap rebalance works for Index Service using FBR, see <<#swap-rebalance-fbr,Swap Rebalance (One-for-One Replacement)>>.
 
-* Use the REST API `redistributeIndexes` argument.
-For more information, see xref:manage:manage-settings/general-settings.adoc#index-settings-via-rest[Settings REST API].
+[#when-fbr-takes-effect]
 
 == When FBR Takes Effect
 
@@ -170,7 +173,7 @@ Instead, the next rebalance rebuilds the index, and during this rebuild Couchbas
 After this initial rebuild, all subsequent rebalances for that index use FBR.
 To establish shard affinity for all existing indexes, you must rebuild them once.
 +
-A <<#full-swap-rebalance-example,full swap rebalance>> cycle is a method for performing this rebuild.
+A <<#full-swap-rebalance,full swap rebalance>> cycle is a method for performing this rebuild.
 
 For more examples on the working of FBR, see <<#working-of-fbr-operations,Working of FBR in Common Operations>>
 
@@ -190,7 +193,7 @@ A rebalance does not affect indexes that reside on nodes that you're not removin
 A swap rebalance moves indexes from nodes you're removing and places them on the nodes you're adding.
 For more information, see <<#swap-rebalance-for-index-service,Swap Rebalance for Index Service>>.
 
-You can enable index movements across any index node during a rebalance in the cluster through the following ways:
+You can enable index redistribution or index movements across any index node during a rebalance in the cluster using one of the following ways:
 
 * From the UI, enable Optimize Index Placement in the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] section.
 
@@ -214,7 +217,7 @@ NOTE: If after you drop Index Service nodes, the remaining nodes cannot handle a
 If you later add additional Index Service nodes to the cluster, Couchbase Server replaces the dropped replicas.
 
 [#smart-batching]
-== Smart Batching
+=== Smart Batching
 
 When Couchbase Server rebalances indexes by rebuilding them, it groups the rebuilds in batches. 
 This batching limits the overhead of rebuilding the indexes on the cluster and limits the performance impacts.
@@ -240,17 +243,17 @@ NOTE: If at least one node in the cluster is running Server 7.1 or a later versi
 even when some nodes are running earlier versions.
 
 [#fbr-all-examples]
-== Examples
+== Understanding Index Rebalance with Examples
 
 This section provides examples of how different rebalance methods affect the Index Service.
 
-[#example-of-swap-rebalance]
-=== Example of Swap Rebalance
+[#examples-of-swap-rebalance]
+=== Examples of Swap Rebalance
 
 The following examples show how Couchbase Server handles swap rebalance operations for the Index Service.
 
-[#swap-rebalance-for-index-service-example]
-==== Swap Rebalance for Index Services
+[#swap-rebalance-without-optimize-index-placement]
+==== Swap Rebalance without Optimize Index Placement
 
 For example, in a four-node cluster (N1, N2, N3, N4) with Optimize Index Placement disabled, you plan to replace nodes N1 and N2.
 Add two new empty nodes, N5 and N6, then perform a swap rebalance by marking N1 and N2 for removal and adding N5 and N6.
@@ -270,8 +273,8 @@ Indexes or shards can move from any of the source nodes to any of the destinatio
 Nodes N3 and N4 aren’t involved in this index movement.
 
 
-[#full-swap-rebalance-example]
-==== Full Swap Rebalance Example
+[#full-swap-rebalance]
+==== Full Swap Rebalance (DCP-based Rebuild)
 
 Perform a full swap rebalance cycle as follows:
 
@@ -340,6 +343,7 @@ For example, idx_B on I3 is moved to I1, and idx_C on I3 is moved to I2, along w
 
 . After all index movements are complete, I3 is safely removed from the cluster.
 
+[#swap-rebalance-fbr]
 ==== Swap Rebalance (One-for-One Replacement)
 
 The following procedure shows how File-Based Rebalance (FBR) works when one node is replaced by another:
@@ -493,7 +497,7 @@ The following table summarizes the key differences between failover and planned 
 [#upgrade-idx-service-swap-vs-fbr]
 == Upgrade Index Service Using - Swap Rebalance vs Failover-Based Rebalance
 
-This section compares two approaches for upgrading Index Service nodes in a Couchbase cluster - swap rebalance and failover-based rebalance.
+This section compares 2 approaches for upgrading Index Service nodes in a Couchbase cluster - swap rebalance and failover-based rebalance.
 
 [cols="1,1,1", options="header"]
 |===
@@ -504,7 +508,8 @@ This section compares two approaches for upgrading Index Service nodes in a Couc
 | Used during an upgrade by failing over a node, adding a new node, and performing a rebalance.
 
 | *Index Movement*
-| Indexes move only between the specified old and new nodes. Other nodes in the cluster are not involved.
+| Indexes move only between the specified old and new nodes.
+Other nodes in the cluster are not involved.
 | Indexes are rebuilt or repaired after failover as part of the rebalance process.
 
 | *Availability*
@@ -527,7 +532,7 @@ FBR behavior depends on the Couchbase Server version running on the nodes in a m
 
 * Nodes running Couchbase Server 7.6 or later versions support FBR.
 
-* Nodes running a Couchbase Server version older than 7.6 do not support FBR.
+* Nodes running a Couchbase Server version earlier than 7.6 do not support FBR.
 
 * During a rebalance, movements that occur only between 7.6 or later nodes use FBR.
 
