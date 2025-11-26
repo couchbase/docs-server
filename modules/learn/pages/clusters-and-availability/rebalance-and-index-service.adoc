@@ -73,6 +73,7 @@ Copying the index files is faster than having the target node rebuild the index 
 
 [#file-based-rebalance-fbr]
 === File-Based Rebalance (FBR) or Shard Based Rebalance
+[.edition]#{enterprise}#
 
 File-Based Rebalance (FBR), called also as Shard Based Rebalance, moves index files between nodes instead of rebuilding them.
 
@@ -557,12 +558,107 @@ Other nodes in the cluster are not involved.
 [fbr-in-mixed-version-clusters]
 === FBR in Mixed-Version Clusters
 
-FBR behavior depends on the Couchbase Server version running on the nodes in a mixed-version cluster:
+FBR behavior depends on the Couchbase Server version running on the nodes in a mixed-version cluster as follows.
 
-* Nodes running Couchbase Server 7.6 or later versions support FBR.
 
-* Nodes running a Couchbase Server version earlier than 7.6 do not support FBR.
+[cols="1,1,1", options="header"]
+|===
+| Source Node Version | Destination Node Version | Index Rebalance Method
 
-* During a rebalance, movements that occur only between 7.6 or later nodes use FBR.
+| 7.6 or later
+| 7.6 or later
+| FBR
 
-* Any movement that involves a node older than 7.6 falls back to the traditional DCP-based rebuild method.
+(if Shard Affinity exists)
+
+| 7.6 or earlier
+| Any
+| DCP-based rebuild
+
+| Any
+| 7.6 or earlier
+| DCP-based rebuild
+
+|===
+
+== Additional Information
+
+The following sections have additional information about Index Rebalance.
+
+=== Verifying Shard Affinity Metadata
+
+To verify that an index has shard-affinity metadata, use the Index Service status REST API endpoint `/getIndexStatus`.
+
+. Inspect the `alternateShardIds` field for each index partition to confirm shard affinity.
+
+curl syntax is as follows:
+
+----
+curl -X GET http://<index_node>:9102/getIndexStatus?getAll=true /
+-u <username>:<password>
+----
+
+In the response, look for the `alternateShardIds` field for each index.
+The outcome is one of the following:
+
+* If `alternateShardIds` contains entries for all partitions, the index has shard affinity.
+* If `alternateShardIds` is empty or missing, the index does not have shard affinity.
+
+=== Adding Shard Affinity Metadata Without Full Swap Rebalance Cycle
+
+A swap-rebalance cycle is the most efficient and recommended method to add Alternate Shard IDs to all indexes across the cluster.
+
+The alternatives are as follows:
+
+[cols="1,3", options="header"]
+|===
+| Method | Description
+
+| Swap Rebalance Cycle
+| Recommended approach.
+
+Moves each index exactly once while adding shard affinity metadata.
+
+| Drop and Recreate
+| Create indexes with shard affinity enabled to embed metadata.
+
+Causes downtime for affected indexes.
+
+| ALTER INDEX
+
+(Add Replica)
+
+| Running `ALTER INDEX` with the `replica_count` action adds shard-affinity metadata when enabled.
+
+|===
+
+NOTE: Any index creation or movement planned by the system while shard affinity is enabled adds the Alternate Shard ID.
+Using `ALTER INDEX` with action `replica_count` also applies the metadata; a rebalance is not required.
+
+=== Scenarios Where FBR may be Skipped
+
+FBR may be skipped and fall back to DCP-based rebuild in the following scenarios.
+
+[cols="1,1", options="header"]
+|===
+| Condition | Why FBR is Skipped
+
+| Index lacks Alternate Shard IDs
+| Existing indexes without shard affinity metadata cannot use FBR.
+
+| Source or destination node runs a version earlier than 7.6
+| Both nodes must run Couchbase Server 7.6 or a later version for FBR.
+
+| Shard version incompatibility
+| Destination node’s shard format version is older than the source.
+
+| Non-Plasma storage mode
+| FBR is supported only with the Plasma storage engine (Standard GSI).
+
+| Replica repair with no surviving replica
+| When no replica exists to copy, the system rebuilds via DCP.
+
+|===
+
+
+
