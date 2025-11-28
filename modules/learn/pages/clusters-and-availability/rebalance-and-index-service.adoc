@@ -96,7 +96,7 @@ For examples of Index Rebalance and FBR in action, see <<#fbr-all-examples,Under
 [#shard-affinity-and-fbr]
 ==== Relationship Between Shard Affinity and FBR
 
-The Shard Affinity is related to FBR (or Shard Based Rebalance) in the following ways:
+xref:learn:clusters-and-availability/rebalance-and-index-service.adoc#shard-affinity[Shard Affinity] is related to FBR (or Shard Based Rebalance) in the following ways:
 
 * As partitions with the same shard ID reside in the same shard file, a rebalance can relocate those partitions by copying that file to another node.
 
@@ -116,9 +116,9 @@ You need to enable FBR to use it.
 +
 For more information about Standard Global Secondary index storage mode, see  xref:learn:services-and-indexes/indexes/storage-modes.adoc#standard-index-storage[Standard Index Storage].
 
-.. Select *Enable File Transfer Based Rebalance*.
+.. Select *Enable File Transfer Based Rebalance* and save the changes.
 
-* To enable FBR using the REST API, set the `enableShardAffinity` parameter in xref:rest-api:post-settings-indexes.adoc[].
+* To enable FBR using the REST API, set the `enableShardAffinity` parameter to `true` in the xref:rest-api:post-settings-indexes.adoc#disable-file-transfer-based-rebalance[GSI curl command settings].
 
 NOTE: <<#smart-batching,Smart Batching>> does not work if you have enabled FBR on your cluster.
 
@@ -134,12 +134,13 @@ These are the ways to have the required metadata in the index files and to under
 * *FBR Enabled Before Index Creation*:
 The following steps explain what happens when you enable FBR before creating any indexes:
 
-. <<#enabling-fbr,Enable FBR>> (or shard affinity) before creating any indexes.
-Create the indexes.
+.. <<#enabling-fbr,Enable FBR>> (or shard affinity) before creating any indexes.
 
-. Couchbase Server adds shard-affinity metadata into the index files.
+.. Create the indexes.
 
-. Because the metadata is present in the index files from the start, when a Rebalance operation is triggered,
+.. Couchbase Server adds shard-affinity metadata into the index files.
+
+.. Because the metadata is present in the index files from the start, when a Rebalance operation is triggered,
 the initial and all subsequent rebalance operations use the FBR method.
 +
 NOTE: This is the best practice for using FBR.
@@ -147,11 +148,11 @@ NOTE: This is the best practice for using FBR.
 * *FBR Enabled After Index Creation*:
 The following steps explain what happens when you enable FBR after creating indexes:
 
-. Create the indexes.
+.. Create the indexes.
 
-. <<#enabling-fbr,Enable FBR>> (or shard affinity).
+.. <<#enabling-fbr,Enable FBR>> (or shard affinity).
 
-. When the Rebalance operation is triggered, Couchbase Server does not use FBR method for those indexes right away,
+.. When the Rebalance operation is triggered, Couchbase Server does not use FBR method for those indexes right away,
 because those indexes do not have <<#shard-affinity,Shard Affinity>>.
 +
 Instead, the rebalance rebuilds the indexes and to establish shard affinity for all existing indexes, you must rebuild them once.
@@ -161,7 +162,7 @@ During this rebuild Couchbase Server adds the required metadata to the index fil
 In summary, the initial rebuild uses full swap rebalance, which is a DCP-based method to add metadata to the indexes.
 Then all subsequent Rebalance operations for those indexes use the FBR method.
 
-For more examples on the working of FBR, see <<#working-of-fbr-operations,Working of FBR in Common Operations>>.
+For examples on the working of FBR, see <<#working-of-fbr-operations,Working of FBR in Common Operations>>.
 
 For examples of Index Rebalance and FBR in action, see <<#fbr-all-examples,Understanding Index Rebalance with Examples>>.
 
@@ -220,6 +221,8 @@ A group failure in a multiple server group database can force all replicas into 
 NOTE: If after you drop Index Service nodes, the remaining nodes cannot handle all of the index replicas, Couchbase Server drops some of the replicas.
 If you later add additional Index Service nodes to the cluster, Couchbase Server replaces the dropped replicas.
 
+For examples of Index Rebalance and FBR in action, see <<#fbr-all-examples,Understanding Index Rebalance with Examples>>.
+
 === Index Rebuild Batching
 
 Couchbase Server can batch index rebuilds during a rebalance to optimize resource usage and minimize performance impacts.
@@ -263,7 +266,12 @@ As the node is not yet serving application traffic, the system can safely move l
 [#fbr-all-examples]
 == Understanding Index Rebalance with Examples
 
-This section provides examples of how different rebalance methods affect the Index Service.
+This section provides explanations and examples of how different rebalance methods, and failover and removal operations affect the Index Service.
+
+* <<#swap-rebalance-for-index-service,Swap Rebalance for Index Service>>
+* <<#working-of-fbr-operations,Working of FBR in Common Operations>>
+* <<#failover-idx-nodes,Failover of Index Service Nodes>>
+* <<#removal-of-idx-nodes,Removal of Index Service Nodes>>
 
 [#swap-rebalance-for-index-service]
 === Swap Rebalance for Index Service
@@ -275,6 +283,11 @@ The indexes move only between those source and destination nodes.
 All other nodes continue supporting Query Service and no indexes relocate between them.
 
 The following examples show how Couchbase Server handles swap rebalance operations for the Index Service.
+
+* <<#full-swap-rebalance,Full Swap Rebalance (DCP-based Rebuild)>>
+* <<#swap-rebalance-without-optimize-index-placement,Swap Rebalance without Optimize Index Placement>>
+
+To understand how swap rebalance works with FBR, see <<#swap-rebalance-fbr,Swap Rebalance (One-for-One Replacement)>>.
 
 [#full-swap-rebalance]
 ==== Full Swap Rebalance (DCP-based Rebuild)
@@ -330,8 +343,13 @@ Nodes N3 and N4 aren’t involved in this index movement.
 [#working-of-fbr-operations]
 === Working of FBR in Common Operations
 
-Working of File-Based Rebalance (FBR) during the following common operations.
+This section explains the Working of File-Based Rebalance (FBR) during the following common operations.
 
+* <<#adding-capacity-scale-out,Adding Capacity (Scale-Out)>>
+* <<#planned-node-removal-rebalance-out,Planned Node Removal (Rebalance-Out)>>
+* <<#swap-rebalance-fbr,Swap Rebalance (One-for-One Replacement)>>
+
+[#adding-capacity-scale-out]
 ==== Adding Capacity (Scale-Out)
 
 The following procedure shows how File-Based Rebalance (FBR) works when adding index capacity:
@@ -358,7 +376,7 @@ Other indexes that share the same shard are also moved to node I3 as a part of t
 . While the copy is in progress, I1 continues to support Query Service for idx_A.
 After I3 synchronizes and catches up with recent changes, it takes over query processing for idx_A, and the original index on I1 is removed.
 
-
+[#planned-node-removal-rebalance-out]
 ==== Planned Node Removal (Rebalance-Out)
 
 The following procedure shows how File-Based Rebalance (FBR) works when removing a node:
@@ -429,8 +447,12 @@ If no replica exists, the index is lost.
 . If the failed node recovers before a rebalance occurs, it can be added back to the cluster, and the next rebalance restores its indexes.
 Any duplicate replicas created during the failover are removed during this add-back rebalance.
 
-The following examples illustrate how Couchbase Server handles node failover scenarios, both when replicas are available and when they are not.
+The following examples explain how Couchbase Server handles node failover scenarios, both when replicas are available and when they're not.
 
+* <<#failover-with-replica,Failover With a Replica>>
+* <<#failover-without-replica,Failover With No Replica (Index Loss)>>
+
+[#failover-with-replica]
 ==== Failover With a Replica
 
 This example shows how Couchbase Server maintains data availability when a node hosting an index fails and a replica is available:
@@ -455,6 +477,7 @@ This process is known as replica repair.
 NOTE: If the Index Service is under memory pressure, for example, due to inadequate sizing, it may skip replica repair during rebalance.
 Replica repair also does not occur if the feature is disabled in the settings or if there are not enough available nodes.
 
+[#failover-without-replica]
 ==== Failover With No Replica (Index Loss)
 
 This example shows what happens when a node hosting an index fails and no replica exists to maintain data availability:
@@ -472,6 +495,7 @@ Any Query Services that depend on idx_B return an error, because no valid copy o
 
 . If a rebalance runs, the system marks idx_B as lost and removes its definition from the cluster metadata.
 
+[#removal-of-idx-nodes]
 === Removal of Index Service Nodes
 
 The following is how node removal affects the Index Service:
@@ -485,8 +509,12 @@ The node is marked for removal, and a rebalance is triggered.
 . The node is removed only after all index movements are complete.
 This process ensures that ongoing scans on the source node complete before removal, preventing any data loss or service interruption.
 
-The following examples explain how node removal and rebalance operations affect the Index Service, both when replicas are present and when they are not.
+The following examples explain how node removal and rebalance operations affect the Index Service, both when replicas are present and when they're not.
 
+* <<#removal-with-replica,Removal and Rebalance-Out With Replicas>>
+* <<#removal-without-replica,Removal and Rebalance-Out Without Replicas>>
+
+[#removal-with-replica]
 ==== Removal and Rebalance-Out With Replicas
 
 The following example explains removing an Index Service node from a cluster and how the system maintains availability throughout the process.
@@ -507,6 +535,7 @@ You must start a rebalance for the removal to take effect.
 
 . After the transfer completes, N3 is safely removed from the cluster with no service interruption.
 
+[#removal-without-replica]
 ==== Removal and Rebalance-Out Without Replicas
 
 The following example describes the process of removing an Index Service node when the index does not have replicas:
