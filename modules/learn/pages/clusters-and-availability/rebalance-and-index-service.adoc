@@ -101,7 +101,7 @@ The Shard Affinity is related to FBR (or Shard Based Rebalance) in the following
 * As partitions with the same shard ID reside in the same shard file, a rebalance can relocate those partitions by copying that file to another node.
 
 * Without shard affinity, partitions of the same logical shard may be spread across multiple files or nodes.
-This distribution makes FBR inefficient forcing it to use the slower DCP rebuild method.
+This distribution makes FBR inefficient forcing it to use the slower DCP-based rebuild method.
 For this reason, a single configuration setting enables both shard affinity and FBR.
 
 [#enabling-fbr]
@@ -122,6 +122,51 @@ For more information about Standard Global Secondary index storage mode, see  xr
 
 NOTE: <<#smart-batching,Smart Batching>> does not work if you have enabled FBR on your cluster.
 
+[#when-fbr-takes-effect]
+==== When Does FBR Take Effect?
+
+The FBR method uses metadata in the index's files during the rebalance process, through relocation.
+
+IMPORTANT: Couchbase Server can perform FBR for an index only when the index’s files have the required metadata.
+
+These are the ways to have the required metadata in the index files and when FBR takes effect:
+
+* *FBR Enabled Before Index Creation*:
+The following steps explain what happens when you enable FBR before creating any indexes:
+
+. <<#enabling-fbr,Enable FBR>> (or shard affinity) before creating any indexes.
+Create the indexes.
+
+. Couchbase Server adds shard-affinity metadata into the index files.
+
+. Because the metadata is present in the index files from the start, when a Rebalance operation is triggered,
+the initial and all subsequent rebalance operations use the FBR method.
++
+NOTE: This is the best practice for using FBR.
+
+* *FBR Enabled After Index Creation*:
+The following steps explain what happens when you enable FBR after creating indexes:
+
+. Create the indexes.
+
+. <<#enabling-fbr,Enable FBR>> (or shard affinity).
+
+. When the Rebalance operation is triggered, Couchbase Server does not use FBR method for those indexes right away,
+because those indexes do not have <<#shard-affinity,Shard Affinity>>.
++
+Instead, the rebalance rebuilds the indexes and to establish shard affinity for all existing indexes, you must rebuild them once.
++
+So a <<#full-swap-rebalance,full swap rebalance>> cycle is a method for performing this rebuild.
++
+During this rebuild Couchbase Server adds the required metadata to the index files.
+
+In summary, the initial rebuild uses full swap rebalance, which is a DCP-based method to add metadata to the indexes.
+Then all subsequent Rebalance operations for those indexes use the FBR method.
+
+For more examples on the working of FBR, see <<#working-of-fbr-operations,Working of FBR in Common Operations>>.
+
+For examples of Index Rebalance and FBR in action, see <<#fbr-all-examples,Understanding Index Rebalance with Examples>>.
+
 ==== Restarting an FBR
 
 If an FBR fails, you can start a new rebalance. 
@@ -138,30 +183,6 @@ NOTE: In Couchbase Server versions 7.6.0 and 7.6.1, when you enabled FBR you cou
 In Couchbase Server 7.6.2 and later, you can use the `WITH <node>` clause to set which node contains the index.
 You still cannot use the `WITH <node>` clause with `ALTER INDEX` after you enable FBR.
 endif::[]
-
-[#when-fbr-takes-effect]
-== When FBR Takes Effect
-
-The FBR method uses metadata in the index's files during the relocation process.
-
-Couchbase Server can perform FBR for an index only when the index’s files include the required metadata:
-
-* *FBR Enabled Before Index Creation*:
-If you enable FBR before you create indexes, Couchbase Server adds the metadata to the index files when creating them.
-As this metadata is in the index's files from the start, the initial rebalance of the index as well as all later rebalances use the FBR method.
-+
-NOTE: This is the best practice for using FBR.
-
-* *FBR Enabled After Index Creation*:
-When you create indexes and then enable FBR (this is same as when FBR is disabled and you create new indexes), Couchbase Server does not use FBR method for that index right away because those indexes do not have <<#shard-affinity,Shard Affinity>>.
-+
-Instead, the next rebalance rebuilds the index, and during this rebuild Couchbase Server adds the required metadata to the index files.
-After this initial rebuild, all subsequent rebalances for that index use FBR.
-To establish shard affinity for all existing indexes, you must rebuild them once.
-+
-A <<#full-swap-rebalance,full swap rebalance>> cycle is a method for performing this rebuild.
-
-For more examples on the working of FBR, see <<#working-of-fbr-operations,Working of FBR in Common Operations>>
 
 [#index-redistribution]
 == More about Index Redistribution 
@@ -240,10 +261,7 @@ This allows the planner to group multiple index movements together and schedule 
 
 By treating the empty node as a clean target, the system reduces planning overhead and speeds up the process of distributing indexes onto the new node.
 This batching behavior improves the efficiency of scale-out operations, especially in clusters with multiple indexes.
-As the node is not yet serving application traffic, the system can safely move larger groups of indexes at once without impacting query performance.
-
-Empty node batching is not a user-configurable feature and does not rely on batch-size settings used for rebuild operations.
-Instead, it's an automatic optimization in the rebalance planner that places indexes onto an empty node to accelerate rebalance progress.
+As the node is not yet serving application traffic, the system can safely move larger groups of indexes at once without affecting query performance.
 
 [#fbr-all-examples]
 == Understanding Index Rebalance with Examples
@@ -637,10 +655,13 @@ Causes downtime for affected indexes.
 
 | Running `ALTER INDEX` with the `replica_count` action adds shard-affinity metadata when enabled.
 
+This is applicable only to the newly generated replicas.
+
 |===
 
 NOTE: Any index creation or movement by the rebalance planner while shard affinity is enabled adds the Alternate Shard ID.
-Using `ALTER INDEX` with action `replica_count` also applies the metadata; a rebalance is not required.
+Using `ALTER INDEX` with action `replica_count`, which is applicable only to moving replica that are new or moved, also applies the metadata.
+A rebalance is not required.
 
 === Scenarios Where FBR may be Skipped
 
@@ -663,7 +684,40 @@ FBR may be skipped and fall back to DCP-based rebuild in the following scenarios
 | FBR is supported only with the Plasma storage engine (Standard GSI).
 
 | Replica repair with no surviving replica
-| When no replica exists to copy, the system rebuilds via DCP.
+| When no replica exists to copy, the system rebuilds via DCP-based method.
 
 |===
 
+=== Moving Indexes Within a Shared Shard
+
+When a shard contains multiple indexes, those indexes cannot be moved independently without breaking shard affinity.
+With shard affinity enabled, all indexes that share the same Alternate Shard ID (Slot ID) are treated as a single unit, and the shard is moved in its entirety.
+This behavior is intentional and enables efficient file-based transfer during rebalance.
+
+CAUTION: Breaking shard affinity to move one index from its group is technically possible but not recommended.
+
+=== Replica Selection During Failover Repair
+
+When multiple replicas are available during failover, Couchbase Server selects the replica that minimizes repair time.
+The system evaluates replicas in the following priority order:
+
+. *Largest index size*: Prioritizes the index in the shard with largest disk size, indicating that it's the most up-to-date.
+
+. *Highest coverage for required indexes*: Prioritizes the replica that already has the largest amount of data built for the indexes undergoing repair.
+
+. *Most matching partition instances*: If coverage is similar, selects the replica with more matching partitions.
+
+. *Smallest total shard size*: If all other factors are equal, prefers the shard with a smaller total disk size to reduce file copy time.
+
+This optimization makes sure that repair completes as efficiently as possible by choosing the replica that requires the least amount of work to bring online.
+
+=== Recovery Behavior for Indexes Without Replicas
+
+For indexes without replicas, there is no automated recovery mechanism after a failover other than a DCP-based rebuild.
+When a node hosting an index without replicas fails over:
+
+. The index becomes unavailable immediately.
+
+. Queries that depend on that index fail.
+
+. If a rebalance is triggered without adding the failed node back to the cluster, Couchbase Server rebuilds the index using the DCP-based rebuild method.
