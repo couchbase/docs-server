@@ -110,13 +110,17 @@ Most deployments can achieve optimal performance with 1 Gbps interconnects, but 
 
 == Sizing Data Service Nodes
 
-Data Service nodes handle data service operations, such as create/read/update/delete (CRUD).
-The sizing information provided below applies both to the _Couchstore_ and _Magma_ storage engines: however, the _differences_ between these storage engines should also be reviewed, before sizing is attempted.
-For information, see xref:learn:buckets-memory-and-storage/storage-engines.adoc[Storage Engines].
+Data Service nodes store and perform data operations such as create/read/update/delete (CRUD).
+The sizing information provided in this section applies to data stored in either Couchstore or Magma storage engines. 
+However, you should also consider the differences between these storage engines.
+For more information, see xref:learn:buckets-memory-and-storage/storage-engines.adoc[].
 
 It's important to keep use-cases and application workloads in mind since different application workloads have different resource requirements.
-For example, if your working set needs to be fully in memory, you might need large RAM size.
-On the other hand, if your application requires only 10% of data in memory, you will need disks with enough space to store all of the data, and that are fast enough for your read/write operations.
+For example, if your working data set needs to be fully in memory, your cluster may need more RAM.
+On the other hand, if your application requires only 10% of data in memory, you need disks with enough space to store all of the data.
+Their read/write rate must also be fast enough to meet your performance goals.
+
+=== RAM Sizing for Data Service Nodes
 
 You can start sizing the Data Service nodes by answering the following questions:
 
@@ -126,25 +130,25 @@ You can start sizing the Data Service nodes by answering the following questions
 
 Answers to the above questions can help you better understand the capacity requirement of your cluster and provide a better estimation for sizing.
 
-*The following is an example use-case for sizing RAM:*
+The following tables show an example use-case for sizing RAM:
 
 .Input Variables for Sizing RAM
 |===
 | Input Variable | Value
 
-| [.var]`documents_num`
+| `documents_num`
 | 1,000,000
 
-| [.var]`ID_size`
+| `ID_size`
 | 100 bytes
 
-| [.var]`value_size`
+| `value_size`
 | 10,000 bytes
 
-| [.var]`number_of_replicas`
+| `number_of_replicas`
 | 1
 
-| [.var]`working_set_percentage`
+| `working_set_percentage`
 | 20%
 |===
 
@@ -172,16 +176,16 @@ Based on the provided data, a rough sizing guideline formula would be:
 |===
 | Variable | Calculation
 
-| [.var]`no_of_copies`
+| `no_of_copies`
 | `1 + number_of_replicas`
 
-| [.var]`total_metadata`
+| `total_metadata`
 | `(documents_num) * (metadata_per_document + ID_size) * (no_of_copies)`
 
-| [.var]`total_dataset`
+| `total_dataset`
 | `(documents_num) * (value_size) * (no_of_copies)`
 
-| [.var]`working_set`
+| `working_set`
 | `total_dataset * (working_set_percentage)`
 
 | Cluster RAM quota required
@@ -198,16 +202,16 @@ Based on the above formula, these are the suggested sizing guidelines:
 |===
 | Variable | Calculation
 
-| [.var]`no_of_copies`
+| `no_of_copies`
 | = 1 for original and 1 for replica
 
-| [.var]`total_metadata`
+| `total_metadata`
 | = 1,000,000 * (100 + 56) * (2) = 312,000,000 bytes
 
-| [.var]`total_dataset`
+| `total_dataset`
 | = 1,000,000 * (10,000) * (2) = 20,000,000,000 bytes
 
-| [.var]`working_set`
+| `working_set`
 | = 20,000,000,000 * (0.2) = 4,000,000,000 bytes
 
 | Cluster RAM quota required
@@ -217,6 +221,48 @@ Based on the above formula, these are the suggested sizing guidelines:
 This tells you that the RAM requirement for the whole cluster is 7 GB.
 
 NOTE: This amount is in addition to the RAM requirements for the operating system and any other software that runs on the cluster nodes.
+
+=== Disk Sizing for Data Service Nodes
+
+A key concept to remember about Couchbase Server's data storage is that it's an append-only system.
+When an application mutates or deletes a document, the old version of the document is not immediately removed from disk.
+Instead, Couchbase Server marks them as stale.
+They remain on disk until a compaction process runs that reclaims the disk space.
+When sizing disk space for your cluster, you take this behavior into account by applying an append-only multiplier to your data size.
+
+When sizing disk space for the Data Service nodes, you first must determine the following information:
+
+* The total number of documents that you plan to store in the cluster.
+If this value constantly grows, consider the growth rate into the future when sizing.
+* The average size of each document.
+* Whether the documents can be compressed, and if they can, what compression ratio Couchbase Server can achieve.
+Couchbase Server always compresses documents when storing them on disk.
+See xref:learn:buckets-memory-and-storage/compression.adoc[] for more information about compression in Couchbase Server.
+Documents containing JSON data or binaries can be compressed. 
+Binary data that's already compressed (such as compressed images or videos) cannot be compressed further.
+
++
+Couchbase Server uses the https://en.wikipedia.org/wiki/Snappy_(compression)[Snappy^] compression algorithm, which is optimized for speed and reasonable compression.
+You can estimate the compression ratio Couchbase Server can achieve by compressing a sample set of documents using a snappy-based command line tool such as `snzip`.
+
+* The number of replicas for your buckets.
+See xref:learn:intra-cluster-replication.adoc[] for more information about replicas.
+* The number of documents that you plan to delete each day. 
+This number includes both the number of documents directly deleted by your applications and those that expire due to TTL (time to live) settings.
+See xref:learn:expiration.adoc[] for more information about document expiration.
+
++
+This value is important because in the short term, deletions actually take a bit more disk space rather than less. 
+Because of Couchbase Server's append-only system, the deleted documents remain on disk until a compaction process runs.
+Also, Couchbase Server creates a tombstone record for each deleted document which consumes a small amount of additional disk space.
+
+* Which storage engine your cluster will use. 
+The storage engine affects the append-only multiplier that you should use when sizing disk space.
+See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for more information
+
+To determine the amount of storage you need in your cluster:
+
+. 
 
 [#cpu-overhead]
 == CPU Overhead
@@ -253,16 +299,16 @@ The following sizing guide can be used to compute the memory requirement for eac
 |===
 | Input Variable | Value
 
-| [.var]`num_entries` (Number of index entries)
+| `num_entries` (Number of index entries)
 | 10,000,000
 
-| [.var]`ID_size` (Size of DocumentID)
+| `ID_size` (Size of DocumentID)
 | 30 bytes
 
-| [.var]`index_entry_size` (Size of secondary key)
+| `index_entry_size` (Size of secondary key)
 | 50 bytes
 
-| [.var]`working_set_percentage` (Nitro, Plasma, ForestDB)
+| `working_set_percentage` (Nitro, Plasma, ForestDB)
 | 100%, 20%, 20%
 |===
 
@@ -290,19 +336,19 @@ Based on the provided data, a rough sizing guideline formula would be:
 |===
 | Variable | Calculation
 
-| [.var]`total_index_data(secondary index)` (Nitro)
+| `total_index_data(secondary index)` (Nitro)
 | `(num_entries) * (metadata_per_entry + ID_size + index_entry_size)`
 
-| [.var]`total_index_data(secondary index)` (Plasma, ForestDB)
+| `total_index_data(secondary index)` (Plasma, ForestDB)
 | `(num_entries) * (metadata_per_entry + ID_size + index_entry_size) * 2`
 
-| [.var]`total_index_data(primary index)` (Nitro, Plasma, ForestDB)
+| `total_index_data(primary index)` (Nitro, Plasma, ForestDB)
 | `(num_entries) * (metadata_main_index + ID_size + index_entry_size)`
 
-| [.var]`index_memory_required(100% resident)` (memdb)
+| `index_memory_required(100% resident)` (memdb)
 | `total_index_data * (1 + overhead_percentage)`
 
-| [.var]`index_memory_required(20% resident)` (Plasma, ForestDB)
+| `index_memory_required(20% resident)` (Plasma, ForestDB)
 | `total_index_data * (1 + overhead_percentage) * working_set`
 |===
 
@@ -313,22 +359,22 @@ Based on the above formula, these are the suggested sizing guidelines:
 |===
 | Variable | Calculation
 
-| [.var]`total_index_data(secondary index)` (Nitro)
+| `total_index_data(secondary index)` (Nitro)
 | (10000000) * (120 + 30 + 50) = 2000000000 bytes
 
-| [.var]`total_index_data(secondary index)` (Plasma)
+| `total_index_data(secondary index)` (Plasma)
 | (10000000) * (120 + 30 + 50) * 2 = 4000000000 bytes
 
-| [.var]`total_index_data(secondary index)` (ForestDB)
+| `total_index_data(secondary index)` (ForestDB)
 | (10000000) * (80 + 30 + 50) * 2 = 3200000000 bytes
 
-| [.var]`index_memory_required(100% resident)` (Nitro)
+| `index_memory_required(100% resident)` (Nitro)
 | (2000000000) * (1 + 0.25) = 2500000000 bytes
 
-| [.var]`index_memory_required(20% resident)` (Plasma)
+| `index_memory_required(20% resident)` (Plasma)
 | (2000000000) * (1 + 0.25) * 0.2 = 1000000000 bytes
 
-| [.var]`index_memory_required(20% resident)` (ForestDB)
+| `index_memory_required(20% resident)` (ForestDB)
 | (3200000000) * (1 + 0.25) * 0.2 = 800000000 bytes
 |===
 
