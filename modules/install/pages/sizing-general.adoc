@@ -1,5 +1,6 @@
 = Sizing Guidelines
 :description: Evaluate the overall performance and capacity goals that you have for Couchbase, and use that information to determine the necessary resources that you'll need in your deployment.
+:stem: latexmath
 
 [abstract]
 {description}
@@ -242,8 +243,9 @@ Documents containing JSON data or binaries can be compressed.
 Binary data that's already compressed (such as compressed images or videos) cannot be compressed further.
 
 +
-Couchbase Server uses the https://en.wikipedia.org/wiki/Snappy_(compression)[Snappy^] compression algorithm, which is optimized for speed and reasonable compression.
-You can estimate the compression ratio Couchbase Server can achieve by compressing a sample set of documents using a snappy-based command line tool such as `snzip`.
+Couchbase Server uses the https://en.wikipedia.org/wiki/Snappy_(compression)[Snappy^] compression algorithm, which prioritizes speed while still providing reasonable compression.
+You can estimate the compression ratio Couchbase Server can achieve for your data by compressing a sample set of documents using a snappy-based command line tool such as `snzip`.
+Otherwise, you can choose to use an estimatated compression ratio of 0.7 for JSON documents.
 
 * The number of replicas for your buckets.
 See xref:learn:intra-cluster-replication.adoc[] for more information about replicas.
@@ -256,13 +258,138 @@ This value is important because in the short term, deletions actually take a bit
 Because of Couchbase Server's append-only system, the deleted documents remain on disk until a compaction process runs.
 Also, Couchbase Server creates a tombstone record for each deleted document which consumes a small amount of additional disk space.
 
+* The metadata purge interval you'll use.
+This purge process removes tombstones that records the deletion of documents.
+The default purge interval is 3 days.
+For more information about the purge interval, see xref:manage:manage-settings/configure-compact-settings.adoc#tombstone-purge-interval[Metadata Purge Interval].
+
 * Which storage engine your cluster will use. 
-The storage engine affects the append-only multiplier that you should use when sizing disk space.
+The storage engine affects the append-only multiplier that you use when sizing disk space.
 See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for more information
 
 To determine the amount of storage you need in your cluster:
 
-. 
+. Calculate the active dataset by multiplying the total number of documents by the average document size. 
+If the documents are compressible, also multiply by the estimated compression ratio:
+
++
+[stem]
+++++
+S_{\mathrm{dataset}} = \text{# of documents} \times \text{avg. document size} \times \text{compression ratio}
+++++
+
+. Calculate the total metadata size by multiplying the total number of documents by 56 bytes (the average metadata size per document):
+
++
+[stem]
+++++
+S_{\mathrm{metadata}} = \text{# of documents} \times 56
+++++
+
+. Calculate the key storage overhead by multiplying the total number of documents by the average key size.
+
++ 
+[stem]
+++++
+S_{\mathrm{keys}}  = \text{# of documents} \times \text{avg. key size}
+++++
+
+. Calculate the tombstone space in bytes using the following formula:
+
++
+[latexmath]
+++++
+\begin{equation}
+\begin{split}
+S_{\mathrm{tombstones}} = & ( \text{avg. key size} + 60 ) \times \text{purge frequency in days} \\
+& \times ( \text{# of replicas} + 1 ) \times \text{# documents deleted/day}
+\end{split}
+\end{equation}
+++++
+
+. Calculate the total disk space required using the following formula:
+
++
+[latexmath]
+++++
+\begin{equation}
+\begin{split}
+\text{total disk space} =  & ( ( S_{\mathrm{dataset}} \times (\text{# replicas} + 1) \\
+ & + S_{\mathrm{metadata}} + S_{\mathrm{keys}} + S_{\mathrm{tombstones}} ) \times F_{\text{append-multiplier}} )
+\end{split}
+\end{equation}
+++++
+
+
++
+Where stem:[F_{\text{append-multiplier}}] depends on the storage engine you use:
+
++
+* For Couchstore storage engine, use an append-only multiplier of 3.
+* For Magma storage engine, use an append-only multiplier of 2.2.
+
+
+For example, suppose you're planning a cluster with the following characteristics:
+
+* Total number of documents: 1,000,000
+* The average document size: 10,000 bytes.
+* The documents contain JSON data that have an estimated compression ratio of 0.7.
+* Average key size: 32 bytes.
+* Number of replicas: 1
+* Number of documents deleted per day: 5,000
+* Purge frequency in days: 3
+* Storage engine: Magma
+
+Using the formulas above, you can calculate the total disk space required as follows:
+
+. Calculate the active dataset:
+
++
+[stem]
+++++
+S_{\mathrm{dataset}}  = 1,000,000 \times 10,000 \times 0.7 = 7,000,000,000 \text{bytes}
+++++
+
+. Calculate the total metadata size:
+
++
+[stem]
+++++
+S_{\mathrm{metadata}}  = 1,000,000 \times 56 = 56,000,000 \text{bytes}
+++++
+
+. Calculate the total key size:     
+
++
+[stem]
+++++
+S_{\mathrm{keys}}  = 1,000,000 \times 32 = 32,000,000 \text{bytes}
+++++
+
+. Calculate the tombstone space:
+
++
+[stem]
+++++
+S_{\mathrm{tombstones}}  = (32 + 60) \times 3 \times (1 + 1) \times 5,000 = 920,000 \text{bytes}
+++++
+
+. Calculate the total disk space:
+
++
+[latexmath]
+++++
+\begin{equation}
+\begin{split}
+\text{total disk space} = & ( (7,000,000,000 \times (1 + 1) \\
+& + 56,000,000 + 32,000,000 + 920,000 ) \\
+& \times 2.2 \\
+& = 15,344,024,000 \text{bytes} 
+\end{split}
+\end{equation}
+++++
+
+Therefore, for the cluster in this example, you need at least 15.35{nbsp}GB of disk space to store your data.
 
 [#cpu-overhead]
 == CPU Overhead
