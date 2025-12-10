@@ -1,0 +1,192 @@
+== Release 7.6.6 (May 2025)
+
+For detailed information on new features and enhancements, see xref:introduction:whats-new.adoc[].
+
+[#fixed-issues-766]
+=== Fixed Issues
+
+Couchbase Server 7.6.6 was released in May 2025.
+This maintenance release contains fixes several for known issues.
+
+This release contains the following fixes:
+
+==== Storage Engine
+
+[#table-fixed-issues-766-storage-engine,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://jira.issues.couchbase.com/browse/MB-64353[MB-64353]
+a| Hard failover of ephemeral buckets could lead to the rollback of DCP clients back to 0. 
+There is currently no work-around for this, and currently the only solution is to upgrade to a version with the fix.
+
+7.6.3 is the oldest release with the fix.
+
+*Details:*
+
+
+* Hard failover of an ephemeral bucket.
+
+* Replica promoted to active.
+
+* DCP client reconnects to the new active.
+
+* DCP clients rollback to zero and have to re-stream all the mutations from the new active.
+
+| Issue resolved.
+
+| https://jira.issues.couchbase.com/browse/MB-64742[MB-64742]
+| An issue in the plasma tracking stats flagged a stale recovery point in the recovery log as valid data.
+This made the log cleaning run slowly at a low mutation rate,
+and therefore, unable to trim the recovery point history effectively.
+
+At a higher mutation rate, the mutations alone could push the fragmentation ratio high enough to start the log cleaner,
+and therefore, was able to trim rp history despite the issue with tracking stats.
+ 
+
+| We mark the latest version of the recovery point that exists in both the recovery log and the data log.
+ This effectively means that plasma will keep the recovery point history list to 1 in the recovery log.
+ In addition,
+ the plasma tracking stats are fixed such that it no longer treats the older recovery point as valid data in the recovery log. +
+ This allows the log cleaner to run even at a low mutation rate.
+
+| https://jira.issues.couchbase.com/browse/MB-65738[MB-65738]
+| An optimization to increase the memory residency of active plasma items caused an issue.
+In-memory compression of plasma pages under certain conditions may result in high CPU usage with this optimization. + 
+Prior to Release `7.6.0`, this  issue will not  occur as this optimization was not present.
+
+| Issue resolved.
+
+
+|===
+
+
+==== Data Service
+
+[#table-fixed-issues-766-data-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://jira.issues.couchbase.com/browse/MB-63827[MB-63827]
+| DCP connection metrics for connection names that do not conform to the server format are not aggregated by connection type when exposing to Prometheus, potentially producing a large number of time series.
+
+| The metrics are aggregated and exposed with `connection_type="_unknown"`.
+
+
+|===
+
+==== XDCR
+
+[#table-fixed-issues-766-xdcr,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://jira.issues.couchbase.com/browse/MB-62309[MB-62309]
+| Tombstones were not replicated if the binary filter is turned on.
+| Issue resolved.
+
+| https://jira.issues.couchbase.com/browse/MB-64563[MB-64563]
+| If users do not want the replication to be automatically deleted upon either source or bucket deletion and/or recreation, 
+users can set the `skipReplSpecAutoGc` replication setting to `true` upon replication creation. 
+
+In the situation that the replication would have been deleted, 
+it will have been automatically paused instead, 
+and a persistent UI error message logged to be viewed.
+
+Users are expected to manually execute the recovery action by deleting the replication and re-creating a newer one,
+if necessary.
+
+| Issue resolved.
+
+
+|===
+
+==== Query Service
+
+[#table-fixed-issues-766-query-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+|https://jira.issues.couchbase.com/browse/MB-65055[MB-65055]
+| In a cluster with multiple query nodes, 
+performing a rolling upgrade to version `7.6.x`
+from an earlier version (such as `7.2`) may cause prepared statements
+containing a WITH clause to malfunction on the upgraded query node.
+
+| Issue resolved.
+
+|===
+
+==== Index Service
+
+[#table-fixed-issues-766-index-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://jira.issues.couchbase.com/browse/MB-65012[MB-65012]
+| When shard affinity is enabled, the indexer internally maps all replicas of an index to an alternateID.
+If such an alternateID exists on a node outside the list of nodes, 
+instead of preventing replica creation, 
+the system creates a new replica with the same alternateID on different nodes.
+This leads to rebalance failures on the affected nodes.
+
+| When `ALTER INDEX` is used with the `replica_count` action,
+do not allow the `nodes` clause when shard affinity is enabled
+
+
+|===
+
+==== Search Service
+
+[#table-fixed-issues-766-search-service,cols="10,40,40"]
+|===
+|Issue | Description | Resolution
+
+| https://jira.issues.couchbase.com/browse/MB-63246[MB-63246]
+| A Couchbase cluster upgrade to 7.6.2 caused data ingestion failure for legacy indexes using `gocouchbase`. 
+A `gocbcore`-specific check in https://github.com/couchbase/cbft/blob/f81ec8920f9b022f7d605feee1907eb4c664379a/pindex_bleve.go#L2374[here] is incompatible with the `gocouchbase` feed,
+resulting in ingestion errors.
+
+| Issue Resolved.
+
+|===
+
+[#known-issues-766]
+== Known Issues
+
+=== Query Service
+
+[#table-known-issues-766-query-service,cols="10,40,40"]
+|===
+|Issue | Description | Workaround
+
+| https://jira.issues.couchbase.com/browse/MB-64966[MB-64966]
+a| Scope level user-defined functions, sequences, and histogram data are stored in `bucket/_system/_query` collection. 
+
+Flushing the bucket will delete the scoped UDF entries. 
+When the UDFs are executed, it will work until the UDFs are evicted from the cache.
+After that, it will always result in an error.
+
+Sequences metadata is also stored in `bucket/_system/_query` collection. 
+FLUSHing the bucket will delete the entries. When executed, sequences will return errors once evicted from the cache.
+
+`FLUSH`ing the bucket will also delete statistics data stored in the `bucket/_system/_query collection.
+ By using stale statistics stored in the cache, a non-optimal plan could be generated.
+
+
+a| For user-defined functions, you can do one of the following:
+
+* Recreate the scoped user-defined functions after the `FLUSH`.
+* Use global UDFs instead of scoped UDFs. (Global UDFs are not stored in the `_query` collection.)
+* Create scoped UDFs on the bucket that does not have FLUSH enabled and then reference them via a fully qualified name (`bucket.scope.UDFname`).
+
+For sequence metadata:
+
+* After the `FLUSH`, recreate the sequence, or
+* Create sequences on the bucket that does not have FLUSH enabled and then reference them via a fully qualified name (`bucket.scope.UDFname`).
+
+For statistical data, rerun `UPDATE STATISTICS` on all the indexes on every scope and collections in the bucket that was flushed.
+
+
+|===
+
