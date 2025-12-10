@@ -13,7 +13,7 @@ The following sections explain how rebalance operation affects the Index Service
 
 The Index Service maintains cluster-wide index definitions and metadata to <<#index-redistribution,redistribute indexes and replicas>> during rebalance operations.
 
-The rebalance operation evaluates each node's CPU, RAM, and disk bandwidth to minimize effects on database performance.
+During rebalance, Couchbase Server evaluates each node’s CPU, RAM, disk bandwidth, and user-defined Server Groups (Availability Zones) to minimize database performance impact and maximize index availability.
 
 == Index Storage Modes, Shards, and Partitions
 
@@ -23,33 +23,39 @@ Couchbase Server defines how Global Secondary Indexes (GSI) stores and manages i
 
 * xref:learn:services-and-indexes/indexes/storage-modes.adoc#memory-optimized-index-storage[Memory Optimized GSI Storage], which stores most index structures in-memory and does not support file-based operations.
 
-Plasma, the storage engine for GSI, stores index data in shards.
-Each shard is a set of on-disk files that can contain one or more index partitions, allowing multiple indexes to share the same physical storage.
+Plasma, the storage engine for Standard GSI, stores index data in shards.
+Each shard is a set of on-disk files that can contain index data for one or more indexes, allowing multiple indexes to share the same physical storage.
 Sharing shard files across indexes reduces disk overhead and improves index storage scalability.
 
 [#shard-affinity]
 == Shard Affinity
 
-In Couchbase Server versions earlier than 7.6, Plasma automatically chose which shard an index partition belonged to.
+In Couchbase Server versions earlier than 7.6, Plasma automatically chose which shard an index belonged to.
 Couchbase Server 7.6 introduces index-shard affinity and continues to support it in later versions.
 
-With shard affinity, the GSI layer assigns a shard slot (an alternate shard ID) to each index partition and provides this information to Plasma.
-Plasma then places the partition’s data into the designated shard on the node as specified by the GSI layer.
-Plasma is unaware of the cluster topology and high-availability (HA) constraints, so the GSI layer makes this decision.
+With shard affinity, each index is assigned an alternate shard ID that determines where its data is stored on the node.
+This assignment ensures that all replicas of the index use the same alternate shard ID and
+are placed appropriately across nodes and Server Groups to maintain availability.
+Shard affinity also keeps related index data collocated within the same shard files, enabling consistent replica placement and predictable movement during rebalance.
 
-Only GSI can do the following:
+Shard affinity makes sure predictable placement of index data by assigning a consistent alternate shard ID to each index partition and its replicas.
+This provides the following visible benefits:
 
-* The replicas are distributed appropriately across nodes and server groups.
-* The corresponding replicas share the same shard slot (shard ID).
+* Deterministic collocation: Indexes that share the same alternate shard ID are stored together in the same shard files, which improves predictability during rebalance and recovery.
 
-As a result, this design provides the following benefits:
+* Consistent replica placement: Replicas are aligned across nodes and Server Groups, reducing the risk of replica-on-same-node situations.
 
-* Provides deterministic collocation, where all indexes with the same shard ID share the same shard files.
-* Prevents replica-on-same-node conflicts.
-* Enables efficient data movement through File-Based Rebalance.
+* Efficient replica repair: Because replicas share the same shard layout, the system can select the most suitable replica for faster repair during failover.
 
-Shard affinity keeps all index partitions with the same shard ID on the same node and moves them as a single unit during index rebalancing.
-This behavior also applies to internal data structures associated with those shards, which remain collocated and move together.
+* Efficient file-based rebalance: When shard files are aligned, movement during rebalance can be performed through file transfer rather than full index rebuilds.
+
+Shard affinity must be present and shard-based rebalance prerequisites must be met.
+When shard affinity and the prerequisites for shard-based rebalance are met,
+Couchbase Server keeps all indexes sharing a physical shard ID (the Plasma shard UUID) together on the same node.
+These indexes remain grouped within that shard.
+During rebalance, the shard moves as a single unit when it's relocated to another node.
+
+NOTE: Do not disable shard affinity after you enable it, unless recommended by Couchbase Support.
 
 For information about how this affects File-Based Rebalance, see <<#shard-affinity-and-fbr,Relationship Between Shard Affinity and File-Based Rebalance>>.
 
@@ -80,14 +86,15 @@ File-Based Rebalance, called also as Shard Based Rebalance, moves index files be
 
 File-Based Rebalance is composed of the following features:
 
-* xref:learn:clusters-and-availability/rebalance-and-index-service.adoc#shard-affinity[*Shard Affinity*]: It decides shard placement, so partitions and their replicas share the same slot ID.
+* xref:learn:clusters-and-availability/rebalance-and-index-service.adoc#shard-affinity[*Shard Affinity*]: It decides shard placement, so indexes and their replicas share the same slot ID.
 * *Shard Based Rebalance:* It moves the shard files between nodes during rebalance.
 
 [NOTE]
 ====
 * File-Based Rebalance is supported only if you have enabled Standard Global Secondary xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] on your cluster.
 
-* You cannot use File-Based Rebalance if you have enabled xref:learn:services-and-indexes/indexes/storage-modes.adoc#memory-optimized-index-storage[Memory Optimized Index Storage] in the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] settings on your cluster because it does not store index metadata in files.
+* Couchbase Server does not support File-Based Rebalance for memory-optimized indexes.
+
 * Shard Based Rebalance and Rebalance Based on File Transfer are synonyms for File-Based Rebalance.
 ====
 
@@ -98,9 +105,9 @@ For examples of Index Rebalance and File-Based Rebalance in action, see <<#fbr-a
 
 xref:learn:clusters-and-availability/rebalance-and-index-service.adoc#shard-affinity[Shard Affinity] is related to File-Based Rebalance (or Shard Based Rebalance) in the following ways:
 
-* As partitions with the same shard ID reside in the same shard file, a rebalance can relocate those partitions by copying that file to another node.
+* As indexes with the same shard ID reside in the same shard file, a rebalance can relocate those indexes by copying that file to another node.
 
-* Without shard affinity, partitions of the same logical shard may be spread across multiple files or nodes.
+* Without shard affinity, indexes that belong to the same logical shard may be spread across multiple files or nodes.
 This distribution makes File-Based Rebalance inefficient forcing it to use the slower DCP-based rebuild method.
 For this reason, a single configuration setting enables both shard affinity and File-Based Rebalance.
 
@@ -114,18 +121,20 @@ You need to enable File-Based Rebalance to use it.
 
 .. On your cluster, in the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode], enable Standard Global Secondary mode.
 +
-For more information about Standard Global Secondary index storage mode, see  xref:learn:services-and-indexes/indexes/storage-modes.adoc#standard-index-storage[Standard Index Storage].
+For more information about Standard Global Secondary index storage mode, see xref:learn:services-and-indexes/indexes/storage-modes.adoc#standard-index-storage[Standard Index Storage].
 
 .. Select *Enable File Transfer Based Rebalance* and save the changes.
 
 * To enable File-Based Rebalance using the REST API, set the `enableShardAffinity` parameter to `true` in the xref:rest-api:post-settings-indexes.adoc#disable-file-transfer-based-rebalance[GSI curl command settings].
 
-NOTE: <<#smart-batching,Smart Batching>> does not work if you have enabled File-Based Rebalance on your cluster.
+NOTE: <<#smart-batching,Smart Batching>> does not apply to index movements that use file-based transfer.
+However, if any index cannot use File-Based Rebalance and falls back to DCP-based rebuild, those indexes continue to use smart batching.
+For example, during replica repair without a sibling shard.
 
 [#when-fbr-takes-effect]
 ==== When Does File-Based Rebalance Take Effect?
 
-The File-Based Rebalance method uses metadata in the index's files during the rebalance process, through relocation.
+The File-Based Rebalance method uses shard affinity metadata in the index's files during the rebalance process, through relocation.
 
 IMPORTANT: Couchbase Server can perform File-Based Rebalance for an index only when the index’s files have the required metadata.
 
@@ -153,7 +162,7 @@ The following steps explain what happens when you enable File-Based Rebalance af
 .. <<#enabling-fbr,Enable File-Based Rebalance>> (or shard affinity).
 
 .. When the Rebalance operation is triggered, Couchbase Server does not use File-Based Rebalance method for those indexes right away,
-because those indexes do not have <<#shard-affinity,Shard Affinity>>.
+because those indexes do not have <<#shard-affinity,Shard Affinity>> metadata.
 +
 Instead, the rebalance rebuilds the indexes and to establish shard affinity for all existing indexes, you must rebuild them once.
 A <<#full-swap-rebalance,full swap rebalance>> cycle is a method for performing this rebuild.
@@ -166,11 +175,12 @@ For examples on the working of File-Based Rebalance, see <<#working-of-fbr-opera
 
 For examples of Index Rebalance and File-Based Rebalance in action, see <<#fbr-all-examples,Understanding Index Rebalance with Examples>>.
 
-==== Restarting an File-Based Rebalance
+==== Restarting a File-Based Rebalance
 
 If a File-Based Rebalance fails, you can start a new rebalance.
-The subsequent rebalance does not repeat any shard transfers that completed successfully during the earlier attempt.
-The subsequent rebalance only transfers the indexes that were incomplete or still in progress when the failure occurred.
+Couchbase Server keeps any index movements that completed successfully and rolls back partial transfers.
+When you start the new rebalance, the planner creates a fresh placement plan based on the current index placements.
+Any further index movements are determined by this new plan rather than by the incomplete index movements from the earlier failed attempt.
 
 To restart File-Based Rebalance, enable it.
 For more information, see <<#enabling-fbr, Enabling File-Based Rebalance>>.
@@ -208,16 +218,27 @@ endif::[]
 Couchbase Server can redistribute indexes during rebalance.
 Redistributing indexes can improve performance by offloading heavily loaded nodes.
 
-A rebalance automatically redistributes indexes in the following situations:
+For self-managed clusters, index redistribution is disabled by default.
+You need to <<#enabling-index-redistribution,enable index redistribution>> to use it.
+When you enable the index redistribution setting, Couchbase Server redistributes indexes when rebalance occurs.
+
+A rebalance redistributes indexes in the following situations:
+
+* *Rebalance when you remove an index node*:
+Rebalance always moves the indexes that reside on nodes you remove from the cluster.
+These indexes are redistributed to other nodes based on the new placement plan.
+Rebalance may also move additional indexes when the `redistributeIndexes` setting is enabled,
+because this setting makes all indexes in the cluster eligible for movement, not only those on the removed nodes.
 
 * *Rebalance when you add an index node*:
-Rebalance always moves indexes off of nodes that you're removing from the cluster to the remaining nodes.
-A rebalance does not affect indexes that reside on nodes that you're not removing. 
+Adding a node by itself does not trigger index movement.
+However, when the `redistributeIndexes` setting is enabled, the planner may redistribute indexes to balance the cluster.
 
-* *Rebalance when you add and remove index nodes*:
-A swap rebalance moves indexes from nodes you're removing and places them on the nodes you're adding.
+* *Rebalance when you add and remove index nodes (swap rebalance)*:
+During a swap rebalance, indexes on the removed node always move to the newly added node, whether or not the `redistributeIndexes` setting is enabled.
 For more information, see <<#swap-rebalance-for-index-service,Swap Rebalance for Index Service>>.
 
+[#enabling-index-redistribution]
 You can enable index redistribution or index movements across any index node during a rebalance in the cluster using one of the following ways:
 
 * From the UI, enable Optimize Index Placement in the xref:manage:manage-settings/general-settings.adoc#index-storage-mode[Index Storage Mode] section.
@@ -239,7 +260,7 @@ Rebalance moves indexes from heavily loaded nodes to nodes with free resources t
 A group failure in a multiple server group database can force all replicas into a single group. In this case, rebalance redistributes the replicas to support high availability across server groups after the server group repair.
 
 NOTE: If after you drop Index Service nodes, the remaining nodes cannot handle all of the index replicas, Couchbase Server drops some of the replicas.
-If you later add additional Index Service nodes to the cluster, Couchbase Server replaces the dropped replicas.
+If you later add additional Index Service nodes to the cluster, Couchbase Server repairs the dropped replicas.
 
 For examples of Index Rebalance and File-Based Rebalance in action, see <<#fbr-all-examples,Understanding Index Rebalance with Examples>>.
 
@@ -256,19 +277,13 @@ This process is called smart batching.
 
 The default batch size is `3`, which means that a rebalance rebuilds up to 3 indexes at the same time.
 
-NOTE: Smart batching does not work if you have enabled File-Based Rebalance.
+NOTE: <<#smart-batching,Smart Batching>> does not apply to index movements that use file-based transfer.
+However, if any index cannot use File-Based Rebalance and falls back to DCP-based rebuild, those indexes continue to use smart batching.
+For example, during replica repair without a sibling shard.
 
 Users with Full Admin or Cluster Admin roles can xref:rest-api:rest-modify-index-batch-size.adoc[Modify Index Batch Size] using the REST API.
 
-You can use smart batching for one or more of the following purposes:
-
-* Reduce further time and resources required to move the index metadata.
-* Rebuild indexes at their new locations during rebalance.
-* Increase rebalance performance by increasing pipeline parallelism by starting the next batch when the previous batch is only partially completed.
-* Allow the increase of overall concurrency by using administrator-determined modifications of the batch size.
-* Optimize the sharing of data streams where index relocation takes place.
-* Repair index replicas lost due to node failure before relocating indexes.
-* Dynamically reassign index-rebuild tasks between batches to improve workload balance.
+Smart batching optimizes the batching of indexes during index transfer in a rebalance, which helps speed up the index rebalance process.
 
 NOTE: If at least one node in the cluster is running Server 7.1 or a later version, most smart batching features apply across the cluster,
 even when some nodes are running earlier versions.
@@ -283,6 +298,35 @@ By treating the empty node as a clean target, the system reduces planning overhe
 This batching behavior improves the efficiency of scale-out operations, especially in clusters with multiple indexes.
 As the node is not yet serving application traffic, the system can safely move larger groups of indexes at once without affecting query performance.
 
+Batch-size Settings::
+
+Couchbase Server uses the following batch-size controls during rebalance:
+
++
+--
+* *Regular batch size*: It defines how many indexes can be rebuilt concurrently during DCP-based rebuilds.
++
+Default size is 3.
+
+* *Empty node batch size*: It defines how many indexes can be moved together to an empty node in a single batch.
++
+Default size is 20.
+
+The empty node batch size is larger because an empty node has no existing index workload,
+allowing the planner to schedule more batching without affecting active queries.
+
+NOTE:
+Empty node batching applies only when the destination node has no indexes.
+After the first batch completes and the node begins hosting indexes, subsequent index movements follow the regular batch-size setting.
+--
+
+== Index Scan Availability During Rebalance
+
+During any index movement or rebalance operation, except in the case of an Index Service node failover, Couchbase Server maintains scan availability.
+The Index Service keeps at least one active index copy available while another copy is being moved or rebuilt,
+ensuring that queries continue to run without interruption.
+Only a failover of a node hosting a non-replicated index can cause temporary unavailability.
+
 [#fbr-all-examples]
 == Understanding Index Rebalance with Examples
 
@@ -296,11 +340,12 @@ This section provides explanations and examples of how different rebalance metho
 [#swap-rebalance-for-index-service]
 === Swap Rebalance for Index Service
 
-A swap rebalance removes one or more source nodes and adds the same number of destination nodes.
+A swap rebalance replaces one or more nodes in the cluster with an equal number of new nodes.
+For the Index Service, a swap rebalance moves the indexes from the nodes being removed to the nodes being added.
+When only one Index Service node participates in the operation, movement generally follows a one-to-one pattern.
+When multiple Index Service nodes are swapped, the planner may distribute indexes across those multiple new nodes rather than maintaining a strict one-to-one mapping.
 
-The effect of a swap rebalance operation on Index Service is that it moves indexes from the nodes you're removing and places them on the nodes you're adding in a cluster.
-The indexes move only between those source and destination nodes.
-All other nodes continue supporting Query Service and no indexes relocate between them.
+Indexes on nodes that are not part of the swap rebalance process continue supporting the Query Service and are not moved.
 
 The following examples show how Couchbase Server handles swap rebalance operations for the Index Service.
 
@@ -310,7 +355,7 @@ The following examples show how Couchbase Server handles swap rebalance operatio
 To understand how swap rebalance works with File-Based Rebalance, see <<#swap-rebalance-fbr,Swap Rebalance (One-for-One Replacement)>>.
 
 [#full-swap-rebalance]
-==== Full Swap Rebalance (DCP-based Rebuild)
+==== Full Swap Rebalance (DCP-based Rebuild) When Shard Affinity is Enabled
 
 Perform a full swap rebalance cycle as follows:
 
@@ -318,7 +363,9 @@ Perform a full swap rebalance cycle as follows:
 +
 image::clusters-and-availability/full-swap-stage0.png[,600,align=middle]
 
-. Select a source node (N1), add a new destination node (S), and perform a swap rebalance (remove N1, add S).
+. Select a source node (N1), add a new destination node (S), and trigger a rebalance operation.
++
+If the system chooses swap rebalance, then N1 is removed and S is added.
 +
 All indexes from N1 are rebuilt on S using the DCP-based method, which adds the required shard affinity metadata.
 +
@@ -465,7 +512,6 @@ When a replica exists, it can be copied using File-Based Rebalance if shard affi
 If no replica exists, the index is lost.
 
 . If the failed node recovers before a rebalance occurs, it can be added back to the cluster, and the next rebalance restores its indexes.
-Any duplicate replicas created during the failover are removed during this add-back rebalance.
 
 The following examples explain how Couchbase Server handles node failover scenarios, both when replicas are available and when they're not.
 
@@ -599,35 +645,16 @@ The following table summarizes the key differences between failover and planned 
 |===
 
 [#upgrade-idx-service-swap-vs-fbr]
-=== Upgrade Index Service Using - Swap Rebalance vs Failover-Based Rebalance
+=== Understanding Swap Rebalance vs Failover+Add Back Rebalance
 
-This section compares 2 approaches for upgrading Index Service nodes in a Couchbase cluster - swap rebalance and failover-based rebalance.
+A swap rebalance is a planned operation where one or more nodes are removed while an equal number of new nodes are added.
+The cluster treats this as a coordinated exchange, and the rebalance moves indexes from the removed nodes to the newly added nodes in a controlled manner.
+This process maintains index availability and does not modify replica topology or trigger replica repair.
 
-[cols="1,1,1", options="header"]
-|===
-| Aspect | Swap Rebalance | Failover-Based Rebalance
-
-| *Purpose*
-| Replaces old nodes with new ones during a planned upgrade or maintenance.
-| Used during an upgrade by failing over a node, adding a new node, and performing a rebalance.
-
-| *Index Movement*
-| Indexes move only between the specified old and new nodes.
-Other nodes in the cluster are not involved.
-| Indexes are rebuilt or repaired after failover as part of the rebalance process.
-
-| *Availability*
-| Indexes remain available throughout the rebalance operation.
-| One replica is lost during failover, and the workload shifts to remaining replicas.
-
-| *Impact on Replicas*
-| Replica distribution remains intact.
-| If a node with a single replica fails, the index is lost.
-
-| *Operation Type*
-| Planned and controlled process.
-| Reactive process following a node failure or manual failover.
-|===
+A failover + add back rebalance occurs when a node is failed over and later added back to the cluster.
+In this workflow, the system repairs or rebuilds index replicas affected by the failover as part of the subsequent rebalance.
+The focus of this process is recovery and restoring availability, not performing a clean node-for-node replacement.
+As a result, a failover + add back rebalance behaves differently from a swap rebalance, which does not involve replica repair.
 
 [fbr-in-mixed-version-clusters]
 === File-Based Rebalance in Mixed-Version Clusters
@@ -644,12 +671,12 @@ File-Based Rebalance behavior depends on the Couchbase Server version running on
 
 (if Shard Affinity exists)
 
-| 7.6 or earlier
+| Earlier than 7.6
 | Any
 | DCP-based rebuild
 
 | Any
-| 7.6 or earlier
+| Earlier than 7.6
 | DCP-based rebuild
 
 |===
@@ -671,6 +698,12 @@ The new plan may choose different nodes, causing more indexes to move than in th
 * Optimize Index Placement is enabled:
 +
 With optimization on, the planner can redistribute indexes across any eligible nodes, instead of just the nodes you assumed were involved.
++
+CAUTION:
+Enabling Optimize Index Placement can to a large extent increase rebalance time in clusters with many indexes.
+When this flag is enabled, the planner considers the entire cluster for redistribution,
+which may trigger large-scale index movement even when such redistribution is not required.
+Use this setting only when you intend to rebalance index placement across the cluster.
 
 * Empty node batching is not used:
 +
@@ -704,56 +737,16 @@ Non-replicated indexes must be rebuilt via DCP, so you will see extra rebuild wo
 Adding or removing nodes, in particular when multiple nodes are affected, expands the planner’s options.
 This may cause broader redistribution than you anticipated.
 
-=== Verifying Shard Affinity Metadata
-
-To verify that an index has shard-affinity metadata, use the Index Service status REST API endpoint `/getIndexStatus`.
-
-curl syntax is as follows:
-
-----
-curl -X GET http://<index_node>:9102/getIndexStatus?getAll=true /
--u <username>:<password>
-----
-
-In the response, look for the `alternateShardIds` field for each index.
-The outcome is one of the following:
-
-* If `alternateShardIds` contains entries for all partitions, the index has shard affinity.
-* If `alternateShardIds` is empty or missing, the index does not have shard affinity.
-
 === Adding Shard Affinity Metadata Without Full Swap Rebalance Cycle
 
 A swap-rebalance cycle is the most efficient and recommended method to add Alternate Shard IDs to all indexes across the cluster.
 
-The alternatives are as follows:
+The alternative is as follows when you do not want to do a full swap rebalance and specific index(es) is missing shard affinity:
 
-[cols="1,3", options="header"]
-|===
-| Method | Description
-
-| Swap Rebalance Cycle
-| Recommended approach.
-
-Moves each index exactly once while adding shard affinity metadata.
-
-| Drop and Recreate
-| Create indexes with shard affinity enabled to embed metadata.
-
+* *Drop and Recreate*:
+Create indexes with shard affinity enabled to embed metadata.
++
 Causes downtime for affected indexes.
-
-| ALTER INDEX
-
-(Add Replica)
-
-| Running `ALTER INDEX` with the `replica_count` action adds shard-affinity metadata when enabled.
-
-This is applicable only to the newly generated replicas.
-
-|===
-
-NOTE: Any index creation or movement by the rebalance planner while shard affinity is enabled adds the Alternate Shard ID.
-Using `ALTER INDEX` with action `replica_count`, which is applicable only to moving replica that are new or moved, also applies the metadata.
-A rebalance is not required.
 
 === Scenarios Where File-Based Rebalance may be Skipped
 
@@ -769,9 +762,6 @@ File-Based Rebalance may be skipped and fall back to DCP-based rebuild in the fo
 | Source or destination node runs a version earlier than 7.6
 | Both nodes must run Couchbase Server 7.6 or a later version for File-Based Rebalance.
 
-| Shard version incompatibility
-| Destination node’s shard format version is older than the source.
-
 | Non-Plasma storage mode
 | File-Based Rebalance is supported only with the Plasma storage engine (Standard GSI).
 
@@ -786,7 +776,7 @@ When a shard contains multiple indexes, those indexes cannot be moved independen
 With shard affinity enabled, all indexes that share the same Alternate Shard ID (Slot ID) are treated as a single unit, and the shard is moved in its entirety.
 This behavior is intentional and enables efficient file-based transfer during rebalance.
 
-CAUTION: Breaking shard affinity to move one index from its group is technically possible but not recommended.
+NOTE: Do not disable shard affinity after you enable it, unless recommended by Couchbase Support.
 
 === Replica Selection During Failover Repair
 
