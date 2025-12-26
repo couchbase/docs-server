@@ -1,0 +1,157 @@
+= Eventing Memory Quota 
+
+:description: The Eventing Service memory quota does not enforce a hard memory limit on the Eventing subsystem, including producer and worker processes. 
+
+This page explains how the memory quota actually works, how Eventing distributes it across workers, and its limitations in non-containerized environments.
+
+[abstract]
+{description}
+
+== Overview
+
+The Couchbase Eventing Service memory quota does not enforce a hard memory limit on the entire Eventing subsystem, including producer and worker processes. 
+The service uses the quota for queue sizing and JavaScript (JS) runtime memory heap, not as an absolute memory cap. 
+In VM or bare-metal deployments, Eventing functions can exceed the configured quota at runtime.
+Understanding this behavior helps you to appropriately size and monitor Eventing functions in production environments.
+
+== How Memory Quota Works
+The Eventing Service memory quota controls specific aspects of memory management but does not act as an absolute ceiling on memory usage.
+The Eventing Service memory quota controls specific aspects of memory management, such as queue sizing and garbage collection, but does not act as an absolute ceiling on memory usage.
+
+=== Minimum Size
+The memory quota must be a minimum of 256 MB. 
+Couchbase does not support values lesser than 256 MB.
+
+=== Purpose of the Quota
+
+The memory quota serves 2 primary purposes:
+
+* `Producer-to-worker queue sizing`: controls the maximum size of each worker's input queue.
+* `Garbage Collection (GC) triggering`: determines when Eventing invokes JavaScript environment (JSE) GC to reclaim memory.
+The quota does not restrict the total memory consumed by JSE heaps or Eventing processes.
+
+== Per-Worker Distribution
+
+The Eventing Service divides the total memory quota uniformly across all workers in all deployed functions.
+
+=== Calculation
+Eventing calculates the per-worker quota as follows:
+`Per-Worker quota = Total memory quota ÷ Total number of workers`
+
+=== Example 
+
+Consider the following configuration:
+
+* Total memory quota: 256 MB
+* Total workers (across all deployed functions): 4
+* Per-worker budget: 64 MB (256 MB ÷ 4 workers)
+
+Each worker receives an equal share of the total quota, regardless of the actual memory usage of individual functions.
+
+=== Impact of Worker Count
+
+As you deploy more functions or add workers per function, the per-worker quota decreases proportionally.
+A smaller per-worker quota can affect performance if individual functions require substantial memory for processing.
+
+== Queue Sizing and GC Behavior
+
+The per-worker quota directly influences 2 key aspects of Eventing runtime behavior.
+
+=== Producer-to-Worker Queue Sizing
+
+Each worker has a bounded input queue that receives changes to documents from the Database Change Protocol (DCP) stream.
+
+* The per-worker quota determines the maximum size of this queue.
+* When the queue exceeds this size, Eventing throttles the DCP stream to prevent unbounded memory growth.
+* Throttling temporarily pauses mutation flow, ensuring workers do not become overwhelmed when processing lags behind the mutation rate.
+
+=== Garbage Collection (GC) Triggering
+
+NOTE: When memory usage approaches the per-worker quota limit, the JavaScript runtime may trigger garbage collection to reclaim memory. 
+However, the garbage collector may delay the stop-the-world collection because it's optimized for throughput. 
+As a result, the runtime may not reclaim memory without delay, which can temporarily affect Eventing memory consumption.
+The service invokes a stop-the-world JSE GC to reduce memory inside the JSE isolate running each function.
+
+* GC frees memory occupied by unreachable objects that are no longer in use.
+* GC reclaims memory only from objects that are no longer in use. 
+Memory held by live objects in the JSE heap remains allocated, so total usage may exceed the per-worker quota.
+
+== Limitations and Considerations
+The Eventing Service memory quota has important limitations that users must understand to prevent operational issues:
+
+* Not a hard limit: The quota does not cap total memory usage. 
+Live objects in JSE heaps may persist, so memory usage can exceed the quota.
+* No OS-level enforcement outside cgroups: In VM or bare-metal deployments, the operating system does not enforce memory limits.
+* Worker sizing impacts memory: Configuring an excessive number of workers or running memory-intensive functions can increase memory pressure and affect node stability.
+* Quota applies per worker, not per function: Each worker receives an equal share of the total quota, regardless of individual function memory requirements.
+
+=== Not a Hard Limit
+
+The Eventing Service memory quota does not restrict total memory usage. 
+
+JSE heaps may still contain live (non-garbage) objects that:
+* GC cannot reclaim.
+* The quota does not account.
+* Continue to consume memory beyond the configured limit.
+
+As a result, setting a memory quota does not guarantee that Eventing functions remain within that limit.
+
+=== No OS-Level Enforcement Outside cgroups
+
+In non-containerized environments, the operating system does not enforce the memory quota.
+
+* Users must monitor Eventing memory usage using system tools.
+* Configuring an excessive number of workers can lead to memory exhaustion.
+* High-memory-consuming functions can affect overall system stability.
+* Eventing does not automatically stop or throttle execution when total memory exceeds the quota. 
+
+=== Memory Isolation
+
+The memory quota does not isolate memory usage between Eventing functions.
+
+* All workers draw from the same total memory quota.
+* A memory-intensive function can reduce the memory available to other functions.
+* Eventing does not support per-function memory limits or reservations.
+
+== Best Practices
+Follow these recommendations to effectively manage Eventing memory usage effectively and avoid operational issues.
+
+=== Monitor Memory Usage
+
+* Use system-level monitoring tools to track actual memory consumption.
+* Monitor memory usage for the Eventing process and individual workers.
+* Configure alerts for memory thresholds well below system limits.
+
+=== Configure Worker Count Appropriately
+
+* Consider the per-worker quota when determining the number of workers.
+* Avoid over-provisioning workers when Eventing functions require substantial memory.
+* Balance the worker count against available system memory.
+
+=== Test in Representative Environments
+
+* Test Eventing functions under production-like load conditions.
+* Measure actual memory consumption during peak processing.
+* Validate that memory usage remains within acceptable limits.
+
+=== Use cgroups for Enforcement
+
+* Consider containerized deployments or cgroup-based memory limits in production environments.
+* Container platforms such as Docker and Kubernetes provide hard memory limits.
+* cgroups enforce OS-level memory restrictions.
+* This approach adds a safety layer beyond the Eventing Service memory quota.
+
+=== Size the Memory Quota Appropriately
+
+* Set the Eventing memory quota based on expected worker count and function complexity.
+* Allow headroom above the minimum 256 MB for production workloads.
+* Account for peak processing scenarios, not just average load.
+
+=== Review Function Memory Efficiency
+
+* Optimize JavaScript code to minimize memory allocation.
+* Avoid accumulating large data structures in function scope.
+* Release object references when data is no longer needed.
+* Profile functions to identify memory-intensive operations.
+
+// Learn how to provide links to other doc pages and provide references to pages like Eventing Service Overview, Eventing Service Settings, and Eventing Function Examples. 
