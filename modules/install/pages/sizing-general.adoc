@@ -1,5 +1,6 @@
 = Sizing Guidelines
 :description: Evaluate the overall performance and capacity goals that you have for Couchbase, and use that information to determine the necessary resources that you'll need in your deployment.
+:stem: latexmath
 
 [abstract]
 {description}
@@ -130,25 +131,25 @@ You can start sizing the Data Service nodes by answering the following questions
 
 Answers to the above questions can help you better understand the capacity requirement of your cluster and provide a better estimation for sizing.
 
-*The following is an example use-case for sizing RAM:*
+The following tables show an example use-case for sizing RAM:
 
 .Input Variables for Sizing RAM
 |===
 | Input Variable | Value
 
-| [.var]`documents_num`
+| `documents_num`
 | 1,000,000
 
-| [.var]`ID_size`
+| `ID_size`
 | 100 bytes
 
-| [.var]`value_size`
+| `value_size`
 | 10,000 bytes
 
-| [.var]`number_of_replicas`
+| `number_of_replicas`
 | 1
 
-| [.var]`working_set_percentage`
+| `working_set_percentage`
 | 20%
 |===
 
@@ -176,16 +177,16 @@ Based on the provided data, a rough sizing guideline formula would be:
 |===
 | Variable | Calculation
 
-| [.var]`no_of_copies`
+| `no_of_copies`
 | `1 + number_of_replicas`
 
-| [.var]`total_metadata`
+| `total_metadata`
 | `(documents_num) * (metadata_per_document + ID_size) * (no_of_copies)`
 
-| [.var]`total_dataset`
+| `total_dataset`
 | `(documents_num) * (value_size) * (no_of_copies)`
 
-| [.var]`working_set`
+| `working_set`
 | `total_dataset * (working_set_percentage)`
 
 | Cluster RAM quota required
@@ -202,16 +203,16 @@ Based on the above formula, these are the suggested sizing guidelines:
 |===
 | Variable | Calculation
 
-| [.var]`no_of_copies`
+| `no_of_copies`
 | = 1 for original and 1 for replica
 
-| [.var]`total_metadata`
+| `total_metadata`
 | = 1,000,000 * (100 + 56) * (2) = 312,000,000 bytes
 
-| [.var]`total_dataset`
+| `total_dataset`
 | = 1,000,000 * (10,000) * (2) = 20,000,000,000 bytes
 
-| [.var]`working_set`
+| `working_set`
 | = 20,000,000,000 * (0.2) = 4,000,000,000 bytes
 
 | Cluster RAM quota required
@@ -221,6 +222,176 @@ Based on the above formula, these are the suggested sizing guidelines:
 This tells you that the RAM requirement for the whole cluster is 7{nbsp}GB.
 
 NOTE: This amount is in addition to the RAM requirements for the operating system and any other software that runs on the cluster nodes.
+
+=== Disk Sizing for Data Service Nodes
+
+A key concept to remember about Couchbase Server's data storage is that it's an append-only system.
+When an application mutates or deletes a document, the old version of the document is not immediately removed from disk.
+Instead, Couchbase Server marks them as stale.
+They remain on disk until a compaction process runs that reclaims the disk space.
+When sizing disk space for your cluster, you take this behavior into account by applying an append-only multiplier to your data size.
+
+When sizing disk space for the Data Service nodes, you first must determine the following information:
+
+* The total number of documents that you plan to store in the cluster.
+If this value constantly grows, consider the growth rate into the future when sizing.
+* The average size of each document.
+* Whether the documents can be compressed, and if they can, what compression ratio Couchbase Server can achieve.
+Couchbase Server always compresses documents when storing them on disk.
+See xref:learn:buckets-memory-and-storage/compression.adoc[] for more information about compression in Couchbase Server.
+Documents containing JSON data or binaries can be compressed. 
+Binary data that's already compressed (such as compressed images or videos) cannot be compressed further.
+
++
+Couchbase Server uses the https://en.wikipedia.org/wiki/Snappy_(compression)[Snappy^] compression algorithm, which prioritizes speed while still providing reasonable compression.
+You can estimate the compression ratio Couchbase Server can achieve for your data by compressing a sample set of documents using a snappy-based command line tool such as `snzip`.
+Otherwise, you can choose to use an estimated compression ratio of 0.7 for JSON documents.
+
+* The number of replicas for your buckets.
+See xref:learn:clusters-and-availability/intra-cluster-replication.adoc[] for more information about replicas.
+* The number of documents that you plan to delete each day. 
+This number includes both the number of documents directly deleted by your applications and those that expire due to TTL (time to live) settings.
+See xref:learn:data/expiration.adoc[] for more information about document expiration.
+
++
+This value is important because in the short term, deletions actually take a bit more disk space rather than less. 
+Because of Couchbase Server's append-only system, the deleted documents remain on disk until a compaction process runs.
+Also, Couchbase Server creates a tombstone record for each deleted document.
+This record consumes a small amount of additional disk space.
+
+* The metadata purge interval you'll use.
+This purge process removes tombstones that records the deletion of documents.
+The default purge interval is 3 days.
+For more information about the purge interval, see xref:manage:manage-settings/configure-compact-settings.adoc#tombstone-purge-interval[Metadata Purge Interval].
+
+* Which storage engine your cluster will use. 
+The storage engine affects the append-only multiplier that you use when sizing disk space.
+See xref:learn:buckets-memory-and-storage/storage-engines.adoc[] for more information
+
+To determine the amount of storage you need in your cluster:
+
+. Calculate the size of the dataset by multiplying the total number of documents by the average document size. 
+If the documents are compressible, also multiply by the estimated compression ratio:
+
++
+[stem]
+++++
+S_{\mathrm{dataset}} = \text{# of documents} \times \text{avg. document size} \times \text{compression ratio}
+++++
+
+. Calculate the total metadata size by multiplying the total number of documents by 56 bytes (the average metadata size per document):
+
++
+[stem]
+++++
+S_{\mathrm{metadata}} = \text{# of documents} \times 56
+++++
+
+. Calculate the key storage overhead by multiplying the total number of documents by the average key size.
+
++ 
+[stem]
+++++
+S_{\mathrm{keys}}  = \text{# of documents} \times \text{avg. key size}
+++++
+
+. Calculate the tombstone space in bytes using the following formula:
+
++
+[latexmath]
+++++
+\begin{equation}
+\begin{split}
+S_{\mathrm{tombstones}} = & ( \text{avg. key size} + 60 ) \times \text{purge frequency in days} \\
+& \times ( \text{# of replicas} + 1 ) \times \text{# documents deleted per day}
+\end{split}
+\end{equation}
+++++
+
+. Calculate the total disk space required using the following formula:
+
++
+[latexmath]
+++++
+\begin{equation}
+\begin{split}
+\text{total disk space} =  & ( ( S_{\mathrm{dataset}} \times (\text{# replicas} + 1) \\
+ & + S_{\mathrm{metadata}} + S_{\mathrm{keys}} ) \times F_{\text{append-multiplier}} ) + S_{\mathrm{tombstones}}
+\end{split}
+\end{equation}
+++++
+
+
++
+Where stem:[F_{\text{append-multiplier}}] is the append-only multiplier. 
+This value depends on the storage engine you use:
+
++
+* For Couchstore storage engine, use an append-only multiplier of 3.
+* For Magma storage engine, use an append-only multiplier of 2.2.
+
+For example, suppose you're planning a cluster with the following characteristics:
+
+* Total number of documents: 1,000,000
+* The average document size: 10,000 bytes.
+* The documents contain JSON data that have an estimated compression ratio of 0.7.
+* Average key size: 32 bytes.
+* Number of replicas: 1
+* Number of documents deleted per day: 5,000
+* Purge frequency in days: 3
+* Storage engine: Magma
+
+Using the formulas above, you can calculate the total disk space required as follows:
+
+. Calculate the dataset:
+
++
+[stem]
+++++
+S_{\mathrm{dataset}}  = 1,000,000 \times 10,000 \times 0.7 = 7,000,000,000 \text{bytes}
+++++
+
+. Calculate the total metadata size:
+
++
+[stem]
+++++
+S_{\mathrm{metadata}}  = 1,000,000 \times 56 = 56,000,000 \text{bytes}
+++++
+
+. Calculate the total key size:     
+
++
+[stem]
+++++
+S_{\mathrm{keys}}  = 1,000,000 \times 32 = 32,000,000 \text{bytes}
+++++
+
+. Calculate the tombstone space:
+
++
+[stem]
+++++
+S_{\mathrm{tombstones}}  = (32 + 60) \times 3 \times (1 + 1) \times 5,000 = 2,760,000 \text{bytes}
+++++
+
+. Calculate the total disk space:
+
++
+[latexmath]
+++++
+\begin{equation}
+\begin{split}
+\text{total disk space} = & ( 7,000,000,000 \times (1 + 1) \\
+& + 56,000,000 + 32,000,000 ) \\
+& \times 2.2 \\
+& + 2,760,000 \\
+& = 30,996,360,000 \text{bytes} 
+\end{split}
+\end{equation}
+++++
+
+Therefore, for the cluster in this example, you need at least 31{nbsp}GB of disk space to store your data.
 
 [#cpu-overhead]
 == CPU Overhead
@@ -259,16 +430,16 @@ Use the following sizing guide to compute the memory requirement for each indivi
 |===
 | Input Variable | Value
 
-| [.var]`num_entries` (Number of index entries)
+| `num_entries` (Number of index entries)
 | 10,000,000
 
-| [.var]`ID_size` (Size of DocumentID)
+| `ID_size` (Size of DocumentID)
 | 30 bytes
 
-| [.var]`index_entry_size` (Size of secondary key)
+| `index_entry_size` (Size of secondary key)
 | 50 bytes
 
-| [.var]`working_set_percentage` (Nitro, Plasma, ForestDB)
+| `working_set_percentage` (Nitro, Plasma, ForestDB)
 | 100%, 20%, 20%
 |===
 
@@ -296,19 +467,19 @@ Based on the provided data, a rough sizing guideline formula would be:
 |===
 | Variable | Calculation
 
-| [.var]`total_index_data(secondary index)` (Nitro)
+| `total_index_data(secondary index)` (Nitro)
 | `(num_entries) * (metadata_per_entry + ID_size + index_entry_size)`
 
-| [.var]`total_index_data(secondary index)` (Plasma, ForestDB)
+| `total_index_data(secondary index)` (Plasma, ForestDB)
 | `(num_entries) * (metadata_per_entry + ID_size + index_entry_size) * 2`
 
-| [.var]`total_index_data(primary index)` (Nitro, Plasma, ForestDB)
+| `total_index_data(primary index)` (Nitro, Plasma, ForestDB)
 | `(num_entries) * (metadata_main_index + ID_size + index_entry_size)`
 
-| [.var]`index_memory_required(100% resident)` (memdb)
+| `index_memory_required(100% resident)` (memdb)
 | `total_index_data * (1 + overhead_percentage)`
 
-| [.var]`index_memory_required(20% resident)` (Plasma, ForestDB)
+| `index_memory_required(20% resident)` (Plasma, ForestDB)
 | `total_index_data * (1 + overhead_percentage) * working_set`
 |===
 
@@ -319,22 +490,22 @@ Based on the above formula, these are the suggested sizing guidelines:
 |===
 | Variable | Calculation
 
-| [.var]`total_index_data(secondary index)` (Nitro)
+| `total_index_data(secondary index)` (Nitro)
 | (10000000) * (120 + 30 + 50) = 2000000000 bytes
 
-| [.var]`total_index_data(secondary index)` (Plasma)
+| `total_index_data(secondary index)` (Plasma)
 | (10000000) * (120 + 30 + 50) * 2 = 4000000000 bytes
 
-| [.var]`total_index_data(secondary index)` (ForestDB)
+| `total_index_data(secondary index)` (ForestDB)
 | (10000000) * (80 + 30 + 50) * 2 = 3200000000 bytes
 
-| [.var]`index_memory_required(100% resident)` (Nitro)
+| `index_memory_required(100% resident)` (Nitro)
 | (2000000000) * (1 + 0.25) = 2500000000 bytes
 
-| [.var]`index_memory_required(20% resident)` (Plasma)
+| `index_memory_required(20% resident)` (Plasma)
 | (2000000000) * (1 + 0.25) * 0.2 = 1000000000 bytes
 
-| [.var]`index_memory_required(20% resident)` (ForestDB)
+| `index_memory_required(20% resident)` (ForestDB)
 | (3200000000) * (1 + 0.25) * 0.2 = 800000000 bytes
 |===
 
