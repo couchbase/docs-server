@@ -1,5 +1,5 @@
 = Setting Thread Allocations
-:description: The number of threads allocated per node is configurable.
+:description: Couchbase Serer has several settings that let you change how it allocates and uses threads for the entire cluster.
 :page-topic-type: reference
 
 [abstract]
@@ -7,6 +7,14 @@
 
 == HTTP method and URI
 
+.Get Global Thread Settings
+[source,url]
+----
+GET /pools/default/settings/memcached/global
+----
+
+.Set Global Thread Allocations
+[source]
 ----
 POST /pools/default/settings/memcached/global
 ----
@@ -14,69 +22,194 @@ POST /pools/default/settings/memcached/global
 [#description]
 == Description
 
-Couchbase Server allows the number of threads allocated per node for _reading_, _writing_, and for _NonIO_, and _AuxIO_ thread-pools to be configured by the administrator.
+Couchbase Server lets you set the number of threads per node for reading, writing, NonIO, and AuxIO thread pools.
+You can also change the number of threads that Magma buckets use for writing data to disk.
+Increasing thread allocation can improve performance on systems with a large number of CPU cores.
+For example, more writer threads can optimize durable write performance.
+See xref:learn:data/durability.adoc[Durability] for details.
+However, allocating too many threads can reduce performance on nodes with limited resources.
+Test any changes to thread allocation before applying them to production systems.
 
-A high thread-allocation may improve performance on systems whose hardware-resources are commensurately supportive (for example, where the number of CPU cores is high).
-In particular, a high number of _writer_ threads on such systems may significantly optimize the performance of _durable writes_: see xref:learn:data/durability.adoc[Durability], for information.
 
-Note, however, that a high thread-allocation might _impair_ some aspects of performance on less appropriately resourced nodes.
-Consequently, changes to the default thread-allocation should not be made to production systems without prior testing.
+== Getting Current Thread Settings
+
+To get the current global thread settings for Couchbase Server, use the `GET /pools/default/settings/memcached/global` endpoint.
+
+[#get-curl-syntax]
+=== curl Syntax
+
+[source,bash]
+----
+curl -X GET http[s]://{HOST}:{PORT}/pools/default/settings/memcached/global
+  -u $USER:$PASSWORD
+----
+
+
+.Path Parameters
+include::partial$user_pwd_host_port_params.adoc[]
+
+
+=== Responses
+
+200 OK::
+The request was successful.
+Returns a JSON object containing the current global thread settings that have been set explicitly.
+
+400 Bad Request::
+The request could not be understood.
+Also returns a JSON object containing an error message.
+
+=== Example
+
+The following example shows how to get the current global thread settings for Couchbase Server:
+
+[source,bash]
+----
+curl -X GET -u Administrator:password \
+http://localhost:8091/pools/default/settings/memcached/global | jq
+----
+
+If successful, the call returns a JSON object containing the any overrides to the default global thread settings:
+
+[source,json]
+----
+{
+  "magma_flusher_thread_percentage": 30,
+  "magma_max_default_storage_threads": 25
+}
+----
+
+== Setting Global Thread Allocations
+
+To set the global thread allocations for Couchbase Server, perform a `POST` ro the `/pools/default/settings/memcached/global` endpoint.
 
 [#curl-syntax]
-== Curl Syntax
+=== curl Syntax
 
+[source,bash]
 ----
-curl -X POST -d hostname=<ip-address-or-hostname>:8091
-  -d num_reader_threads=<int>
-  -d num_writer_threads=<int>
-  -d num_nonio_threads=<int>
-  -d num_auxio_threads=<int>
-  -d password=<password>
-  -u <administrator>:<password>
-  http://<host>:<port>/pools/default/settings/memcached/global
+curl -X POST http[s]://{HOST}:{PORT}/pools/default/settings/memcached/global
+  [-d num_reader_threads=<integer>]
+  [-d num_writer_threads=<integer>]
+  [-d num_nonio_threads=<integer>]
+  [-d num_auxio_threads=<integer>]
+  [-d magma_max_default_storage_threads=<integer>]
+  [-d magma_flusher_thread_percentage=<integer>]
+  -u $USER:$PASSWORD
 ----
 
-Each key is specified optionally.
+.Path Parameters
+include::partial$user_pwd_host_port_params.adoc[]
 
-The keys `num_reader_threads` and `num_writer_threads` specify the number of threads that are to be used for _reading_ and _writing_, respectively.
+.Parameters
 
-The keys `num_nonio_threads` and `num_auxio_threads` specify the number of threads that are to be used for _NonIO_ and _AuxIO_ thread pools, respectively.
-Note that:
+`num_reader_threads`:: 
+(optional) Sets the number threads Couchbase Server uses to read data.
 
-* The _NonIO_ thread pool is used to run _in memory_ tasks -- for example, the _durability timeout_ task.
+`num_writer_threads`:: 
+(optional) Sets the number threads Couchbase Server uses to write data.
 
-* The _AuxIO_ thread pool is used to run _auxiliary I/O_ tasks -- for example, the _access log_ task.
+`num_nonio_threads`:: 
+(optional) Sets the number of NonIO threads to be used by Couchbase Server.
+The NonIO thread pool runs in-memory tasks.
+For example, the durability timeout task uses these threads.
+Valid values are:
 
-In all cases, the value of `int` should be an integer between `1` and `64`, inclusive.
-If in any case the value `default` is specified (for example, `-d num_reader_threads=default`), Couchbase Server itself calculates and applies an appropriate number of threads.
++
+* An integer from `1` to `64`: explictly sets the number of threads.
+* `default`: Couchbase Server calculates and applies an appropriate number of threads.
+
+`num_auxio_threads`:: 
+(optional) Sets the number of AuxIO threads to be used by Couchbase Server.
+The AuxIO thread pool runs auxiliary I/O tasks -- for example, the access log task.
+Valid values are:
+
++
+* An integer from `1` to `64`: explictly sets the number of threads.
+* `default`: Couchbase Server determines the number of threads.
+
+`magma_max_default_storage_threads`::
+(optional) Sets the number of threads the Magma storage engine can use when compacting and writing data to disk.
+This thread pool is divided into 2 types of threads: flusher threads and compactor threads.
+See xref:learn:buckets-memory-and-storage/storage-settings.adoc#magma-flushing-and-compaction-threads[Magma Flushing and Compaction Threads] for more information.
+The default value is `20`.
+
+`magma_flusher_thread_percentage`::
+(optional) Sets the percentage of Magma storage engine threads to allocate to flushing compacted data to disk.
+The remaining threads in the thread pool are allocated to compacting data.
+For example, if you set `magma_max_default_storage_threads` to `20` and set `magma_flusher_thread_percentage` to `50`, Couchbase Server uses `10` threads to flush data and `10` threads to compact data.
+Valid values for this setting are integers from `0` to `100`.
+The default setting is `20` which allocates 20% of threads to flushing data.
+
+NOTE: `magma_max_default_storage_threads` and `magma_flusher_thread_percentage` are advanced settings.
+Contact Couchbase Support before making changes to them.
+Support can help you determine the best settings for your workload and hardware.
 
 [#responses]
-== Responses
+=== Responses
+
+202 Accepted::
+The request has been accepted for processing.
+Also returns a JSON object containing all non-default thread settings.
+
+400 Bad Request::
+The request could not be understood or contained invalid values.
+Also returns a JSON object containing an error message.
+
 Success returns an object whose values confirm the settings that have been made.
 
 [#examples]
-== Examples
+=== Examples
 
 To set the numbers of reader, writer, NonIO, and AuxIO threads for Couchbase Server, use the `POST /pools/default/settings/memcached/global` http method and endpoint as follows:
 
+[source,bash]
 ----
-curl -v -X POST -u Administrator:password \
-http://10.144.220.101:8091/pools/default/settings/memcached/global \
+curl -X POST -u Administrator:password \
+http://localhost:8091/pools/default/settings/memcached/global \
 -d num_reader_threads=12 \
 -d num_writer_threads=8 \
 -d num_nonio_threads=6 \
--d num_auxio_threads=6
+-d num_auxio_threads=6 | jq
 ----
 
-This sets the number of _reader_ threads to `12`, the number of _writer_ threads to `8`, and the numbers of _NonIO_ and _AuxIO_ threads each to `6`.
-If successful, the call returns an object whose values confirm the settings that have been made:
+This sets the number of `reader` threads to `12`, the number of `writer` threads to `8`, and the numbers of `NonIO` and `AuxIO` threads each to `6`.
+If successful, the call returns an object that confirms the settings you specified:
 
+[source,json]
 ----
-{"num_reader_threads":12,"num_writer_threads":8,"num_auxio_threads":6,"num_nonio_threads":6}
+{
+  "num_reader_threads": 12,
+  "num_writer_threads": 8,
+  "num_auxio_threads": 6,
+  "num_nonio_threads": 6
+}
 ----
+
+The following example increases the Magma storage engine's thread pool to 30 threads and allocates 25% of the threads to flushing data to disk:
+
+[source,bash]
+----
+curl -X POST -u Administrator:password \
+     http://localhost:8091/pools/default/settings/memcached/global \
+     -d magma_max_default_storage_threads=30 \
+     -d magma_flusher_thread_percentage=25 | jq
+----
+
+If successful, the call returns an object that confirms the settings you specified:
+
+[source,json]
+----
+{
+  "magma_flusher_thread_percentage": 25,
+  "magma_max_default_storage_threads": 30
+}
+----
+
+
 
 [#see-also]
 == See Also
 
-See xref:learn:data/durability.adoc[Durability], for information on durable writes.
-See xref:learn:buckets-memory-and-storage/storage-settings.adoc#threading[Threading] for an overview of threads.
+* See xref:learn:data/durability.adoc[Durability], for information about durable writes.
+* See xref:learn:buckets-memory-and-storage/storage-settings.adoc#threading[Threading] for an overview of threads.
