@@ -1,0 +1,195 @@
+= Linux Kernel TCP/IP Memory Settings
+:description: pass:q[The Linux kernel has a global parameter named `tcp_mem` that limits the TCP/IP stack's RAM use.]
+:page-topic-type: concept
+:stem: asciimath
+
+[abstract]
+{description}
+It prevents the TCP/IP stack from consuming so much memory under heavy network use that it interferes with other workloads.
+The Linux Kernel sets default values for `tcp_mem` based on the total amount of RAM and other factors in the system.
+You should verify and, if necessary, adjust this setting to prevent potential networking issues.
+
+[#about]
+== About tcp_mem
+
+The Linux kernel's `tcp_mem` setting is a trio of integers that sets thresholds for the TCP/IP stack's memory use.
+You can view the current `tcp_mem` settings by running the following command:
+
+[source,sh]
+----
+cat /proc/sys/net/ipv4/tcp_mem
+----
+
+NOTE: Even though `tcp_mem` appears within the `ipv4` directory, it applies to both IPv4 and IPv6 traffic.
+There's no separate `tcp_mem` setting for IPv6.
+
+The command returns 3 integer values representing memory thresholds in pages.
+The following output is from a system with 8{nbsp}GB of RAM:
+
+[source,console]
+----
+93933	125246	187866
+----
+
+The 3 values in `tcp_mem` are:
+
+* The minimum threshold: When the total memory used by all TCP sockets is less than this value, the TCP/IP stack stops taking steps to reduce its memory use.
+* The pressure threshold: When the TCP/IP stack's memory use exceeds this value, the TCP/IP stack starts taking steps to reduce its memory use.
+For example, it minimizes the amount of memory it allocates for TCP/IP windows, buffers, and incoming packets and aggressively frees buffers for closing sockets.
+
++
+These measures can affect network performance.
+Symptoms of the TCP/IP memory use being under pressure include increased latency and limited throughput.
+The TCP/IP stack continues to apply these measures until its memory use drops to less than the minimum threshold.
+
+* The maximum threshold: If the TCP/IP stack's memory use reaches this limit, the kernel prevents it from allocating more memory. 
+This limit results in dropped packets and refused connections.
+The kernel also begins logging Out Of Memory (OOM) errors to the system log.
+For example, you may see the following message in the `dmesg` log:
+
++
+[source,console]
+----
+TCP: out of memory -- consider tuning tcp_mem
+----
+
+[IMPORTANT] 
+====
+The values returned by the command (and the values you use to set these thresholds) represent the limits in number of memory pages, not bytes.
+The size of a Linux kernel memory page is typically 4{nbsp}KB, but it can vary depending on the system architecture and configuration.
+You can verify the memory page size on your system by running the following command:
+
+[source,sh]
+----
+getconf PAGE_SIZE
+----
+
+It returns the number of bytes in a memory page.
+For example, it returns `4096` for 4 KB pages.
+To convert the `tcp_mem` values from pages to bytes, multiply each value by the page size.
+For example, if the page size is 4{nbsp}KB (4096 bytes), the above `tcp_mem` values in bytes are `384749568 513007616 769499136`.
+====
+
+== Recommended tcp_mem Settings
+
+The best setting for `tcp_mem` on a Couchbase Server node is between 5% and 10% of the total RAM.
+Most Linux distributions set their `tcp_mem` values to this range.
+Before you install Couchbase Server, verify that the `tcp_mem` value on your system is within 5% to 10% of the total RAM size.
+You'll need to compare the numbers returned by the `cat /proc/sys/net/ipv4/tcp_mem` command to the recommended range for your system.
+Remember that the `tcp_mem` values are in pages, so you need to convert the amount of RAM reported by your system into pages.
+
+For example, suppose your nodes have 64{nbsp}GB of RAM and 4{nbsp}KB page size.
+To determine what the minimum, pressure, and maximum thresholds should be for a 5% memory limit, you can follow these steps:
+
+. Calculate the total number of bytes in the node's RAM: stem:[64 xx 1024 xx 1024 xx 1024 = 68,719,476,736] bytes.
+. Calculate the total number of memory pages in the system by dividing the total bytes by the page size: stem:["68,719,476,736" / "4,096" = 16,777,216] pages.
+. Calculate the maximum threshold as 5% of the total memory pages: stem:[16,777,216 xx 0.05 = 838,860.8] pages.
+Round the result to the nearest whole number: stem:[838,861] pages. 
+. Calculate the pressure threshold as 90% of the maximum threshold: stem:[838,861 xx 0.90 = 754,974.9] pages.
+Round up to the nearest whole number: stem:[754,975] pages.
+. Calculate the minimum threshold as 80% of the maximum threshold: stem:[838,861 xx 0.80 = 671,088.8] pages.
+Round up to the nearest whole number: stem:[671,089] pages.
+
+As a result, the recommended minimum `tcp_mem` settings for this example are:
+
+* Minimum threshold: 671089
+* Pressure threshold: 754975
+* Maximum threshold: 838861
+
+The calculations for nodes with the same RAM and page size for a 10% memory limit are:
+
+* Minimum threshold: 1342178
+* Pressure threshold: 1509950
+* Maximum threshold: 1677722
+
+You can compare these values to the result of the `cat /proc/sys/net/ipv4/tcp_mem` command.
+If the `tcp_mem` values for your system are less than the recommended range, adjust the `tcp_mem` settings to prevent potential network performance issues.
+
+== Setting tcp_mem
+
+You can change the `tcp_mem` settings temporarily or permanently.
+
+=== Temporarily Set tcp_mem
+
+You can set `tcp_mem` temporarily (until the next reboot), using the `sysctl` command as root:
+
+[source,sh]
+----
+sysctl -w net.ipv4.tcp_mem="<minimum> <pressure> <maximum>"
+----
+
+For example, to set the `tcp_mem` values calculated in the previous section for a 5% memory limit, run the following command:
+
+[source,sh]
+----
+sysctl -w net.ipv4.tcp_mem="671089 754975 838861"
+----
+
+If successful, the command returns the updated setting:
+
+[source,console]
+----
+net.ipv4.tcp_mem = 671089 754975 838861
+----
+
+[#permanent]
+=== Permanently Set tcp_mem
+
+To set `tcp_mem` permanently, add or modify a setting in the Linux `sysctl` configuration. 
+The exact file to edit depends on your Linux distribution.
+Traditionally, you would add the setting to the `/etc/sysctl.conf` file.
+However, recent Linux distributions have deprecated the use of this file in favor of files containing individual settings in the `/etc/sysctl.d/` directory.
+Consult your Linux distribution's documentation for the recommended way to set `sysctl` parameters permanently.
+
+Once you have determined the file to edit, add or modify the following line. 
+Replace the example values with your calculated values:
+
+[source,sh]
+----
+# Adjust tcp_mem settings for Couchbase Server
+net.ipv4.tcp_mem = <minimum> <pressure> <maximum>
+----
+
+For example, to set the `tcp_mem` values calculated in the previous section for a 5% memory limit on a Debian 13 system, you would follow these steps:
+
+. Using your preferred text editor, create a new file named `/etc/sysctl.d/99-couchbase-tcp-mem.conf`.
+. Add the following line to the file:
+
++
+[source,sh]
+----
+# Adjust tcp_mem settings for Couchbase Server
+net.ipv4.tcp_mem = 671089 754975 838861
+----
+
+. Save the file and exit the text editor.
+
+. To apply the new settings without rebooting, run the following command with root privileges:
+
++
+[source,sh]
+----
+sysctl --system
+----
+
++
+This command reloads all `sysctl` settings from the configuration files.
+It prints all the kernel settings, including the updated `net.ipv4.tcp_mem` setting (shown in a truncated form in the following example):
+
++
+[source,console]
+----
+. . .
+net.ipv4.tcp_max_syn_backlog = 512
+net.ipv4.tcp_max_tw_buckets = 32768
+net.ipv4.tcp_mem = 671089 754975 838861
+net.ipv4.tcp_migrate_req = 0
+net.ipv4.tcp_min_rtt_wlen = 300
+. . .
+----
+
+TIP: If you notice that your configuration settings are not having an effect, search for any conflicting settings in other `sysctl` configuration files.
+Conflicts can happen if multiple files set the same parameter with different values.
+The last configuration file that Linux processes takes precedence.
+For example, if both `/etc/sysctl.conf` and a file in `/etc/sysctl.d/` set `net.ipv4.tcp_mem`, the kernel may use the value from `/etc/sysctl.conf`.
+This setting takes precedence because some Linux distributions process that file last.
