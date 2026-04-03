@@ -105,14 +105,30 @@ To upgrade a cluster, you must individually upgrade each node in turn.
 You must select the upgrade procedure for the cluster depending on whether the cluster needs to continue or cease serving data during the cluster-upgrade.
 A review of the factors that determine the appropriateness of an upgrade-procedure is provided in xref:install:upgrade-procedure-selection.adoc[Upgrade Procedure-Selection].
 
+
+[#version-numbers]
+== Couchbase Server Version Numbers
+
+When upgrading, you need to consider the version numbers of the server that you're upgrading from and to.
+Not all versions of Couchbase Server can be directly upgraded to all later versions.
+Also, the version numbers indicate under what conditions you can downgrade a version upgrade should you encounter problems.
+See <<downgrade>> for more information about downgrading an upgrade.
+
+Couchbase Server uses a 3-number version scheme:
+
+image::couchbase_version_numbers.svg[alt="Couchbase Server 3-digit number scheme example: 8.0.1"]
+
+* The first number is the major version number. 
+* The second number is the minor version number. 
+* The third number is the maintenance or patch version number.
+The terms patch version and maintenance version are interchangeable.
+
 [#supported-upgrade-paths]
 == Upgrade Paths
 
 An upgrade path declares that Couchbase Server supports upgrading from one version to another.
 The tables in the following subsections list upgrade paths for Enterprise Edition and for Couchbase Server Community Edition, respectively.
 Each instance of the{nbsp}`->`{nbsp}sign declares support for the upgrade of the server-version on the left of the sign to the server-version on the right.
-
-
 
 You can perform all supported upgrades with the cluster either offline or online.
 
@@ -222,9 +238,9 @@ Delta Recovery is not supported since the new nodes must be fresh Enterprise Edi
 NOTE: Rolling upgrades from CE to EE are not supported if there are index service nodes running in the cluster.
 
 The Enterprise Edition nodes must be running the same version number of Couchbase Server as the Community Edition nodes that they're replacing, otherwise the upgrade may fail.
-This means you can not upgrade to a newer version of Couchbase Server while also upgrading to Enterprise Edition during the same rolling upgrade.
+This means you can not upgrade to a later version of Couchbase Server while also upgrading to Enterprise Edition during the same rolling upgrade.
 
-If you want to upgrade from an older version of `Community Edition` to a later version of `Enterprise Edition`, you need to perform 2 separate upgrade procedures:
+If you want to upgrade from an earlier version of `Community Edition` to a later version of `Enterprise Edition`, you need to perform 2 separate upgrade procedures:
 
 . Upgrade the entire cluster to Enterprise Edition via a rolling online upgrade
 . Upgrade to the desired version number of Couchbase Server using any supported type of upgrade
@@ -264,11 +280,102 @@ For information, see xref:learn:security/certificates.adoc#node-certificate-vali
 [#downgrade]
 == Downgrade
 
-Once an upgrade of a Couchbase-Server cluster has started,
-you can downgrade to an earlier version of Couchbase Server by using the `swap/rebalance` method:
+If you have issues with an upgrade, you may want to downgrade to the earlier version of Couchbase Server.
+Your ability to downgrade depends on the whether the upgrade was between and major or minor version numbers or a maintenance version.
+See <<version-numbers>> for an explanation of Couchbase Server's version numbering scheme.
 
-. Remove the target node from the cluster, then perform a rebalance on the cluster.
-. Downgrade the target node (or create a new node using the earlier version of Couchbase).
-. Add the node to the cluster and rebalance.
+[#downgrade_major_minor]
+=== Downgrading an Upgrade Between Major or Minor Versions
 
-Once all nodes are running the later version, you can no longer downgrade and you must create an entirely new cluster running the earlier version if application-support needs it.
+When you're upgrading between major or minor versions of Couchbase Server, you can downgrade at any time before you finalize your upgrade.
+
+Examples of a major or minor version upgrade include:
+
+* Upgrading from version 6.6 to version 7.2.3
+* Upgrading from version 7.2.3 to version 7.6.10.
+
+Finalizing an upgrade means that all nodes in the cluster are running the new version of Couchbase Server.
+When you upgrade Couchbase Server on the last node running the prior version,
+Couchbase Server updates all metadata, objects, and structures to any new formats to enable new features. 
+As long as the cluster is running in mixed mode (at least 1 node running a different version), it cannot make these changes.
+
+Use the online downgrade method of downgrading If you choose to downgrade before finalizing an major or minor version upgrade. 
+See <<online-downgrade>> to learn how to perform an online downgrade. 
+
+After you finalize an upgrade between major or minor versions, the new features in the new version become available for use. 
+As long as the cluster is running in mixed mode, you cannot use the new features in the new version. 
+
+After you finalize your upgrade, you cannot roll back your upgrade because
+Couchbase Server cannot roll back the metadata, objects, and structures to their prior formats.
+If your applications have issues with the new version, you can only revert to the earlier version by creating a new cluster running the earlier version and migrating your data to it.
+For this reason, it's vital to test the new version of Couchbase Server with your applications before you finalize your upgrade.
+
+NOTE: If you do need to roll back a finalized upgrade and you have a disaster recovery cluster synced via XDCR, consider switching to it.
+Then you can create a new cluster running the prior version and use it as the disaster recovery cluster or switch back to it after it has synched data.
+
+[#prevent-finalization]
+=== Preventing Finalization
+
+You may want to verify that your entire cluster performs well using the new version of Couchbase Server before you finalize your upgrade.
+You can prevent finalization by adding a small arbiter node to the cluster that runs the earlier version of Couchbase Server. 
+The presence of this node prevents Couchbase Server from finalizing the upgrade because the cluster is running in mixed mode.
+
+An arbiter node does not host any services including the data service, so you can allocate minimal resources to it.
+Couchbase Server 7.6 introduced arbiter nodes. 
+Therefore, you can only use this method if you're upgrading from 7.6.0 or later.  
+See xref:learn:clusters-and-availability/nodes.adoc#adding-arbiter-nodes[] for more about arbiter nodes. 
+
+To add an arbiter node, follow the steps in xref:manage:manage-nodes/join-cluster-and-rebalance.adoc[] and deselect all services when you add the node to the cluster.
+
+The arbiter node prevents the cluster from finalizing the upgrade because it's running a previous version of Couchbase Server.
+While the arbiter node is in place, you can upgrade your regular nodes to the new version of Couchbase Server.
+Then you can verify your application's stability and performance.
+However, the arbiter node also prevents you from using any of the new features in the new version of Couchbase Server.
+
+Once you have verified that the new version of Couchbase Server works well for your applications, remove the arbiter node to finalize the upgrade.
+
+If you find that the new version of Couchbase Server does not work well for your applications, keep the arbiter node in place.
+Then downgrade the other nodes to the earlier version of Couchbase Server.
+Once you have finished updating the nodes, remove the arbiter node to complete the downgrade.
+See <<online-downgrade>> for the steps to take to perform the downgrade.
+
+[#downgrade-maintenance]
+=== Downgrading an Upgrade Between Maintenance or Patch Versions
+
+If you're upgrading between maintenance versions of Couchbase Server, you can downgrade at any time, even after you finalize the upgrade.
+A maintenance or patch version upgrade is an upgrade between versions that have the same major and minor version numbers but different maintenance or patch version numbers.
+For example, an upgrade from version 8.0.0 to version 8.0.1 is a maintenance version upgrade.
+
+The only concern is if you enabled any new features by enabling Developer Preview Mode.
+See xref:developer-preview:preview-mode.adoc[] for more information about Developer Preview Mode and the features it enables.
+If you have enabled Developer Preview Mode, contact Couchbase Customer Support for assistance before attempting to downgrade your cluster.
+
+You downgrade a maintenance version upgrade by performing an online downgrade. 
+See <<online-downgrade>> for more the steps to take.
+
+[#online-downgrade]
+=== Perform an Online Downgrade
+
+You can perform an online downgrade when:
+
+* You're downgrading an upgrade between maintenance or patch versions of Couchbase Server.
+See <<downgrade-maintenance>> for more information.
+* You're downgrading an upgrade between major or minor versions of Couchbase Server and you have not finalized the upgrade.
+See <<downgrade_major_minor>> for more information.
+
+The online downgrade method is similar to an xref:install:upgrade-cluster-online.adoc#online-upgrade-at-reduced-and-full-capacity[online upgrade] procedure. 
+You perform a swap rebalance procedure where you remove a node, downgrade it, and then add it back to the cluster before rebalancing:
+
+. Remove a node from the cluster.
+. Perform a rebalance to complete the removal.
+. On the node you removed, install the earlier version of Couchbase Server.
+. Add the node back to the cluster.
+. Perform a rebalance to complete the addition.
+. Repeat steps 1-5 for each node in the cluster until all nodes are running the earlier version of Couchbase Server.
+. If you added an arbiter node to prevent finalization, remove the arbiter node and perform a rebalance to finalize the downgrade.
+See <<prevent-finalization>> for more information about using an arbiter node to prevent finalization.
+
+NOTE: You cannot use an offline downgrade to roll back an upgrade. 
+An offline downgrade is similar to an offline upgrade, except that you install an earlier version of Couchbase Server instead of a later version.
+See xref:install:upgrade-procedure-selection.adoc#offline-upgrade[Upgrade with Cluster Offline] for more information about online upgrades.
+You also cannot use a graceful failover followed by a full recovery to perform a downgrade.
