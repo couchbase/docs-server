@@ -20,15 +20,15 @@ GET /settings/replications/<settings_URI>
 [#description]
 == Description
 
-Used with the `POST` method, the URIs respectively change global settings for _all_ replications; and for _a specific_ replication, which is referenced by its `settings_URI`.
-The `settings_URI` comprises the _id_ for the replication, and can be retrieved by means of the `GET /pools/default/tasks` method and URI: see xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks].
+Used with the `POST` method, the URIs respectively change global settings for all replications; and for a specific replication, which is referenced by its `settings_URI`.
+The `settings_URI` comprises the id for the replication, and can be retrieved by means of the `GET /pools/default/tasks` method and URI: see xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks].
 
 The global settings are the default values used if settings are not specified during the creation of a particular replication.
 If settings are specified for a particular replication, the specified settings overwrite the global settings.
 
-If the global settings are themselves changed, existing replications are not affected: only replications created _after_ the change made to the global settings receive the updated global settings.
+If the global settings are themselves changed, existing replications are not affected: only replications created after the change made to the global settings receive the updated global settings.
 
-Used with the `GET` method, the URIs respectively retrieve global settings for _all_ replications; and for _a specific_ replication, which is referenced by its `settings_URI`.
+Used with the `GET` method, the URIs respectively retrieve global settings for all replications; and for a specific replication, which is referenced by its `settings_URI`.
 
 
 
@@ -126,6 +126,7 @@ curl -u Administrator:password -X GET http://localhost:8091/settings/replication
 
 If successful, the call returns an object similar to the following:
 
+[source,jsonlines]
 ----
 {
   "cLogConnPoolGCIntervalMs": 60000,
@@ -133,8 +134,10 @@ If successful, the call returns an object similar to the following:
   "cLogConnPoolReapIntervalMs": 120000,
   "cLogErrorTimeWindowMs": 120000,
   "cLogMaxErrorCount": 10,
+  "cLogMonitorDuration": 0,
   "cLogNetworkRetryCount": 5,
   "cLogNetworkRetryIntervalMs": 2000,
+  "cLogPauseReplThreshold": 0,
   "cLogPoolGetTimeoutMs": 5000,
   "cLogQueueCapacity": 6000,
   "cLogReattemptDurationMs": 600000,
@@ -143,11 +146,17 @@ If successful, the call returns an object similar to the following:
   "casDriftThresholdSecs": 3900,
   "checkpointInterval": 600,
   "ckptSvcCacheEnabled": true,
+  "cngConnCount": 2,
+  "cngQueueSize": 1000,
+  "cngRPCDeadlineMs": 5000,
+  "cngWorkerCount": 500,
   "collectionsOSOMode": true,
+  "componentEventsChanLength": 10000,
   "compressionType": "Auto",
-  "conflictLogging": {},
   "dcpEnablePurgeRollback": false,
+  "dcpFlowControlThrottle": 100,
   "desiredLatency": 50,
+  "devReplOpts": "",
   "disableHlvBasedShortCircuit": false,
   "docBatchSizeKb": 2048,
   "failureRestartInterval": 10,
@@ -155,16 +164,18 @@ If successful, the call returns an object similar to the following:
   "filterBypassExpiry": false,
   "filterBypassUncommittedTxn": false,
   "filterDeletion": false,
+  "filterDeletionsWithExpression": false,
   "filterExpiration": false,
+  "filterExpirationsWithExpression": false,
   "genericServicesLogLevel": {
-    < ... diagnostic items cut out due to length ... >
-    },
+    // < ... diagnostic items cut out due to length ... >
+  },
   "goGC": 100,
   "goMaxProcs": 4,
   "jsFunctionTimeoutMs": 20000,
   "logLevel": "Info",
   "mergeFunctionMapping": {},
-  "mobile": "Off",
+  "minHLVHistoryLenForMobile": 5,
   "networkUsageLimit": 0,
   "optimisticReplicationThreshold": 256,
   "preCheckCasDriftThresholdHours": 8760,
@@ -176,7 +187,6 @@ If successful, the call returns an object similar to the following:
   "retryOnRemoteAuthErrMaxWaitSec": 360,
   "skipReplSpecAutoGc": false,
   "sourceNozzlePerNode": 2,
-  "targetTopologyLogFrequency": 1800,
   "statsInterval": 1000,
   "targetNozzlePerNode": 2,
   "targetTopologyLogFrequency": 1800,
@@ -423,7 +433,7 @@ curl -X POST -u Administrator:password http://localhost:8091/<settings_URI> -d m
 
 For information about _XDCR with Sync Gateway mobile clusters in a bi-directional, active-active replication_, see xref:learn:clusters-and-availability/xdcr-active-active-sgw.adoc[XDCR Active-Active with Sync Gateway].
 
-===== Change Settings for XDCR Generic Services Log Levels
+=== Change Settings for XDCR Generic Services Log Levels
 
 The following example modifies the log levels for XDCR Generic Services, for a specific replication.
 Usually, you modify the log levels only when requested by Couchbase Support.
@@ -519,6 +529,21 @@ This setting can only be established for and retrieved from an individual replic
 | Whether the replication optimizes performance; by streaming, from a source bucket, mutations that could be out of order, in terms of sequence-number.
 Default is true.
 
+| `componentEventsChanLength`
+| Integer (1000 to 10000)
+a| Default: 10000 
+
+Sets the default length of the channels being used by event-listeners to buffer various internal events before processing.
+
+
+NOTE: By decreasing this value, the replication throughput will be throttled in favour of a lower memory footprint.
+See xref:xdcr-reference:xdcr-lowering-memory-footprint.adoc[] for more information.
+
+ 
+
+This setting can be established and retrieved either for an individual replication or globally.
+
+
 | `compressionType`
 | String
 | Default: `Auto`.
@@ -533,7 +558,23 @@ This setting can be established and retrieved either for an individual replicati
 
 This configuration setting defines objects/parameters and options used to control how conflicts are logged during an XDCR replication.
 
-For more  information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#configure-conflictlogging-settings[Enabling and Configuring Conflict Logging].
+For more information, see xref:learn:clusters-and-availability/xdcr-conflict-logging-feature.adoc#configure-conflictlogging-settings[Enabling and Configuring Conflict Logging].
+
+| `dcpFlowControlThrottle`
+
+| Integer (5 to 100)
+a| Default: 100
+
+The percentage applied to the default value for both: 
+
+. The `connection_buffer_size` set by XDCR replication for the DCP connection to KV (1024*1024 bytes by default)
+. Length of the channel used by XDCR replication to buffer incoming items (over the DCP connection) from KV (20000 by default)
+
+NOTE: By decreasing this percentage value, the replication throughput is throttled in favor of a lower memory footprint. 
+See xref:xdcr-reference:xdcr-lowering-memory-footprint.adoc[] for more information.
+
+This setting can be established and retrieved either for an individual replication or globally.
+
 
 | `desiredLatency`
 | Integer
