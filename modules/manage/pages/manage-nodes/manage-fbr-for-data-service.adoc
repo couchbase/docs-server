@@ -1,44 +1,47 @@
 = File-Based Rebalance for Data Service
 :description: pass:q[]
 :page-toclevels: 3
+:page-edition: Enterprise Edition
 
 [abstract]
 {description}
 
-== *What's New*
+== What's New
 
 Couchbase Server 8.1 introduces File-Based Rebalance (FBR) for the Data Service.
 FBR accelerates cluster rebalance by copying vBucket storage files directly between nodes rather than streaming data through the DCP
 (Database Change Protocol) replication pipeline.
 This eliminates the serialization and pipeline overhead of DCP backfill for large, disk-resident datasets.
 
-The following changes apply to the Data Service rebalance behavior in
-8.1:
+The following changes apply to the Data Service rebalance behavior in 8.1:
 
-* *File-Based Rebalance overview.* FBR transfers vBucket data files directly from the source node to the destination node during the
-backfill phase of a vBucket move, bypassing the full DCP backfill mechanism used in prior releases.
-* *Enabled by default.* FBR is enabled by default for Enterprise Edition, both for self-managed deployments and Couchbase Capella.
+* *File-Based Rebalance*: FBR transfers vBucket data files directly from the source node to the destination node during the backfill phase of a vBucket move,
+bypassing the full DCP backfill mechanism used in prior releases.
+
+* *Enabled by default*: FBR is enabled by default for Enterprise Edition, both for self-managed deployments and Couchbase Capella.
 No configuration is required to activate it.
-* *Automatic rebalance type selection.* The server automatically determines whether FBR or DCP is more efficient for each vBucket move.
+
+* *Automatic rebalance type selection*: The server automatically determines whether FBR or DCP is more efficient for each vBucket move.
 When FBR is not applicable or not expected to be faster, the server falls back to DCP automatically.
-* *New bucket-level rebalance type setting.* A new per-bucket setting, dataServiceRebalanceType, allows operators to control rebalance behavior
-at the bucket level, overriding the cluster-level FBR setting.
-* *Separate vBucket move concurrency for FBR.* A new setting, dataServiceFileBasedRebalanceMovesPerNode, controls the maximum number
+
+* *New bucket-level rebalance type setting*: A new per-bucket setting, dataServiceRebalanceType,
+allows operators to control rebalance behavior at the bucket level, overriding the cluster-level FBR setting.
+
+* *Separate vBucket move concurrency for FBR*: A new setting, dataServiceFileBasedRebalanceMovesPerNode, controls the maximum number
 of concurrent file-based vBucket moves per node. This is independent of the existing rebalance_moves_per_node setting, which applies to DCP rebalance.
 
-NOTE: FBR is an Enterprise Edition feature. Community Edition
-continues to use DCP-based rebalance for all vBucket moves.
+NOTE: FBR is an Enterprise Edition feature. Community Edition continues to use DCP-based rebalance for all vBucket moves.
 
-== *(Learn section) Data Service File-Based Rebalance*
+== (Learn section) Data Service File-Based Rebalance
 
 This section supplements the existing Rebalancing the Data Service content.
 It describes how FBR works, how it differs from DCP rebalance, when each method is used, and the performance improvement it delivers.
 
-=== *DCP Rebalance vs File-Based Rebalance*
+=== DCP Rebalance vs File-Based Rebalance
 
 Prior to Couchbase Server 8.1, all Data Service rebalances used DCP backfill.
-During a DCP rebalance, each vBucket's data is read from disk on the source node, transmitted through the DCP streaming protocol over
-the network, and written to disk on the destination node.
+During a DCP rebalance, each vBucket's data is read from disk on the source node, transmitted through the DCP streaming protocol over the network,
+and written to disk on the destination node.
 This approach is reliable but introduces overhead proportional to the number of items in the dataset,
 because each document must be deserialized, transmitted, and re-serialized.
 
@@ -49,145 +52,113 @@ making rebalance time proportional to data size rather than document count.
 [width="100%",cols="25%,36%,39%",options="header",]
 |===
 |*Aspect* |*DCP Rebalance* |*File-Based Rebalance (FBR)*
-|Transfer mechanism |Stream documents through DCP pipeline |Copy storage
-files directly over the network
+|Transfer mechanism |Stream documents through DCP pipeline
+|Copy storage files directly over the network
 
-|Time scales with |Number of items in the dataset |Size of data on disk
+|Time scales with
+|Number of items in the dataset
+|Size of data on disk
 
-|CPU overhead |Higher , serialization on source, deserialization on
-destination |Lower , file copy with no document processing
+|CPU overhead
+|Higher , serialization on source, deserialization on destination
+|Lower , file copy with no document processing
 
-|Best suited for |Small datasets, storage migration, ephemeral buckets
+|Best suited for
+|Small datasets, storage migration, ephemeral buckets
 |Large disk-resident (DGM) datasets, swap rebalance, rebalance-in
 
-|Enterprise Edition only |No , available in all editions |Yes , EE only
+|Enterprise Edition only
+|No , available in all editions
+|Yes , EE only
 
-|Default in 8.1 |Fallback when FBR is not applicable |Default for all
-eligible vBucket moves
+|Default in 8.1
+|Fallback when FBR is not applicable
+|Default for all eligible vBucket moves
 |===
 
-=== *Backfill and Takeover Phases*
+=== Backfill and Takeover Phases
 
 A vBucket move during rebalance consists of two phases:
 
-* *Backfill.* Historical data is transferred from the source node to the
-destination node. In 8.1, FBR is used for this phase when enabled and
-applicable. FBR significantly reduces the time required to complete
-backfill for large, disk-resident datasets.
-* *Takeover.* The destination node becomes the active owner of the
-vBucket. The takeover phase always uses DCP, regardless of whether FBR
-was used for backfill.
+* *Backfill*: Historical data is transferred from the source node to the destination node.
+In 8.1, FBR is used for this phase when enabled and applicable.
+FBR significantly reduces the time required to complete backfill for large, disk-resident datasets.
 
-Because takeover always uses DCP, the DCP rebalance infrastructure
-remains fully operational in 8.1. FBR is an optimization of the backfill
-phase only.
+* *Takeover*: The destination node becomes the active owner of the vBucket.
+The takeover phase always uses DCP, regardless of whether FBR was used for backfill.
 
-=== *When DCP Rebalance Is Required*
+Because takeover always uses DCP, the DCP rebalance infrastructure remains fully operational in 8.1.
+FBR is an optimization of the backfill phase only.
 
-Even when FBR is enabled at both the cluster and bucket levels, the
-server automatically uses DCP rebalance in the following situations:
+=== When DCP Rebalance Is Required
 
-* Storage engine migration between Couchstore and Magma. Migrating the
-storage format requires a full data reload, which is only possible
-through DCP.
-* Eviction policy changes. Changing a bucket's eviction policy requires
-data to be reprocessed during rebalance, which requires DCP.
-* Ephemeral buckets. Ephemeral buckets store data entirely in memory and
-have no persistent storage files for FBR to copy.
-* Scenarios where DCP is estimated to be faster. When the server
-determines that DCP rebalance is likely to complete at least 10% faster
-than FBR , for example, when the data resident ratio is 100% , the
-server automatically selects DCP.
+Even when FBR is enabled at both the cluster and bucket levels, the server automatically uses DCP rebalance in the following situations:
 
-NOTE: The server's automatic selection logic ensures that DCP is used
-whenever it is required or more efficient. Operators do not need to
-manually switch methods for these scenarios.
+* Storage engine migration between Couchstore and Magma.
+Migrating the storage format requires a full data reload, which is only possible through DCP.
 
-=== *Performance*
+* Eviction policy changes.
+Changing a bucket's eviction policy requires data to be reprocessed during rebalance, which requires DCP.
 
-The primary goal of FBR is to deliver significant, not merely
-incremental, improvements to rebalance speed for large datasets. The
-target throughput is 1 TB of data movement in 30 minutes.
+* Ephemeral buckets.
+Ephemeral buckets store data entirely in memory and have no persistent storage files for FBR to copy.
 
-Rebalance time scales proportionally with the amount of data on disk and
-is independent of item count. Throughput depends on the available
-network bandwidth, disk IOPS, and CPU resources on the participating
-nodes.
+* Scenarios where DCP is estimated to be faster.
+When the server determines that DCP rebalance is likely to complete at least 10% faster than FBR , for example,
+when the data resident ratio is 100% , the server automatically selects DCP.
 
-The following results compare Couchbase Server 8.0 (DCP rebalance) with
-8.1 (FBR enabled) on standard benchmark scenarios. Tests used 1 billion
-documents at 1 KB each, 15,000 ops/sec at a 90/10 read/write ratio, and
-a 10% cache miss rate.
+NOTE: The server's automatic selection logic ensures that DCP is used whenever it is required or more efficient.
+Operators do not need to manually switch methods for these scenarios.
 
-[width="100%",cols="31%,12%,13%,13%,13%,18%",options="header",]
-|===
-|*Scenario* |*Nodes* |*Data Moved* |*8.0 (DCP)* |*8.1 (FBR)*
-|*Improvement*
-|Swap rebalance , Magma, DGM, 10% RR |4 → 4 |250 GB |56.6 min |30.6 min
-|~46%
+=== Performance
 
-|Rebalance-out , Magma, DGM, 10% RR |5 → 4 |200 GB |15.5 min |15.0 min
-|~3%
+The primary goal of FBR is to deliver significant, not merely incremental, improvements to rebalance speed for large datasets.
+The target throughput is 1 TB of data movement in 30 minutes.
 
-|Rebalance-out , Magma, 2.4% RR |3 → 2 |250 GB |11.1 min |8.3 min |~25%
+Rebalance time scales proportionally with the amount of data on disk and is independent of item count.
+Throughput depends on the available network bandwidth, disk IOPS, and CPU resources on the participating nodes.
 
-|Rebalance-out , Magma, 2% RR |5 → 4 |~1 TB |18.9 min |10.0 min |~47%
-|===
+NOTE: Performance varies by scenario, storage engine, resident ratio, and hardware.
+Workloads with lower resident ratios (disk-greater-than-memory) show the greatest benefit from FBR.
 
-NOTE: Performance varies by scenario, storage engine, resident ratio,
-and hardware. Workloads with lower resident ratios
-(disk-greater-than-memory) show the greatest benefit from FBR.
+=== Concurrent vBucket Moves
 
-=== *Concurrent vBucket Moves*
+The default number of concurrent vBucket moves for DCP rebalance is controlled by the existing rebalance_moves_per_node setting.
+In Couchbase Server 8.1, FBR uses a separate concurrent moves setting, `dataServiceFileBasedRebalanceMovesPerNode`.
 
-The default number of concurrent vBucket moves for DCP rebalance is
-controlled by the existing rebalance_moves_per_node setting. In
-Couchbase Server 8.1, FBR uses a separate concurrent moves setting:
-dataServiceFileBasedRebalanceMovesPerNode.
+The default value for both settings is 4.
+They are independent, changing the DCP concurrent moves value does not affect FBR concurrent moves, and vice versa.
+See the Manage section for configuration details.
 
-The default value for both settings is 4. They are independent: changing
-the DCP concurrent moves value does not affect FBR concurrent moves, and
-vice versa. See the Manage section for configuration details.
+== (Manage section) General Settings
 
-== *(Manage section) General Settings*
+=== Rebalance Settings from the UI (Configure General Settings)
 
-=== *Rebalance Settings from the UI (Configure General Settings)*
+In Couchbase Server 8.1, the Rebalance Settings section of the General Settings UI has been updated to reflect the addition of FBR.
+The Retry Rebalance subsection, which earlier applied only to DCP rebalance, now applies to both DCP and FBR rebalance types.
 
-In Couchbase Server 8.1, the Rebalance Settings section of the General
-Settings UI has been updated to reflect the addition of FBR. The Retry
-Rebalance subsection, which previously applied only to DCP rebalance,
-now applies to both DCP and FBR rebalance types.
+The updated UI includes separate controls for DCP and FBR concurrent vBucket moves:
 
-The updated UI includes separate controls for DCP and FBR concurrent
-vBucket moves:
+* *Maximum Concurrent vBucket Moves (DCP)*: Controls the rebalance_moves_per_node setting.
+Default: 4.
+This setting applies to DCP-based vBucket moves.
 
-* *Maximum Concurrent vBucket Moves (DCP).* Controls the
-rebalance_moves_per_node setting. Default: 4. This setting applies to
-DCP-based vBucket moves.
+* *Maximum Concurrent vBucket Moves (File-Based)*: Controls the `dataServiceFileBasedRebalanceMovesPerNode` setting.
+Default: 4.
+Range: 1 to 1024.
+This setting applies to FBR-based vBucket moves.
 
-* *Maximum Concurrent vBucket Moves (File-Based).* Controls the
-dataServiceFileBasedRebalanceMovesPerNode setting. Default: 4. Range: 1
-to 1024. This setting applies to FBR-based vBucket moves.
+=== Retry Rebalance for DCP and FBR
 
-NOTE: A UI screenshot update is required for 8.1 to show both the DCP
-and FBR concurrent move fields in the Rebalance Settings panel. See the
-relevant Jira ticket for the updated screenshot.
+The Retry Rebalance feature, which allows the server to automatically retry a failed rebalance, applies to both DCP and FBR rebalance types in Couchbase Server 8.1.
+No separate configuration is required.
+Retry behavior is the same regardless of which rebalance method was used for the failed attempt.
 
-=== *Retry Rebalance for DCP and FBR*
+=== Maximum Concurrent vBucket Moves from REST API
 
-The Retry Rebalance feature, which allows the server to automatically
-retry a failed rebalance, applies to both DCP and FBR rebalance types in
-Couchbase Server 8.1. No separate configuration is required. Retry
-behavior is the same regardless of which rebalance method was used for
-the failed attempt.
+The existing REST API endpoint for configuring maximum concurrent vBucket moves has been updated in 8.1 to include the FBR-specific parameter.
 
-=== *Maximum Concurrent vBucket Moves from REST API*
-
-The existing REST API endpoint for configuring maximum concurrent
-vBucket moves has been updated in 8.1 to include the FBR-specific
-parameter.
-
-==== *Get current settings*
+==== Get current settings
 
 [source]
 ----
@@ -214,7 +185,7 @@ ____
 }
 ____
 
-==== *Set FBR concurrent moves*
+==== Set FBR concurrent moves
 
 [source]
 ----
@@ -232,78 +203,75 @@ dataServiceFileBasedRebalanceMovesPerNode=8
 [width="100%",cols="41%,11%,13%,8%,27%",options="header",]
 |===
 |*Parameter* |*Type* |*Default* |*Range* |*Description*
-|dataServiceFileBasedRebalanceMovesPerNode |Integer |4 |1–1024 |Maximum
-number of concurrent file-based vBucket moves per node. Independent of
-rebalance_moves_per_node (DCP). Increase during maintenance windows when
-additional resources are available; reduce to limit rebalance impact on
-application workloads.
 
-|rebalance_moves_per_node |Integer |4 |1–64 |Maximum number of
-concurrent DCP-based vBucket moves per node. Unchanged from prior
-releases. Applies to DCP rebalance only.
+|dataServiceFileBasedRebalanceMovesPerNode 
+|Integer 
+|4 
+|1–1024 
+|Maximum number of concurrent file-based vBucket moves per node.
+Independent of rebalance_moves_per_node (DCP).
+Increase during maintenance windows when additional resources are available; reduce to limit rebalance impact on application workloads.
+
+|rebalance_moves_per_node
+|Integer
+|4
+|1–64 
+|Maximum number of concurrent DCP-based vBucket moves per node.
+Unchanged from prior releases.
+Applies to DCP rebalance only.
 |===
 
-For related node and bucket rebalance configuration, see Manage Nodes
-and Clusters and Manage Buckets.
+For related node and bucket rebalance configuration, see Manage Nodes and Clusters and Manage Buckets.
 
-== *(Manage section) Add a Node and Rebalance*
+== (Manage section) Add a Node and Rebalance
 
-The Add a Node and Rebalance workflow is unchanged in Couchbase Server
-8.1. When a node is added to a cluster and rebalance is initiated
-through the UI or REST API, FBR is used automatically for eligible
-vBucket moves if the cluster-level setting
-dataServiceFileBasedRebalanceEnabled is true (the default).
+The Add a Node and Rebalance workflow is unchanged in Couchbase Server 8.1.
+When a node is added to a cluster and rebalance is initiated through the UI or REST API,
+FBR is used automatically for eligible vBucket moves if the cluster-level setting `dataServiceFileBasedRebalanceEnabled` is `true` (the default).
 
 No additional steps are required to benefit from FBR when adding nodes.
-The server selects the optimal rebalance method for each vBucket move
-transparently.
+The server selects the optimal rebalance method for each vBucket move transparently.
 
-For information on configuring concurrent FBR vBucket moves for
-rebalance operations, see *Section 3.3*. For bucket-level rebalance type
-overrides, see *Section 5*.
+== (Manage section) Bucket-Level Rebalance Type
 
-NOTE: This section will be updated with specific UI or procedural
-changes once they are finalized for 8.1. Refer to the Jira tracking
-ticket for current status.
+In Couchbase Server 8.1, each bucket has a new setting that controls the rebalance method used for its vBucket moves.
+This bucket-level setting takes precedence over the cluster-level `dataServiceFileBasedRebalanceEnabled` setting,
+allowing operators to configure FBR behavior differently across buckets.
 
-== *(Manage section) Bucket-Level Rebalance Type*
-
-In Couchbase Server 8.1, each bucket has a new setting that controls the
-rebalance method used for its vBucket moves. This bucket-level setting
-takes precedence over the cluster-level
-dataServiceFileBasedRebalanceEnabled setting, allowing operators to
-configure FBR behavior differently across buckets.
-
-=== *dataServiceRebalanceType Values*
+=== dataServiceRebalanceType Values
 
 [width="100%",cols="26%,59%,15%",options="header",]
 |===
 |*Value* |*Behavior* |*Default*
-|auto |The server automatically selects FBR or DCP for each vBucket move
-based on which is expected to be faster. FBR is used when it is
-estimated to complete at least 10% faster than DCP. This is the
-recommended setting for most workloads. |Yes
 
-|preferFileBased |FBR is used for all eligible vBucket moves. DCP is
-used only when required, for example, during storage engine migration
-(Couchstore to Magma or vice versa) or when the eviction policy is
-changed. This setting maximizes FBR usage. |No
+|`auto` 
+|The server automatically selects FBR or DCP for each vBucket move based on which is expected to be faster.
+FBR is used when it is estimated to complete at least 10% faster than DCP.
+This is the recommended setting for most workloads. 
+|Yes
 
-|preferDcp |FBR is disabled for this bucket. All rebalance moves for
-this bucket use DCP, regardless of the cluster-level FBR setting. Use
-this value if a specific bucket must always use DCP rebalance. |No
+|`preferFileBased` 
+|FBR is used for all eligible vBucket moves. 
+DCP is used only when required, for example, during storage engine migration (Couchstore to Magma or vice versa) or when the eviction policy is changed. 
+This setting maximizes FBR usage. 
+|No
+
+|`preferDcp` 
+|FBR is disabled for this bucket. 
+All rebalance moves for this bucket use DCP, regardless of the cluster-level FBR setting. 
+Use this value if a specific bucket must always use DCP rebalance. 
+|No
 |===
 
-NOTE: Setting dataServiceRebalanceType to preferDcp disables FBR for
-that bucket only. Other buckets in the cluster continue to use their own
-settings. The cluster-level setting is not affected.
+NOTE: Setting dataServiceRebalanceType to `preferDcp` disables FBR for that bucket only. 
+Other buckets in the cluster continue to use their own settings. 
+The cluster-level setting is not affected.
 
-=== *Bucket-Level Setting using REST API*
+=== Bucket-Level Setting using REST API
 
-Use the bucket management REST API to set or update the rebalance type
-when creating or editing a bucket.
+Use the bucket management REST API to set or update the rebalance type when creating or editing a bucket.
 
-==== *Create a bucket with a specific rebalance type*
+==== Create a bucket with a specific rebalance type
 
 [source]
 ----
@@ -318,7 +286,7 @@ Content-Type: application/x-www-form-urlencoded
 name=myBucket&ramQuotaMB=1024&dataServiceRebalanceType=auto
 ----
 
-==== *Update the rebalance type on an existing bucket*
+==== Update the rebalance type on an existing bucket
 
 [source]
 ----
@@ -333,7 +301,7 @@ Content-Type: application/x-www-form-urlencoded
 dataServiceRebalanceType=preferFileBased
 ----
 
-==== *Get current bucket settings*
+==== Get current bucket settings
 
 [source]
 ----
@@ -346,7 +314,6 @@ Authorization: Basic <credentials>
 
 The response includes the dataServiceRebalanceType field:
 
-____
 {
 
 "name": "myBucket",
@@ -356,45 +323,41 @@ ____
 ...
 
 }
-____
 
 [width="100%",cols="23%,12%,13%,13%,39%",options="header",]
 |===
 |*Parameter* |*Type* |*Default* |*Valid Values* |*Description*
-|dataServiceRebalanceType |String |auto |auto \| preferFileBased \|
-preferDcp |Controls the rebalance method for this bucket's vBucket
-moves. Overrides the cluster-level dataServiceFileBasedRebalanceEnabled
-setting. See Section 5.1 for value descriptions.
+
+|dataServiceRebalanceType 
+|String 
+|auto 
+|auto \| preferFileBased \
+|preferDcp |Controls the rebalance method for this bucket's vBucket moves. 
+Overrides the cluster-level dataServiceFileBasedRebalanceEnabled setting. 
 |===
 
-For the cluster-level FBR enable/disable setting and concurrent move
-configuration, see *Section 3*. For the REST API parameter reference,
-see *Section 6*.
 
-== *(Reference section) Data Service Rebalance APIs*
+== (Reference section) Data Service Rebalance APIs
 
-This section documents the REST API parameters introduced for Data
-Service File-Based Rebalance in Couchbase Server 8.1. The parameters are
-accessible through two existing endpoints:
+This section documents the REST API parameters introduced for Data Service File-Based Rebalance in Couchbase Server 8.1. 
+The parameters are accessible through two existing endpoints:
 
-____
-• */internalSettings:* Cluster-level FBR settings (EE only, not
-configurable in Capella UI).
+* */internalSettings:*
+Cluster-level FBR settings (EE only, not configurable in Capella UI).
 
-• */pools/default/buckets/{bucket}:* Bucket-level rebalance type
-setting.
-____
+* */pools/default/buckets/{bucket}:* 
+Bucket-level rebalance type setting.
 
-NOTE: These parameters are Enterprise Edition only. They have no
-effect on Community Edition clusters. The /internalSettings parameters
-are not exposed in the Couchbase Capella UI.
+NOTE: These parameters are Enterprise Edition only. 
+They have no effect on Community Edition clusters. 
+The /internalSettings parameters are not exposed in the Couchbase Capella UI.
 
-=== *Cluster-Level Settings for /internalSettings*
+=== Cluster-Level Settings for /internalSettings
 
-The /internalSettings endpoint is used to read and write internal
-cluster configuration. In 8.1, it exposes two new parameters for FBR.
+The /internalSettings endpoint is used to read and write internal cluster configuration. 
+In 8.1, it exposes two new parameters for FBR.
 
-==== *GET /internalSettings to retrieve FBR settings*
+==== GET /internalSettings to retrieve FBR settings
 
 [source]
 ----
@@ -407,7 +370,6 @@ Authorization: Basic <credentials>
 
 Response (relevant fields):
 
-____
 {
 
 "dataServiceFileBasedRebalanceEnabled": true,
@@ -417,9 +379,9 @@ ____
 ...
 
 }
-____
 
-==== *POST /internalSettings to update FBR settings*
+
+==== POST /internalSettings to update FBR settings
 
 [source]
 ----
@@ -439,24 +401,28 @@ dataServiceFileBasedRebalanceEnabled=true
 [width="100%",cols="39%,16%,12%,33%",options="header",]
 |===
 |*Parameter* |*Type* |*Default* |*Description*
-|dataServiceFileBasedRebalanceEnabled |Boolean |true |Enables (true) or
-disables (false) FBR at the cluster level. When false, all Data Service
-rebalances use DCP regardless of bucket-level settings. EE only.
 
-|dataServiceFileBasedRebalanceMovesPerNode |Integer (1–1024) |4 |Maximum
-number of concurrent file-based vBucket moves per node during rebalance.
-Independent of rebalance_moves_per_node (DCP). Increase during scheduled
-maintenance to speed up rebalance; decrease to reduce impact on running
-workloads. EE only.
+|`dataServiceFileBasedRebalanceEnabled` 
+|Boolean 
+|true 
+|Enables (true) or disables (false) FBR at the cluster level. 
+When false, all Data Service rebalances use DCP regardless of bucket-level settings. 
+EE only.
+
+|`dataServiceFileBasedRebalanceMovesPerNode` 
+|Integer (1–1024) 
+|4 
+|Maximum number of concurrent file-based vBucket moves per node during rebalance.
+Independent of rebalance_moves_per_node (DCP). 
+Increase during scheduled maintenance to speed up rebalance; decrease to reduce impact on running workloads. 
+EE only.
 |===
 
-=== *Bucket-Level Settings for /pools/default/buckets/{bucket}*
+=== Bucket-Level Settings for /pools/default/buckets/{bucket}
 
-The standard bucket management endpoint accepts the
-dataServiceRebalanceType parameter on both POST (create or update) and
-returns it in GET (read) responses.
+The standard bucket management endpoint accepts the dataServiceRebalanceType parameter on both POST (create or update) and returns it in GET (read) responses.
 
-==== *POST /pools/default/buckets/{bucket} to set rebalance type*
+==== POST /pools/default/buckets/{bucket} to set rebalance type
 
 [source]
 ----
@@ -471,7 +437,7 @@ Content-Type: application/x-www-form-urlencoded
 dataServiceRebalanceType=preferFileBased
 ----
 
-==== *GET /pools/default/buckets/{bucket} to read rebalance type*
+==== GET /pools/default/buckets/{bucket} to read rebalance type
 
 [source]
 ----
@@ -484,7 +450,6 @@ Authorization: Basic <credentials>
 
 Response (relevant field):
 
-____
 {
 
 "name": "myBucket",
@@ -494,29 +459,50 @@ ____
 ...
 
 }
-____
+
 
 [width="100%",cols="29%,7%,9%,16%,39%",options="header",]
 |===
 |*Parameter* |*Type* |*Default* |*Valid Values* |*Description*
-|dataServiceRebalanceType |String |auto |auto \| preferFileBased \|
-preferDcp |Per-bucket rebalance type. auto: server selects the faster
-method. preferFileBased: use FBR unless DCP is required. preferDcp:
-always use DCP for this bucket. Bucket-level setting overrides the
-cluster-level dataServiceFileBasedRebalanceEnabled value.
+
+|dataServiceRebalanceType 
+|String 
+|auto 
+|auto \
+| preferFileBased \
+
+|preferDcp 
+|Per-bucket rebalance type. 
+|auto: server selects the faster method. 
+|preferFileBased: use FBR unless DCP is required. 
+|preferDcp: always use DCP for this bucket. 
+Bucket-level setting overrides the cluster-level dataServiceFileBasedRebalanceEnabled value.
 |===
 
-=== *Quick Reference for all FBR Parameters*
+=== Quick Reference for all FBR Parameters
 
 [width="100%",cols="32%,26%,12%,16%,8%,6%",options="header",]
 |===
 |*Parameter* |*Endpoint* |*Method* |*Type* |*Default* |*EE Only*
-|dataServiceFileBasedRebalanceEnabled |/internalSettings |GET / POST
-|Boolean |true |Yes
 
-|dataServiceFileBasedRebalanceMovesPerNode |/internalSettings |GET /
-POST |Integer 1–1024 |4 |Yes
+|dataServiceFileBasedRebalanceEnabled 
+|/internalSettings 
+|GET / POST
+|Boolean 
+|true 
+|Yes
 
-|dataServiceRebalanceType |/pools/default/buckets/{bucket} |GET / POST
-|String |auto |Yes
+|dataServiceFileBasedRebalanceMovesPerNode 
+|/internalSettings 
+|GET /POST 
+|Integer 1–1024 
+|4 
+|Yes
+
+|dataServiceRebalanceType 
+|/pools/default/buckets/{bucket} 
+|GET / POST
+|String 
+|auto 
+|Yes
 |===
