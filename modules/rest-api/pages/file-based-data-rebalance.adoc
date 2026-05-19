@@ -1,0 +1,217 @@
+= Configure File-Based Data Rebalance
+:description: pass:q[You control Data Service File-Based Rebalance (FBR) using the `/internalSettings` REST API endpoint.]
+:page-edition: Enterprise Edition
+:page-topic-type: reference
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+== Description
+
+The file-based rebalance option for the Data Service directly copies vBucket data files between nodes during rebalance. 
+This usually improves rebalance speed compared to DCP-based backfill method.
+See xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance] for more information about file-based rebalance and how it compares to DCP-based rebalance. 
+
+== HTTP Methods 
+
+This API endpoint supports the following methods:
+
+* <<#get-settings>>
+* <<#set-settings>>
+
+[#get-settings]
+== Get FBR Settings
+
+Get the current values of the FBR settings.
+The FBR settings are part of the internal settings, so this API returns all internal settings.
+
+.List All Internal Settings
+----
+GET /internalSettings
+----
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -u ${USER}:${PASSWORD} -X GET \
+        http[s]://${HOST}:${PORT}/internalSettings \
+        | jq 'with_entries(select(.key | startswith("dataService")))' 
+----
+
+.Path Parameters
+:priv-link: get-privs
+include::partial$user-pw-host-port-params.adoc[]
+
+
+[#get-privs]
+=== Required Privileges
+
+You must have at least 1 of the following roles to get the FBR settings:
+
+* xref:learn:security/roles.adoc#full-admin[Full Admin]
+* xref:learn:security/roles.adoc#cluster-admin[Cluster Admin]
+* xref:learn:security/roles.adoc#ro-security-admin[Read-Only Security Admin]
+* xref:learn:security/roles.adoc#security-admin[Security Admin]
+* xref:learn:security/roles.adoc#local-user-security-admin[Local User Admin]
+
+=== Responses
+
+`200 OK`::
+Returns the internal settings. 
+See examples for an example of the settings.
+
+`401 Unauthorized`::
+Returned when authentication fails, such as when the password is incorrect.
+
+`403 Forbidden`::
+Returned if you do not have 1 of the roles listed in <<get-privs>>.
+
+[#gey-settings-example]
+=== Examples
+
+The following example gets the current values of the FBR settings.
+It filters the internal settings using the `jq` command to show only the FBR settings.
+
+[source,bash]
+----
+curl -s -u Administrator:password \
+     -X GET http://node1.example.com:8091/internalSettings \
+     | jq 'with_entries(select(.key | startswith("dataService")))'
+----
+
+Running the example returns a JSON object containing the current FBR settings, such as the following:
+
+[source,json]
+----
+{
+  "dataServiceFileBasedRebalanceEnabled": true,
+  "dataServiceFileBasedRebalanceMovesPerNode": 4
+}
+----
+
+The keys returned by the previous example are the FBR settings you can use to control FBR behavior:
+
+dataServiceFileBasedRebalanceEnabled::
+When `true`, eligible vBucket moves use FBR; when `false`, all vBucket moves use DCP.
+
+dataServiceFileBasedRebalanceMovesPerNode::
+The maximum number of concurrent file-based vBucket moves per node during rebalance.
+
+
+[#set-settings]
+== Configure FBR
+
+You can change the FBR settings using the REST API.
+
+.Change FBR Settings
+----
+POST /internalSettings
+----
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -sS -u ${USER}:${PASSWORD} \
+  -X POST http[s]://${HOST}:${PORT}//internalSettings \
+  [-d dataServiceFileBasedRebalanceEnabled={true|false}] \
+  [-d dataServiceFileBasedRebalanceMovesPerNode=<integer>]
+----
+
+=== Path Parameters
+:priv-link: settings-privs
+include::partial$user-pw-host-port-params.adoc[]
+
+=== Parameters
+
+`dataServiceFileBasedRebalanceEnabled`::
+Set to `true` (the default) to allow the Data Service to use FBR when rebalancing data in eligible vBucket.
+Set to `false` to force the Data Service to use DCP when rebalancing data.
+
++
+NOTE: This setting can be overridden on a per-bucket basis using the bucket's  `dataServiceRebalanceType` setting.
+See xref:manage:manage-buckets/edit-bucket.adoc#bucket-rebalance-type[Bucket-Level Rebalance Type] for more information.
+
+`dataServiceFileBasedRebalanceMovesPerNode`::
+Integer value that sets the maximum number of concurrent file-based vBucket moves per node during rebalance.
+Valid range of values is from `1` to `1024`.
+The default value is `4`.
+Increase this value when you perform a rebalance when your cluster has low loads.
+For example, consider increasing this value during scheduled maintenance windows. 
+Decrease this value to reduce the overhead of rebalance on running workloads.
+
++
+NOTE: This setting is independent of `rebalanceMovesPerNode`, which applies to DCP rebalance.
+
+[#settings-privs]
+=== Required Privileges
+
+You must have 1 of the following roles to change the FBR settings:
+
+* xref:learn:security/roles.adoc#full-admin[Full Admin]
+* xref:learn:security/roles.adoc#cluster-admin[Cluster Admin]
+
+=== Responses
+
+`200 OK`::
+Updating the value or values succeeded.
+
+`400 Bad Request`::
+Returned if you specify an invalid value for either setting or an out-of-range value for `dataServiceFileBasedRebalanceMovesPerNode`.
+
++ 
+Also returns a JSON object that describes the error, such as the following:
+
++
+[source,json]
+----
+{
+  "errors": [
+    "dataServiceFileBasedRebalanceMovesPerNode - The value must be between 1 and 1024."
+  ]
+}
+----
+
+'401 Unauthorized`::
+Returned when authentication fails, such as when the password is incorrect.
+
+`403 Forbidden`::
+Returned if you do not have the proper roles to call this API.
+See <<#settings-privs>>.
+
+
+[#settings-examples]
+=== Examples
+
+[#disable-fbr-example]
+.Disable FBR
+
+The following example prevents the Data Service from using FBR cluster-wide:
+
+[source,bash]
+----
+curl -s -u Administrator:password \
+     -X POST http://node1.example.com:8091/internalSettings \
+     -d dataServiceFileBasedRebalanceEnabled=false 
+----
+
+.Set the Maximum Concurrent FBR Moves per Node
+
+The following example sets the maximum number of concurrent file-based vBucket moves per node to `8`:
+
+
+
+[source,bash]
+----
+curl -s -u Administrator:password \
+     -X POST http://node1.example.com:8091/internalSettings \
+     -d dataServiceFileBasedRebalanceMovesPerNode=8 
+----
+
+## See Also
+
+* For conceptual information, see xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)].
+* For UI configuration, see xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Rebalance Settings].
+* For per-bucket FBR configuration, see xref:manage:manage-buckets/edit-bucket.adoc#bucket-rebalance-type[Bucket-Level Rebalance Type].
