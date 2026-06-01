@@ -6,9 +6,8 @@
 
 == Description
 
-Use these API calls to set the rate limit (in bytes per second). 
-This setting is a global rate limit for the Memcached process shared across buckets. 
-The strategy for this rate limiting is to set the block waiting time on the compaction threads to maintain the specified limits. 
+Use these API calls to limit the disk I/O bandwidth (in bytes per second) that Magma Storage Engine Compaction may consume. 
+The limit is global to the Data Service and shared across all buckets on the node
 
 Magma supports 2 types of compaction:
 
@@ -21,9 +20,26 @@ Data Log Compactions::
 Data compactions can be de-prioritized compared to LSM Tree compactions.
 The only consequence of slowing these operations is increased space usage.
 
+== Usage
+
+Rate limiting helps wherever compaction can surge and contend with front-end I/O, for example:
+
+* Short-burst, write-heavy workloads, where spikes in writes drive spikes in compaction.
+* Large collection drops, which mark a large amount of data for removal at once.
+* Sudden large number document expirations, such as a batch of items with closer TTL ranges expiring together.
+
+The trade-off is that compaction runs more slowly, so disk usage may stay higher for longer. 
+Set the limit low enough to protect front-end write bursts, but high enough that compaction keeps pace with the rate at which data is written.
+
+
+== Recommended Value
+
+A practical starting point is 100 MB/s (104857600 bytes/s), or about 10× your incoming write rate — estimated as writes per second per node × average document size. 
+For example, 10,000 writes/s of 1 KB documents is approximately 10 MB/s incoming, giving a ~100 MB/s limit.
+
 == Settings
 
-[cols="3,3,1"]
+[cols="1,2,1"]
 |===
 | Setting | Description| Range
 
@@ -35,10 +51,6 @@ Setting this value to 0 disables compaction rate limiting.
 | stem:[0 … 2^64 - 1] 
 (default: 0)
 
-| `magma_enable_compaction_dataonly_ratelimiting`
-| Controls whether the compaction rate limiting runs in `data-only` mode.
-(Only fragment reduction compactions are rate-limited)
-| `true`, `false` (default:``false``)
 
 |===
 
@@ -86,24 +98,5 @@ The call executes and returns a JSON object containing the new setting.
   "system_connections": 5000,
   "magma_compaction_rate_limit": 500,
   "magma_enable_compaction_dataonly_ratelimiting": false
-}
-----
-
-.Setting Compaction for data only rate limiting
-[source,shell]
-----
-curl -u Administrator:password -X POST localhost:8091/pools/default/settings/memcached/global \
--d magma_enable_compaction_dataonly_ratelimiting=true | jq
-----
-
-The call executes and returns a JSON object containing the new setting.
-
-[source, json]
-----
-{
-  "max_connections": 20000,
-  "system_connections": 5000,
-  "magma_compaction_rate_limit": 500,
-  "magma_enable_compaction_dataonly_ratelimiting": true
 }
 ----
