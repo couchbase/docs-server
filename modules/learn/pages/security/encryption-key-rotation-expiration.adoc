@@ -1,5 +1,4 @@
-[#rotation-expiration]
-== Encryption Key Rotation and Expiration
+= Encryption Key Rotation and Expiration
 :description: Key rotation periodically deactivates old keys and generates new encryption keys to replace them.
 :page-toclevels: 2
 :page-edition: Enterprise Edition
@@ -36,15 +35,15 @@ It then deletes the expired DEK.
 
 You can adjust the rotation and lifetime for encryption keys to suit your environment.
 
-See xref:manage:manage-security/manage-native-encryption-at-rest.adoc[] to learn how to manage native encryption at rest.
+For information on managing native encryption at rest, see xref:manage:manage-security/manage-native-encryption-at-rest.adoc[]. 
 
 [#re-encryption-vs-key-rotation]
-=== Re-encryption vs Key Rotation
+== Re-encryption vs Key Rotation
 
 Key rotation and data re-encryption are related but distinct operations.
 Understanding the difference helps you choose the right operation for your security requirements.
 
-==== Key Rotation (Lightweight)
+=== Key Rotation (Lightweight)
 
 When you rotate a KEK or a DEK, Couchbase Server generates new key material and re-wraps the keys below it in the hierarchy:
 
@@ -66,7 +65,7 @@ Key rotation is a lightweight operation.
 It changes only the key wrappers — the actual data on disk is not rewritten.
 The performance impact is minimal.
 
-==== Data Re-encryption (Expensive)
+=== Data Re-encryption (Expensive)
 
 Data re-encryption reads all data from disk, decrypts it with the old DEK, re-encrypts it with the new DEK, and writes it back to disk.
 This is an I/O-intensive operation that rewrites every piece of data for the affected data type.
@@ -83,7 +82,8 @@ Drop DEKs → new DEK generated
 Data re-encryption (Drop DEKs) is expensive.
 The time it takes depends on the amount of data and the I/O capacity of your cluster.
 
-==== When to Use Each Operation
+=== When to Use Each Operation
+
 
 [cols="1,1,1"]
 |===
@@ -99,8 +99,10 @@ Lightweight and safe to run frequently.
 | Ensures the compromised key is no longer used to protect any data.
 
 | Compliance requirement for periodic re-encryption
-| Drop DEKs (scheduled)
-| Some regulations require periodic re-encryption of all data.
+| Configured DEK rotation (recommended)
+| Automatically re-encrypts data over time based on DEK lifetime configuration.
+Only re-encrypts data that has not already been re-encrypted naturally.
+If DEK rotation is not available, Drop DEKs can be used as an alternative, though it re-encrypts 100% of data on every invocation.
 
 | Transitioning from unencrypted to fully encrypted
 | Drop DEKs (one-time)
@@ -111,46 +113,27 @@ TIP: In most environments, automatic DEK rotation is sufficient.
 Reserve the Drop DEKs operation for situations where you need to guarantee that no data remains encrypted with a specific key.
 
 [#drop-deks-force-re-encryption]
-=== Drop DEKs and Force Re-encryption
+== Drop DEKs and Force Re-encryption
 
-When you enable encryption at rest, Couchbase Server encrypts only new data as it writes it to disk.
-Existing data remains unencrypted until it is mutated or compacted.
-To force Couchbase Server to encrypt all existing data, use the Drop DEKs operation.
+The endpoints are available for managing Data Encryption Keys (DEKs) are:
 
-==== What Drop DEKs Does
+Drop DEKs (POST /controller/dropEncryptionAtRestDeks/*) — Drops all existing DEKs and re-encrypts all data when encryption is enabled.
 
-When you drop DEKs for a data type (a bucket, configuration, logs, audit, or other):
+Force Encryption (POST /controller/forceEncryptionAtRest/*) — Encrypts all currently unencrypted data, typically data that existed before encryption was enabled. This endpoint does not generate new keys or re-encrypt data that is already encrypted.
 
-. Couchbase Server generates a new DEK.
-. It re-encrypts all data of that type by reading it from disk, decrypting it with the old DEK, encrypting it with the new DEK, and writing it back.
-. After all data is re-encrypted, it deletes the old DEK.
+=== When to use Drop DEKs:
 
-This operation applies per data type.
-For bucket data, you trigger it per bucket.
-For system data, you trigger it per type (configuration, log, or audit).
+* After a suspected key compromise, to ensure all data is re-encrypted with new keys.
 
-==== When to Use Drop DEKs
+* After disabling and re-enabling encryption, to re-encrypt all data with fresh keys.
 
-Use the Drop DEKs operation in the following situations:
+* To meet periodic re-encryption requirements when automatic DEK rotation is not configured. If DEK rotation is enabled, data is re-encrypted automatically and using Drop DEKs for this purpose is unnecessary.
 
-After enabling encryption for the first time::
-Existing unencrypted data is not automatically re-encrypted.
-If you need all data encrypted (for example, for compliance), use Drop DEKs to force encryption of pre-existing data.
+=== When to use Force Encryption:
 
-After a suspected key compromise::
-If you suspect a DEK has been compromised, drop the DEKs for the affected data type.
-This generates new DEKs and re-encrypts all data, ensuring the compromised key no longer protects any data.
+* After enabling encryption for the first time, to encrypt pre-existing data without re-encrypting data that is already encrypted.
 
-After disabling encryption::
-When you disable encryption, Couchbase Server stops encrypting new data but does not decrypt existing encrypted data.
-If you want to force all data to be stored unencrypted, use Drop DEKs after disabling encryption.
-Couchbase Server re-writes the data without encryption.
-
-To meet periodic re-encryption requirements::
-Some compliance frameworks require that data be re-encrypted at regular intervals.
-Use Drop DEKs to satisfy these requirements.
-
-==== Performance Impact
+=== Performance Impact
 
 WARNING: Drop DEKs is an expensive operation.
 It reads and rewrites all data for the affected data type.
@@ -160,7 +143,7 @@ Plan this operation during maintenance windows or periods of low activity.
 For bucket data, the operation triggers compaction to re-encrypt all documents.
 During re-encryption, the cluster continues to serve read and write requests, but you may observe increased I/O latency.
 
-==== Monitoring Re-encryption Progress
+=== Monitoring Re-encryption Progress
 
 You can monitor the progress of re-encryption using the REST API.
 Check the `encryptionAtRestInfo` field in the bucket or system data status:
@@ -173,11 +156,11 @@ Couchbase Server also exposes the `cm_encr_at_rest_drop_deks_events_total` metri
 For the steps to force re-encryption, see xref:manage:manage-security/manage-encryption-at-rest.adoc#drop-deks[Drop DEKs and Re-encrypt Data].
 
 [#minimum-rotation-interval]
-=== Minimum Rotation Interval
+== Minimum Rotation Interval
 
 Couchbase Server enforces a minimum DEK rotation interval to prevent key accumulation issues.
 
-==== Why a Minimum Exists
+=== Why a Minimum Exists
 
 Each time Couchbase Server rotates a DEK, it generates a new DEK and keeps the old one until either:
 
@@ -189,7 +172,7 @@ This can cause the number of active DEKs to grow until the system reaches its DE
 
 The minimum rotation interval prevents this situation.
 
-==== Minimum Values
+=== Minimum Values
 
 The minimum DEK rotation interval is *7 days*.
 
@@ -214,23 +197,16 @@ NOTE: The DEK lifetime must be greater than or equal to the rotation interval.
 If you set a lifetime shorter than the rotation interval, the DEK may expire before the next rotation occurs, causing Couchbase Server to force re-encryption of all data protected by the expired DEK.
 This is by design — it ensures that expired DEKs are not kept indefinitely — but it can be expensive if it happens frequently.
 
-==== Log Retention Rationale
+=== Log Retention Rationale
 
-The 7-day minimum for DEK rotation is closely tied to log retention.
-Couchbase Server log files are written sequentially and are only rotated (closed and replaced by a new file) periodically.
-If the DEK rotation interval is shorter than the log rotation interval:
+A new log file is created each time a new Data Encryption Key (DEK) is generated, triggering log file rotation. Because the system retains only a limited number of rotated log files on disk, frequent DEK rotation can result in reduced log history.
 
-* The old DEK cannot be retired because the current log file still references it.
-* New DEKs continue to be generated at each rotation interval.
-* The number of active DEKs grows until the `too_many_deks` limit is reached.
+This also applies to on-demand rotation using the drop DEKs procedure. Initiating a DEK drop triggers log rotation, and if performed frequently, it can similarly reduce the available log history.
 
-The 7-day minimum ensures that log files have enough time to rotate naturally before the DEK that encrypted them is considered for retirement.
-A similar principle applies to other data types (audit files, FFDC files) that are written sequentially and rotated on a schedule.
-
-==== Recommendations
+=== Recommendations
 
 * Use the default rotation interval (30 days) unless your compliance requirements mandate more frequent rotation.
 * If you shorten the rotation interval, also shorten the DEK lifetime proportionally.
 * Monitor the `cm_encr_at_rest_deks_in_use` metric to ensure the number of active DEKs remains stable over time.
 * If you see `too_many_deks` errors in your logs, increase the rotation interval or investigate why old DEKs are not being retired.
-See the xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest] page for steps to configure rotation intervals.
+For information on configuring rotation intervals, see the xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest].
