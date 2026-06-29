@@ -72,6 +72,15 @@ All of the nodes in the cluster must have access to this storage location.
 You can host the location on a shared network directory such as a Network File System (NFS) share.
 Continuous backup also supports storage locations on Amazon S3, Microsoft Azure Blob Storage, and Google's Cloud Storage.
 
+You can use 1 continuous backup storage location to store backups for multiple buckets.
+Having multiple buckets sharing the same storage location makes performing PITR on multiple buckets easier.
+You use the same commands to restore multiple buckets.
+
+You can also use different storage locations for buckets. 
+Separate locations are useful in multi-tenancy configurations. 
+Each tenant can supply their own continuous backup location. 
+You can also separately track the cost of a tenant's cloud-based continuous backup location.
+
 === The Continuous Backup Interval
 
 When enabling continuous backup, you must choose the interval when continuous backup copies the mutations to a bucket's data to the backup location.
@@ -140,47 +149,53 @@ Any documents added after the point in time you choose will remain in the bucket
 However, mutations to existing documents made after the point in time are lost.
 If you want the bucket to be the way it was at the point in time you chose to restore to, flush the bucket before restoring.
 
-When perform a PITR on a bucket, continuous backup first restores the most recent full and incremental backups from before restore time you chose.
-It then replays the mutations stored in the continuous backups in order until it reaches the restore time you chose.
+When restoring, PITR first restores the latest full and incremental backups from before restore time you chose.
+It then replays the mutations stored in the continuous backups since the last full or incremental backup. 
+It continues replaying the mutations until it reaches the point in time you chose. 
 
 [ditaa]
 ....
                                                                 
-        +----------+         +-----------+    
-        | cEEE     |         | cEEE      |         Continuous Backups   
-        |   Full   |         |Incremental|  +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ 
-        |  Backup  |         |  Backup   |  | | | | | | | | | | | | | | | | | |                                        
---------+----------*---------+-----------+--+-+-+-+-+-+-+-+-+-+-+-+-+-*-+-+-+-+-------->
-              |                     |       |                         |
-            Restored            Restored    |<----------------------->|
-             first               second          Continuous backups   |
-                                                      replayed        |  
-                                                                   Selected     
-                                                                   point in 
-                                                                     time                                  
+    +----------+         +-----------+    
+    | cEEE     |         | cEEE      |        Continuous Backups   
+    |   Full   |  . . .  |Incremental+--+--+--+--+--+--+--+--+--+
+    |  Backup  |         |  Backup   |  |  |  |  |  |  |  |  |  | 
+----+----------+---------+-----------+--+--+--+--+--+--+--+*-+--+-->
+          |                    |     |                     |
+      Restored             Restored  |<------------------->|
+       first                second      Continuous backups |
+                                             replayed      |
+                                                           |  
+                                                        Selected     
+                                                        point in 
+                                                          time                                  
 ....
 
 
-== Continuous Backup's Impact on the Cluster
+== Continuous Backup's Effects on the Cluster
 
 Enabling has several impacts on the cluster and interactions with other features.
 
-=== Disk Use
-
-Continuous backup increases the disk usage on nodes. 
+* Continuous backup increases the disk usage on nodes. 
 Couchbase Server has to retain some files it would otherwise delete until continuous backup can back them up.
 The amount of added disk space depends on the number of mutations and the length of the continuous backup interval.
 
-=== Change History Requirement
+* You must use the credential store to provide the credentials for any cloud storage locations you use for continuous backup.
+The credential store has its own requirements---you must enable peer-to-peer encryption and encryption at rest for Couchbase Server configuration files.
+See the credential store documentation for more information.
 
-As part of enabling continuous backup, you must enable the bucket's change history. 
+// FIXME: add link to the credential store docs when they are done. 
+
+* As part of enabling continuous backup, you must enable the bucket's change history. 
 Change history is a Magma feature that lets continuous backup record the mutations so it can replay them back during a PITR.
 When you have continuous backup enabled for a bucket, you cannot turn off the bucket's change history setting.
 
++
 When you enable continuous backup for a bucket, disabling change history for individual collections is not supported. 
 Verify that no collection has a change history override setting on it before enabling continuous backup.
 
-See xref:learn/:data/change-history.adoc[] for more information about change history.
++
+See xref:learn:data/change-history.adoc[] for more information about change history.
 
 === Continuous Backup and Unsafe Failover
 
@@ -193,12 +208,12 @@ See xref:install:startup-shutdown.adoc[] for more instructions on shutting down 
 
 === Continuous Backup and Encryption at Rest
 
-When you enable encryption at rest for a bucket's data, continuous backup needs to maintain a copy of the encryption at rest Data Encryption Keys (DEKs). 
-It needs its own copy of these keys because the encryption at rest feature rotates its DEKs. 
+If you enable encryption at rest for a bucket's data, continuous backup needs to maintain a copy of the encryption at rest Data Encryption Keys (DEKs). 
+It needs its own copy of these keys because the encryption at rest rotates its DEKs. 
 Therefore, the current DEKs are usually not the same ones continuous backup needs to decrypt older the data in its backups. 
-Continuous backup creates a backup of the DEKs along with the bucket's data.
+Continuous backup creates a backup of the DEKs along with the bucket's data so that it can decrypt the data itself.
 
-Continuous backup must have access to a Key Management System (KMS) to protect the DEKs it saves alongside the bucket data.
+To protect the DEKs, you must configure continuous backup with access to a Key Management System (KMS) to protect the DEKs it saves alongside the bucket data.
 It uses the KMS to securely re-encrypt the DEKs.
 This re-encryption protects the keys the same way encryption at rest does.
 All nodes in the cluster must be able to connect to the KMS you configure for continuous backup.
