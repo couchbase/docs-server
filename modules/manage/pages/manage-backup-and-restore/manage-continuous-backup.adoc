@@ -11,6 +11,8 @@ See xref:learn:services-and-indexes/services/continuous-backup.adoc[] for an ove
 
 Before configuring continuous backup, your cluster must meet the following requirements:
 
+* Your Couchbase Server account must have the xref:learn:security/roles.adoc#backup-full-admin[Full Admin] or xref:learn:security/roles.adoc#backup-full-admin[Backup Full Admin] role.
+
 * It must have 1 or more Magma buckets. 
 Continuous backup relies on Magma's change history feature to back up individual mutations.
 You cannot use it on Couchstore buckets. 
@@ -52,13 +54,14 @@ Therefore, before you enable continuous backup, you must verify that the bucket'
 You also must verify that no collection overrides the bucket's change history setting.
 
 You must also configure the bucket so that it keeps its change history long enough for continuous backup to save it to the storage location.
+This period is either 15 minutes or twice the continuous backup interval, whichever is greater.
 
-See xref:learn:data/scopes-and-collections.adoc#change-history[Change History] for more information about the change history.
+See xref:learn:data/scopes-and-collections.adoc#change-history[Change History] for more information about Magma's change history feature.
 
 To configure the bucket's change history settings:
 
 . Verify that the bucket's change history setting is the default value of `true`.
-The following example calls the REST-API and pipes the result through `jq` to get the setting for the `travel-sample` bucket:
+The following example calls the REST API and pipes the result through `jq` to get the setting for the `travel-sample` bucket:
 
 +
 [source,bash]
@@ -71,8 +74,7 @@ curl -s -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
 +
 The previous examples returns either `true` or `false`.
 
-. If the value is not `true`, set it to `true`.
-The following example sets the `travel-sample` bucket to `true`.
+. If the value is not `true`, set it to `true` as shown in the following example:
 
 +
 [source,bash]
@@ -83,30 +85,31 @@ curl -s POST -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
 ```
 
 +
-Then repeat step 1 to verify that `historyRetentionCollectionDefault` is now set to `true`.
+Repeat step 1 to verify that `historyRetentionCollectionDefault` is now set to `true`.
 
 . Verify that no collection in the bucket overrides the bucket's `historyRetentionCollectionDefault` setting.
 If a collection overrides this setting, continuous backup cannot back it up.
 Excluding collections from continuous backup is unsupported.
 
 +
-The following example gets the settings for the `travel-sample` bucket and uses `jq` to locate aany collections that have their `history` key set to `false`:
+The following example gets the settings for the `travel-sample` bucket and uses `jq` to locate any collections that have their `history` key set to `false`:
 
 +
 [source,bash]
 ```
-$ curl -s GET -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
-        http://node1.example.com:8091/pools/default/buckets/travel-sample/scopes \
-        | jq '.scopes[] 
-        | select(.name != "_system") 
-        | .name as $scope 
-        | .collections[] 
-        | select(.history == false) 
-        | {scope: $scope, collection: .name, history: .history}'
+curl -s GET -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
+     http://node1.example.com:8091/pools/default/buckets/travel-sample/scopes \
+     | jq '.scopes[] 
+     | select(.name != "_system") 
+     | .name as $scope 
+     | .collections[] 
+     | select(.history == false) 
+     | {scope: $scope, collection: .name, history: .history}'
 ```
 
 +
-Any collections that have overrides appear in the output:
+Any collections that have overrides appear in the output.
+For example:
 
 +
 [source,json]
@@ -123,7 +126,7 @@ Any collections that have overrides appear in the output:
 }
 ```
 
-. If any collections have overrides, edit them to change their `history` setting back to `true`.
+. If any collections have overrides, edit them to change their `history` setting to `true`.
 The following example sets the history setting for the `airline` collection in the `inventory` scope to `true`.
 
 +
@@ -139,7 +142,7 @@ After editing the collections that had overrides, re-run step 3 to verify that n
 
 . You must set the history retention time for the bucket to a period long enough for continuous backup to collect and save the bucket's history to the backup location.
 This period is 15 minutes or double the continuous backup interval, whichever is longer.
-For example, if you chose 10 minutes for your backup interval, you must set the retention time to 20 minutes.
+For example, if you chose 10 minutes for your continuous backup interval, set the retention time to 20 minutes.
 
 +
 The following example sets the `travel-sample` bucket's history retention to 20 minutes (1200 seconds).
@@ -147,7 +150,7 @@ The following example sets the `travel-sample` bucket's history retention to 20 
 +
 [source,bash]
 ```
-curl -v -s POST -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
+curl -s POST -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
      http://node1.example.com:8091/pools/default/buckets/travel-sample \
      -d historyRetentionSeconds=1200
 ```
@@ -156,8 +159,6 @@ curl -v -s POST -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
 == Configure Continuous Backup
 
 You can configure continuous backup using the Couchbase Server Web Console, the command line interface, or the REST API.
-
-
 
 === Configure Continuous Backup Using the Web Console
 
@@ -188,7 +189,7 @@ Valid URIs start with `awskms`, `azurekeyvalue`, or `gcpkms`.
 You can enable continuous backup when creating a bucket or editing it via the REST-API.
 
 Whether you're creating a new bucket or editing an existing bucket, make a POST call to the `/pools/default/buckets/<bucket-name>` REST API endpoint.
-Set the following :
+Set the following:
 
 
 * `continuousBackupEnabled`: set to `true` to enable continuous backup for the bucket.
@@ -204,9 +205,7 @@ This value sets how far back in time you can use Point in Time Recovery (PITR).
 ** `continuousBackupKmKeyUrl`: The URI for the KMS key the Backup Service uses to manage the encryption key it uses to encrypt data encryption keys. 
     This URI must start with `awskms`, `azurekeyvalue`, or `gcpkms`.
 ** `continuousBackupKmCredId`: the name of a credential in the Couchbase Server credential store that grants the Backup Service access to a KMS to manage its encryption keys.
-
-See xref:rest-api:rest-bucket-create.adoc[] for details of using the REST API to add and edit buckets.
-    
+   
 The following example enables continuous backup for `travel-sample` bucket. 
 It sets the backup interval to 10 minutes.
 The backup location is an NFS share mounted on each not at the path `/shared.continuous-backup`.
@@ -220,18 +219,21 @@ curl -X POST localhost:8091/pools/default/buckets/travel-sample \
      -d continuousBackupInterval=10 
 ```
 
+See xref:rest-api:rest-bucket-create.adoc[] for details about editing bucket settings using the REST API.
+
 === Enable Continuous Backup Using the Command Line
 
-Use the `couchbase-cli` tool's `bucket create` or `bucket-edit` tool to change the continuous backup settings for the bucket.
+Use the `couchbase-cli` tool's `bucket create` or `bucket-edit` command to change the continuous backup settings for the bucket.
 
-Use the following arguments to enable the continuous backup settings:
+Use the following arguments to configure continuous backup:
 
 * `--continuous-backup-enabled`: set to `1` to enable continuous backup for the bucket.
 * `--continuous-backup-location`: The location where the backup service will store the continuous backup data.
-This value must a string containing either an absolute path to NFS an mount point mounted on every node or a cloud storage URI.
-* `--continuous-backup-cloud-storage-cred-id`: If you set `--continuous-backup-location` to a cloud storage URI, set this to the name of a credential in the Couchbase Server credential store that the Backup Service can use to authenticate.
-You must grant the Backup Service access to this credential.
-* `--continuous-backup-interval`: How frequently, in minutes, the Backup Service copies data to the continuous backup location.
+This value must a string containing either an absolute path to an NFS mount point mounted on every node or a cloud storage URI.
+* `--continuous-backup-cloud-storage-cred-id`: If you set `--continuous-backup-location` to a cloud storage URI, set this to the name of a credential in the Couchbase Server credential store.
+The Backup Service uses this credential to authenticate with the cloud provider.
+You must also grant the Backup Service access to this credential.
+* `--continuous-backup-interval`: How frequently in minutes then Backup Service copies data to the continuous backup location.
 When using a cloud-based storage location, lower settings for this value result in higher per-access costs.
 * `--continuous-backup-retention-period`: the number of hours the Backup Service keeps the continuous backup data before purging it. 
 This value sets how far back in time you can use Point in Time Recovery (PITR).
@@ -240,7 +242,6 @@ This value sets how far back in time you can use Point in Time Recovery (PITR).
     This URI must start with `awskms`, `azurekeyvalue`, or `gcpkms`.
 ** `--continuous-backup-km-cred=id`: the name of a credential in the Couchbase Server credential store that grants the Backup Service access to a KMS to manage its encryption keys.
 
-
 The following example enables continuous backup on the `travel-sample` bucket. 
 It sets the backup interval to 10 minutes and the retention period to 30 days (270 hours). 
 The backup location is an NFS share mounted at `/shared/continuous-backup` on all nodes.
@@ -248,7 +249,8 @@ The backup location is an NFS share mounted at `/shared/continuous-backup` on al
 [source,bash]
 ```
 couchbase-cli bucket-edit --cluster couchbase://node1.example.com \
-              --username Administrator --password password \
+              --username $COUCHBASE_USERNAME \
+              --password $COUCHBASE_PASSWORD \
               --bucket travel-sample \
               --continuous-backup-enabled 1 \
               --continuous-backup-location /shared/continuous-backup \
@@ -256,11 +258,13 @@ couchbase-cli bucket-edit --cluster couchbase://node1.example.com \
               --continuous-backup-retention-period 270
 ```
 
+See the documentation for the `couchbase-cli` tool's xref:cli:cbcli/couchbase-cli-bucket-create.adoc[] and xref:cli:cbcli/couchbase-cli-bucket-edit.adoc[] commands for more information about creating and editing buckets using the command line.
+
 ## Turning Off Continuous Backup
 
 Once enabled, you can turn off continuous backup for a bucket.
 You can turn off continuous backups before you do a PITR to prevent a backup from occurring during the restore.
-You may also want to turn it off to prevent a point in time you may want to restore to from falling outside the retention window.
+You may also want to turn it off to preserve the PITR recovery window that's currently in the continuous backup location. 
 
 You can turn off continuous backup using the Couchbase Server Web Console, REST API, or command line:
 
@@ -276,7 +280,7 @@ Using the Couchbase Server Web Console::
 
 Using the REST API::
 
-Make a POST call to the `/pools/default/buckets/<bucket-name>` endpoint and set to `false`.
+Make a POST call to the `/pools/default/buckets/<bucket-name>` endpoint and set `continuousBackupEnabled` to `false`.
 For example, to turn off continuous backup for the `travel-sample` bucket, use this command:
 
 +
@@ -287,14 +291,14 @@ curl -X POST localhost:8091/pools/default/buckets/travel-sample \
      -d continuousBackupEnabled=false
 ```
 
-Using the Ccommand Line Interface::
+Using the Command Line Interface::
 
 Use the `couchbase-cli` tools' `edit-bucket` command with the argument `--continuous-backup-enabled 0`:
 
 [source.bash]
 ```
 couchbase-cli bucket-edit --cluster couchbase://node1.example.com \
-              --username Administrator --password password \
+              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
               --bucket travel-sample \
               --continuous-backup-enabled 0
 ```
