@@ -62,7 +62,7 @@ This option and the `--with-keystore` option are mutually exclusive.
 You can only use one of these options.
 
 --with-keystore <json>::
-A JSON representation of the keystore containing the keys.
+A JSON representation of a keystore containing the keys that were used to encrypt the files you want to decrypt and view.
 Use `-` to read from standard input.
 +
 This option and the `--password` option are mutually exclusive.
@@ -79,6 +79,63 @@ Displays the program version.
 
 --help::
 Displays help text.
+
+== Schema
+
+The `--with-keystore` option expects a JSON value with the following schema.
+
+[cols="25,55,20",separator=¦]
+|===
+¦ One{nbsp}of{nbsp}... ¦ ¦ Schema
+
+a¦ 
+a¦ An object which contains a key definition.
+a¦ xref:key-definition[]
+
+a¦ or
+a¦ An array of objects, each of which contains a key definition.
+a¦ xref:key-definition[] array
+|===
+
+[#key-definition]
+=== Key Definition
+[cols="25,55,20",separator=¦]
+|===
+¦ Property ¦ ¦ Schema
+
+a¦ *cipher* +
+required
+a¦ The encryption algorithm used for the data encryption key.
+Currently, only one encryption algorithm is supported.
+
+*Value:* `AES-256-GCM`
+a¦ String
+
+a¦ *id* +
+required
+a¦ The ID of the data encryption key that was used to encrypt the file you want to view.
+
+This is not the same as the user-friendly name that you can specify when you create a key, or the integer that the Encryption-at-Rest API assigns to a key.
+a¦ String (UUID)
+
+a¦ *key* +
+required
+a¦ The value of the data encryption key that was used to encrypt the file you want to view.
+a¦ String
+
+|===
+
+To decrypt and view a single file, the keystore only needs to contain a single key definition, which must be the key used to encrypt that file.
+
+To decrypt and view multiple files, the keystore must contain the definitions of the keys that were used to encrypt each file.
+
+To get the ID of the key that was used to encrypt a file, you can use `cbcat` with the `--dump-encryption-header` option.
+See <<cbcat-ex5>>.
+
+Alternatively, if the keystore contains at least one valid key definition, but does not contain the correct key for the file you want to decrypt, `cbcat` tells you the ID of the key that's required.
+
+To get the value of a key given its ID, use the `dump-keys` binary.
+See <<cbcat-ex6>>.
 
 == Output
 
@@ -159,11 +216,53 @@ cbcat --password $MASTER --dump-encryption-header memcached.rbac
 ----
 File: memcached.rbac
   Encrypted:
-    Key ID: <redacted>
+    Key ID: 3f64f34c-a0bd-4248-a1da-5769e5bc15ef
     Key Derivation: KeyBased
     Compression: None
 ======================================================================
 <file content ...>
+----
+====
+
+[[cbcat-ex6]]
+.Decrypt and view file using its encryption key
+====
+The following command finds the value of a data encryption key, using the key ID returned by <<cbcat-ex5>>.
+
+.Command
+[source,sh]
+----
+dump-keys -p $MASTER -k 3f64f34c-a0bd-4248-a1da-5769e5bc15ef
+----
+
+.Output
+[source,json]
+----
+{
+  "3f64f34c-a0bd-4248-a1da-5769e5bc15ef": {
+    "result": "raw-aes-gcm",
+    "response": {
+      "kind": "configDek",
+      "name": "3f64f34c-a0bd-4248-a1da-5769e5bc15ef",
+      "key": "5YHAbvomWQuMZSnwQcSWhh4c+XpiildvYlOpbg7VLLE=",
+      "encryptionKeyId": "encryptionService",
+      "creationTime": "2026-06-30T11:32:03Z",
+      "imported": false
+    }
+  }
+}
+----
+
+The following command uses a JSON keystore containing the key ID and value obtained in the previous command to decrypt and view a file.
+
+.Command
+[source,sh]
+----
+cbcat --with-keystore '{
+  "cipher": "AES-256-GCM",
+  "id": "3f64f34c-a0bd-4248-a1da-5769e5bc15ef",
+  "key": "5YHAbvomWQuMZSnwQcSWhh4c+XpiildvYlOpbg7VLLE="
+}' memcached.rbac
 ----
 ====
 
