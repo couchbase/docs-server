@@ -49,10 +49,17 @@ This can be:
 --
 +
 PITR recovery does not flush the bucket before a restore.
-The documents restored by PITR overwrite corresponding documents in the bucket.
-However, documents that do not exist in the backup (such as those added after the point in time)  remain in the bucket.
+By default, it does not overwrite existing documents already in the bucket.
 If you want to restore the bucket to its exact state at the point in time you choose, flush the bucket before restoring.
 See xref:manage:manage-buckets/flush-bucket.adoc[] for more information about flushing buckets.
+
+* To prevent consistency issues, stop continuous backup on the bucket you're restoring.
+You must stop continuous backup even if you're not restoring to the original bucket.
+Once the PITR finishes, you can restart continuous backup.
+See xref:manage:manage-backup-and-restore/manage-continuous-backup.adoc#stop-continuous-backup[Stop Continuous Backup] to learn how to stop continuous backup for a bucket.
+
+NOTE: You do not need to stop traditional periodic backups or XDCR for the bucket when performing PITR.
+
 
 ## Restore to a Point in Time
 
@@ -65,10 +72,111 @@ When calling `cbcontbk`, you must supply the following arguments:
 * `--tmp-dir` a temporary directory the Backup Service can use when restoring data.
 * `-l` the continuous backup storage location.
 This is either the absolute path of the NFS mount point, or the URI of the cloud storage location.
-* `-a` the path to the traditional backup directory.
-* `-r` is the repository containing the bucket's traditional backup.
-* `-c` is the URL for a node in the cluster.
+* `-a` the path to the traditional backup directory or its .
+* `-r` is the UUID for the repository containing the bucket's traditional backup.
+* `-c` is the URL for a node in the cluster running the backup service.
 
-In addition, you must supply credentials to access the continuous backup location or the traditional backup repository if they are stored in the cloud.
+In addition, you must supply credentials the Backup Service can use to authenticate with the continuous backup location and the traditional backup repository if they're stored in the cloud.
+You have encrypted backups, you must also supply credentials to decrypt them.
+See the documentation for `cbcontbk` for details.
 
+// FIXME: add link to `cbcontbk` docs when they are available in the repo.
+
+For example, suppose you want to restore the `travel-sample` bucket that uses locally mounted NFS shares for continuous backup and traditional backup. 
+Also suppose you want to restore to the original bucket and want the bucket to be in the state it was in at your chosen restoration time.
+In that case, you can follow these steps to perform the PITR:
+
+. Stop continuous backup for the bucket. 
+Because you'll need to use the command line to run `cbcontbk` anyhow, this example uses command line on one of the nodes to stop continuous backup:
+
++
+[source,bash]
+```
+couchbase-cli bucket-edit --cluster couchbase://localhost \
+              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
+              --bucket travel-sample \
+              --continuous-backup-enabled 0
+```
+
+. In this example, the goal is to have the bucket to be the exact state it was at the recovery time.
+Therefore, you need to flush the bucket before performing PITR.
+
++
+[source,bash]
+```
+couchbase-cli bucket-flush --cluster couchbase://localhost \
+              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
+              --bucket travel-sample 
+```
+
++
+[NOTE]
+====
+The previous example assumes the bucket is already configured to allow flushing. 
+If it's not, you must first enable flushing using the command:
+
+[source,bash]
+```
+couchbase-cli bucket-edit --cluster couchbase://localhost \
+              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
+              --bucket travel-sample \
+              --enable-flush 1
+```
+
+After finishing the PITR, consider tunring off flushing the bucket again to prevent accidental data loss.
+====
+
+. Before performing the restore, you should verify the point in time you want to restore to is available in the continuous backup location.
+You can find the range of times you can restore to using the `cbcontbk` command line tool.
+
++
+[source,bash]
+```
+include::manage:example$continuous-backup.sh[tag=get-backup-info]
+```
+
++
+The result of the previous command looks like the following:
+
++
+[source,log]
+```
+include::manage:example$continuous-backup.log[tag=get-backup-info]
+```
+
++ 
+The result shows that you can restore to a point in time between June 6th at 14:57 GMT and June 23rd at 17:55 GMT. 
+
+. Use the `cbcontbk restore` command to restore the bucket. 
+The following command restores `travel-sample` to the state it was in at June 8th, 2026 at 19:54:10 GMT.
+
++
+[source,bash]
+```
+include::manage:example$continuous-backup.sh[tag=restore-bucket]
+```
+
++
+The output from this command looks like this:
+
++
+[source,log]
+```
+include::manage:example$continuous-backup.log[tag=restore-output]
+```
+
++
+You can see that PITR restores a traditional full backup and possibly multiple incremental backups.
+Then it replays mutations from the continuous backup until it reaches the selected point in time.
+
+. After you have finished the PITR, start continuous backup again.
+
++
+[source,bash]
+```
+couchbase-cli bucket-edit --cluster couchbase://localhost \
+              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD  \
+              --bucket travel-sample \
+              --continuous-backup-enabled 1
+```
 
