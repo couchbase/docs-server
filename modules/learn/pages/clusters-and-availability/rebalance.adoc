@@ -67,7 +67,9 @@ The phases through which rebalance moves a replica vBucket are shown by the foll
 
 image::clusters-and-availability/replicaVbucketMove.png[,640,align=left]
 
-The move has two principal phases. Phase 1 is Backfill. Phase 2 is Book-keeping.
+The move has two principal phases. 
+Phase 1 is Backfill. 
+Phase 2 is Book-keeping.
 
 Phase 1, Backfill, itself consists of two subphases.
 The first subphase comprises the movement of the replica vBucket data from its node of origin to the memory of the destination node.
@@ -79,6 +81,9 @@ Phase 2, Book-keeping, comprises various ancillary tasks required for move-compl
 
 The total time required for the move is calculated by adding Backfill Time to the time required for Phase 2, Book-keeping; and is termed Move Time.
 
+NOTE: File-based rebalance (FBR) changes these phases. 
+See <<#file-based-rebalance>> for more information.
+
 [#rebalance-phases-for-active-vbuckets]
 ==== Rebalance Phases for Active vBuckets
 
@@ -86,7 +91,7 @@ The phases in which rebalance moves an active vBucket are shown by the following
 
 image::clusters-and-availability/activeVbucketMove.png[,780,align=left]
 
-The move has four principal phases.
+The move has 4 principal phases.
 Phase 1, Backfill, and Phase 2, Book-keeping, are identical to those required for replica vBuckets; except that the Book-keeping phase includes additional Persistence Time.
 
 Phase 3, Active Takeover, comprises the operations required to establish the relocated vBucket as the new active copy.
@@ -96,24 +101,10 @@ Phase 4, Book-keeping, comprises a final set of ancillary tasks, required for mo
 
 The total time for the move is termed Move Time.
 
-[#limiting-concurrent-vbucket-moves]
-=== Limiting Concurrent vBucket Moves
+NOTE: File-based rebalance (FBR) also changes the phases for active vBuckets. 
+See <<#file-based-rebalance>> for more information.
 
-Since vBucket moves are highly resource-intensive, Couchbase Server allows the concurrency of such moves to be limited: a setting is provided that determines the maximum number of concurrent vBucket moves permitted on any node.
-The minimum value for the setting is `1`, the maximum `64`, the default `4`.
 
-A move counts toward this restriction only when in the backfill phase, as described above, in xref:learn:clusters-and-availability/rebalance.adoc#data-service-rebalance-phases[Data Service Rebalance Phases].
-The move may be of either an active or a replica vBucket.
-A node's participation in the move may be as either a source or a target.
-
-For example, if a node is at a given time the source for two moves in backfill phase, and is the target for two additional moves in backfill phase, and the setting stands at `4`, the node may participate in the backfill phase of no additional moves, until at least one of its current moves has completed its backfill phase.
-
-The setting may be established by means of the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Couchbase Web Console], the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-cli[Couchbase CLI], or the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-rest[REST API].
-
-A higher setting may improve rebalance performance, at the cost of higher resource consumption; in terms of CPU, memory, disk, and bandwidth.
-Conversely, a lower setting may degrade rebalance performance, while freeing up such resources.
-Note, however, that rebalance performance can be affected by many additional factors; and that in consequence, changing this parameter may not always have the expected effects.
-Note also that a higher setting, due to its additional consumption of resources, may degrade the performance of other systems, including the Data Service.
 
 [#file-based-rebalance]
 === File-Based Rebalance (FBR)
@@ -129,22 +120,25 @@ Couchbase Server Community Edition continues to use DCP-based rebalance for all 
 
 Prior to Couchbase Server {totoro}, the Data Service always rebalanced using DCP backfills.
 A DCP backfill reads each piece of data from the vBucket on the source node.
-It then transmits it over the network using the DCP streaming protocol to the destination node.
+It then transmits it via the network using the DCP streaming protocol to the destination node.
 The destination node then writes the data into the target vBucket.
 This approach is reliable, but its overhead is proportional to the number of items in the dataset.
-For each document, the DCP backfill deserializes it, transmits it, and re-serializes it on the destination node.
+The DCP backfill has to deserialize, transmit, and re-serialize each document.
 
-FBR replaces DCP backfill for eligible vBucket moves by copying the storage files directly, reducing CPU usage and improving network throughput.
-It also adds an additional cache transfer phase beyond DCP's 2-step process for replica vBucket transfers:
+Instead of performing a DCP backfill, FBR moves eligible vBuckets by copying the storage files directly.
+Directly copying the vBucket files reduces CPU usage and improves network throughput by avoiding deserializing and reserializing each document.
+
+FBR adds an additional cache transfer phase beyond DCP's 2-step process for replica vBucket transfers:
+
+image::clusters-and-availability/rebalance-stages-fbr-1.svg[align=left]
+
+FBR also adds the cache transfer phase for active vBucket transfers:
 
 image::clusters-and-availability/rebalance-stages-fbr-1.svg[align=left]
 
-It also adds the cache transfer phase for active vBucket transfers:
-
-image::clusters-and-availability/rebalance-stages-fbr-1.svg[align=left]
+See <#data-service-rebalance-phases> for more information about rebalance phases. 
 
 The following table summarizes the differences between DCP and FBR.
-
 
 [width="100%",cols="25%,36%,39%",options="header"]
 |===
@@ -176,7 +170,7 @@ The following table summarizes the differences between DCP and FBR.
 |===
 
 [#fbr-backfill-takeover]
-==== Backfill and Takeover Phases
+==== FBR Backfill and Takeover Phases
 
 FBR applies only to the Backfill phase of a vBucket move, as described in xref:learn:clusters-and-availability/rebalance.adoc#data-service-rebalance-phases[Data Service Rebalance Phases].
 The Active Takeover phase always uses DCP, regardless of whether FBR was used for backfill.
@@ -185,9 +179,9 @@ Because takeover always uses DCP, the DCP rebalance infrastructure remains fully
 [#fbr-automatic-selection]
 ==== Automatic Rebalance Method Selection
 
-When you enable FBR, the server automatically selects the most efficient method for each vBucket move.
-It uses FBR when it estimates the FBR would be at least 10% faster than DCP.
-The server falls back to DCP automatically in the following situations:
+When FBR is enabled, the server automatically uses it to backfill vBuckets when it can.
+If it cannot directly copy the vBucket files, Couchbase Server falls back to using DCP to move the data.
+Couchbase Server cannot directly copy the vBucket files in the following cases:
 
 Storage engine migration between Couchstore and Magma::
 Migrating the storage format requires a full data reload, which is only possible through DCP.
@@ -198,27 +192,54 @@ Changing a bucket's eviction policy requires data to be reprocessed during rebal
 Ephemeral buckets::
 Ephemeral buckets store data entirely in memory and have no persistent storage files for FBR to copy.
 
-Scenarios where DCP may be faster::
-For example, DCP can be faster when the data resident ratio is 100%.
-
 [#fbr-performance]
 ==== Performance
 
-The primary goal of FBR is to deliver significant improvements to rebalance speed for large datasets.
-The target throughput is 1 TB of data movement in 30 minutes.
+The primary goal of FBR is to improve rebalance speed for large datasets.
 Rebalance time scales proportionally with the amount of data on disk and is independent of item count.
 Throughput depends on the available network bandwidth, disk IOPS, and CPU resources on the participating nodes.
 
-NOTE: Workloads with lower resident ratios (data greater than memory) show the greatest benefit from FBR.
+NOTE: Workloads with lower resident ratios (the ratio of data stored on disk vs. in memory) show the greatest benefit from FBR.
 
-[#fbr-concurrent-moves]
-==== Limiting Concurrent File-Based vBucket Moves
+[#limiting-concurrent-vbucket-moves]
+=== Limiting Concurrent vBucket Moves
 
-In Couchbase Server {totoro}, FBR uses a separate concurrent-moves setting, `dataServiceFileBasedRebalanceMovesPerNode`, which is independent of the DCP `rebalanceMovesPerNode` setting.
-The default value for both settings is `4`.
-Changing one setting does not affect the other.
+Because copying vBuckets via DCP or FBR is resource-intensive, Couchbase Server lets you limit the number of concurrent moves for both types of backfills.
+Couchbase Sever has separate settings to limit the concurrency of DCP and FBR rebalances.
+These settings limit the maximum number of simultaneous vBucket moves allowed on a node (either as the source or destination) at a time.
+They apply to both active and replica vBuckets.
+Both settings default to `4` and have a minimum value of `1` and a maximum of `1024`.
 
-The setting may be established by means of the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Couchbase Web Console] or the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-rest[REST API].
+They only have an effect on rebalances in the backfill phase. 
+See <<#data-service-rebalance-phases>> and <<#fbr-backfill-takeover]>> for more about rebalance phases.
+
+For example, suppose a node is the source for 2 moves that are in the DCP backfill phase and is the target for 2 additional DCP backfill moves.
+With the default setting of `4`, any additional backfills involving the node (either as a source or destination) have to wait until 1 of its current moves completes its backfill phase.
+
+You can change the concurrency settings using the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Couchbase Web Console], the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-cli[Couchbase CLI], or the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-rest[REST API].
+
+Increasing the vBucket move concurrency can improve rebalance performance.
+However, higher concurrency uses more CPU, memory, disk, and network bandwidth resources.
+Conversely, a lower setting can degrade rebalance performance, while reducing the resources used by rebalance.
+
+Many additional factors can affect rebalance performance.
+Therefore, changing these parameters does not always result in a faster rebalance.
+Also consider that higher concurrency settings can degrade the performance of other database processes such the Data Service.
+
+==== Limiting FBR Backfill Network Bandwidth
+
+FBR copies vBucket snapshots via the network during its backfill phase.
+Doing so makes them more efficient, but it also means they can consume more network bandwidth than DCP backfills.
+Depending on available network bandwidth and the size of the vBuckets, these transfers can add latency to other database activities such as key-value retrievals.
+
+If you see additional latency during rebalances, you can monitor the amount of bandwidth FBR file transfers are consuming using the xref:metrics-reference:data-service-metrics.adoc#kv_ep_snapshot_read_bytes[`kv_ep_snapshot_read_bytes`] metric.
+See xref:manage:monitor/set-up-prometheus-for-monitoring.adoc[] for more information about monitoring metrics.
+
+If you find that the FBR transfers are consuming too much bandwidth, you can limit the bandwidth FBR can use to transfer vBuckets.
+You impose the limit using the File-Based Rebalance Throttle Rate setting in the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[rebalance setting] section of the Couchbase Server Web Console's Settings page.
+
+To change this setting via the REST API, see the xref:rest-api:rest-reader-writer-thread-config.adoc#fbr-throttle[`snapshot_download_throttle_bytes`] setting in the `/pools/default/settings/memcached/global` REST API endpoint. 
+
 
 [#rebalance-reporting]
 === Accessing Rebalance Reports

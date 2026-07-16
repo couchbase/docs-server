@@ -174,16 +174,16 @@ See xref:learn:data/durability.adoc[Durability], for information.
 [#rebalance-settings]
 === Rebalance Settings
 
-_Rebalance_ redistributes data, indexes, event processing, and query processing among available nodes.
+Rebalance redistributes data, indexes, event processing, and query processing among available nodes.
 For an overview, see xref:learn:clusters-and-availability/rebalance.adoc[Rebalance].
 Fully open, the panel appears as follows:
 
 image::manage-settings/rebalance-settings.png["The Rebalance Settings panel",548,align=center]
 
-The *Retry rebalance* option allows rebalance to be _retried_, in cases where it has failed.
+The *Retry rebalance* option allows rebalance to be retried, in cases where it has failed.
 Check the checkbox, to enable.
-The specifiable, _maximum number of retries_ must be in the range of 1 to 3, inclusive.
-The specifiable, _maximum number of seconds_ must be in the range of 5 to 3600, inclusive.
+The specifiable, maximum number of retries must be in the range of 1 to 3, inclusive.
+The specifiable, maximum number of seconds must be in the range of 5 to 3600, inclusive.
 
 Note that this option should _not_ be enabled if the cluster is managed by _Couchbase Autonomous Operator_, or if custom scripts are already being used to trigger rebalance.
 Note also that no administrative tasks should be attempted when rebalance-retries are pending.
@@ -881,23 +881,28 @@ For additional information, refer to xref:n1ql-rest-settings:index.adoc[].
 [#rebalance-settings-via-rest]
 === Rebalance Settings via REST
 
-By means of the REST API, both _rebalance retries_ and _maximum concurrent moves per node_ can be configured.
+You can change rebalance settings such as rebalance retries and maximum concurrent moves per node using REST API calls.
 
 ==== Rebalance Retries via REST
 
-To obtain the cluster's current settings for _rebalance retries_ by means of the REST API, use the `GET /settings/retryRebalance` HTTP method and URI, as follows:
+To obtain the cluster's current settings for rebalance retries using the REST API, use the `GET /settings/retryRebalance` HTTP method and URI, as follows:
 
 [source,shell]
 ----
-curl -X GET -u Administrator:password \
-http://10.143.192.101:8091/settings/retryRebalance
+curl -v -X GET -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
+     http://node1.example.com:8091/settings/retryRebalance | jq
 ----
 
 If successful, the command returns the following object:
 
 [source,json]
 ----
-{"enabled":true,"afterTimePeriod":200,"maxAttempts":3}
+{
+  "enabled": false,
+  "afterTimePeriod": 300,
+  "maxAttempts": 1
+}
+
 ----
 
 This output shows that rebalance retry is enabled, with `200` seconds required to elapse before a retry is attempted, and a maximum of `3` retries possible.
@@ -906,8 +911,8 @@ To change the rebalance settings, use the `POST` method with the same URI, speci
 
 [source,shell]
 ----
-curl -X POST -u Administrator:password \
-http://10.143.192.101:8091/settings/retryRebalance \
+curl -v -X POST -u $COUCHBASE_USERNAME:$COUCHBASE_PASSWORD \
+http://node1.example.com:8091/settings/retryRebalance \
 -d enabled=false \
 -d afterTimePeriod=100 \
 -d maxAttempts=2
@@ -924,30 +929,73 @@ This verifies that rebalance retry has been disabled, the required period betwee
 
 For more information on getting and setting the rebalance retry status, see xref:rest-api:rest-configure-rebalance-retry.adoc[Configure Rebalance Retries], xref:rest-api:rest-get-rebalance-retry.adoc[Get Rebalance-Retry Status], and xref:rest-api:rest-cancel-rebalance-retry.adoc[Cancel Rebalance Retries].
 
-==== Maximum Concurrent vBucket Moves via REST
+[#fbr-settings]
+==== Configure File-Based Rebalance via REST
 
-To inspect the current maximum number of concurrent vBucket moves permitted for every node, use the `GET /settings/rebalance` HTTP method and URI, with the `rebalanceMovesPerNode` parameter, as follows:
+The Data Service defaults to using file-based rebalance (FBR) when possible to transfer vBucket data between nodes. 
+See xref:learn:clusters-and-availability:rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)] for more information.
+
+You can use the REST API to view the status of FBR in the cluster by making a `GET` request to the `/internalSettings` endpoint to view the `dataServiceFileBasedRebalanceEnabled` setting.
+The following example uses `jq` to filter out all other values:
 
 [source,shell]
 ----
-curl -v -X GET http://10.143.201.101:8091/settings/rebalance \
--u Administrator:password
+curl -X GET -u $USERNAME:$PASSWORD \
+      http://node1.example.com:8091/internalSettings \
+      | jq '{dataServiceFileBasedRebalanceEnabled}'
+----
+
+The result of running this command returns a JSON object:
+
+[source,json]
+----
+{
+  "dataServiceFileBasedRebalanceEnabled": true
+}
+----
+
+To turn off FBR, make a `POST` request to set `dataServiceFileBasedRebalanceEnabled` to `false`:
+
+[source,bash]
+----
+curl -X POST -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/internalSettings \
+     -d dataServiceFileBasedRebalanceEnabled=false
+----
+
+You can also override the FBR setting on a per-bucket basis using 
+
+[#rest_rebalance_concurrent_moves]
+==== Maximum Concurrent vBucket Moves via REST
+
+Couchbase Server has 2 settings to control the number of vBucket moves a node can take part in concurrently: 1 for data change protocol (DCP) backfills and another for file-based rebalance (FBR) backfills.
+
+See xref:docs-server/modules/learn/pages/clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)] for more information about these backfill modes.
+
+To find the current maximum number of concurrent DCP vBucket moves DCP can perform on a node, use the `GET /settings/rebalance` REST API endpoint:
+
+[source,shell]
+----
+curl -v -X GET -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/settings/rebalance | jq
 ----
 
 This returns an object, confirming the current setting as being `4` (which is the default value):
 
 [source,json]
 ----
-{"rebalanceMovesPerNode":4}
+{
+    "rebalanceMovesPerNode":4
+}
 ----
 
-To _set_ a new value for the parameter use the `POST` method with the same URI, and with the `rebalanceMovesPerNode` parameter.
-Note that the minimum value is `1`, and the maximum `64`.
+To set a new value for the DCP backfill limit, send a `POST` request to the same endpoint setting the `rebalanceMovesPerNode` parameter to a new value.
+The valid range for this setting is from `1` to `1024`.
 
 [source,shell]
 ----
-curl -v -X POST http://10.143.201.101:8091/settings/rebalance \
--u Administrator:password \
+curl -X POST http://node1.example.com:8091/settings/rebalance \
+-u $COUCHBASE_USER:$PASSWORD \
 -d rebalanceMovesPerNode=10
 ----
 
@@ -958,7 +1006,83 @@ If successful, the call returns an object confirming the new setting:
 {"rebalanceMovesPerNode":10}
 ----
 
-For more information, see the REST reference page xref:rest-api:rest-limit-rebalance-moves.adoc[Limiting Concurrent vBucket Moves].
+For more information about limiting concurrent DCP backfills, see  xref:rest-api:rest-limit-rebalance-moves.adoc[Limiting Concurrent vBucket Moves].
+
+To get the FBR concurrent backfill limit, send a `GET` request to the `/internalSettings` REST API endpoint.
+This example uses `jq` to filter the output to show just this setting:
+
+[source,shell]
+----
+curl -X GET -u $USERNAME:$PASSWORD \
+      http://node1.example.com:8091/internalSettings \
+      | jq '{dataServiceFileBasedRebalanceMovesPerNode}'
+----
+
+The result shows the current setting:
+
+[source,json]
+----
+{
+  "dataServiceFileBasedRebalanceMovesPerNode": 4
+}
+----
+
+To change the value, make a `POST` request to the endpoint, setting  `dataServiceFileBasedRebalanceMovesPerNode` to the maximum number of concurrent moves.
+The valid range for this setting is from `1` to `1024`.
+The default is `4`.
+
+[source,bash]
+----
+curl -X POST -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/internalSettings \
+    -d dataServiceFileBasedRebalanceMovesPerNode=6 
+----
+
+See xref:rest-api:rest-get-internal-setting.adoc[] for more information about setting internal settings.
+
+
+==== Limit FBR Backfill Bandwidth Use
+
+By default, Couchbase Server does not limit the network bandwidth FBR uses when transferring vBucket data over the network.
+These unlimited transfers could increase latency for other Couchbase Server features, such as key-value operations.
+You can use the REST API to set the `snapshot_download_throttle_bytes` option, which limits the FBR's network use.
+
+To determine if there are limits on FBR's network use, make a `GET` request to the `pools/default/settings/memcached/global` REST API endpoint:
+
+[source,bash]
+----
+curl -X GET -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global | jq
+----
+
+If there are no overrides of any storage thread allocations (including `snapshot_download_throttle_bytes`), the command returns an empty JSON object.
+
+[source,json]
+----
+{}
+----
+
+To set a limit, make a `POST` request to the endpoint, setting `snapshot_download_throttle_bytes` to the maximum number of bytes per second FBR should use to transfer files.
+This sets the maximum transfer rate FBR can use on each node. 
+The following example limits FBR file downloads to 600MiB/s per node. 
+
+[source,bash]
+----
+curl -X POST -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global \
+     -d snapshot_download_throttle_bytes=629145600 | jq
+----
+
+If successful, the result returns the current overrides to the settings:
+
+[source,json]
+----
+{
+  "snapshot_download_throttle_bytes": 629145600
+}
+----
+
+See xref:rest-api:rest-reader-writer-thread-config.adoc[] for more information about overriding reader and writer thread settings.
 
 [#xdcr-process-setting-via-rest]
 === XDCR Process Setting via REST
