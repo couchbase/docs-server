@@ -104,25 +104,30 @@ The total time for the move is termed Move Time.
 NOTE: File-based rebalance (FBR) also changes the phases for active vBuckets. 
 See <<#file-based-rebalance>> for more information.
 
-
-
 [#file-based-rebalance]
 === File-Based Rebalance (FBR)
 
-File-Based Rebalance (FBR) for the Data Service copies the underlying Couchstore or Magma storage files directly from the source node to the destination node during the backfill phase of a vBucket move.
+File-based rebalance (FBR) for the Data Service copies the underlying Couchstore or Magma storage files directly from the source node to the destination node during the backfill phase of a vBucket move.
 Copying the files reduces CPU overhead on both nodes and decouples rebalance time from item count, making rebalance time proportional to data size on disk rather than document count.
 
+FBR only works on Couchstore or Magma buckets.
+It does not work on ephemeral buckets.
+
+FBR is enabled by default. 
+You can choose to turn it off globally or on a bucket-by-bucket basis. 
+See 
+
 NOTE: FBR is a Couchbase Server Enterprise Edition feature.
-Couchbase Server Community Edition continues to use DCP-based rebalance for all vBucket moves.
+Couchbase Server Community Edition only uses DCP-based rebalance for all vBucket moves.
 
 [#fbr-vs-dcp]
 ==== DCP Rebalance vs File-Based Rebalance
 
-Prior to Couchbase Server {totoro}, the Data Service always rebalanced using DCP backfills.
-A DCP backfill reads each piece of data from the vBucket on the source node.
+Prior to Couchbase Server {totoro}, the Data Service always rebalanced using Data Change Protocol (DCP) backfills.
+A DCP backfill reads each document from the vBucket on the source node.
 It then transmits it via the network using the DCP streaming protocol to the destination node.
-The destination node then writes the data into the target vBucket.
-This approach is reliable, but its overhead is proportional to the number of items in the dataset.
+The destination node then writes the document into the target vBucket.
+This approach is reliable, but its overhead is proportional to the number of documents in the dataset.
 The DCP backfill has to deserialize, transmit, and re-serialize each document.
 
 Instead of performing a DCP backfill, FBR moves eligible vBuckets by copying the storage files directly.
@@ -136,7 +141,7 @@ FBR also adds the cache transfer phase for active vBucket transfers:
 
 image::clusters-and-availability/rebalance-stages-fbr-1.svg[align=left]
 
-See <#data-service-rebalance-phases> for more information about rebalance phases. 
+See <<#data-service-rebalance-phases>> for more information about rebalance phases. 
 
 The following table summarizes the differences between DCP and FBR.
 
@@ -164,7 +169,7 @@ The following table summarizes the differences between DCP and FBR.
 |No — available in all editions
 |Yes — EE only
 
-|Default in {totoro} 
+|Default from {totoro} onward
 |Fallback when FBR is not applicable
 |Default for all eligible vBucket moves
 |===
@@ -174,14 +179,13 @@ The following table summarizes the differences between DCP and FBR.
 
 FBR applies only to the Backfill phase of a vBucket move, as described in xref:learn:clusters-and-availability/rebalance.adoc#data-service-rebalance-phases[Data Service Rebalance Phases].
 The Active Takeover phase always uses DCP, regardless of whether FBR was used for backfill.
-Because takeover always uses DCP, the DCP rebalance infrastructure remains fully operational in {totoro}.
 
 [#fbr-automatic-selection]
 ==== Automatic Rebalance Method Selection
 
-When FBR is enabled, the server automatically uses it to backfill vBuckets when it can.
+The server automatically uses FBR (when enabled) to backfill vBuckets when it can.
 If it cannot directly copy the vBucket files, Couchbase Server falls back to using DCP to move the data.
-Couchbase Server cannot directly copy the vBucket files in the following cases:
+Situations where Couchbase Server cannot directly copy the vBucket files include:
 
 Storage engine migration between Couchstore and Magma::
 Migrating the storage format requires a full data reload, which is only possible through DCP.
@@ -205,18 +209,21 @@ NOTE: Workloads with lower resident ratios (the ratio of data stored on disk vs.
 === Limiting Concurrent vBucket Moves
 
 Because copying vBuckets via DCP or FBR is resource-intensive, Couchbase Server lets you limit the number of concurrent moves for both types of backfills.
-Couchbase Sever has separate settings to limit the concurrency of DCP and FBR rebalances.
-These settings limit the maximum number of simultaneous vBucket moves allowed on a node (either as the source or destination) at a time.
+DCP and FBR rebalances have their own concurrency settings.
+These settings limit the maximum number of simultaneous vBucket moves allowed on a node (as either the source or destination) at a time.
 They apply to both active and replica vBuckets.
-Both settings default to `4` and have a minimum value of `1` and a maximum of `1024`.
 
-They only have an effect on rebalances in the backfill phase. 
-See <<#data-service-rebalance-phases>> and <<#fbr-backfill-takeover]>> for more about rebalance phases.
-
-For example, suppose a node is the source for 2 moves that are in the DCP backfill phase and is the target for 2 additional DCP backfill moves.
+For example, suppose a node is the source for 2 moves that are in the DCP backfill phase.
+Also, it's the target for 2 additional DCP backfill moves.
 With the default setting of `4`, any additional backfills involving the node (either as a source or destination) have to wait until 1 of its current moves completes its backfill phase.
 
-You can change the concurrency settings using the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Couchbase Web Console], the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-cli[Couchbase CLI], or the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-rest[REST API].
+Both settings default to `4` and have a minimum value of `1`.
+You can set DCP concurrency to a maximum of `64` and FBR to a maximum of `1024`.
+
+They only have an effect on rebalances in the backfill phase. 
+See <<#data-service-rebalance-phases>> and <<#fbr-backfill-takeover>> for more about rebalance phases.
+
+You can change the concurrency settings using the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Couchbase Web Console], the xref:manage:manage-settings/general-settings.adoc#rebalance-settings-via-cli[Couchbase CLI], or the xref:manage:manage-settings/general-settings.adoc#rest_rebalance_concurrent_moves[REST API].
 
 Increasing the vBucket move concurrency can improve rebalance performance.
 However, higher concurrency uses more CPU, memory, disk, and network bandwidth resources.
@@ -226,6 +233,7 @@ Many additional factors can affect rebalance performance.
 Therefore, changing these parameters does not always result in a faster rebalance.
 Also consider that higher concurrency settings can degrade the performance of other database processes such the Data Service.
 
+[#fbr-throttle]
 ==== FBR Backfill Network Throttle
 
 FBR copies vBucket snapshots via the network during the rebalance backfill phase.
@@ -236,10 +244,11 @@ If you see additional latency during rebalances, you can monitor the amount of b
 See xref:manage:monitor/set-up-prometheus-for-monitoring.adoc[] for more information about monitoring metrics.
 
 If you find that the FBR transfers are consuming too much bandwidth, you can limit the bandwidth FBR can use to transfer vBuckets.
-You impose the limit using the File-Based Rebalance Throttle Rate setting in the xref:manage:manage-settings/general-settings.adoc#rebalance-settings[rebalance setting] section of the Couchbase Server Web Console's Settings page.
 
-To change this setting via the REST API, see the xref:rest-api:rest-reader-writer-thread-config.adoc#fbr-throttle[`snapshot_download_throttle_bytes`] setting in the `/pools/default/settings/memcached/global` REST API endpoint. 
+You can set the limit using the *File-Based Rebalance Throttle Rate* setting in the Couchbase Server Web Console's *Settings* page.
+See xref:manage:manage-settings/general-settings.adoc#rebalance-settings[Rebalance Settings] for more information.
 
+To change this setting via the REST API, alter the xref:rest-api:rest-reader-writer-thread-config.adoc#fbr-throttle[`snapshot_download_throttle_bytes`] setting in the `/pools/default/settings/memcached/global` REST API endpoint. 
 
 [#rebalance-reporting]
 === Accessing Rebalance Reports
@@ -267,7 +276,7 @@ Rebalance affects each service differently.
 The following sections describe how rebalance affects non-Data Services.
 
 [#rebalancing-the-index-service]
-== Index Service
+=== Index Service
 
 The Index Service maintains a cluster-wide set of index definitions and metadata, which allows the redistribution of indexes and index replicas during a rebalance.
 
