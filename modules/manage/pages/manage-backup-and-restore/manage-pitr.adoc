@@ -22,6 +22,19 @@ Continuous backup restores the most recent full backup taken before the point in
 It then restores any incremental backups taken between the full backup and the point in time you chose.
 It uses the data in the continuous backup location to fill the gap between the last traditional backup it restored and the target point in time.
 
+[#backup-overlap]
+* Your continuous backups and periodic backups for the bucket made by either the Backup Service or `cbbackupmgr` must overlap.
+Overlapping means the bucket must have a full or incremental periodic backup that has occurred since you enabled continuous backup on it.
+For example, to make sure you can perform a PITR, you can:
+
++
+. Enable continuous backup for the bucket.
+. Wait at least until the continuous backup interval elapses so that continuous backup copies data into the continuous backup location.
+. Trigger a full or incremental backup on the bucket using either the Backup Service or `cbbackupmgr`.
+
++
+Once you complete this process, your continuous backup and traditional backups overlap and you can perform a PITR.
+
 * You must choose which point in time you want to restore the bucket to.
 
 +
@@ -33,7 +46,7 @@ However, you cannot restore to a specific point in time with traditional backup.
 
 +
 The latest time you can restore to is whenever the continuous backup agent last copied data to the continuous backup location. 
-This may be as far back in the past as the continuous backup iteration period you set when configuring continuous backup.
+This may be as far back in the past as the continuous backup interval period you set when configuring continuous backup.
 If you stopped continuous backup, then you can only restore up to the moment you stopped it.
 
 +
@@ -48,7 +61,7 @@ This can be:
 ** A bucket in a different cluster.
 --
 +
-PITR recovery does not flush the bucket before a restore.
+PITR recovery does not flush the target bucket before a restore.
 By default, it does not overwrite existing documents already in the bucket.
 If you want to restore the bucket to its exact state at the point in time you choose, flush the bucket before restoring.
 See xref:manage:manage-buckets/flush-bucket.adoc[] for more information about flushing buckets.
@@ -64,7 +77,6 @@ See xref:manage:manage-backup-and-restore/manage-continuous-backup.adoc#stop-con
 
 NOTE: You do not need to stop traditional periodic backups or XDCR for the bucket when performing PITR.
 
-
 == Restore to a Point in Time
 
 You use the `cbcontbk` command line tool to restore a bucket backed up using continuous backup to point in time.
@@ -75,7 +87,9 @@ When calling `cbcontbk`, you must supply the following arguments:
 * `-u` and `-p` are the username and password for the full administrator.
 * `--tmp-dir` a temporary directory the `cbcontbk` can use when restoring data.
 * `-l` the continuous backup storage location.
-This is either the absolute path of the NFS mount point, or the URI of the cloud storage location.
+This is either:
+** The absolute path to the e the backup storage location's NFS mount point.
+** The URI of the cloud storage location.
 * `-a` the filesystem path or S3 URI storing the traditional backup repository.
 * `-r` is the UUID for the repository containing the bucket's traditional backup.
 * `-c` is the URL for a node in the cluster running the Backup Service.
@@ -95,38 +109,39 @@ Because you'll need to use the command line to run `cbcontbk` anyhow, this examp
 [source,bash]
 ```
 couchbase-cli bucket-edit --cluster couchbase://localhost \
-              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
+              --username $USERNAME --password $PASSWORD \
               --bucket travel-sample \
               --continuous-backup-enabled 0
 ```
 
-. In this example, the goal is to have the bucket to be the exact state it was at the recovery time.
+. In this example, the goal is to have the bucket to be the exact state it was at your chosen recovery time.
 Therefore, you must flush the bucket before performing PITR.
+
++
+If the bucket does not have flushing enabled, you must first enable it:
+
++
+[source,bash]
+```
+couchbase-cli bucket-edit --cluster couchbase://localhost \
+              --username $USERNAME --password $PASSWORD \
+              --bucket travel-sample \
+              --enable-flush 1
+```
+
++
+Then flush the bucket:
 
 +
 [source,bash]
 ```
 couchbase-cli bucket-flush --cluster couchbase://localhost \
-              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
+              --username $USERNAME --password $PASSWORD \
               --bucket travel-sample 
 ```
 
 +
-[NOTE]
-====
-The previous example assumes the bucket is already configured to allow flushing. 
-If it's not, you must first enable flushing using the command:
-
-[source,bash]
-```
-couchbase-cli bucket-edit --cluster couchbase://localhost \
-              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD \
-              --bucket travel-sample \
-              --enable-flush 1
-```
-
-After finishing the PITR, consider turning off flushing the bucket again to prevent accidental data loss.
-====
+NOTE: After finishing PITR, consider turning off the ability to flush the bucket to prevent accidental data loss.
 
 . Before performing the restore, you should verify the point in time you want to restore to is available in the continuous backup location.
 You can find the range of times you can restore to using the `cbcontbk` command line tool.
@@ -178,8 +193,7 @@ The following example restarts continuous backup on the `travel-sample` bucket.
 [source,bash]
 ```
 couchbase-cli bucket-edit --cluster couchbase://localhost \
-              --username $COUCHBASE_USERNAME --password $COUCHBASE_PASSWORD  \
+              --username $USERNAME --password $PASSWORD  \
               --bucket travel-sample \
               --continuous-backup-enabled 1
 ```
-
