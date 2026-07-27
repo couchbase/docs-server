@@ -6,7 +6,7 @@ cbcontbk info -l /shared/continuous-backup/
 # Restore the bucket
 # tag::restore-bucket[]
 cbcontbk restore --target 2026-06-08T19:54:10Z \
-         -u $COUCHBASE_USERNAME -p $COUCHBASE_PASSWORD \
+         -u $USERNAME -p $PASSWORD \
          --tmp-dir /scratch \
          -l /shared/continuous-backup/ \
          -a /shared/backups \
