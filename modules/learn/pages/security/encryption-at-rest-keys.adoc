@@ -1,0 +1,377 @@
+= Encryption-at-Rest Keys 
+:description: To encrypt data at rest, you must create at least 1 encryption key. Couchbase Server uses the keys you create to encrypt data encryption keys.
+:page-toclevels: 2
+:page-edition: Enterprise Edition
+
+It then uses those data encryption keys to encrypt data on disk.
+This two-tier system lets Couchbase Server manage the rotation and expiration of the DEKs, even when another system manages the encryption keys.
+
+You have 2 primary choices to make when creating an encryption key:
+
+* The system you want to manage the key.
+You can have Couchbase Server manage encryption keys or have a third-party Key Management Service (KMS) manage them.
+For more information, see xref:learn:security/encryption-key-management-services.adoc[Encryption Key Management Services].
+
+* The data that Couchbase Server can use the encryption key to encrypt.
+You can restrict the key to encrypting 1 or more types of data:
+
+** *Other encryption keys:* You can enable an encryption-at-rest key to be a Key Encryption Key (KEK) for other encryption-at-rest keys.
+KEKs are useful when you want to use multiple layers of encryption keys.
+For example, you can use a KEK managed by a third-party KMS as a primary encryption key that encrypts encryption-at-rest keys managed by Couchbase Server.
+
+** *Buckets:* You can enable a key to encrypt all buckets or restrict it to specific buckets.
+
+** *Configuration:* By default, Couchbase Server uses the master password to encrypt configuration data.
+You can choose to use an encryption-at-rest key instead.
+
+** *Logs:* You can choose to use an encryption-at-rest key to encrypt logs.
+You can also use the master password instead.
+
+** *Audits:* As with configuration and log data, you can choose to use an encryption-at-rest key or the master password to encrypt audit data.
+
+** *Other:* You can enable a key to encrypt service-generated data, such as Query Service temporary spill files.
+ For more information, see <<service-generated-data>>.
+
+[#two-tier-encryption-model]
+== Two-Tier Encryption Model (KEK to DEK)
+
+Couchbase Server uses a two-tier key hierarchy to encrypt data at rest:
+
+=== Key Encryption Keys (KEKs)
+You create and manage KEKs through the Couchbase Server REST API or UI.
+A KEK encrypts and decrypts 1 or more Data Encryption Keys.
+You can store a KEK locally (managed by Couchbase Server) or in an external KMS such as AWS KMS, Azure Key Vault, GCP KMS, HashiCorp Vault, or a KMIP-compatible server.
+
+=== Data Encryption Keys (DEKs)
+Couchbase Server generates and manages DEKs automatically on each node.
+A DEK encrypts the actual data written to disk.
+Each node maintains separate DEKs for each encryption data type (buckets, configuration, logs, audit, and other).
+
+This design provides the following benefits:
+
+Reduced external KMS calls::
+Couchbase Server only contacts the external KMS to decrypt KEKs.
+After decryption, it uses the KEKs locally to encrypt and decrypt DEKs.
+This reduces latency and avoids an availability dependency on the external KMS during normal operations.
+
+Independent key rotation::
+You can rotate KEKs and DEKs independently.
+Couchbase Server automatically rotates DEKs at a configurable interval without contacting the external KMS for each rotation.
+ For more information, see xref:learn:security/encryption-key-rotation-expiration.adoc[Encryption Key Rotation and Expiration].
+
+Granular data isolation::
+You can assign different KEKs to different data types.
+For example, you can use 1 KEK for bucket data and a different KEK for configuration data.
+In multi-tenant configurations, each tenant's bucket can use its own KEK.
+ <<using-multiple-kmss-and-multiple-keys>> for more information.
+
+IMPORTANT: Use an external KMS key only as a KEK for locally managed keys.
+Do not assign an external KMS key directly to encrypt data.
+Doing so causes Couchbase Server to call the external KMS for every DEK decryption, which increases latency and creates an availability dependency.
+ For more information, see xref:learn:/security/encryption-key-management-services.adoc#remote-kms-best-practice[Remote KMS Best Practice].
+
+== Encrypting Bucket Data
+
+When using native encryption at rest to encrypt data in buckets, you choose which buckets to encrypt.
+For example, you can decide to just encrypt buckets containing sensitive data such as customer information.
+Then you would leave less-sensitive data unencrypted, such as product catalog data.
+Encrypting just sensitive data can help reduce the overhead of encrypting and decrypting data on your cluster.
+
+Each bucket can have its own encryption key.
+This configuration is useful in multi-tenancy configurations where each customer may want to manage their own encryption key.
+For more information, see  For more information, see <<bucket-encryption-data-type>>.
+
+== Encrypting Audit, Logs, and Configuration Data
+
+In addition to data, you can encrypt audit, logs, and most configuration data. 
+You enable the encryption of each of these types of data separately.
+You can use either an encryption-at-rest key or the master password to encrypt data.
+
+== Encrypting Configuration Data
+
+Configuration data includes cluster topology, security settings, passwords, certificates, and service configuration files.
+
+By default, Couchbase Server uses the master password to encrypt configuration data.
+Couchbase Server does not set the master password by default.
+You must set it on each node in the cluster.
+For more information, see xref:manage:manage-security/manage-system-secrets.adoc#setting-the-master-password[Setting the Master Password].
+
+IMPORTANT: You may notice that Couchbase Server reports that the configuration data as partially encrypted using the master password, even if you have not set it.
+When you first create the Couchbase Cluster, the master password is set to the empty string (`""`).
+Couchbase Server uses this empty password to encrypt the configuration data.
+Because the password is known, the encryption does not provide any security.
+Be sure to set the master password on each node in the cluster to make sure that the configuration data is encrypted with a secure password.
+You can also assign an encryption-at-rest key to encrypt configuration data instead of the master password.
+
+[NOTE]
+====
+* Some configuration data cannot be encrypted.
+This includes:
+
+** Bootstrap information.
+** Node and internal client certificates.
+** Prometheus configuration, metric data, and tokens used to gather metrics.
+
+* Logs of some services are not encrypted by NS Server.
+For example, Analytics log files such as `analytics_debug.log` and `analytics_periodic_dump.log` remain unencrypted even when encryption-at-rest for logs is enabled.
+====
+
+==== Log Data
+
+When you enable log encryption, Couchbase Server encrypts all new log entries it writes to disk.
+Now, this also includes service-specific log artifacts:
+
+Server log files::
+Standard Couchbase Server log files.
+
+First Failure Data Capture (FFDC) files:: 
+Diagnostic files that contain sensitive information, including xref:n1ql-rest-admin:index.adoc#Requests[completed and active requests] data and xref:n1ql-rest-admin:index.adoc#Vitals[Vitals] information.
+Only FFDC files that contain sensitive data are encrypted.
+
+Archive request files::
+Files that persist completed query requests when xref:n1ql:n1ql-manage/monitoring-n1ql-query.adoc#sys-history[streaming of completed requests] is enabled.
+
+Index Service statistics logs::
+The `indexer_stats.log` and `projector_stats.log` files.
+
+==== Audit Data
+
+Audit data includes the audit event files that Couchbase Server generates.
+You can assign an encryption-at-rest key or use the master password to encrypt audit data.
+
+[#service-generated-data]
+== Service-Specific Details
+
+Individual services encrypt their own service-generated files when you enable encryption at rest.
+Each service uses the encryption key associated with the appropriate data type.
+You do not need to configure encryption separately for each service.
+When you enable encryption for a data type, services that write that data type encrypt their files automatically.
+
+The following sections describe what each service encrypts and which encryption data type applies.
+
+=== Index Service (GSI)
+
+When you enable encryption at rest, the Index Service encrypts its data files, statistics, and metadata.
+The Index Service supports encryption for all storage modes, Plasma (the default), Memory-Optimized (MOI), and BHive.
+
+==== What the Index Service Encrypts
+
+[cols="2,1"]
+|===
+| Data | Encryption Data Type
+
+| Index data files
+| Bucket
+
+| Index definitions
+| Bucket
+
+| Persisted index statistics
+| Bucket
+
+| Codebook files for vector indexes
+| Bucket
+
+| Backup index data files
+| Bucket
+
+| Request handle cache
+| Bucket
+
+| Scan backfill temporary files
+| Bucket
+
+| Indexing MetaKV entries
+| Configuration
+
+| `indexer_stats.log` and `projector_stats.log`
+| Log
+|===
+
+==== File Path Changes
+
+When you enable encryption, the Index Service removes bucket and index names from index storage path names.
+This prevents the filesystem from exposing sensitive naming information.
+
+For example, when you enable encryption, the Index Service replaces an index path that contained the bucket name and index name with opaque identifiers.
+This change applies to all new index files created after you enable encryption.
+
+==== Rebalance Behavior
+
+The Index Service preserves encryption keys during file-based rebalance.
+When you use file-based rebalance to move index data between nodes, the encryption keys transfer along with the data files.
+The Index Service also enforces shard cleanup during DLI (Deferred Local Index) rebalance when encryption is enabled.
+
+==== Observability
+
+You can check the encryption status of every index using a REST API endpoint.
+// TODO: :info: confirm endpoint details with the Index team — a REST endpoint shows the encryption status of every bucket, vBucket, and index.
+
+For more information about the Index Service, see xref:learn:services-and-indexes/services/index-service.adoc[Index Service].
+
+=== Search Service
+
+When you enable encryption at rest for a bucket, the Search Service encrypts sensitive portions of its index files for indexes associated with that bucket.
+
+==== What the Search Service Encrypts
+
+The Search Service encrypts the following data within its index files:
+
+* Stored fields
+* Doc values
+* Vector index data
+* Synonyms data
+
+Other metadata portions of Search index files are not encrypted.
+These portions do not contain sensitive data, and encrypting them would reduce Search performance.
+
+==== How to Configure
+
+You do not configure Search encryption separately.
+When you enable encryption for a bucket, the Search Service automatically encrypts the sensitive portions of any Search index that maps to that bucket.
+When you turn off encryption for the bucket, the Search Service stops encrypting new data.
+The Search Service continues to decrypt data that was encrypted before encryption was disabled.
+
+==== Performance Considerations
+
+Encrypting Search index data adds overhead to both write and read operations.
+You may observe increased latency and reduced throughput for Search queries, especially for vector search workloads.
+Test your workload with encryption enabled to understand the performance impact in your environment.
+
+For more information about the Search Service, see xref:learn/services-and-indexes/services/search-service.adoc[Search Service].
+
+=== Backup Service
+
+Now, the Backup Service integrates with the centralized encryption-at-rest framework.
+
+NOTE: The Backup Service and `cbbackupmgr` already support encrypting backup data independently using a KMS-managed repository key.
+For more information, see xref:learn:services-and-indexes/services/backup-service.adoc[Backup Service].
+The changes described here are about encrypting the Backup Service's own operational files — not backup data itself.
+
+==== What the Backup Service Encrypts
+
+When you enable encryption at rest, the Backup Service encrypts the following:
+
+Backup log files::
+The Backup Service encrypts its log output when you enable log encryption.
+This includes logs written by `cbbackupmgr` within the backup archive (under the `logs/` directory).
+
+Continuous backup metadata::
+When you use continuous backup (point-in-time recovery), the Backup Service encrypts metadata files that track backup state and restore points.
+
+==== Bucket Identifiers in Backup Paths
+
+Now, the Backup Service uses bucket UUIDs instead of bucket names in backup storage paths when encryption is enabled.
+This prevents bucket names from being exposed through the filesystem, consistent with the Index Service's approach to path obfuscation.
+
+=== Query Service
+
+The Query Service uses Data Encryption Keys (DEKs) to encrypt sensitive data on disk.
+It encrypts different types of files under different encryption data types.
+
+For more information, see xref:learn:services-and-indexes/services/query-service.adoc[Query Service].
+
+==== Other Encryption Data Type
+
+When you enable "other" encryption, the Query Service encrypts temporary spill files used during query processing, such as files created for spilled sorting operations.
+
+For more information, see xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest].
+
+[#bucket-encryption-data-type]
+==== Bucket Encryption Data Type
+
+When you enable encryption for a bucket, the Query Service encrypts:
+
+IndexScan backfill files::
+The Index and Search Service clients create temporary backfill files when scan results exceed the capacity of the buffered channel between the client and the Query Service.
+The Query Service encrypts these files with the associated bucket's encryption key.
++
+The size of the buffered channel is managed by the xref:n1ql:n1ql-manage/query-settings.adoc#scan-cap-srv[pipeline-batch] setting.
+
+Sequential scan spill files::
+When the Query Service performs a xref:indexes:query-without-index.adoc[sequential scan] over a bucket, it creates temporary spill files on disk.
+The Query Service encrypts these files with the bucket's encryption key.
+
+==== Log Encryption Data Type
+
+When you enable log encryption, the Query Service encrypts:
+
+First Failure Data Capture (FFDC) files::
+Diagnostic files created when the Query Service detects incidents or conditions that may lead to failure.
+Only FFDC files that contain sensitive data are encrypted, including files with xref:n1ql-rest-admin:index.adoc#Requests[completed and active requests] information and xref:n1ql-rest-admin:index.adoc#Vitals[Vitals] information.
+
+Archive request files::
+Files that persist completed requests when xref:n1ql:n1ql-manage/monitoring-n1ql-query.html#sys-history[streaming of completed requests] is enabled.
+
+==== Decrypting Query Service Files
+
+Use the `cbcat` CLI tool to decrypt encrypted FFDC files and archived request files.
+
+==== Observability
+
+Use the Query Admin REST API to check the encryption-at-rest status on a Query node:
+
+[source,console]
+----
+curl -u <username>:<password> http://<node>:8093/admin/encryption_at_rest
+----
+
+.Example response
+[source,json]
+----
+{
+  "keys.in_use": {
+    "logs": ["", "c8e2a394-0498-4c37-8380-a61f434c7b80"]
+  }
+}
+----
+
+`keys.in_use`::
+An object containing the DEK IDs currently in use to encrypt data on disk.
+The list may include the special key ID `""` (an empty string), which indicates the presence of unencrypted data on disk.
+When encryption at rest is enabled for a data type, the list always includes the current active key.
+
+*Required roles:* Full Admin, Security Admin, or Read-Only Security Admin.
+
+[#eventing-service]
+=== Eventing Service
+
+The Eventing Service adopts the centralized encryption-at-rest framework.
+When you enable encryption at rest, the Eventing Service encrypts its metadata and service-generated artifacts.
+
+==== What the Eventing Service Encrypts
+
+The Eventing Service encrypts the following when encryption is enabled:
+
+* Eventing function definitions and configuration documents
+* Timer-related metadata
+* Checkpoint data (per-vBucket processing state)
+* DCP stream metadata
+* Application log (applog) files — encrypted when you enable log encryption
+
+Eventing application log files are stored in the `/opt/couchbase/var/lib/couchbase/data/@eventing/` directory.
+When you enable log encryption, the Eventing Service encrypts new log entries as it writes them.
+
+==== Log Rotation Requirement
+
+The Eventing `enable_applog_rotation` setting must remain `true` (the default) when encryption at rest is enabled.
+Couchbase Server blocks attempts to disable log rotation because encryption at rest depends on it to rotate encrypted log files properly.
+
+If you attempt to set `enable_applog_rotation` to `false` while encryption at rest is enabled, the request is rejected.
+
+==== Decrypting Eventing Files
+
+Use the `cbcat` CLI tool to decrypt encrypted Eventing log files and metadata.
+Run `cbcat` with the `--with-gosecrets` flag and the path to `gosecrets.cfg`.
+
+=== Diagnostic and Tool-Generated Files
+
+Several services generate diagnostic files that contain potentially sensitive information.
+When you enable encryption at rest, these files are encrypted as they are written.
+
+Use the `cbcat` CLI tool to decrypt any encrypted service-generated file.
+Run `cbcat` with the `--with-gosecrets` flag and the path to `gosecrets.cfg`.
+
+IMPORTANT: Encryption at rest does not retroactively encrypt service-generated files that were written before you enabled encryption.
+Only files written after enablement are encrypted.
+

@@ -1,0 +1,378 @@
+= Key Health Monitoring and Alerts
+:description: Couchbase Server provides metrics, alerts, key testing endpoints, and diagnostic information to help you monitor the health of your encryption-at-rest configuration.
+:page-toclevels: 2
+:page-edition: Enterprise Edition
+
+Use these tools to detect problems before they cause data unavailability or prevent a node from starting.
+
+[#periodic-key-testing]
+== Periodic Key Testing
+
+You can test encryption keys at any time to verify that Couchbase Server can reach the KMS and encrypt and decrypt data using the key.
+For keys managed by an external KMS (AWS KMS, Azure Key Vault, GCP Cloud KMS, HashiCorp Vault, or a KMIP server), testing is critical: network or credential issues can break encryption without triggering immediate alarms.
+
+=== How Key Testing Works
+
+When you test a key, Couchbase Server performs a round-trip encrypt/decrypt operation:
+
+. It generates a test payload.
+. It encrypts the payload using the key (contacting the external KMS if applicable).
+. It decrypts the encrypted payload.
+. It compares the decrypted result to the original payload.
+
+If any step fails, the test returns an error describing the failure.
+Starting with the next major release, key tests bypass the key cache.
+This means a test always contacts the external KMS directly, even if the key is cached locally.
+This also ensures the test accurately reflects the current state of the external KMS connection — not the cached state.
+
+=== When to Test Keys
+
+Test your encryption keys in the following situations:
+
+* *After configuring a new external KMS key* — to verify the connection, credentials, and permissions are correct before assigning the key to encrypt data.
+* *After rotating credentials* (such as AWS access keys, Azure client secrets, or HashiCorp Vault tokens) — to verify the new credentials work.
+* *After network or infrastructure changes* — to verify Couchbase Server can still reach the external KMS.
+* *When investigating encryption-related alerts* — to pinpoint whether the problem is with the key configuration, the KMS, or the network.
+* *Periodically as part of operational health checks* — to catch issues before they cause problems during DEK rotation or node restart.
+
+=== How to Test Keys
+
+You can test encryption keys using the Couchbase Server Web Console or the REST API.
+
+==== Web Console
+
+. In the Web Console, navigate to *Security > Encryption at Rest*.
+. Select the key you want to test and click *Test Encryption Key Settings*.
+
+==== REST API
+
+Couchbase Server provides 3 test endpoints:
+
+[cols="1,2"]
+|===
+| Endpoint | Description
+
+| `POST /settings/encryptionKeys/<ID>/test`
+| Test an existing encryption key by its ID.
+
+| `POST /settings/encryptionKeys/test`
+| Test encryption key settings before creating the key.
+Send the same JSON payload as when creating a key with `POST /settings/encryptionKeys`.
+
+| `PUT /settings/encryptionKeys/<ID>/test`
+| Test modified encryption key settings before saving them.
+Send the same JSON payload as when editing a key with `PUT /settings/encryptionKeys/<ID>`.
+
+|===
+
+*Required roles:* Full Admin or Security Admin.
+
+.Example: Test an existing key
+
+[source,console]
+
+----
+
+curl -u <username>:<password> -X POST \
+ http://<node>:8091/settings/encryptionKeys/<key-id>/test
+
+----
+
+.Example response (success)
+
+[source,json]
+
+----
+
+{
+ "result": "success"
+}
+
+----
+
+.Example response (failure)
+
+[source,json]
+
+----
+
+{
+ "result": "failure",
+ "reason": "failed to use key to generate proof: could not encrypt data error: secrets (code=Unknown): operation error KMS: Encrypt, https response error StatusCode: 400, RequestID: 6bbee74e-..., api error AccessDeniedException: ..."
+}
+
+----
+
+[#key-test-alerts]
+== Key Test Alerts
+
+Couchbase Server generates alerts when encryption operations fail.
+These alerts appear in the Web Console and can be configured to send notifications via email or other alert destinations.
+
+The following encryption-at-rest alerts are available:
+
+[cols="2,1,2"]
+|===
+
+| Alert | Metric | Description
+
+| Encryption-at-Rest Error
+| `cm_encr_at_rest_generate_dek_failures_total`
+| Triggered when Couchbase Server fails to generate a new DEK.
+If another DEK is present, the system continues using the old DEK (possibly expired) for encryption.
+If no DEK exists (first enablement), data stays unencrypted until the issue is resolved.
+
+| Encryption-at-Rest Error
+| `cm_encryption_key_rotation_failures_total`
+| Triggered when the system fails to rotate a configured encryption key (KEK).
+Failed rotation does not cause immediate service disruption, but can be an early sign of an external KMS connectivity or configuration problem.
+
+| Encryption-at-Rest Error
+| `cm_encryption_service_failures_total`
+| Covers a range of encryption key management failures, including problems reading or writing keys to disk, encryption and decryption failures, corrupted key files, and key integrity check failures.
+Impact depends on which key is affected — can range from partial data unavailability to complete node failure.
+
+| Encryption-at-Rest Key Test Failed
+|`encr_at_rest_key_test_failed`
+| Triggered when a periodic encryption key test fails. The system regularly tests configured encryption keys, and this alert fires if any such test does not pass.
+|===
+
+=== Investigating Alerts
+
+When you receive an encryption-at-rest alert:
+
+. Check the server logs (`ns_log` and debug logs) for the specific error message.
+The log entry typically indicates whether the failure is caused by a misconfiguration, an expired credential, or a connectivity problem with the external KMS.
+
+. Test the encryption key that is configured to encrypt the affected data type.
+Use the Web Console (*Security > Encryption at Rest > Test Encryption Key Settings*) or the REST API (`POST /settings/encryptionKeys/<ID>/test`).
+
+. If the key test fails, check:
+
+* External KMS connectivity (can Couchbase Server reach the KMS endpoint?).
+
+* Credential validity (have access keys, client secrets, or tokens expired?).
+
+* Permission configuration (does the KMS identity have the required encrypt/decrypt permissions?).
+
+* Key status in the external KMS (has the key been disabled, scheduled for deletion, or rotated?).
+
+TIP: Set up alert notifications (email, webhook, or other destination) for encryption-at-rest alerts so you are notified promptly when issues occur.
+
+For information on configuring steps, see xref:manage:manage-settings/configure-alerts.adoc[Configure Alerts].
+
+[#key-test-results-in-api]
+== Key Test Results in API
+
+You can check the encryption status and health of keys programmatically using several REST API endpoints.
+
+=== Encryption Status Endpoints
+
+[cols="1,2"]
+
+|===
+
+| Endpoint | What It Returns
+
+| `GET /pools/default`
+| Per-node encryption-at-rest status for configuration, audit, and log data (in the `encryptionAtRestInfo` key).
+
+| `GET /pools/default/buckets`
+| Aggregated per-bucket encryption-at-rest info (`encryptionAtRestInfo` key), and per-bucket per-node info (`bucketEncryptionAtRestInfo` key).
+
+| `GET /pools/default/buckets/<name>`
+| Aggregated encryption-at-rest info for a specific bucket (`encryptionAtRestInfo` key), and per-node info (`bucketEncryptionAtRestInfo` key).
+
+| `GET /settings/security/encryptionAtRest`
+| Aggregated encryption-at-rest info for configuration, log, and audit data (in the `info` key).
+
+|===
+
+Each endpoint returns a `dataStatus` field for each data type:
+
+[cols="1,2"]
+
+|===
+
+| Value | Meaning
+
+| `"encrypted"`
+| All data of this type is encrypted.
+
+| `"partiallyEncrypted"`
+| Some data is encrypted and some is not.
+
+| `"unencrypted"`
+| No data of this type is encrypted.
+
+|===
+
+=== Query Service Encryption Status
+
+The Query service provides its own encryption-at-rest status endpoint:
+
+[source,console]
+
+----
+
+curl -u <username>:<password> http://<node>:8093/admin/encryption_at_rest
+
+----
+
+.Example response
+
+[source,json]
+
+----
+{
+ "keys.in_use": {
+   "logs": ["", "c8e2a394-0498-4c37-8380-a61f434c7b80"]
+ }
+}
+
+----
+
+The `keys.in_use` field lists the DEK IDs in use.
+An empty string (`""`) indicates the presence of unencrypted data on disk.
+
+*Required roles:* Full Admin, Security Admin, or Read-Only Security Admin.
+
+[#encryption-error-alerts]
+== Encryption Metrics Reference
+
+Couchbase Server exposes the following Prometheus metrics for encryption at rest.
+You can use these metrics in Grafana dashboards, Prometheus alerting rules, or any compatible monitoring system.
+
+[cols="2,2"]
+
+|===
+
+| Metric | Description
+
+| `cm_encr_at_rest_data_status`
+| Encryption at rest status per data type.
+
+Values: `1` (encrypted), `0.5` (partially encrypted), `0` (unencrypted), `-1` (unknown).
+
+| `cm_encr_at_rest_deks_in_use`
+| Number of data keys currently in use per data type.
+
+A steady increase over time may indicate that old DEKs are not being retired.
+
+| `cm_encr_at_rest_drop_deks_events_total`
+| Total number of Drop DEKs events (when a DEK expires and the system re-encrypts data to stop using it).
+
+| `cm_encr_at_rest_generate_dek_total`
+| Total number of successful DEK generation events.
+
+| `cm_encr_at_rest_generate_dek_failures_total`
+| Total number of DEK generation failures.
+
+A non-zero value indicates a problem with the encryption key used to encrypt DEKs — test the key immediately.
+
+| `cm_encryption_key_rotation_failures_total`
+| Total number of encryption key (KEK) rotation failures.
+
+| `cm_encryption_key_rotations_total`
+| Total number of successful encryption key (KEK) rotations.
+
+| `cm_encryption_service_failures_total`
+| Total number of encryption service failures.
+
+This is a broad metric covering key read/write errors, encryption/decryption failures, corrupted key files, and key integrity check failures.
+
+|===
+
+=== Recommended Alert Rules
+
+[cols="2,1,1,2"]
+
+|===
+
+| Alert Name | Expression | Threshold | Severity
+
+| DEK Generation Failures
+| `increase(cm_encr_at_rest_generate_dek_failures_total[5m]) > 0`
+| Any failure
+| Critical — data may remain unencrypted
+
+| Key Rotation Failures
+| `increase(cm_encryption_key_rotation_failures_total[5m]) > 0`
+| Any failure
+| Warning — early sign of KMS connectivity issue
+
+| Encryption Service Failures
+| `increase(cm_encryption_service_failures_total[5m]) > 0`
+| Any failure
+| Critical — can cause data unavailability or node failure
+
+| DEK Accumulation
+| `cm_encr_at_rest_deks_in_use > 50`
+| Per data type
+| Warning — old DEKs may not be retiring; check rotation interval
+
+| Encryption Status Degraded
+| `cm_encr_at_rest_data_status < 1`
+| Per data type
+| Info — data is partially encrypted or unencrypted
+
+|===
+
+[#dek-expiry-diagnostics]
+== DEK Expiry in Diagnostics Endpoint
+
+The diagnostics endpoint `GET /diag/encryptionAtRest` provides detailed information about the encryption-at-rest state of each node, including debug information about DEKs, timers, and failed DEK-related jobs.
+
+Starting with the next major release, this endpoint also shows whether each DEK is expired or not.
+
+This enhancement helps you identify DEKs that have exceeded their configured lifetime and are pending re-encryption.
+
+=== Accessing the Diagnostics Endpoint
+
+[source,console]
+----
+curl -u <username>:<password> http://<node>:8091/diag/encryptionAtRest
+----
+
+*Required roles:* Full Admin.
+
+=== What the Endpoint Returns
+
+The diagnostics endpoint returns the following information for each node:
+
+DEK details::
+For each data type (buckets, configuration, logs, audit, other), the endpoint lists:
+
+* The DEK IDs currently in use.
+
+* Whether each DEK is active (the current encryption key) or deactivated (rotated out, kept for decryption).
+
+* Whether each DEK is expired — meaning its configured lifetime has elapsed and the system is attempting to re-encrypt data to retire it.
+
+* The creation and rotation timestamps for each DEK.
+
+Timer information::
+Shows the next scheduled DEK rotation time and the next scheduled encryption key (KEK) rotation time for each data type.
+
+Failed jobs::
+Lists any DEK-related operations that failed, including the failure reason and timestamp.
+This is useful for diagnosing why a DEK rotation or Drop DEKs operation did not complete.
+
+Cached key IDs::
+Lists the IDs of encryption keys that are currently cached in memory.
+Key tests bypass this cache, but the cache information is useful for understanding which keys the node is actively using.
+
+=== When to Use the Diagnostics Endpoint
+
+Use the diagnostics endpoint for troubleshooting and operational health checks:
+
+* *After a DEK generation or rotation failure alert* — to see which DEKs are affected and why the operation failed.
+
+* *When investigating partial encryption status* — to identify which DEKs are expired and pending re-encryption.
+
+* *During support escalations* — the output from this endpoint is included in `cbcollect_info` and provides comprehensive information for support analysis.
+
+NOTE: This endpoint is intended for diagnostics and troubleshooting.
+
+It returns internal implementation details that may change between releases.
+Do not build automation that depends on the exact format of this endpoint's output.
