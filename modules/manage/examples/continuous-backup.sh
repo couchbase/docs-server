@@ -4,7 +4,7 @@ curl -X POST node1.example.com:8091/pools/default/buckets/travel-sample \
      -u $USERNAME:$PASSWORD \
      -d continuousBackupEnabled=true \
      -d continuousBackupLocation="/shared/continuous-backup" \
-     -d continuousBackupInterval=10 
+     -d continuousBackupInterval=10
 # end::enable-travel-sample[]
 
 # Get information about the continuous backup location
