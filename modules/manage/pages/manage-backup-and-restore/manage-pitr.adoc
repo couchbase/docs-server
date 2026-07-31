@@ -17,37 +17,15 @@ For more information about how to configure continuous backup for a Magma bucket
 * Continuous backup must have made at least a single backup to the continuous backup location.
 This means continuous backup must have been active for a bit longer than its continuous backup interval.
 
-* You must have traditional periodic backups for the bucket you're restoring.
-PITR restores the most recent full backup taken before the point in time you're restoring to.
-It then restores any incremental backups taken between the full backup and the point in time you chose.
-It uses the data in the continuous backup location to fill the gap between the latest periodic backup it restored and the target point in time.
-
-[#backup-overlap]
-* Your continuous backups and periodic backups for the bucket made by either the Backup Service or `cbbackupmgr` must overlap.
-Overlapping means the bucket must have a full or incremental periodic backup that has occurred since you enabled continuous backup on it.
-For example, to make sure you can perform a PITR, you can:
-
-+
-. Enable continuous backup for the bucket.
-. Wait at least until the continuous backup interval elapses so that continuous backup copies data into the continuous backup location.
-. Trigger a full or incremental backup on the bucket using either the Backup Service or `cbbackupmgr`.
-
-+
-Once you complete this process, your continuous backup and traditional backups overlap and you can perform a PITR.
+* You must have periodic backups for the bucket that overlap with its continuous backups.
+For more information about how to make your backups overlap, see xref:manage:manage-backup-and-restore/manage-continuous-backup.adoc#backup-overlap[Overlap Continuous and Periodic Backups].
 
 * You must choose which point in time you want to restore the bucket to.
+You can choose any moment in the range currently held in the continuous backup location.
+If you stopped continuous backup, you can only restore up to the moment you stopped it.
 
 +
-The earliest point in time you can restore to is determined by your continuous backup retention period.
-The exception is if you enabled continuous backup more recently than the retention period.
-In that case, the earliest moment you can restore to is shortly after you enabled continuous backup.
-If you need to restore your cluster to a point earlier than this time, you can only restore a periodic backup, assuming you have one that covers the time you need to restore to.
-However, you cannot restore to a specific point in time with periodic backup.
-
-+
-The latest time you can restore to is whenever the continuous backup agent last copied data to the continuous backup location.
-This may be as far back in the past as the continuous backup interval period you set when configuring continuous backup.
-If you stopped continuous backup, then you can only restore up to the moment you stopped it.
+For more information about how far back you can restore, see xref:learn:services-and-indexes/services/continuous-backup.adoc#continuous-backup-retention[Continuous Backup Retention].
 
 +
 For more information about how to find the range of time backed up by a continuous backup location, see xref:manage:manage-backup-and-restore/monitor-continuous-backup.adoc#get-cont-backup-info[Get Information About a Continuous Backup Location].
@@ -61,16 +39,8 @@ This can be:
 ** A bucket in a different cluster.
 --
 +
-PITR recovery does not flush the target bucket before a restore.
-By default, it does not overwrite existing documents already in the bucket.
 If you want to restore the bucket to its exact state at the point in time you choose, flush the bucket before restoring.
 For more information about flushing buckets, see xref:manage:manage-buckets/flush-bucket.adoc[].
-
-+
-NOTE: You can have PITR overwrite existing documents in the bucket with documents in the backup by passing the `--force-updates` option to `cbcontbk`.
-This flag restores documents that are in the backup to the state they were in at the point in time you chose to restore to.
-However, it does not affect documents in the bucket that are not in the backup.
-For more information, see <<#pitr_force_updates>>.
 
 * To prevent consistency issues, stop continuous backup on the bucket you're restoring.
 You must stop continuous backup even if you're not restoring to the original bucket.
@@ -87,24 +57,26 @@ When calling `cbcontbk`, you must supply the following arguments:
 
 * `--target` is the date and time you want to restore the bucket to in an https://www.rfc-editor.org/info/rfc3339/[RFC3339 timestamp^].
 * `-u` and `-p` are the username and password for the full administrator.
-* `--tmp-dir` a temporary directory the `cbcontbk` can use when restoring data.
+* `--tmp-dir` is a temporary directory the `cbcontbk` can use when restoring data.
 * `-l` the continuous backup storage location.
 This is either:
 ** The absolute path to the backup storage location's Network File System (NFS) mount point on all nodes.
 ** The URI of the cloud storage location.
-* `-a` the filesystem path or S3 URI storing the traditional backup repository.
+* `-a` is the filesystem path or S3 URI storing the traditional backup repository.
 * `-r` is the UUID for the repository containing the bucket's traditional backup.
 * `-c` is the URL for a node in the cluster running the Backup Service.
 
-NOTE: If you're restoring to an empty bucket or you want any existing documents in the bucket to be restored to the state they were in at the time you're restoring to, add the `--force-updates` flag.
+NOTE: If you're restoring to an empty bucket or you want the bucket's existing documents to be in the state they were in at the time you're restoring to, add the `--force-updates` flag.
 This flag can make the PITR faster by turning off conflict resolution.
 For more information, see <<#pitr_force_updates>>.
 
-In addition, you must supply credentials `cbcontbk` can use to authenticate with the continuous backup location and the traditional backup repository if they're stored in the cloud.
+You must also supply credentials `cbcontbk` can use to authenticate with the continuous backup location and the traditional backup repository if they're stored in the cloud.
 If you have encrypted backups, you must also supply credentials to decrypt them.
 For more information, see the xref:continuous-backup:cbcontbk.adoc[`cbcontbk`] documentation.
 
-For example, suppose you want to restore the `travel-sample` bucket that uses locally mounted NFS shares for continuous backup and traditional backup.
+=== PITR Example
+
+Suppose you want to restore the `travel-sample` bucket that uses locally mounted NFS shares for continuous backup and traditional backup.
 Also suppose you want to restore to the original bucket and want it to be in the state it was in at your chosen restoration time.
 In this case, you can follow these steps to perform the PITR:
 
@@ -147,9 +119,12 @@ couchbase-cli bucket-flush --cluster couchbase://localhost \
 ```
 
 +
+For more information about flushing buckets, see xref:manage:manage-buckets/flush-bucket.adoc[].
+
++
 NOTE: After finishing PITR, consider turning off the ability to flush the bucket to prevent accidental data loss.
 
-. Before performing the restore, you should verify the point in time you want to restore to is available in the continuous backup location.
+. Before performing the restore, verify the point in time you want to restore to is available in the continuous backup location.
 You can find the range of times you can restore to using the `cbcontbk` command line tool.
 
 +
@@ -189,7 +164,7 @@ include::manage:example$continuous-backup.log[tag=restore-output]
 ```
 
 +
-You can see that PITR restores a traditional full backup and possibly multiple incremental backups.
+You can see that PITR restores a periodic full backup and possibly multiple incremental backups.
 Then it replays mutations from the continuous backup until it reaches the selected point in time.
 
 . After you have finished the PITR, start continuous backup again.
