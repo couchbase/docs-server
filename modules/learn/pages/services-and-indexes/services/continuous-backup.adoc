@@ -1,0 +1,243 @@
+= Continuous Backup & Point-in-Time Recovery
+:description: pass:q[Continuous backup frequently backs up mutations to Magma buckets and records timestamps to enable Point-In-Time Recovery (PITR).]
+:page-edition: Enterprise Edition
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+The Backup Service and `cbbackupmgr` are designed to perform periodic backups.
+For example, you may choose to have the Backup Service perform a daily full backup at midnight and then incremental backups every 2 hours.
+
+[ditaa]
+....
+                                  Periodic Backups          
+        +----------+                                                 +-----------+
+        | cEEE     |                                                 | cEEE      |
+        |   Full   |                                                 |Incremental|
+        |  Backup  |                                                 |  Backup   |
+Time ---+----------+-------------------------------------------------+-----------+------>
+        |                                                            | 
+        Midnight                                                     2:00 AM
+....
+
+
+Any data mutations made since the last periodic backup could be lost if there is data loss or corruption.
+
+Continuous backup supplements full and incremental backups by performing backups at shorter intervals.
+You can have it perform backups as frequently as every 2 minutes.
+It can limit the loss of data mutations that take place between periodic full and incremental backups.
+For example, the following diagram shows a continuous backup that's configured to perform backups every 10 minutes:
+
+[ditaa]
+....
+                                  Continuous Backups          
+        +----------+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-----------+
+        | cEEE     | | | | | | | | | | | | | | | | | | | | | | | | | | cEEE      |
+        |   Full   | +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ +-+ |Incremental|
+        |  Backup  |                                                 |  Backup   |
+--------+----------+-------------------------------------------------+-----------+------>
+        |                                                            | 
+        | Midnight                                                   | 2:00 A.M.
+....
+
+== Point-in-Time Recovery
+
+With periodic backups, you can only restore a bucket to the state it was in when it was backed up.
+For example, consider the backups shown in the Periodic Backup diagram.
+You can only choose to restore the bucket to the state it was in at midnight or at 2 A.M.
+You cannot restore it to any state between the 2 backups.
+
+With continuous backups, in addition to backing up data, the backup also records the timestamp of data mutations.
+These timestamps let you perform Point-In-Time Recovery (PITR)&#8212;restoring the bucket to the state it was in at a specific moment.
+
+Using PITR, you can precisely recover from data loss or corruption.
+For example, suppose a user accidentally flushed a bucket.
+You can restore the bucket to seconds before the flush occurred, recovering the lost data.
+
+== How Continuous Backup Works
+
+Continuous backup relies on a feature of the xref:learn:buckets-memory-and-storage/storage-engines.adoc#storage-engine-magma[Magma storage engine] to track changes to the data in a bucket.
+Because it relies on these features, continuous backup is only available for Magma buckets.
+You cannot use it with xref:learn:buckets-memory-and-storage/storage-engines.adoc#couchstore[Couchstore] buckets.
+
+You enable continuous backup on a per-bucket basis.
+You can choose to enable it for buckets that contain critical data while leaving it off for buckets that are not as vital or have few mutations.
+For more information about how to enable continuous backup, see xref:manage:manage-backup-and-restore/manage-continuous-backup.adoc[].
+
+[#continuous-backup-locations]
+=== Continuous Backup Locations
+
+Continuous backup saves the data mutations and their timestamps to a backup storage location.
+This location must be separate from the location of the backup repository for full and incremental backups.
+All of the nodes in the cluster must have access to this storage location.
+You can host the location on a shared network directory such as a Network File System (NFS) share.
+Continuous backup also supports storage locations on https://aws.amazon.com/s3/[Amazon S3^], https://azure.microsoft.com/en-us/products/storage/blobs/[Microsoft Azure Blob Storage^], and https://cloud.google.com/storage[Google Cloud Storage^].
+
+You can use 1 continuous backup storage location to store backups for multiple buckets.
+Having multiple buckets sharing the same storage location makes performing PITR on multiple buckets easier.
+You use the same commands to restore multiple buckets.
+
+You can also use different storage locations for buckets.
+Separate locations are useful in multi-tenancy configurations.
+Each tenant can supply their own continuous backup location.
+You can also separately track the cost of a tenant's cloud-based continuous backup location.
+
+[#continuous-backup-interval]
+=== The Continuous Backup Interval
+
+When enabling continuous backup, you must choose the interval when continuous backup copies the mutations to a bucket's data to the backup location.
+The minimum interval is 2 minutes.
+When setting the interval, you must consider potential data loss versus the potential increased storage cost.
+
+The longer you make the interval, the greater the possibility of losing data mutations that occur before the next continuous backup.
+It also affects the latest moment you can choose to restore the bucket to during a PITR.
+
+[ditaa]
+....
++-------------+  Up to the 
+| Latest      |  backup         
+| continuous  |  interval     | Current 
+| backup      |  + 2 Minutes  | time
+|             | <-----------> |
+| cEEE        |               | 
++-------------+               V
+--------------*---------------*--------->
+              |
+              Latest point in time
+              you can restore to
+....
+
+The latest point in time you can restore the bucket to is within the latest continuous backup.
+This can be as long as the entire backup interval, plus an additional 2 minutes.
+The additional 2 minutes is because Magma flushes its in-memory data to disk every 2 minutes.
+
+The continuous backup interval plus 2 minutes is the worst case scenario.
+In most cases, you'll be able to restore to a more recent point in time.
+
+A shorter continuous backup interval can cost you more money if your storage location is cloud-based.
+The cloud services that continuous backup supports all have per-request fees in addition to their raw data storage fee.
+Having a shorter interval means more frequent API requests and therefore more charges.
+A continuous backup interval of 5 minutes costs you twice the amount of request fees than a 10 minute backup interval.
+
+The continuous backup interval setting is per bucket.
+You can choose to have a shorter continuous backup interval on vital buckets that have a higher volume mutations.
+You can set a longer interval for less important buckets or ones that have fewer mutations.
+
+[#continuous-backup-retention]
+=== Continuous Backup Retention
+
+Continuous backup retains its backups for a configurable period of time.
+The range you can set the retention period is from 1 hour to 60 days.
+
+The retention period controls how far back in time you can restore a bucket using PITR.
+Continuous backup purges data that's older than the retention period.
+Once continuous backup purges the data, you cannot perform a PITR to the range of time it contained.
+
+Assuming you have periodic full and incremental backups older than the continuous backup retention period, you can use them to restore the bucket.
+However, they can only restore the bucket to the state it was in when the periodic backup was taken.
+You cannot use them to restore the bucket to an arbitrary point in time.
+
+When choosing the retention period, you must balance between the cost of storing the backup data and the flexibility of restoring your bucket to an earlier time.
+If you choose cloud storage for your continuous backup location, you pay data storage fees based on the amount of data you store.
+These fees increase the longer you set the retention period.
+
+[#how-pitr-works]
+== How PITR Works
+
+You can perform a PITR on a bucket to the same cluster or a different cluster.
+When restoring to the same cluster, you can choose to restore to a new bucket or to the existing bucket.
+
+If you're restoring to the original bucket, decide whether you want the bucket to be in the state it was in at the specific point in time.
+PITR does not automatically flush the bucket before performing a restore.
+PITR does not affect any documents added after the point in time you chose to restore to.
+By default, PITR performs Compare and Swap (CAS) checks to avoid overwriting changes to documents that exist in the bucket.
+You can choose to have it overwrite existing data in the bucket.
+For more information, see xref:manage:manage-backup-and-restore/manage-pitr.adoc#pitr_force_updates[PITR Performance and Conflict Resolution].
+
+If you want an existing bucket to be exactly the way it was at the point in time you chose to restore to, flush the bucket before restoring.
+For more information about flushing buckets, see xref:manage:manage-buckets/flush-bucket.adoc[].
+
+When restoring, PITR first restores the latest full and incremental backups from before restore time you chose.
+It then replays the mutations stored in the continuous backups since the last full or incremental backup.
+It continues replaying the mutations until it reaches the point in time you chose.
+
+[ditaa]
+....
+                                                                
+    +----------+         +-----------+    
+    | cEEE     |         | cEEE      |        Continuous Backups   
+    |   Full   |  . . .  |Incremental+--+--+--+--+--+--+--+--+--+
+    |  Backup  |         |  Backup   |  |  |  |  |  |  |  |  |  | 
+----+----------+---------+-----------+--+--+--+--+--+--+--+*-+--+-->
+         |                    |      |                     |
+      Restored             Restored  |<------------------->|
+       first                second      Continuous backups |
+                                             replayed      |
+                                                           |  
+                                                        Selected     
+                                                        point in 
+                                                          time                                  
+....
+
+
+== Continuous Backup's Effects on the Cluster
+
+Enabling continuous backup has several impacts on the cluster and interactions with other features:
+
+* Continuous backup increases the disk usage on nodes.
+Couchbase Server has to retain some files it would otherwise delete until continuous backup can back them up.
+The amount of added disk space depends on the number of mutations and the length of the continuous backup interval.
+
+* You must use the credential store to provide the credentials for any cloud storage locations you use for continuous backup.
+The credential store has its own requirements&#8212;you must enable peer-to-peer encryption and encryption at rest for Couchbase Server configuration files.
+For more information, see the credential store documentation.
+
+// FIXME: add link to the credential store docs when they are done.
+
+* As part of enabling continuous backup, you must enable the bucket's change history.
+Change history is a Magma feature that lets continuous backup record the mutations so it can replay them back during a PITR.
+When you have continuous backup enabled for a bucket, you cannot turn off the bucket's change history setting.
+
++
+When you enable continuous backup for a bucket, disabling change history for individual collections is not supported.
+Verify that no collection has a change history override setting on it before enabling continuous backup.
+
++
+For more information about change history, see xref:learn:data/change-history.adoc[].
+
+=== Continuous Backup and Unsafe Failover
+
+For continuous backup to be able to reliably restore a bucket to a point in time, it must have a consistent history of the changes made to a bucket.
+An xref:learn:clusters-and-availability/hard-failover.adoc#performing-an-unsafe-failover[unsafe failover] can cause consistency issues in this history.
+If you must perform an unsafe failover on a node, first stop the Couchbase Server process on it.
+Stopping the process prevents inconsistencies in history, and protects continuous backup's ability to perform a PITR.
+
+For more information about how to stop the Couchbase Server process, see xref:install:startup-shutdown.adoc[].
+
+[#encryption-at-rest]
+=== Continuous Backup and Encryption at Rest
+
+If you enable encryption at rest for a bucket's data, continuous backup needs to maintain a copy of the encryption at rest Data Encryption Keys (DEKs).
+Continuous backup needs its own copy of the DEKs because encryption at rest rotates its DEKs.
+Therefore, the current DEKs are usually not the same ones continuous backup needs to decrypt older data in its backups.
+Continuous backup creates a backup of the DEKs along with the bucket's data so that it can decrypt the data itself.
+
+You must configure continuous backup with access to a https://en.wikipedia.org/wiki/Key_management#Key_management_system[Key Management Service^] (KMS) it can use to protect the DEKs it saves alongside the bucket data.
+It uses the KMS to securely re-encrypt the DEKs.
+This re-encryption protects the keys the same way encryption at rest does.
+All nodes in the cluster must be able to connect to the KMS you configure for continuous backup.
+
+If you have already configured a KMS to manage encryption keys for your periodic full and incremental backups, you can reuse it to manage the keys for continuous backup.
+
+For more information about encryption at rest, see xref:learn:security/native-encryption-at-rest-overview.adoc[].
+
+== See Also
+
+* xref:manage:manage-backup-and-restore/manage-continuous-backup.adoc[]
+* xref:manage:manage-backup-and-restore/manage-pitr.adoc[]
+* xref:manage:manage-backup-and-restore/monitor-continuous-backup.adoc[]
+* xref:learn:services-and-indexes/services/backup-service.adoc[]
+* xref:learn:data/change-history.adoc[]
+
+
