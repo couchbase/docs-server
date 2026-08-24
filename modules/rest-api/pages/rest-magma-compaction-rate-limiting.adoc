@@ -1,0 +1,100 @@
+= Magma Compaction Rate Limiting
+:description: This API is used to set the rate limit for Magma compaction threads. 
+:stem: asciimath
+[abstract]
+{description}
+
+== Description
+
+Use these API calls to limit the disk I/O bandwidth (in *bytes per second*) that the Magma Storage Engine Compaction may consume. 
+The limit is global to the Data Service and shared across all buckets on the node
+
+NOTE: The limit setting is global, 
+even though the application of the setting is on a per-node basis. 
+This allows compactions on each node to consume a maximum of `compaction-rate-limit` bytes per second.
+
+Compaction is a background maintenance activity that reclaims space from stale and deleted data and keeps data files efficient to read. 
+It operates on the same data files that front-end reads and writes use, so large bursts of compaction can consume enough disk I/O to slow front-end operations. 
+Rate limiting smooths those bursts into a steady background rate, keeping front-end performance predictable — at the cost of slower compaction.
+
+=== Usage
+
+Rate limiting helps wherever compaction can surge and contend with front-end I/O, for example:
+
+* Short burst, write heavy workloads, where spikes in writes drive spikes in compaction.
+
+* Large collection drops, which mark a large amount of data for removal at once.
+
+* Sudden large number document expirations, such as a batch of items with closer TTL range expiring together.
+
+The trade-off is that compaction runs more slowly, so disk usage may stay higher for longer. 
+Set the limit low enough to protect front-end write bursts, but high enough that compaction keeps pace with the write rate.
+
+
+== Recommended Value
+
+A practical starting point is 100 MB/s (104857600 bytes/s), or about 10× your incoming write rate — estimated as writes per second per node × average document size. 
+For example, 10,000 writes/s of 1 KB documents is roughly 10 MB/s incoming, giving a ~100 MB/s limit.
+
+== Settings
+
+[cols="1,2,1"]
+|===
+| Setting | Description| Range
+
+| `magma_compaction_rate_limit`
+| Controls the I/O bandwidth
+(given in bytes per second)
+that compactions on all the shards on one node consume.
+Setting this value to 0 disables compaction rate limiting.
+| stem:[0 … 2^64 - 1] 
+(default: 0)
+
+
+|===
+
+== HTTP Methods and URIs
+
+[source, shell]
+----
+GET /pools/default/settings/memcached/global 
+POST /pools/default/settings/memcached/global 
+
+----
+
+== Examples
+
+.Retrieve the compaction limit settings
+[source, shell]
+----
+curl -u Administrator:password -X GET http://localhost:8091/pools/default/settings/memcached/global
+----
+
+Running this command returns the global settings:
+
+[source, json]
+----
+{
+  "max_connections": 20000,
+  "system_connections": 5000,
+  "magma_compaction_rate_limit": 100
+}
+----
+
+.Setting the compaction rate
+[source, shell]
+----
+ curl -u Administrator:password -X POST localhost:8091/pools/default/settings/memcached/global \
+-d magma_compaction_rate_limit=500 | jq
+----
+
+The call executes and returns a JSON object containing the new setting.
+
+[source, json]
+----
+{
+  "max_connections": 20000,
+  "system_connections": 5000,
+  "magma_compaction_rate_limit": 500
+}
+----
