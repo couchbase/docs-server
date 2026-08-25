@@ -30,6 +30,8 @@ For more information, see xref:learn:data/durability.adoc[Durability].
 However, allocating too many threads can reduce performance on nodes with limited resources.
 Test any changes to thread allocation before applying them to production systems.
 
+This endpoint also lets you limit the bandwidth each node uses when downloading vBucket snapshots during a file-based rebalance (FBR) backfill.
+For more information, see xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)].
 
 == Getting Current Thread Settings
 
@@ -75,11 +77,13 @@ The following example shows how to get the current global thread settings for Co
 
 [source,bash]
 ----
-curl -X GET -u Administrator:password \
-http://localhost:8091/pools/default/settings/memcached/global | jq
+curl -X GET -u $USERNAME:$PASSWORD \
+http://node1.example.com:8091/pools/default/settings/memcached/global | jq
 ----
 
-If successful, the call returns a JSON object containing any overrides to the default global thread settings:
+If successful, the call returns a JSON object containing any overrides to the default global thread settings.
+If there are no overrides, the command returns an empty JSON object.
+The following example shows the result after 2 settings have been overridden.
 
 [source,json]
 ----
@@ -106,6 +110,7 @@ curl -X POST http[s]://{host}:{port}/pools/default/settings/memcached/global
   [-d num_auxio_threads=<integer>]
   [-d num_storage_threads=<integer>]
   [-d magma_flusher_thread_percentage=<integer>]
+  [-d snapshot_download_throttle_bytes=<integer>]
 ----
 
  
@@ -165,6 +170,22 @@ NOTE: `num_storage_threads` and `magma_flusher_thread_percentage` are advanced s
 Contact Couchbase Support before making changes to them.
 Support can help you determine the best settings for your workload and hardware.
 
+[#fbr-throttle]
+`snapshot_download_throttle_bytes`::
+(optional) Limits the number of bytes per second each node can read to download vBucket snapshots during a xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance] (FBR) backfill.
+The default value is 0, which does not limit the download rate.
+The maximum value is the maximum unsigned 64-bit integer value (2^64^ - 1).
+
++
+[NOTE]
+====
+Setting this value to too high (or leaving it set at the default value of 0, which lets FBR use unlimited bandwidth) can increase the latency of KV operations.
+If KV latency during rebalance become an issue, consider adjusting this value to limit the network bandwidth available to FBR.
+
+You can monitor the xref:metrics-reference:data-service-metrics.adoc#kv_ep_snapshot_read_bytes[`kv_ep_snapshot_read_bytes`] metric to find the bandwidth FBR is consuming when transferring vBucket snapshots.
+For more information about monitoring metrics, see xref:manage:monitor/set-up-prometheus-for-monitoring.adoc[].
+====
+
 [#required-privileges-post]
 === Required Privileges
 
@@ -192,8 +213,8 @@ To set the numbers of reader, writer, NonIO, and AuxIO threads for Couchbase Ser
 
 [source,bash]
 ----
-curl -X POST -u Administrator:password \
-http://localhost:8091/pools/default/settings/memcached/global \
+curl -X POST -u $USERNAME:$PASSWORD \
+http://node1.example.com:8091/pools/default/settings/memcached/global \
 -d num_reader_threads=12 \
 -d num_writer_threads=8 \
 -d num_nonio_threads=6 \
@@ -217,8 +238,8 @@ The following example increases the Magma storage engine's thread pool to 30 thr
 
 [source,bash]
 ----
-curl -X POST -u Administrator:password \
-     http://localhost:8091/pools/default/settings/memcached/global \
+curl -X POST -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global \
      -d num_storage_threads=30 \
      -d magma_flusher_thread_percentage=25 | jq
 ----
@@ -230,6 +251,30 @@ If successful, the call returns an object confirming your new settings:
 {
   "magma_flusher_thread_percentage": 25,
   "num_storage_threads": 30
+}
+----
+
+[#fbr-throttle-example]
+This example limits FBR file downloads to 600MiB/s.
+
+[source,bash]
+----
+curl -X POST -u $USERNAME:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global \
+     -d snapshot_download_throttle_bytes=629145600 | jq
+----
+
+If successful, the result returns the current settings:
+
+[source,json]
+----
+{
+  "num_reader_threads": "balanced",
+  "num_writer_threads": "balanced",
+  "num_storage_threads": "default",
+  "snapshot_download_throttle_bytes": 629145600,
+  "throttle_enabled": false,
+  "node_capacity": 18446744073709551615
 }
 ----
 
