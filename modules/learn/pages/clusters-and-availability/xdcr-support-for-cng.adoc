@@ -9,11 +9,10 @@
 This feature allows XDCR to replicate data to a target cluster through its CNG interface, using gRPC over HTTPS instead of direct node-to-node Couchbase connections.
 
 This document covers the concepts, configuration, usage, and behavior of XDCR over CNG for Couchbase Server administrators and operators.
+For information about CNG deployment, see xref:cloud-native-gateway::intro/about-cng.adoc[About Cloud Native Gateway].
 
-NOTE: This document does not cover Cloud Native Gateway installation.
-
-IMPORTANT: This feature is available in Enterprise Edition only.
-It's not available in Community Edition.
+IMPORTANT: This feature is available in Couchbase Server Enterprise Edition only.
+It's not available in Couchbase Server Community Edition.
 
 == Cloud Native Gateway in Couchbase
 
@@ -37,10 +36,12 @@ In cloud environments, this requires exposing multiple ports on every node acros
 
 * OpenShift and Kubernetes environments:
 OpenShift Routes and Kubernetes Ingress objects only support HTTP/HTTPS traffic.
-With CNG, instead of a custom solution to expose all of the cluster's nodes externally, you can use the standard approaches for exposing cluster services like OpenShift Routes and Kubernetes LoadBalancer and only expose CNG.
-For more information, see xref:docs-cloud-native-gateway:about-cng.adoc.
+With CNG, instead of a custom solution to expose all of the cluster's nodes externally, you can use the standard approaches for exposing cluster services.
+For example, you can use OpenShift Routes and Kubernetes LoadBalancer to just expose CNG.
+For more information, see xref:cloud-native-gateway::intro/about-cng.adoc[About Cloud Native Gateway].
 * Private Link environments:
-Cloud Service Provider (CSP) private link services expect a single load-balanced resource, and the configuration required for direct XDCR node-to-node connections is complex and difficult to maintain.
+Cloud Service Provider (CSP) private link services expect a single load-balanced resource.
+The configuration required for direct XDCR node-to-node connections is complex and difficult to maintain.
 * General cloud networking:
 Any network interface or proxy that supports HTTPS or gRPC works naturally with CNG, whereas direct XDCR connections require custom solutions that are environment-specific and fragile.
 
@@ -67,7 +68,7 @@ The following version requirements apply to XDCR over CNG:
 
 |Source cluster
 |Couchbase Server
-|the next major release or later
+|8.5
 
 |Source cluster
 |Cloud Native Gateway
@@ -75,14 +76,14 @@ The following version requirements apply to XDCR over CNG:
 
 |Target cluster
 |Couchbase Server
-|Any version that supports CNG (earlier versions are supported as target; however, both clusters must support the next major release or later for bidirectional CNG replication)
+|Any version that supports CNG (earlier versions are supported as target; however, both clusters must support Couchbase Server 8.5 or later for bidirectional CNG replication)
 
 |Target cluster
 |Cloud Native Gateway
 |CNG version 1.2.1 or later
 |===
 
-IMPORTANT: The Couchbase Server on the source cluster must be running the next major release or later, as the XDCR in the Server must understand the gRPC protocol and support Cloud Native Gateway as a target.
+IMPORTANT: The Couchbase Server on the source cluster must be running Couchbase Server 8.5 or later, as the XDCR in the Server must understand the gRPC protocol and support Cloud Native Gateway as a target.
 The target cluster must have Cloud Native Gateway version 1.2.1 or later, as 1.2.1 includes XDCR support.
 
 === One-Way vs Two-Way Replication Requirements
@@ -92,20 +93,20 @@ The target cluster must have Cloud Native Gateway version 1.2.1 or later, as 1.2
 |Replication Type |Source Cluster Requirements |Target Cluster Requirements
 
 |One-way (unidirectional)
-|The next major release.
+|8.5
 CNG not required.
 |CNG with XDCR support installed.
 Server version can be any version that works with CNG 1.2.1.
 
 |Two-way (bidirectional)
-|The next major release.
+|8.5
 CNG with XDCR support installed (acting as a target).
-|The next major release.
+|8.5
 CNG with XDCR support installed (acting as a target).
 |===
 
 NOTE: In a bidirectional setup, each cluster is both an XDCR source and a target.
-As a source, it must be running the next major release.
+As a source, it must be running Couchbase Server version 8.5.
 As a target, it must have CNG version 1.2.1 or later installed.
 
 == Limitations
@@ -119,14 +120,14 @@ Attempting to use `xdcrDiffer` with a CNG remote reference returns an error.
 * *Conflict Logging*: Conflict logging is not supported for XDCR over CNG since Conflict logging requires cross cluster versioning to be enabled on the bucket.
 * *Sync Gateway Interop*: Mobile buckets (Sync Gateway / App Services) are only supported for one-way (uni-directional) XDCR replication with CNG since bidirectional support requires cross cluster versioning to be enabled on the bucket.
 
-== Working of XDCR Over CNG
+== How XDCR over CNG Works
 
 This section explains how XDCR communicates with the target cluster through Cloud Native Gateway, including the connection model, protocol switching capabilities, and error handling mechanisms.
 
 === Connection Model
 
 When a remote cluster reference is created with the `couchbase2://` prefix, XDCR transmits data over HTTPS using the gRPC protocol.
-By default, this traffic uses port *18098* on the Cloud Native Gateway.
+By default, this traffic uses port 18098 on the Cloud Native Gateway.
 
 The CNG on the target cluster handles load balancing and routes traffic to the appropriate nodes and vBuckets within the target cluster.
 Cluster topology changes in the target cluster are handled by CNG transparently.
@@ -137,6 +138,7 @@ The source cluster XDCR process does not need to track or update topology maps f
 XDCR supports dynamically switching a remote cluster reference between CNG-based and direct node-to-node connections.
 When the remote reference for an existing replication is updated to change between these 2 protocols, for example, switching from `couchbase2://` to a direct cluster hostname or vice versa, the replication resumes using the existing XDCR checkpoints.
 No data needs to be re-replicated from the beginning.
+For more information, see xref:manage:manage-xdcr/create-xdcr-reference.adoc#switching-protocols[Switching Protocols].
 
 This means that in a multi-cluster XDCR topology, some replication legs can use CNG while others use direct node-to-node connections.
 
@@ -161,9 +163,9 @@ You learn how to create remote cluster references, configure security settings, 
 
 To configure XDCR to replicate to a target cluster through its CNG interface, specify the target cluster hostname using the `couchbase2://` prefix when creating the remote cluster reference.
 
-=== Hostname Prefix
+=== CNG URI
 
-As shown below, use the couchbase2:// prefix with the target cluster CNG hostname or load balancer address.
+When creating the CNG URI, use the couchbase2:// scheme with the target cluster CNG hostname or load balancer address.
 If the CNG is using the default gRPC port, 18098, you do not need to add the port to the hostname.
 However, if the CNG is using a different port, then, you must add the port to the hostname.
 
@@ -172,8 +174,8 @@ However, if the CNG is using a different port, then, you must add the port to th
 couchbase2://<target-cluster-cng-hostname-or-address>
 ----
 
-IMPORTANT: Use the prefix `couchbase2://`, not `couchbases2://`.
-The prefix does not contain an `s` after `couchbase`.
+IMPORTANT: Use the scheme `couchbase2://`, not `couchbases2://`.
+The scheme does not contain an `s` after `couchbase`.
 
 === Security and Encryption
 
@@ -266,32 +268,32 @@ This section describes common deployment scenarios for XDCR over Cloud Native Ga
 
 === Self-Managed to Self-Managed
 
-Two self-managed clusters, both running the next major release, can replicate data using XDCR over CNG.
+Two self-managed clusters, both running Couchbase Server 8.5, can replicate data using XDCR over CNG.
 This enables bidirectional replication without requiring direct node-to-node network access between the clusters.
 
 Typical requirements for this scenario:
 
-* Both clusters run the next major release or later.
+* Both clusters run Couchbase Server 8.5 release or later.
 * Both clusters have CNG version 1.2.1 or later installed.
-* Remote references are created using the `couchbase2://` prefix and the hostname of the target Cloud Native Gateway.
+* Remote references are created using the `couchbase2://` scheme and the hostname of the target Cloud Native Gateway.
 * Remote references are configured with full TLS encryption (`secureType=full`).
 * The clusters do not require alternate addresses or direct node-to-node network connectivity.
 
 === OpenShift Environment
 
 With Cloud Native Gateway (CNG), instead of a custom solution to expose all of the cluster's nodes externally, you can use the standard approaches for exposing cluster services like OpenShift Routes and Kubernetes LoadBalancer and only expose the CNG service outside of the k8s environment. 
-For more information, see xref:docs-cloud-native-gateway:about-cng.adoc.
+For more information, see xref:cloud-native-gateway::intro/about-cng.adoc[About Cloud Native Gateway].
 
 In an OpenShift deployment managed by the Couchbase Autonomous Operator (CAO), CNG is deployed as a sidecar to each Couchbase Server node.
 Administrators define OpenShift routes that expose the CNG service to external clients.
-XDCR from any Couchbase cluster can replicate into the OpenShift-hosted cluster by creating a remote reference with the `couchbase2://` prefix and the route address.
+XDCR from any Couchbase cluster can replicate into the OpenShift-hosted cluster by creating a remote reference with the `couchbase2://` scheme and the route address.
 
 NOTE: CAO manages the installation and lifecycle of CNG in Kubernetes and OpenShift environments.
-When creating XDCR remote references in a CAO-managed cluster, the `couchbase2://` prefix and CNG address should be allowed in the CAO XDCR configuration.
+When creating XDCR remote references in a CAO-managed cluster, the `couchbase2://` scheme and CNG address should be allowed in the CAO XDCR configuration.
 
 === Capella to Self-Managed Over Public Network
 
-A Capella cluster running the next major release can replicate data to a self-managed cluster using Cloud Native Gateway across the public network or private network using VPC Peering.
+A Capella cluster running Couchbase Server 8.5 can replicate data to a self-managed cluster using Cloud Native Gateway across the public network or private network using VPC Peering.
 To use this scenario:
 
 * The self-managed target cluster must have CNG installed and enabled.
