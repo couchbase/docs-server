@@ -240,6 +240,100 @@ Formatted, the output is as follows:
 
 For more information on the REST APIs `remoteClusters` method, see the detailed reference pages on xref:rest-api:rest-xdcr-create-ref.adoc[creating] and xref:rest-api:rest-xdcr-get-ref.adoc[getting] references.
 
+== Staging XDCR Credentials
+
+Stage secondary credentials for XDCR remote references to enable seamless password rotation and prevent replication downtime.
+
+Cross Data Center Replication (XDCR) allows you to stage a secondary set of credentials for a remote reference. 
+If the primary credentials fail due to authentication errors, XDCR automatically promotes the staged credentials to active, ensuring uninterrupted replication.
+
+When managing remote clusters, security policies often require regular password rotations or certificate updates. 
+By staging a secondary set of credentials, you provide XDCR with a fallback mechanism that prevents replication interruptions during these updates.
+
+The system manages two credential slots:
+
+* **Active**: The credentials currently used to authenticate with the remote cluster.
+* **Staged**: A secondary set of credentials (username/password or client certificate/key) waiting to be promoted.
+
+If the active credentials return an authentication error, XDCR automatically promotes the staged credentials to the active position.
+
+IMPORTANT: Credential staging applies only to the **target/destination** cluster credentials provided during the creation or update of an XDCR remote reference.
+
+=== Prerequisites
+
+* An existing XDCR remote reference. You cannot stage a secondary credential during the initial creation of a remote reference.
+* Full Admin or Cluster Admin permissions.
+
+=== Stage a Secondary Credential
+
+To stage a secondary credential, update an existing remote reference using the REST API and include the `stage=true` parameter.
+
+==== Stage a Username and Password
+
+In the following example, an existing remote reference named `self` is updated to include a staged username `xdcruser2`.
+
+[source,shell]
+----
+curl -X POST -u Administrator:password \
+http://localhost:8091/pools/default/remoteClusters/self \
+-d "username=xdcruser2" \
+-d "password=some!password" \
+-d "stage=true"
+----
+
+==== Stage a Client Certificate
+
+You can also stage a client certificate and key. 
+XDCR supports mixing credential types; for instance, the active credential can be a username/password while the staged credential is a certificate.
+
+=== Verify Staged Credentials
+
+To view the status of your credentials, use the `GET /pools/default/remoteClusters` endpoint. 
+The staged credentials appear within the `stage` object.
+
+[source,json]
+----
+[
+  {
+    "connectivityStatus": "RC_OK",
+    "hostname": "[::1]:8091",
+    "name": "self",
+    "stage": {
+      "username": "xdcruser2"
+    },
+    "uri": "/pools/default/remoteClusters/self",
+    "username": "xdcruser1",
+    "uuid": "59ec6ca41da3a82518fc4a31462f59d2"
+  }
+]
+----
+
+In this output:
+* `xdcruser1` is the current **Active** user.
+* `xdcruser2` is the **Staged** user.
+
+=== Automatic Promotion
+
+When the active credentials become invalid (for example, after a password change on the target cluster), XDCR detects the authentication failure and automatically promotes the staged credentials to active.
+
+Once promotion occurs, the `GET` response shows the promoted username in the primary `username` field, and the `stage` object is removed:
+
+[source,json]
+----
+[
+  {
+    "connectivityStatus": "RC_OK",
+    "hostname": "[::1]:8091",
+    "name": "self",
+    "uri": "/pools/default/remoteClusters/self",
+    "username": "xdcruser2",
+    "uuid": "59ec6ca41da3a82518fc4a31462f59d2"
+  }
+]
+----
+
+After promotion, you can stage a new set of credentials to prepare for the next rotation cycle.
+
 [#next-xdcr-steps-after-create-reference]
 == Next Steps
 
