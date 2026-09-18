@@ -219,6 +219,50 @@ By default, any source-document deletion (or expiration) _is_ replicated to the 
 Note that such replication is _not_ prevented by the specifying of a filter that is formed with regular and other filtering expressions: such expressions only determine which non-deleted documents are to be replicated.
 Therefore, to ensure that document-deletions (and expirations) are _not_ replicated, _deletion filters_ must specifically be configured.
 
+[#filtering-deletions-and-expirations-with-expressions]
+=== Filtering Deletions and Expirations with Key ID Expressions
+
+By default, XDCR allows you to filter out all document deletions (`filterDeletions`) or expirations (`filterExpirations`) binary-style across an entire replication stream. 
+Starting in Couchbase Server 8.5, you can apply granular, expression-based filtering to document deletions and expirations using Key ID filter expressions.
+
+When enabled, XDCR evaluates the document ID (`META().id`) of incoming deletion and expiration events against the replication's filter expression before sending them over the network.
+
+[#use-case-partitioning]
+=== Use Case: Regional and Key-Partitioned Topologies
+
+Consider a multi-cluster, geographically partitioned architecture such as one that routes documents with key prefix `eu:` to a European data center and `us:` to an American data center.
+In this topology, standard filter expressions route matching document insertions and mutations.`
+
+Prior to this feature:
+
+* If deletion filtering is disabled (`filterDeletions=false`), document deletions for all keys (including `us:*`) propagate to the European cluster, potentially deleting documents unnecessarily.
+
+* If deletion filtering is enabled (`filterDeletions=true`), no deletions are sent.
+
+With Key ID deletion/expiration filtering:
+
+* Setting `filterDeletionsWithExpression=true` ensures that only deletions for keys matching the filter expression (for example, `REGEXP_CONTAINS(META().id, "^eu:")`) replicate to the target cluster.
+
+[#expression-constraints]
+=== Expression Constraints and Requirements
+
+Because document deletions (tombstones) and expiration notices do not retain the original document body or extended attributes (xattrs), the following technical constraints apply:
+
+* Document ID References Only: The filter expression must evaluate only the document key ID (`META().id`). Expressions attempting to match JSON document fields (such as `type = "user"`) or extended attributes will fail validation or will evaluate to false during deletion/expiration processing.
+
+* Prerequisite Setting: `filterDeletionsWithExpression` requires `filterDeletions` to be enabled (`true`). Likewise, `filterExpirationsWithExpression` requires `filterExpirations` to be enabled (`true`).
+
+[#dynamic-updates]
+=== Dynamic Updates and Mutation Processing
+
+You can enable or disable `filterDeletionsWithExpression` and `filterExpirationsWithExpression` on active, running replications dynamically:
+
+* Changes take effect immediately for all mutations received after the configuration update timestamp.
+
+* Unlike modifying the primary `filterExpression` (which triggers a restream from sequence number 0), modifying deletion/expiration expression filtering does not restream existing mutations.
+
+IMPORTANT: In mixed-version clusters or during rolling upgrades to patch versions, make sure that all nodes in the source cluster have been upgraded before enabling `filterDeletionsWithExpression` or `filterExpirationsWithExpression`.
+
 === Tombstones, DCP Events, and Replication
 
 When a document is deleted or is expired, a tombstone is created.
