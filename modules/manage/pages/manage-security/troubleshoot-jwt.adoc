@@ -1,0 +1,190 @@
+= Troubleshoot JWT Authentication
+:description: pass:q[What to check when users cannot sign in with a token, and what the error messages mean.]
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+A rejected token produces a `401 Unauthorized` response, which on its own does not say why.
+The reason is recorded in the audit log.
+
+== Start Here
+
+Two things resolve most problems.
+
+*Compare the token against your configuration.*
+Paste a real token from your identity provider into the https://www.jwt.io/[JWT Debugger^] and put its payload next to your issuer configuration.
+Check that:
+
+* The `iss` value in the token matches the issuer *name* exactly, character for character.
+* The `alg` value in the token header matches the signing algorithm you configured.
+* The field you named as the subject claim exists and holds the username you expect.
+* The audience claim and its values line up with what you configured.
+* If you are reading roles or groups from the token, those fields exist and are where you said they would be.
+
+*Turn on auditing and read the reason.*
+Couchbase Server records why each token was rejected.
+See <<auditing,Find the Reason in the Audit Log>>.
+
+[#auditing]
+== Find the Reason in the Audit Log
+
+Enable auditing if it is not on already.
+See xref:manage:manage-security/manage-auditing.adoc[Manage Auditing].
+
+JWT authentication produces these events:
+
+[cols="1,3"]
+|===
+| Event | Meaning
+
+| Login success
+| A token was accepted.
+The event names the issuer and the claims that produced the session.
+The `roles` field is what the user actually ended up with; `token_roles` is the raw list the token asked for.
+
+| Login failure
+| A token was rejected.
+The `reason` field says why.
+Both events are tagged `"type": "jwt"`.
+
+| JWT authentication success
+| A token was accepted for a request that does not create a session, such as a REST API call.
+|===
+
+Audit events are written to `audit.log`, in the audit log directory you configured.
+Search it for the username, and filter to JWT events:
+
+[source,console]
+----
+grep test_user audit.log | jq 'select(.type == "jwt")'
+----
+
+A rejected sign-in looks something like this, with the cause in `reason`:
+
+[source,json]
+----
+{
+  "type": "jwt",
+  "reason": "Mismatched signing algorithm in JWT",
+  "iss": "https://idp.example.com/realms/couchbase",
+  "sub": "test_user"
+}
+----
+
+Changes to your JWT settings are audited too, so you can see who changed the configuration and when.
+
+== What the Error Messages Mean
+
+[cols="1,2"]
+|===
+| Message | What to do
+
+| `Unknown issuer: <name>`
+| The token's `iss` value does not match any configured issuer.
+Copy the value out of the token rather than typing it, and check for a trailing slash.
+
+| `Missing/invalid iss claim`
+| The token has no issuer, or it is not a string.
+Check your IdP's token configuration.
+
+| `Mismatched signing algorithm in JWT`
+| The token was signed with a different algorithm from the one you configured for that issuer.
+Set the signing algorithm to match what your IdP actually uses.
+
+| `Invalid signature`
+| The signature did not verify against the key Couchbase Server holds.
+Usually the key is wrong or out of date.
+If you supplied the key by hand, your IdP may have rotated it --- consider using a JWKS URI so keys refresh automatically.
+If you are using a URI, check the cluster can reach it.
+
+| `Invalid token format`
+| The token is not a well-formed JWS compact token.
+Couchbase Server does not support the JWT JSON Serialization format.
+
+| `Token has expired`
+| The token's `exp` time has passed.
+Fetch a new token.
+If this happens constantly, check the clocks on your IdP and your cluster nodes; `expiryLeewayS` allows for small differences.
+
+| `Token not yet valid`
+| The token's `nbf` (not before) time is in the future, which again usually means clock drift.
+
+| `Invalid audience`
+| The token's audience does not satisfy your configuration.
+Check the audience claim name, the values you listed, and whether you set audience handling to `any` or `all`.
+
+| `Missing/invalid claim: <name>`
+| A claim Couchbase Server needs is absent or the wrong type.
+Check the claim paths you configured, including any dotted paths into nested objects.
+
+| `Missing mandatory custom claim: <name>`
+| You marked a custom claim as mandatory and the token does not carry it.
+
+| `Custom claim validation failed for <name>`
+| The claim is present but breaks the constraint you set, such as a pattern or a numeric range.
+|===
+
+== The User Signs In But Cannot Do Anything
+
+This is almost always JIT provisioning.
+
+If a user has no Couchbase Server account, they only get the roles and groups the token names.
+And Couchbase Server only reads those from the token when JIT provisioning is on for that issuer.
+So a user with no account and no JIT provisioning authenticates successfully and then has no permissions at all.
+
+Check, in order:
+
+. `jitProvisioning` is `true` for the issuer.
+. `rolesClaim` or `groupsClaim` names the right field in the token.
+. The names in the token match Couchbase Server's own roles and groups, or you have mapping rules that make them match.
+. If the user should get several roles, that you set `rolesMapsStopFirstMatch` or `groupsMapsStopFirstMatch` to `false`.
+Otherwise only the first recognised name is applied.
+
+To see what a user actually has, call `/whoami` with their token:
+
+[source,console]
+----
+curl -H "Authorization: Bearer $TOKEN" \
+     https://localhost:18091/whoami
+----
+
+== The Username Is Wrong
+
+If Couchbase Server reports a user you did not expect, check the subject claim and any `subMaps` rules.
+
+A mapping rule's regular expression must match the *whole* value from the token.
+A pattern such as `(.*)@example.com` matches a full address; `@example.com` on its own matches nothing.
+
+See xref:manage:manage-security/configure-jwt-issuer.adoc#map-usernames[Map Token Subjects to Couchbase Server Usernames].
+
+== Client Applications Cannot Connect
+
+* *Check you are using TLS.*
+Token authentication for client connections works only on the encrypted port.
+Connect with `couchbases://`.
+* *Check the username.*
+If your application passes a username as well as a token, it must match the name Couchbase Server derives from the token, after mapping rules.
+Leaving the username out avoids the problem.
+* *Stale credential errors on an established connection* mean the token expired, or the user's roles changed.
+Get a new token and authenticate again.
+
+== Couchbase Server Will Not Store a Secret
+
+If saving an issuer fails with a message about configuration encryption at rest or node-to-node encryption, Couchbase Server is protecting a shared secret or client secret from being written unprotected.
+
+Enable the encryption it asks for, or override the check --- see xref:manage:manage-security/configure-jwt-issuer.adoc#store-secrets-without-encryption[Store Secrets Without Encryption].
+
+== Nothing Works After an Upgrade
+
+`/settings/jwt` requires every node in the cluster to be upgraded and the cluster compatibility version to be raised.
+During a rolling upgrade you cannot read or change JWT settings from an already-upgraded node, though existing tokens keep authenticating throughout.
+
+Finish the upgrade and raise the cluster compatibility version.
+
+== Settings Changes Have No Effect
+
+A configuration change is synchronised across the cluster, but if you test immediately after saving, you may still hit a node that has not caught up.
+Wait a moment and try again.

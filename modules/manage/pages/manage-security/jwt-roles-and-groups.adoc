@@ -1,0 +1,161 @@
+= Assign Roles and Groups from a Token
+:description: pass:q[Let your identity provider decide what a user can do in Couchbase Server, instead of creating each user in Couchbase Server yourself.]
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+By default, a token only proves *who* a user is.
+What they are allowed to *do* comes from their Couchbase Server account.
+
+You can change that, and have the token carry the user's roles and groups as well.
+This is useful when you would rather manage access in your identity provider (IdP) than maintain a matching set of accounts in Couchbase Server.
+
+== Turn On JIT Provisioning
+
+Reading roles and groups from a token requires _just-in-time_ (JIT) provisioning.
+Turn it on per issuer.
+
+In the Web Console, select *JIT Provisioning* in the issuer's *General Settings*.
+Over REST, set `jitProvisioning` to `true` in the issuer's configuration:
+
+[source,json]
+----
+"jitProvisioning": true
+----
+
+With JIT provisioning on:
+
+* A user with *no* Couchbase Server account can sign in.
+Couchbase Server gives them exactly the roles and groups the token names, and nothing else.
+It does not create an account for them and keeps nothing once they sign out.
+* A user who *does* have a Couchbase Server account gets the roles and groups from their account *and* those from the token, combined.
+
+[IMPORTANT]
+====
+Turning on JIT provisioning is not enough on its own.
+You must also tell Couchbase Server where the roles and groups live in the token, using the settings below.
+Without that, a user who has no Couchbase Server account signs in successfully but has no permissions at all, so they cannot do anything.
+
+The reverse is also true: with JIT provisioning off, Couchbase Server ignores the roles and groups in the token completely.
+====
+
+== Before You Start
+
+* *Assign the roles or groups in your IdP.*
+You can set them on each user.
+Most IdPs also let you define defaults that they include in every token.
+See your IdP's documentation.
+
+* *Find out where the token carries them.*
+Paste a real token into the https://www.jwt.io/[JWT Debugger^] and look at the payload.
+Keycloak, for example, puts realm roles at `realm_access.roles`.
+
+* *Decide whether the names need translating.*
+If the names in your IdP do not match the names in Couchbase Server, you can rewrite them.
+See <<map-names,Translate IdP Names to Couchbase Server Names>>.
+
+== Take Roles from the Token
+
+Set the roles claim to the field in the token that holds the roles.
+In the Web Console this is *Roles Claim Path* in the issuer's *Group, Role & Subject Mapping* section.
+Over REST, it is `rolesClaim`.
+
+For a Keycloak token that carries realm roles:
+
+[source,json]
+----
+"jitProvisioning": true,
+"rolesClaim": "realm_access.roles"
+----
+
+Couchbase Server compares each name in that field to its own roles and grants any that match.
+For the list of roles, see xref:learn:security/roles.adoc[Roles].
+
+To see what a user ended up with, call the `/whoami` endpoint with their token:
+
+[source,console]
+----
+curl -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8091/whoami
+----
+
+== Take Groups from the Token
+
+Groups work the same way.
+Set the groups claim to the field holding the group names --- *Groups Claim Path* in the Web Console, or `groupsClaim` over REST:
+
+[source,json]
+----
+"jitProvisioning": true,
+"groupsClaim": "groups"
+----
+
+Groups are often the tidier choice.
+Put your users into groups in the IdP, then create groups with the same names in Couchbase Server and give each one the roles it needs.
+Afterwards you can adjust what a whole class of users can do by editing one Couchbase Server group, without touching the IdP.
+
+To create and manage groups, see xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users, Groups, and Roles].
+
+== Accept More Than One Role or Group
+
+By default Couchbase Server stops at the first name it recognises in the token and ignores the rest.
+
+To have it accept every name it recognises, turn off the stop-on-first-match behaviour:
+
+[source,json]
+----
+"rolesMapsStopFirstMatch": false,
+"groupsMapsStopFirstMatch": false
+----
+
+In the Web Console, clear *Stop on First Role Match* and *Stop on First Group Match*.
+
+NOTE: This setting controls how many *mapping rules* are applied to each value in the token, which is what determines how many roles and groups a user can collect.
+It has no effect on usernames: a user always maps to a single name.
+
+[#map-names]
+== Translate IdP Names to Couchbase Server Names
+
+Sometimes you cannot make the names match.
+You may want to reuse roles that already exist in your IdP, or your IdP may enforce a naming convention of its own.
+
+Mapping rules rewrite a name from the token before Couchbase Server compares it to its own roles and groups.
+Use `rolesMaps` for roles and `groupsMaps` for groups.
+
+A rule is a regular expression and a replacement template, separated by a single space.
+The expression must match the whole name, and the template cannot contain spaces.
+Refer to parenthesised parts of the expression as `\1` to `\9`.
+
+This example renames `sysadmin` to `admin`, and strips a `cb_` prefix off anything else:
+
+[source,json]
+----
+"rolesClaim": "realm_access.roles",
+"rolesMaps": ["sysadmin admin", "cb_(.*) \\1"]
+----
+
+So a token carrying `sysadmin` and `cb_query_select` grants the `admin` and `query_select` roles.
+
+This example maps one of the IdP's own group names onto a Couchbase Server group:
+
+[source,json]
+----
+"groupsClaim": "groups",
+"groupsMaps": ["example_travel_agency_admin tenant_agent_00_admin"]
+----
+
+Rules are tried in the order you list them, so put your more specific rules first.
+If a name matches no rule, Couchbase Server compares it exactly as it appears in the token.
+
+In the Web Console, each rule is two boxes: the *Expression* box holds the regular expression, and the *Role* or *Group* box holds the template.
+
+TIP: Role names can include a scope or collection, so a template can build one.
+For example, the template `data_writer[\1:\2:c1]` turns captured parts of an IdP role name into a `data_writer` role limited to one collection.
+
+== Next Steps
+
+* xref:manage:manage-security/authenticate-using-jwt.adoc[Authenticate Using a JWT]
+* xref:manage:manage-security/troubleshoot-jwt.adoc[Troubleshoot JWT Authentication]

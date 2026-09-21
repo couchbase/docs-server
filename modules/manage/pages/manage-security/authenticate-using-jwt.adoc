@@ -1,0 +1,121 @@
+= Authenticate Using a JWT
+:description: pass:q[Once JWT authentication is configured, you can use a token in place of a username and password from the Web Console, the REST API, the CLI, and client applications.]
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+Before you start, configure at least one issuer.
+See xref:manage:manage-security/configure-jwt-issuer.adoc[Configure a JWT Issuer].
+
+[IMPORTANT]
+====
+A token is signed but not encrypted.
+Anyone who intercepts one can read it and reuse it until it expires, which makes a token as sensitive as a password.
+Always use TLS-encrypted connections, and keep tokens out of shell history, scripts, and logs.
+====
+
+== Tokens Expire
+
+Your identity provider decides how long a token lasts, not Couchbase Server.
+When a token expires, Couchbase Server starts returning authentication errors.
+
+So plan for expiry:
+
+* Fetch a fresh token before the current one runs out.
+* For long-running applications, refresh in the background rather than waiting for the first failure.
+* For client connections, expect an error telling you the credentials are stale.
+Get a new token and authenticate again; the connection itself does not need to be rebuilt from scratch.
+
+The `expiryLeewayS` setting adds a few seconds of slack to the expiry check, to absorb small clock differences between your IdP and your cluster.
+It is not a way to extend a token's life.
+
+== Sign In to the Web Console
+
+Set up single sign-on first --- see xref:manage:manage-security/configure-jwt-sso.adoc[Set Up Single Sign-On for the Web Console].
+
+Then:
+
+. Open the Web Console sign-in page.
+. Click *Sign In Using SSO*.
+. Click the button for your identity provider.
+. Sign in at your identity provider.
+It returns you to the Web Console, signed in.
+
+== Authenticate REST API Calls
+
+Send the token in the `Authorization` header as a bearer token, in place of the usual username and password:
+
+[source,console]
+----
+curl -H "Authorization: Bearer $TOKEN" \
+     https://localhost:18091/pools/default
+----
+
+In practice you fetch a token first and then use it.
+This example gets a token from Keycloak and calls Couchbase Server with it:
+
+----
+include::rest-api:example$jwt-bearer-request.sh[]
+----
+
+To check which user Couchbase Server thinks you are, and which roles you have, call `/whoami`:
+
+[source,console]
+----
+curl -H "Authorization: Bearer $TOKEN" \
+     https://localhost:18091/whoami
+----
+
+== Authenticate CLI Commands
+
+`couchbase-cli` accepts a token through the `--auth-token` argument, in place of `--username` and `--password`.
+You cannot combine `--auth-token` with either of those, or with client certificate authentication.
+
+[source,console]
+----
+couchbase-cli server-list \
+    --cluster https://localhost:18091 \
+    --auth-token $TOKEN
+----
+
+You can also set the `CB_REST_AUTH_TOKEN` environment variable and leave the argument off:
+
+[source,console]
+----
+export CB_REST_AUTH_TOKEN=$(
+  curl -s -X POST \
+       -d "client_id=couchbase" \
+       -d "username=test_user" \
+       -d "password=password" \
+       -d "grant_type=password" \
+       https://idp.example.com/realms/couchbase/protocol/openid-connect/token \
+  | jq -r .access_token)
+
+couchbase-cli server-list --cluster https://localhost:18091
+----
+
+This works the same way as `CB_REST_PASSWORD`, and keeps the token out of your command history and out of the process list.
+
+== Authenticate Client Applications
+
+The Couchbase SDKs can authenticate with a token instead of a password.
+For the exact syntax, see the documentation for your SDK.
+
+Two requirements apply whichever SDK you use:
+
+* *TLS is mandatory.*
+Token authentication for client connections is only available on the encrypted port, so connect with `couchbases://`.
+* *If you supply a username, it must match the one in the token.*
+Couchbase Server compares the username you pass against the name it worked out from the token's subject claim, after any mapping rules have been applied.
+If they differ, authentication fails.
+You can leave the username out and let the token speak for itself.
+
+Because a client connection is long-lived, permissions are not re-checked on every operation.
+If a user is deleted or their roles change, operations on the existing connection fail with a stale-credentials error until the client presents a new token.
+
+== Next Steps
+
+If authentication fails, see xref:manage:manage-security/troubleshoot-jwt.adoc[Troubleshoot JWT Authentication].

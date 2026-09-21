@@ -1,0 +1,468 @@
+= Configure JWT
+:description: pass:q[The /settings/jwt endpoint manages JWT authentication: which identity providers Couchbase Server trusts, and how it validates their tokens.]
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+For an explanation of these settings and worked examples, see xref:manage:manage-security/manage-jwt.adoc[JWT Authentication].
+
+The endpoint supports `GET`, `PUT`, and `DELETE`.
+It accepts and returns JSON only.
+
+`GET` requires read access to security settings; `PUT` and `DELETE` require write access.
+The Full Admin and Security Admin roles both have these.
+
+NOTE: This endpoint requires every node in the cluster to be running Couchbase Server 8.5 or later, with the cluster compatibility version raised to match.
+
+== GET /settings/jwt
+
+*Description*
+
+Returns the current JWT settings.
+If JWT authentication has never been configured, returns `{"enabled": false, "issuers": []}`.
+
+Shared secrets and client secrets are returned masked as `+**********+`.
+
+If any stored secret is not protected by encryption, the response includes a `warnings` array naming the affected issuers.
+
+*Example*
+
+----
+include::rest-api:example$get-jwt.sh[]
+----
+
+== PUT /settings/jwt
+
+*Description*
+
+Replaces the entire JWT configuration, including every issuer.
+This endpoint is idempotent.
+
+[IMPORTANT]
+====
+There is no endpoint for adding or editing a single issuer.
+To change one issuer, call `GET /settings/jwt`, modify the `issuers` list, and `PUT` the whole document back.
+====
+
+You can `PUT` a document you got from `GET` without re-entering secrets.
+If a secret field holds the masked placeholder, Couchbase Server keeps the value it already has for that issuer, matched by name.
+Sending any other string sets the secret.
+
+*Syntax*
+
+----
+curl -X PUT -u <administrator>:<password>
+   -H "Content-Type: application/json"
+   -d '<json-document>'
+   http://<host>:<port>/settings/jwt
+----
+
+*Example*
+
+----
+include::rest-api:example$put-jwt.sh[]
+----
+
+Returns `200 OK` on success, or `400 Bad Request` with a message naming the invalid field.
+
+=== Top-Level Parameters
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `enabled`
+| Required boolean.
+Whether Couchbase Server accepts JWTs for authentication.
+When `true`, `issuers` must contain at least one entry.
+
+| `issuers`
+| Array, required whenever `enabled` is `true`.
+One object per identity provider Couchbase Server should trust.
+Defaults to an empty list.
+See <<issuer-parameters,Issuer Parameters>>.
+Issuer names must be unique, and so must display names.
+
+| `jwksUriRefreshIntervalS`
+| Optional integer.
+How often, in seconds, Couchbase Server refetches signing keys from every issuer configured with `publicKeySource` set to `jwks_uri`.
+Minimum 300, maximum 86400.
+Defaults to 3600 (one hour).
+
+| `configEncryptionOverride`
+| Optional boolean.
+Allows secrets to be stored even though configuration encryption at rest is disabled.
+Defaults to `false`.
+Setting this to `true` leaves secrets unprotected on disk.
+
+| `n2nEncryptionOverride`
+| Optional boolean.
+Allows secrets to be stored even though node-to-node encryption is not enabled on every node.
+Defaults to `false`.
+Setting this to `true` risks secrets being sent between nodes unencrypted.
+|===
+
+[#issuer-parameters]
+=== Issuer Parameters
+
+Each object in the `issuers` array describes one identity provider.
+
+==== Identity and Token Shape
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `name`
+| Required string.
+Must match the token's `iss` claim exactly.
+This is how Couchbase Server decides which issuer configuration applies to a token, so it is a protocol identifier and not a label.
+
+| `displayName`
+| Optional string, unless the issuer has `oidcSettings`, in which case it is required.
+A friendly name shown in the Web Console, including as the button text on the sign-in page.
+
+| `signingAlgorithm`
+| Required string.
+The algorithm the issuer uses to sign tokens.
+One of `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES256K`, `ES384`, `ES512`, `EdDSA`, `HS256`, `HS384`, `HS512`.
++
+Couchbase Server rejects a token signed with any other algorithm, so this also protects against an attacker downgrading the algorithm.
+
+| `subClaim`
+| Required string.
+The claim holding the username, usually `sub`.
+Accepts a top-level field name or a dotted path into a nested object, such as `custom.profile.sub`.
+
+| `audClaim`
+| Required string.
+The claim listing the intended recipients of the token.
+Use `aud` if the token may be used by several applications including Couchbase Server, or `azp` if it is intended for Couchbase Server alone.
+Accepts a dotted path.
+
+| `audiences`
+| Required array of strings.
+The audience values Couchbase Server accepts.
+
+| `audienceHandling`
+| Required string.
+Either `any`, which accepts a token if any one of the values in `audiences` appears in the token, or `all`, which requires every one of them.
+
+| `expiryLeewayS`
+| Optional integer.
+Seconds of leeway when checking the `exp` and `nbf` claims, which allows for clock differences between the issuer and the cluster.
+Minimum 0, maximum 300.
+Defaults to 15.
+
+| `jitProvisioning`
+| Optional boolean.
+When `false` (the default), only users defined in Couchbase Server's external authentication domain can authenticate, and Couchbase Server ignores any roles and groups in the token.
++
+When `true`, a user with no Couchbase Server account can authenticate and receives the roles and groups mapped from the token.
+A user who does have an account receives the union of both.
+No account is created either way.
+
+| `customClaims`
+| Optional array.
+Additional claims a token must satisfy.
+If present it must contain at least one entry.
+See <<custom-claims,Custom Claims>>.
+|===
+
+==== Signing Key
+
+Which of these you need depends on `signingAlgorithm`.
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `publicKeySource`
+| Required for asymmetric algorithms, and must be absent for HMAC algorithms.
+One of:
++
+--
+* `jwks_uri` --- Couchbase Server fetches the key set from `jwksUri`.
+* `jwks` --- you supply the key set in `jwks`.
+* `pem` --- you supply a single key in `publicKey`.
+--
+
+| `jwksUri`
+| Required when `publicKeySource` is `jwks_uri`, unless the issuer uses OIDC discovery, which supplies it.
+Supplying both is an error.
+
+| `jwks`
+| Required when `publicKeySource` is `jwks`.
+A JSON Web Key Set object.
+
+| `publicKey`
+| Required when `publicKeySource` is `pem`.
+A public key in PEM format, valid for the chosen algorithm.
+
+| `sharedSecret`
+| Required for the HMAC algorithms (`HS256`, `HS384`, `HS512`), and rejected for all others.
+The secret must be at least as long as the hash output: 32 bytes for `HS256`, 48 for `HS384`, 64 for `HS512`.
++
+Returned masked on `GET`.
+Storing it requires encryption --- see `configEncryptionOverride` and `n2nEncryptionOverride`.
+|===
+
+==== JWKS URI Options
+
+These apply only when `publicKeySource` is `jwks_uri`.
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `jwksUriHttpTimeoutMs`
+| Optional integer.
+How long to wait for the key set request, in milliseconds.
+Minimum 5000, maximum 60000.
+Defaults to 5000.
+
+| `jwksUriTlsVerifyPeer`
+| Optional boolean.
+Whether to verify the issuer's TLS certificate when fetching the key set.
+Defaults to `true`.
++
+Setting this to `false` significantly weakens security, because Couchbase Server can no longer confirm where the signing key came from.
+
+| `jwksUriTlsCa`
+| Optional string.
+A CA certificate chain in PEM format, used to verify the issuer's certificate.
+Supply this when the issuer's certificate is not signed by a CA the operating system already trusts.
+
+| `jwksUriTlsSni`
+| Optional string.
+The hostname to send in the TLS SNI extension.
+Needed only when the key set is served from behind a proxy or load balancer presenting several certificates.
+
+| `jwksUriAddressFamily`
+| Optional string.
+`inet` to prefer IPv4, or `inet6` to prefer IPv6.
+|===
+
+==== Mapping
+
+Mapping rules rewrite a value from the token before Couchbase Server uses it.
+Each rule is a single string: a regular expression, a space, then a replacement template.
+The expression must match the whole value.
+The template must not contain whitespace, and refers to captured groups as `\1` to `\9`; the `\g` spellings are not supported.
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `subMaps`
+| Optional array of rule strings.
+Rewrites the username from `subClaim` to a Couchbase Server username.
+The first rule that matches is applied and the rest ignored; a username always maps to a single value.
+If no rule matches, the value is used unchanged.
+
+| `groupsClaim`
+| Optional string.
+The claim listing the user's groups.
+Accepts a dotted path.
+Only has an effect when `jitProvisioning` is `true`.
+
+| `groupsMaps`
+| Optional array of rule strings.
+Rewrites group names from the token to Couchbase Server group names.
+
+| `groupsMapsStopFirstMatch`
+| Optional boolean.
+When `true` (the default), each group name stops at the first rule that matches.
+When `false`, every matching rule is applied, so one name can yield several groups.
+
+| `rolesClaim`
+| Optional string.
+The claim listing the user's roles.
+Accepts a dotted path; Keycloak realm roles, for instance, are at `realm_access.roles`.
+Only has an effect when `jitProvisioning` is `true`.
+
+| `rolesMaps`
+| Optional array of rule strings.
+Rewrites role names from the token to Couchbase Server role names.
+
+| `rolesMapsStopFirstMatch`
+| Optional boolean.
+Behaves like `groupsMapsStopFirstMatch`, for roles.
+Defaults to `true`.
+|===
+
+[#custom-claims]
+==== Custom Claims
+
+Each object in `customClaims` adds a validation rule for one claim.
+Names must be unique within an issuer, and must not clash with a standard JWT claim or with the claims named by `subClaim`, `audClaim`, `groupsClaim`, or `rolesClaim`.
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `name`
+| Required string.
+The claim to validate.
+
+| `type`
+| Required string.
+One of `string`, `number`, `boolean`, `array`, `object`.
+
+| `mandatory`
+| Required boolean.
+Whether the token is rejected if the claim is absent.
+
+| `pattern`
+| Required when `type` is `string`.
+A regular expression the value must match.
+
+| `min`, `max`
+| Optional numbers, for `type` `number`.
+`min` must be less than or equal to `max`.
+
+| `enum`
+| Optional array of numbers, for `type` `number`.
+The allowed values.
+Must contain at least one element.
+
+| `const`
+| Optional boolean, for `type` `boolean`.
+The value the claim must have.
+|===
+
+[#oidc-settings]
+==== OIDC Settings
+
+Add an `oidcSettings` object to let users sign in to the Web Console through this issuer.
+The issuer must also have a `displayName`.
+
+See xref:manage:manage-security/configure-jwt-sso.adoc[Set Up Single Sign-On for the Web Console].
+
+[cols="30,70"]
+|===
+| Parameter | Description
+
+| `clientId`
+| Required string.
+The client ID of the application you registered with the identity provider.
+
+| `clientSecret`
+| Required string.
+The client secret for that application.
+Returned masked on `GET`.
+Storing it requires encryption --- see `configEncryptionOverride` and `n2nEncryptionOverride`.
+
+| `baseRedirectUris`
+| Required array of strings, at least one.
+Each entry must be a scheme and host only, optionally with a port --- no path (other than `/`), query string, fragment, user info, or wildcard.
++
+Couchbase Server appends `/oidc/callback` to form the redirect URI, which is what you register with the identity provider.
+
+| `endpointSource`
+| Required string.
+Either `discovery`, to read the provider's endpoints from its discovery document, or `manual`, to supply them yourself.
+
+| `oidcDiscoveryUri`
+| Required when `endpointSource` is `discovery`, and must be absent when it is `manual`.
+Must use HTTPS, except for `localhost` and `127.0.0.1`.
+
+| `authorizationEndpoint`
+| Required when `endpointSource` is `manual`, and must be absent when it is `discovery`.
+
+| `tokenEndpoint`
+| Required when `endpointSource` is `manual`, and must be absent when it is `discovery`.
+
+| `endSessionEndpoint`
+| Optional, and only valid when `endpointSource` is `manual`.
+The provider's logout endpoint, used to sign the user out of the provider as well as the console.
+
+| `postLogoutRedirectUris`
+| Optional array of URLs.
+Where the provider may send users after they sign out.
+
+| `scopes`
+| Required array of strings.
+Must include `openid`.
+
+| `pkceEnabled`
+| Optional boolean.
+Defaults to `true`.
+Leave it on unless your provider cannot support PKCE.
+
+| `nonceValidation`
+| Optional boolean.
+Defaults to `true`.
+Protects against token replay.
+
+| `tokenEndpointAuthMethod`
+| Optional string.
+Either `client_secret_basic` (the default) or `client_secret_post`.
+
+| `disablePushedAuthorizationRequests`
+| Optional boolean.
+Defaults to `false`.
+Set to `true` if your provider advertises pushed authorization requests but does not handle them correctly.
+
+| `httpTimeoutMs`
+| Optional integer.
+Timeout for requests to the provider, in milliseconds.
+Minimum 1000, maximum 60000.
+Defaults to 10000.
+
+| `tlsVerifyPeer`
+| Optional boolean.
+Whether to verify the provider's TLS certificate.
+Defaults to `true`.
+
+| `tlsCa`
+| Optional string.
+A CA certificate chain in PEM format for verifying the provider's certificate.
+
+| `tlsSni`
+| Optional string.
+The hostname to send in the TLS SNI extension.
+
+| `addressFamily`
+| Optional string.
+`inet` or `inet6`.
+|===
+
+=== OIDC Example
+
+----
+include::rest-api:example$put-jwt-oidc.sh[]
+----
+
+== DELETE /settings/jwt
+
+*Description*
+
+Removes all JWT settings, which disables JWT authentication.
+
+*Example*
+
+[source,console]
+----
+curl -X DELETE -u Administrator:password \
+     http://localhost:8091/settings/jwt
+----
+
+== Authenticating with a Token
+
+To authenticate a REST API call with a token, send it in the `Authorization` header as a bearer token instead of using basic authentication:
+
+----
+include::rest-api:example$jwt-bearer-request.sh[]
+----
+
+See xref:manage:manage-security/authenticate-using-jwt.adoc[Authenticate Using a JWT].
+
+== See Also
+
+* xref:manage:manage-security/configure-jwt-issuer.adoc[Configure a JWT Issuer]
+* xref:learn:security/external-authentication.adoc#jwt-overview[JSON Web Token (JWT) Authentication]
+* xref:manage:manage-security/troubleshoot-jwt.adoc[Troubleshoot JWT Authentication]

@@ -1,0 +1,303 @@
+= Configure a JWT Issuer
+:description: pass:q[Tell Couchbase Server about the identity provider that issues your tokens, so it can check that a token is genuine and work out which user it refers to.]
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+An _issuer_ is one identity provider (IdP) that Couchbase Server trusts.
+You need at least one issuer before anyone can authenticate with a token.
+You can configure several, and Couchbase Server picks the right one for each token.
+
+== What You Need From Your Identity Provider
+
+Gather this information before you start.
+Your IdP's own documentation is the place to find it, and the https://www.jwt.io/[JWT Debugger^] is a quick way to inspect a real token and see how it is put together.
+
+[cols="1,2"]
+|===
+| Item | Notes
+
+| The issuer name
+| The exact value your IdP puts in the token's `iss` claim.
+This is usually a URL.
+Couchbase Server matches it character for character, so copy it rather than typing it.
+
+| The signing algorithm
+| The algorithm your IdP uses to sign tokens, such as `RS256`.
+
+| The signing key
+| How Couchbase Server gets the key that verifies the signature.
+See <<signing-key,Choose How to Supply the Signing Key>>.
+
+| The subject claim
+| Which field in the token holds the username, usually `sub`.
+
+| The audience claim and values
+| Which field lists the applications the token is meant for, usually `aud`, and which values you accept.
+See <<audiences,Set the Audience>>.
+|===
+
+You also need to decide whether the IdP will supply each user's roles and groups.
+If so, see xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token].
+
+[#signing-key]
+=== Choose How to Supply the Signing Key
+
+Couchbase Server needs a key to verify that a token really came from your IdP.
+Which kind of key depends on the signing algorithm.
+
+*Asymmetric algorithms* (`RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES256K`, `ES384`, `ES512`, and `EdDSA`) use a public key.
+You have three ways to provide it:
+
+* *A URL* (`jwks_uri`) --- Couchbase Server fetches the key from your IdP and refetches it periodically.
+Choose this if your cluster can reach the IdP.
+It is the easiest option to maintain, because Couchbase Server picks up new keys automatically when your IdP rotates them.
+* *A JSON Web Key Set* (`jwks`) --- you paste the key set in as JSON.
+* *A PEM file* (`pem`) --- you paste in a single public key in PEM format.
+
+The last two mean you must update the key yourself whenever your IdP rotates it.
+
+*Symmetric algorithms* (`HS256`, `HS384`, `HS512`) use a shared secret that both your IdP and Couchbase Server hold.
+Shared secrets are less secure than public keys, because anyone holding the secret can mint valid tokens.
+Prefer an asymmetric algorithm where you can.
+
+[IMPORTANT]
+====
+If an issuer uses a shared secret, Couchbase Server refuses to store it unless both of the following are true:
+
+* Configuration encryption at rest is enabled.
+See xref:manage:manage-security/manage-native-encryption-at-rest.adoc[Manage Encryption at Rest].
+* Node-to-node encryption is enabled on every node in the cluster.
+See xref:manage:manage-security/manage-tls.adoc[Manage On-the-Wire Security].
+
+The same applies to the client secret used for xref:manage:manage-security/configure-jwt-sso.adoc[single sign-on].
+You can override either requirement, but doing so leaves the secret unprotected.
+See <<store-secrets-without-encryption,Store Secrets Without Encryption>>.
+====
+
+[#audiences]
+=== Set the Audience
+
+The _audience_ is the IdP's way of saying which applications a token is meant for.
+Checking it stops a token that was issued for some other application from being used against Couchbase Server.
+
+Set the audience claim to one of:
+
+* `aud` --- the token may be used by several applications, including Couchbase Server.
+Use this when an intermediate application calls Couchbase Server on a user's behalf.
+* `azp` --- the token is meant for Couchbase Server alone.
+This is stricter and simpler.
+
+Then list the audience values you accept, and say how strictly to match them:
+
+* `any` --- accept the token if any one of your listed values appears in the token.
+* `all` --- accept the token only if every value you listed appears in the token.
+
+NOTE: Identity providers use different words for the audience.
+Keycloak calls it the _client_; Okta calls it the _application_.
+Check your IdP's documentation.
+
+[#claim-paths]
+=== Point at a Nested Claim
+
+Wherever you name a claim --- the subject, the audience, groups, or roles --- you can either give a top-level field name such as `sub`, or use dots to reach into a nested object.
+For example, Keycloak puts realm roles at `realm_access.roles`.
+
+== Configure an Issuer with the Web Console
+
+. In the navigation bar, click *Security*.
+. In the sub-navigation bar, click *JWT*.
+. Select the *Enabled* checkbox.
+. Click *ADD ISSUER*.
+. Under *General Settings*, fill in:
++
+--
+* *Name* --- the issuer's `iss` value.
+* *Display Name* --- a friendly label.
+Required only if you set up single sign-on, where it becomes the button text on the sign-in page.
+* *Signing Algorithms* --- the algorithm your IdP uses.
+* *Subject Claim Path* --- the field holding the username, usually `sub`.
+* *Audience Claim Path*, *Audiences*, and *Audience Handling* --- see <<audiences,Set the Audience>>.
+* *Expiry Leeway* --- optional.
+Seconds of slack when checking whether a token has expired, which allows for small clock differences between machines.
+Defaults to 15.
+* *JIT Provisioning* --- leave this off unless you want users who have no Couchbase Server account to sign in.
+See xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token].
+--
+. Under *Key & Signature Verification*, choose a *Public Key Source* and supply the key, or enter the *Shared Secret* if you chose an HMAC algorithm.
+See <<signing-key,Choose How to Supply the Signing Key>>.
+. Optionally fill in *Group, Role & Subject Mapping*, *Custom Claims*, and *OIDC / OAuth2 Login Integration*.
+. Click *Add Issuer*.
+(When you come back to change an existing issuer, this button says *Save Issuer* instead.)
+. Back on the *JWT* page, click *Save* to store the settings.
+
+The issuer now appears in the table, which lists each issuer's name, signing algorithm, client ID, whether JIT provisioning is on, and its JWKS URI.
+Click an issuer's name to edit it.
+
+To change the *JWKS URI Refresh Interval (seconds)* --- how often Couchbase Server refetches signing keys from every issuer configured with a URL --- set it on the *JWT* page itself.
+It defaults to 3600 (one hour).
+
+== Configure an Issuer with the REST API
+
+Send a `PUT` request to the `/settings/jwt` endpoint.
+
+IMPORTANT: `PUT /settings/jwt` replaces *all* JWT settings, including every issuer.
+To add an issuer to an existing configuration, fetch the current settings first, add your issuer to the `issuers` list, and send the whole thing back.
+See <<retrieve,Retrieve the Current Settings>>.
+
+This example configures a Keycloak instance and has Couchbase Server fetch the signing key from Keycloak:
+
+----
+include::rest-api:example$put-jwt.sh[]
+----
+
+For every parameter, see the xref:rest-api:rest-configure-jwt.adoc[Configure JWT] REST API reference.
+
+WARNING: The example above sets `jwksUriTlsVerifyPeer` to `false`, which stops Couchbase Server from checking the IdP's certificate when it fetches the signing key.
+That is convenient in a test environment but unsafe in production, because Couchbase Server can no longer confirm where the key came from.
+In production, leave it at its default of `true` and supply the CA certificate in `jwksUriTlsCa` if the IdP's certificate is not signed by a public CA.
+
+To check that the configuration works, see xref:manage:manage-security/authenticate-using-jwt.adoc[Authenticate Using a JWT].
+
+[#retrieve]
+=== Retrieve the Current Settings
+
+Send a `GET` request to `/settings/jwt`:
+
+----
+include::rest-api:example$get-jwt.sh[]
+----
+
+Shared secrets and client secrets come back masked as `+**********+`.
+You can send a masked value straight back in a `PUT` request and Couchbase Server keeps the secret it already has, so you can edit other fields without re-entering secrets.
+To change a secret, send the new value.
+
+=== Configure Several Issuers
+
+Add an entry to the `issuers` list for each identity provider.
+Names must be unique, and so must display names.
+
+When a token arrives, Couchbase Server reads its `iss` claim and applies the matching issuer's configuration.
+If no issuer matches, authentication fails.
+
+=== Turn JWT Authentication Off
+
+Set `enabled` to `false` to stop accepting tokens while keeping your issuer configuration:
+
+[source,console]
+----
+curl -X PUT -u Administrator:password \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": false, "issuers": []}' \
+     http://localhost:8091/settings/jwt
+----
+
+To remove the configuration entirely, send a `DELETE` request:
+
+[source,console]
+----
+curl -X DELETE -u Administrator:password \
+     http://localhost:8091/settings/jwt
+----
+
+[#map-usernames]
+== Map Token Subjects to Couchbase Server Usernames
+
+If you create your users in Couchbase Server, the name in the token has to match the name on the account.
+When it does not, you can rewrite it with a _mapping rule_.
+
+Say your IdP identifies everyone by their full email address, `john.doe@example.com`, but your Couchbase Server accounts use just `john.doe`.
+A `subMaps` rule strips the domain.
+
+A mapping rule is a regular expression and a replacement template, separated by a single space:
+
+----
+(.*)@example.com \1
+----
+
+* The *regular expression* must match the *whole* value from the token, not just part of it.
+Wrap the parts you want to keep in parentheses.
+* The *template* is what the name becomes.
+Refer to the parenthesised parts as `\1` to `\9`.
+It cannot contain spaces, because usernames cannot.
+
+In the Web Console, the two halves are separate boxes.
+The *Expression* box holds the regular expression and the *Subject* box holds the template.
+
+Over REST, supply rules as a list of strings:
+
+[source,json]
+----
+"subMaps": ["(.*)@example.com \\1"]
+----
+
+NOTE: In JSON you must write a backslash as `\\`, so `\1` becomes `"\\1"`.
+
+Couchbase Server applies the first rule whose expression matches and ignores the rest, so list your more specific rules first.
+If no rule matches, the name is used exactly as it appears in the token.
+
+You can use this to redirect particular users, too.
+This rule turns `contractor-42` into `temp_user` and leaves everyone at `example.com` mapped to their mailbox name:
+
+[source,json]
+----
+"subMaps": ["contractor-42 temp_user", "(.*)@example.com \\1"]
+----
+
+The same rule format maps groups and roles.
+See xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token].
+
+[#custom-claims]
+== Require Additional Claims
+
+Sometimes you want Couchbase Server to reject a token unless it carries some extra field --- a department, a tenant ID, a flag set by your IdP.
+Add a _custom claim_ for each one.
+
+Each custom claim has a name, a type (`string`, `number`, `boolean`, `array`, or `object`), and a flag saying whether it must be present.
+Depending on the type you can also constrain the value:
+
+* `string` --- a regular expression the value must match.
+This is required for string claims.
+* `number` --- a minimum, a maximum, or a list of allowed numbers.
+* `boolean` --- the exact value the claim must have.
+
+This example rejects any token whose `tenant` field is missing or is not a three-digit number:
+
+[source,json]
+----
+"customClaims": [
+  {
+    "name": "tenant",
+    "type": "string",
+    "mandatory": true,
+    "pattern": "^[0-9]{3}$"
+  }
+]
+----
+
+A custom claim's name cannot clash with a standard JWT claim, nor with the claims you named for the subject, audience, groups, or roles.
+
+[#store-secrets-without-encryption]
+== Store Secrets Without Encryption
+
+If an issuer needs a shared secret or a single sign-on client secret, Couchbase Server normally insists on configuration encryption at rest and node-to-node encryption, so the secret is protected on disk and in transit between nodes.
+
+If you cannot enable those --- in a test cluster, for instance --- you can override the checks:
+
+* `configEncryptionOverride` --- store secrets even though configuration encryption at rest is off.
+* `n2nEncryptionOverride` --- store secrets even though node-to-node encryption is not on every node.
+
+Both default to `false`.
+Setting either to `true` leaves your secrets exposed, so avoid it in production.
+
+When a secret is stored unprotected, `GET /settings/jwt` returns a `warnings` field naming the affected issuers.
+
+== Next Steps
+
+* xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token]
+* xref:manage:manage-security/configure-jwt-sso.adoc[Set Up Single Sign-On for the Web Console]
+* xref:manage:manage-security/authenticate-using-jwt.adoc[Authenticate Using a JWT]
+* xref:manage:manage-security/troubleshoot-jwt.adoc[Troubleshoot JWT Authentication]
