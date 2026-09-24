@@ -39,8 +39,12 @@ Turning on JIT provisioning is not enough on its own.
 You must also tell Couchbase Server where the roles and groups live in the token, using the settings below.
 Without that, a user who has no Couchbase Server account signs in successfully but has no permissions at all, so they cannot do anything.
 
-The reverse is also true: with JIT provisioning off, Couchbase Server ignores the roles and groups in the token completely.
+The reverse is also true: with JIT provisioning off, Couchbase Server ignores the groups and roles in the token completely.
+A token for a user who has no account still authenticates, but ends up with no permissions.
 ====
+
+NOTE: If you do not name a groups or roles claim, Couchbase Server looks at claims called `groups` and `roles`.
+So a token carrying either of those grants their contents as soon as JIT provisioning is on, whether or not you configured a claim path.
 
 === Eventing Limitation
 
@@ -88,8 +92,11 @@ To see what a user ended up with, call the `/whoami` endpoint with their token:
 [source,console]
 ----
 curl -H "Authorization: Bearer $TOKEN" \
-     http://localhost:8091/whoami
+     https://localhost:18091/whoami
 ----
+
+NOTE: Use the encrypted port.
+On port 8091 the bearer token crosses the network in clear text.
 
 == Take Groups from the Token
 
@@ -154,7 +161,17 @@ This example renames `sysadmin` to `admin`, and strips a `cb_` prefix off anythi
 "rolesMaps": ["sysadmin admin", "cb_(.*) \\1"]
 ----
 
-So a token carrying `sysadmin` and `cb_query_select` grants the `admin` and `query_select` roles.
+So a token carrying `sysadmin` and `cb_query_select[*]` grants the `admin` and `query_select[*]` roles.
+
+[IMPORTANT]
+====
+Some roles take parameters naming a bucket, scope, or collection.
+You have to include them, because a bare `query_select` is not a role: Couchbase Server silently ignores it rather than reporting an error.
+Write `query_select[*]` for all buckets, or `query_select[travel-sample]` for one.
+
+Remember too that *any* role can be granted this way, including Full Admin.
+Whoever controls role names at the identity provider effectively controls access to your cluster.
+====
 
 This example maps one of the IdP's own group names onto a Couchbase Server group:
 
@@ -165,7 +182,16 @@ This example maps one of the IdP's own group names onto a Couchbase Server group
 ----
 
 Rules are tried in the order you list them, so put your more specific rules first.
-If a name matches no rule, Couchbase Server compares it exactly as it appears in the token.
+
+[IMPORTANT]
+====
+There is no fallback rule.
+
+* With *no* mapping rules configured, every value is used exactly as it appears in the token.
+* As soon as you configure *any* rule, a value that matches none of them is dropped.
+
+A mapped name that does not correspond to a real Couchbase Server group or role is also ignored, without an error.
+====
 
 In the Web Console, each rule is two boxes: the *Expression* box holds the regular expression, and the *Role* or *Group* box holds the template.
 

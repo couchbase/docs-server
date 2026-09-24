@@ -7,8 +7,14 @@
 
 [.edition]#{enterprise}#
 
-A rejected token produces a `401 Unauthorized` response, which on its own does not say why.
-The reason is recorded in the audit log.
+A rejected token produces a `401 Unauthorized` response.
+
+Where you find the reason depends on how you connected:
+
+* *REST API* --- the reason is in the response body.
+* *Client applications and the other services* --- the reason is in the audit log.
+
+Either way, the audit log has the fullest record.
 
 == Start Here
 
@@ -36,23 +42,38 @@ See xref:manage:manage-security/manage-auditing.adoc[Manage Auditing].
 
 JWT authentication produces these events:
 
-[cols="1,3"]
+[cols="1,1,3"]
 |===
-| Event | Meaning
+| Event | Enabled by default | Meaning
 
 | Login success
-| A token was accepted.
+| Yes
+| A Web Console sign-in through single sign-on succeeded.
 The event names the issuer and the claims that produced the session.
 The `roles` field is what the user actually ended up with; `token_roles` is the raw list the token asked for.
 
 | Login failure
-| A token was rejected.
+| Yes
+| A Web Console sign-in through single sign-on failed.
 The `reason` field says why.
-Both events are tagged `"type": "jwt"`.
+
+| Authentication failure
+| Yes
+| A JWT authentication request was rejected.
+The `reason` field says why.
+This is the event to look for when a REST, CLI, or client connection is refused.
 
 | JWT authentication success
+| *No*
 | A token was accepted for a request that does not create a session, such as a REST API call.
+Turn this on only when you need it: a busy cluster produces a very large number of these.
 |===
+
+The *Login success* and *Login failure* events cover Web Console sign-ins only.
+Everything else is covered by the authentication events.
+
+Events are tagged with a `type`.
+Most JWT activity is tagged `"type": "jwt"`, but a single sign-on attempt that fails *before* the identity provider returns a token is tagged `"type": "oidc"` instead.
 
 Audit events are written to `audit.log`, in the audit log directory you configured.
 Search it for the username, and filter to JWT events:
@@ -155,34 +176,33 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 If Couchbase Server reports a user you did not expect, check the subject claim and any `subMaps` rules.
 
-A mapping rule's regular expression must match the *whole* value from the token.
-A pattern such as `(.*)@example.com` matches a full address; `@example.com` on its own matches nothing.
+A mapping rule's regular expression is matched against the *whole* value from the token, anchored automatically.
+So `(.*)@example.com` matches a full address, while `@example.com` on its own matches nothing.
+
+If authentication fails outright with `Username not provisioned`, you have `subMaps` rules configured and none of them matched.
+There is no fallback: once you define any rule, a name matching none of them is rejected rather than used as-is.
 
 See xref:manage:manage-security/configure-jwt-issuer.adoc#map-usernames[Map Token Subjects to Couchbase Server Usernames].
 
 == Client Applications Cannot Connect
 
 * *Check you are using TLS.*
-Token authentication for client connections works only on the encrypted port.
-Connect with `couchbases://`.
+Client connections accept a token only on the encrypted port, so connect with `couchbases://`.
+(This is stricter than the REST API, which does accept a bearer token on the unencrypted port. So a token that works with `curl` on port 8091 can still be refused by an SDK.)
 * *Check the username.*
 If your application passes a username as well as a token, it must match the name Couchbase Server derives from the token, after mapping rules.
 Leaving the username out avoids the problem.
-* *Stale credential errors on an established connection* mean the token expired, or the user's roles changed.
+* *Stale credential errors on an established connection* mean the credentials the connection was established with are no longer good --- most often because the token expired.
 Get a new token and authenticate again.
 
 == Couchbase Server Will Not Store a Secret
 
 If saving an issuer fails with a message about configuration encryption at rest or node-to-node encryption, Couchbase Server is protecting a shared secret or client secret from being written unprotected.
 
+This catches most people out on a new cluster, because *node-to-node encryption is off by default*.
+It happens as soon as you save an issuer that uses an HMAC shared secret, or one configured for single sign-on, which needs a client secret.
+
 Enable the encryption it asks for, or override the check --- see xref:manage:manage-security/configure-jwt-issuer.adoc#store-secrets-without-encryption[Store Secrets Without Encryption].
-
-== Nothing Works After an Upgrade
-
-`/settings/jwt` requires every node in the cluster to be upgraded and the cluster compatibility version to be raised.
-During a rolling upgrade you cannot read or change JWT settings from an already-upgraded node, though existing tokens keep authenticating throughout.
-
-Finish the upgrade and raise the cluster compatibility version.
 
 == Settings Changes Have No Effect
 

@@ -48,8 +48,11 @@ To change one issuer, call `GET /settings/jwt`, modify the `issuers` list, and `
 ====
 
 You can `PUT` a document you got from `GET` without re-entering secrets.
-If a secret field holds the masked placeholder, Couchbase Server keeps the value it already has for that issuer, matched by name.
-Sending any other string sets the secret.
+If a secret field holds the masked placeholder --- exactly eight asterisks --- Couchbase Server keeps the value it already has for that issuer, matched by name.
+Any other string is taken as a real secret and replaces the stored one.
+
+IMPORTANT: If the `GET` response contained a `warnings` field, remove it before sending the document back.
+`PUT` rejects a document that still carries it.
 
 *Syntax*
 
@@ -94,15 +97,16 @@ Defaults to 3600 (one hour).
 
 | `configEncryptionOverride`
 | Optional boolean.
-Allows secrets to be stored even though configuration encryption at rest is disabled.
+Allows secrets to be stored even though configuration encryption at rest is disabled, and allows that encryption to be turned off later while secrets are still stored.
 Defaults to `false`.
-Setting this to `true` leaves secrets unprotected on disk.
+Setting this to `true` leaves secrets unprotected on disk, and `GET` keeps reporting a warning for as long as that is the case.
 
 | `n2nEncryptionOverride`
 | Optional boolean.
-Allows secrets to be stored even though node-to-node encryption is not enabled on every node.
+Allows secrets to be stored even though node-to-node encryption is not enabled on every node, and allows that encryption to be turned off later while secrets are still stored.
 Defaults to `false`.
-Setting this to `true` risks secrets being sent between nodes unencrypted.
+Node-to-node encryption is off by default, so without this override a new cluster cannot store a shared secret or a single sign-on client secret until you enable it everywhere.
+`GET` keeps reporting a warning for as long as secrets are unprotected.
 |===
 
 [#issuer-parameters]
@@ -144,8 +148,9 @@ Any field name is accepted, including a dotted path.
 Couchbase Server reads whichever claim you name and compares it against `audiences`.
 
 | `audiences`
-| Required array of strings.
+| Required array of strings, which must contain at least one value.
 The audience values Couchbase Server accepts.
+For an issuer configured for single sign-on, this must include the OIDC `clientId`.
 
 | `audienceHandling`
 | Required string.
@@ -160,9 +165,10 @@ Defaults to 15.
 
 | `jitProvisioning`
 a| Optional boolean.
-When `false` (the default), only users defined in Couchbase Server's external authentication domain can authenticate, and Couchbase Server ignores any roles and groups in the token.
+When `false` (the default), Couchbase Server ignores any groups and roles in the token, and a user takes only the permissions held by their account in the external authentication domain.
+A valid token for a user with no such account still authenticates, but ends up with no permissions at all.
 
-When `true`, a user with no Couchbase Server account can authenticate and receives the roles and groups mapped from the token.
+When `true`, a user with no Couchbase Server account can authenticate and receives the groups and roles mapped from the token.
 A user who does have an account receives the union of both.
 No account is created either way.
 
@@ -194,6 +200,7 @@ One of:
 | `jwksUri`
 | Required when `publicKeySource` is `jwks_uri`, unless the issuer uses OIDC discovery, which supplies it.
 Supplying both is an error.
+Must use HTTPS, except for `localhost` and `127.0.0.1`, which may use HTTP for local testing.
 
 | `jwks`
 | Required when `publicKeySource` is `jwks`.
@@ -244,7 +251,8 @@ Setting this to `false` significantly weakens security, because Couchbase Server
 | `jwksUriTlsCa`
 | Optional string.
 A CA certificate chain in PEM format, used to verify the issuer's certificate.
-Supply this when the issuer's certificate is not signed by a CA the operating system already trusts.
+Couchbase Server checks the certificate against this CA and against the cluster's own trusted CAs.
+It does not use the operating system's trust store, so a certificate that your shell tools accept may still be rejected here.
 
 | `jwksUriTlsSni`
 | Optional string.
@@ -260,28 +268,40 @@ Needed only when the key set is served from behind a proxy or load balancer pres
 
 Mapping rules rewrite a value from the token before Couchbase Server uses it.
 Each rule is a single string: a regular expression, a space, then a replacement template.
-The expression must match the whole value.
-The template must not contain whitespace, and refers to captured groups as `\1` to `\9`; the `\g` spellings are not supported.
+
+* The expression is matched against the whole value, anchored automatically, so `^` and `$` are unnecessary.
+* The rule is split at the first space, so the expression cannot contain a literal space. Use `\s`.
+* A rule that matches only an empty string is not applied.
+* The template must not contain whitespace, and refers to captured groups as `\1` to `\9`. The `&`, `\g1` and `\g{1}` spellings are not supported.
+
+There is no fallback rule.
+If no rules are configured for a field, its values are used unchanged; if rules are configured and none matches a value, that value is rejected.
 
 [cols="30,70"]
 |===
 | Parameter | Description
 
 | `subMaps`
-| Optional array of rule strings.
+a| Optional array of rule strings.
 Rewrites the username from `subClaim` to a Couchbase Server username.
 The first rule that matches is applied and the rest ignored; a username always maps to a single value.
-If no rule matches, the value is used unchanged.
+
+With no rules configured, the name is used unchanged.
+With rules configured and none matching, authentication fails with `Username not provisioned`.
 
 | `groupsClaim`
 | Optional string.
 The claim listing the user's groups.
 Accepts a dotted path.
+Defaults to `groups`, so a token carrying a `groups` claim supplies groups even when you do not set this.
 Only has an effect when `jitProvisioning` is `true`.
 
 | `groupsMaps`
 | Optional array of rule strings.
 Rewrites group names from the token to Couchbase Server group names.
+With no rules, values map to themselves.
+With rules, a value matching none of them is dropped.
+A mapped name that is not a real Couchbase Server group is ignored, without an error.
 
 | `groupsMapsStopFirstMatch`
 | Optional boolean.
@@ -292,11 +312,14 @@ When `false`, every matching rule is applied, so one name can yield several grou
 | Optional string.
 The claim listing the user's roles.
 Accepts a dotted path; Keycloak realm roles, for instance, are at `realm_access.roles`.
+Defaults to `roles`, so with `jitProvisioning` enabled a token carrying a `roles` claim grants those roles even when you do not set this.
 Only has an effect when `jitProvisioning` is `true`.
 
 | `rolesMaps`
 | Optional array of rule strings.
 Rewrites role names from the token to Couchbase Server role names.
+Behaves like `groupsMaps`: unmatched values are dropped, and a mapped name that is not a real role is ignored.
+Remember that parameterised roles need their parameters, so `query_select[*]` is a role and a bare `query_select` is not.
 
 | `rolesMapsStopFirstMatch`
 | Optional boolean.
@@ -309,6 +332,7 @@ Defaults to `true`.
 
 Each object in `customClaims` adds a validation rule for one claim.
 Names must be unique within an issuer, and must not clash with a standard JWT claim or with the claims named by `subClaim`, `audClaim`, `groupsClaim`, or `rolesClaim`.
+`groups` and `roles` are reserved as well, even when the groups and roles claims point at different fields.
 
 [cols="30,70"]
 |===
@@ -328,7 +352,8 @@ Whether the token is rejected if the claim is absent.
 
 | `pattern`
 | Required when `type` is `string`.
-A regular expression the value must match.
+A regular expression, which must match the whole value.
+An empty value is rejected.
 
 | `min`, `max`
 | Optional numbers, for `type` `number`.
@@ -378,7 +403,8 @@ Either `discovery`, to read the provider's endpoints from its discovery document
 
 | `oidcDiscoveryUri`
 | Required when `endpointSource` is `discovery`, and must be absent when it is `manual`.
-Must use HTTPS, except for `localhost` and `127.0.0.1`.
+Must use HTTPS, except for `localhost` and `127.0.0.1`, which may use HTTP for local testing.
+The same applies to `authorizationEndpoint`, `tokenEndpoint`, and `jwksUri`.
 
 | `authorizationEndpoint`
 | Required when `endpointSource` is `manual`, and must be absent when it is `discovery`.

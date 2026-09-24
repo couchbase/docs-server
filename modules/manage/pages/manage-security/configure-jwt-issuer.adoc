@@ -37,6 +37,7 @@ See <<signing-key,Choose How to Supply the Signing Key>>.
 
 | The audience claim and values
 | Which field lists the applications the token is meant for, usually `aud`, and which values you accept.
+You must list at least one value.
 See <<audiences,Set the Audience>>.
 |===
 
@@ -74,7 +75,12 @@ See xref:manage:manage-security/manage-native-encryption-at-rest.adoc[Manage Enc
 See xref:manage:manage-security/manage-tls.adoc[Manage On-the-Wire Security].
 
 The same applies to the client secret used for xref:manage:manage-security/configure-jwt-sso.adoc[single sign-on].
-You can override either requirement, but doing so leaves the secret unprotected.
+
+*Node-to-node encryption is off by default*, so on a new cluster neither a shared secret nor single sign-on will save until you turn it on across every node.
+
+Once a secret is stored, Couchbase Server also refuses to let you turn either kind of encryption back off while that secret is still there.
+
+You can override both requirements, but doing so leaves the secret unprotected.
 See <<store-secrets-without-encryption,Store Secrets Without Encryption>>.
 ====
 
@@ -124,6 +130,8 @@ For example, Keycloak puts realm roles at `realm_access.roles`.
 * *Display Name* --- a friendly label.
 Required only if you set up single sign-on, where it becomes the button text on the sign-in page.
 * *Signing Algorithms* --- the algorithm your IdP uses.
+An issuer has exactly one.
+If your provider signs with more than one, configure a separate issuer for each.
 * *Subject Claim Path* --- the field holding the username, usually `sub`.
 * *Audience Claim Path*, *Audiences*, and *Audience Handling* --- see <<audiences,Set the Audience>>.
 * *Expiry Leeway* --- optional.
@@ -176,9 +184,13 @@ Send a `GET` request to `/settings/jwt`:
 include::rest-api:example$get-jwt.sh[]
 ----
 
-Shared secrets and client secrets come back masked as `+**********+`.
-You can send a masked value straight back in a `PUT` request and Couchbase Server keeps the secret it already has, so you can edit other fields without re-entering secrets.
+Shared secrets and client secrets come back masked, as exactly eight asterisks (`+********+`).
+You can send that masked value straight back in a `PUT` request and Couchbase Server keeps the secret it already has, so you can edit other fields without re-entering secrets.
+Any other string is treated as a real secret and replaces the stored one, so take care to send exactly eight.
 To change a secret, send the new value.
+
+If the `GET` response contained a `warnings` field, remove it before sending the document back.
+`PUT` rejects a document that still carries it.
 
 === Configure Several Issuers
 
@@ -190,14 +202,17 @@ If no issuer matches, authentication fails.
 
 === Turn JWT Authentication Off
 
-Set `enabled` to `false` to stop accepting tokens while keeping your issuer configuration:
+`PUT` is a full replace, so sending `{"enabled": false, "issuers": []}` would discard every issuer you have configured.
+
+To stop accepting tokens but keep your issuers, fetch the current settings, set `enabled` to `false`, and send the whole document back:
 
 [source,console]
 ----
-curl -X PUT -u Administrator:password \
-     -H "Content-Type: application/json" \
-     -d '{"enabled": false, "issuers": []}' \
-     http://localhost:8091/settings/jwt
+curl -s -u Administrator:password http://localhost:8091/settings/jwt \
+  | jq 'del(.warnings) | .enabled = false' \
+  | curl -X PUT -u Administrator:password \
+         -H "Content-Type: application/json" \
+         -d @- http://localhost:8091/settings/jwt
 ----
 
 To remove the configuration entirely, send a `DELETE` request:
@@ -211,8 +226,13 @@ curl -X DELETE -u Administrator:password \
 [#map-usernames]
 == Map Token Subjects to Couchbase Server Usernames
 
-If you create your users in Couchbase Server, the name in the token has to match the name on the account.
-When it does not, you can rewrite it with a _mapping rule_.
+If you create your users in Couchbase Server, the name in the token has to match an account in the *external* authentication domain.
+Local accounts are never matched against a token.
+When the names do not line up, you can rewrite the one from the token with a _mapping rule_.
+
+NOTE: A token whose name resolves to the cluster's built-in Administrator account is always rejected, so that account cannot be impersonated with a token.
+This protects that one username only.
+It does not prevent a token user from being granted the Full Admin role by other means.
 
 Say your IdP identifies everyone by their full email address, `john.doe@example.com`, but your Couchbase Server accounts use just `john.doe`.
 A `subMaps` rule strips the domain.
@@ -220,14 +240,23 @@ A `subMaps` rule strips the domain.
 A mapping rule is a regular expression and a replacement template, separated by a single space:
 
 ----
-(.*)@example.com \1
+(.*)@example\.com \1
 ----
 
-* The *regular expression* must match the *whole* value from the token, not just part of it.
+* The *regular expression* is matched against the *whole* value from the token.
+Couchbase Server anchors it for you, so you do not need to add `^` and `$`.
 Wrap the parts you want to keep in parentheses.
+* Because the rule is split at the first space, *the expression cannot contain a literal space*.
+Use `\s` to match one.
+* A rule that matches only an empty string is not applied.
 * The *template* is what the name becomes.
 Refer to the parenthesised parts as `\1` to `\9`.
 It cannot contain spaces, because usernames cannot.
+The `&`, `\g1` and `\g{1}` spellings are not supported.
+
+TIP: Escape a dot you mean literally.
+In `(.*)@example.com` the unescaped `.` matches any character, so that rule would also accept `user@exampleXcom`.
+Write `@example\.com` instead.
 
 In the Web Console, the two halves are separate boxes.
 The *Expression* box holds the regular expression and the *Subject* box holds the template.
@@ -242,7 +271,16 @@ Over REST, supply rules as a list of strings:
 NOTE: In JSON you must write a backslash as `\\`, so `\1` becomes `"\\1"`.
 
 Couchbase Server applies the first rule whose expression matches and ignores the rest, so list your more specific rules first.
-If no rule matches, the name is used exactly as it appears in the token.
+
+[IMPORTANT]
+====
+There is no fallback rule.
+
+* If you define *no* `subMaps` rules, the name is used exactly as it appears in the token.
+* If you define rules and *none* of them matches, authentication fails with `Username not provisioned`.
+
+So once you add a single rule, make sure every user you expect to sign in is covered by one.
+====
 
 You can use this to redirect particular users, too.
 This rule turns `contractor-42` into `temp_user` and leaves everyone at `example.com` mapped to their mailbox name:
@@ -284,6 +322,9 @@ This example rejects any token whose `tenant` field is missing or is not a three
 ----
 
 A custom claim's name cannot clash with a standard JWT claim, nor with the claims you named for the subject, audience, groups, or roles.
+`groups` and `roles` are reserved too, even when you point the groups and roles claims at different fields.
+
+For a `string` claim, the pattern has to match the whole value, and an empty value is rejected.
 
 [#store-secrets-without-encryption]
 == Store Secrets Without Encryption
@@ -298,7 +339,11 @@ If you cannot enable those --- in a test cluster, for instance --- you can overr
 Both default to `false`.
 Setting either to `true` leaves your secrets exposed, so avoid it in production.
 
-When a secret is stored unprotected, `GET /settings/jwt` returns a `warnings` field naming the affected issuers.
+When a secret is stored unprotected, `GET /settings/jwt` returns a `warnings` field naming the affected issuers, and the Web Console shows the same warnings above the list of issuers.
+They persist for as long as the secrets are stored that way.
+
+NOTE: The Web Console has no controls for these two overrides.
+It preserves whatever you set through the REST API, but you cannot switch them on or off from the console.
 
 == Next Steps
 

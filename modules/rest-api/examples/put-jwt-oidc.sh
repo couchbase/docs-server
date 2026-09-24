@@ -11,7 +11,7 @@ curl -X PUT -u Administrator:password \
                "subClaim": "preferred_username",
                "audClaim": "aud",
                "audienceHandling": "any",
-               "audiences": ["couchbase"],
+               "audiences": ["couchbase-console"],
                "oidcSettings": {
                  "clientId": "couchbase-console",
                  "clientSecret": "REPLACE_WITH_YOUR_CLIENT_SECRET",
