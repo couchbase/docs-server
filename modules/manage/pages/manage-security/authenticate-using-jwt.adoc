@@ -1,0 +1,148 @@
+= Authenticate Using a JWT
+:description: pass:q[Once JWT authentication is configured, you can use a token in place of a username and password from the Web Console, the REST API, the CLI, and client applications.]
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+Before you start, configure at least one issuer.
+See xref:manage:manage-security/configure-jwt-issuer.adoc[Configure a JWT Issuer].
+
+[IMPORTANT]
+====
+A token is signed but not encrypted.
+Anyone who intercepts one can read it and reuse it until it expires, which makes a token as sensitive as a password.
+Always use TLS-encrypted connections, and keep tokens out of shell history, scripts, and logs.
+====
+
+== Tokens Expire
+
+Your identity provider decides how long a token lasts, not Couchbase Server.
+When a token expires, Couchbase Server starts returning authentication errors.
+
+So plan for expiry:
+
+* Fetch a fresh token before the current one runs out.
+* For long-running applications, refresh in the background rather than waiting for the first failure.
+* For client connections, expect an error telling you the credentials are stale.
+Get a new token and authenticate again; the connection itself does not need to be rebuilt from scratch.
+
+The `expiryLeewayS` setting adds a few seconds of slack to the expiry check, to absorb small clock differences between your IdP and your cluster.
+It is not a way to extend a token's life.
+
+== Sign In to the Web Console
+
+Set up single sign-on first --- see xref:manage:manage-security/configure-jwt-sso.adoc[Set Up Single Sign-On for the Web Console].
+
+Then:
+
+. Open the Web Console sign-in page.
+. Click *Sign In Using SSO*.
+. Click the button for your identity provider.
+. Sign in at your identity provider.
+It returns you to the Web Console, signed in.
+
+== Authenticate REST API Calls
+
+Send the token in the `Authorization` header as a bearer token, in place of the usual username and password:
+
+[source,console]
+----
+curl -H "Authorization: Bearer $TOKEN" \
+     https://localhost:18091/pools/default
+----
+
+In practice you fetch a token first and then use it.
+This example gets a token from Keycloak and calls Couchbase Server with it:
+
+----
+include::rest-api:example$jwt-bearer-request.sh[]
+----
+
+To check which user Couchbase Server thinks you are, and which roles you have, call `/whoami`:
+
+[source,console]
+----
+curl -H "Authorization: Bearer $TOKEN" \
+     https://localhost:18091/whoami
+----
+
+== Authenticate CLI Commands
+
+`couchbase-cli` accepts a token through the `--auth-token` argument, in place of `--username` and `--password`.
+You cannot combine `--auth-token` with either of those, or with client certificate authentication.
+
+[source,console]
+----
+couchbase-cli server-list \
+    --cluster https://localhost:18091 \
+    --auth-token $TOKEN
+----
+
+You can also set the `CB_REST_AUTH_TOKEN` environment variable and leave the argument off:
+
+[source,console]
+----
+export CB_REST_AUTH_TOKEN=$(
+  curl -s -X POST \
+       -d "client_id=couchbase" \
+       -d "username=test_user" \
+       -d "password=password" \
+       -d "grant_type=password" \
+       https://idp.example.com/realms/couchbase/protocol/openid-connect/token \
+  | jq -r .access_token)
+
+couchbase-cli server-list --cluster https://localhost:18091
+----
+
+This works the same way as `CB_REST_PASSWORD`, and keeps the token out of your command history and out of the process list.
+
+== Authenticate Client Applications
+
+The Couchbase SDKs can authenticate with a token instead of a password.
+For the exact syntax, see the documentation for your SDK.
+
+Two requirements apply whichever SDK you use:
+
+* *TLS is mandatory.*
+Client connections accept a token only on the encrypted port, so connect with `couchbases://`.
+(The REST API is more permissive and accepts a bearer token on the unencrypted port too, but you should still use TLS there --- see the warning above.)
+* *If you supply a username, it must match the one in the token.*
+Couchbase Server compares the username you pass against the name it worked out from the token's subject claim, after any mapping rules have been applied.
+If they differ, authentication fails.
+You can leave the username out and let the token speak for itself.
+
+Because a client connection is long-lived, the token is presented once when the connection authenticates rather than on every operation.
+When the token expires, operations start failing with a stale-credentials error until the client authenticates again with a fresh token.
+
+[#jwt-and-client-certificates]
+== Using a JWT with Client Certificate Authentication
+
+A request can present a client certificate *and* a bearer token at the same time.
+When it does:
+
+* The certificate secures the connection and is verified during the TLS handshake, as usual.
+* The *token* decides who the user is.
+Couchbase Server authenticates the token's subject and ignores the username in the certificate.
+* If the token is invalid, the request fails --- even if the certificate on its own would have authenticated the user.
+
+When client certificate authentication is set to mandatory, a connection without a valid certificate is refused during the handshake, before the token is even read.
+
+[IMPORTANT]
+====
+The token is not bound to the certificate.
+Couchbase Server does not support certificate-bound tokens and ignores the `cnf` claim, so the certificate and the token can identify two different users, and the token wins.
+====
+
+== Back Up and Restore with a Token
+
+`cbbackupmgr` also accepts a token through an `--auth-token` argument, in place of `--username` and `--password`.
+The user the token identifies needs the usual backup permissions, per bucket.
+
+See xref:backup-restore:enterprise-backup-restore.adoc[Backup and Restore].
+
+== Next Steps
+
+If authentication fails, see xref:manage:manage-security/troubleshoot-jwt.adoc[Troubleshoot JWT Authentication].
