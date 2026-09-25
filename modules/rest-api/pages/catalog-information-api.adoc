@@ -1,0 +1,121 @@
+= Catalog Information API
+:description: pass:q[The Query service exposes detailed Apache Iceberg catalog metadata through a dedicated diagnostic endpoint.]
+:page-edition: Enterprise Edition
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+== HTTP Method and URI
+
+----
+GET http://<query-node>:8093/admin/catalogs
+----
+
+== Description
+
+The Catalog Information API returns detailed metadata about the external catalogs a Couchbase Server cluster knows about, straight from the Query service.
+Unlike the xref:rest-api:external-catalogs-api.adoc[External Catalogs API], which manages a catalog's stored connection details, this endpoint reports what the Query service currently sees: resolved schemas, snapshot history, and data file listings for tables the catalog exposes.
+
+This endpoint runs on the Query service's own port (`8093`), not the cluster-manager port (`8091`) that the rest of the Couchbase REST API uses.
+Query it directly against a node running the Query service.
+
+Use this endpoint to diagnose a query that returns unexpected results, or to confirm which snapshot an external collection currently resolves to, without running a {sqlpp} query yourself.
+
+== Getting Catalog Information
+
+Send a `GET` request to `/admin/catalogs` on the Query service port.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X GET "http[s]://<query-node>:8093/admin/catalogs[?name=<catalog-name>][&infoFlags=<bitmask>]" \
+  -u <username>:<password>
+----
+
+=== Parameters
+
+`name`::
+Optional. Limits the response to one catalog. Omit this parameter to return every catalog the Query service knows about.
+
+`infoFlags`::
+Optional bitmask, defaults to `0`. Controls how much detail the response includes for each catalog.
++
+[cols="1,3"]
+|===
+|Value |Includes
+
+|1
+|Schema information for each table.
+
+|2
+|Snapshot history for each table.
+
+|4
+|Data file listings for each table.
+
+|7
+|All of the above (1 + 2 + 4).
+|===
+
+=== Required Privileges
+
+Your account needs Full Admin.
+
+This endpoint requires Full Admin specifically, a stricter requirement than the `external_catalog_reader` role that satisfies the xref:rest-api:external-catalogs-api.adoc[External Catalogs API]'s `GET` requests.
+This is a deliberate design choice. The endpoint can expose a table's full data file listing, which is sensitive infrastructure detail beyond what catalog-read access is meant to grant.
+
+=== Responses
+
+200 OK::
+Couchbase Server returns a JSON object describing the requested catalog, or every catalog when you omit `name`.
+
+403 Forbidden::
+Your account does not have Full Admin.
+
+=== Example
+
+The following example retrieves full information, including snapshot history and file listings, for `analytics_catalog`:
+
+[source,bash]
+----
+curl -X GET -u Administrator:password \
+  "http://localhost:8093/admin/catalogs?name=analytics_catalog&infoFlags=7" | jq
+----
+
+If successful, the call returns the catalog's resolved metadata:
+
+[source,json]
+----
+{
+  "name": "analytics_catalog",
+  "catalogSource": "AWS_GLUE_REST",
+  "tables": [
+    {
+      "namespace": "analytics_db",
+      "tableName": "flights",
+      "currentSnapshotId": 8492017364550123456,
+      "schema": {
+        "fields": [
+          {"name": "flight_id", "type": "long"},
+          {"name": "carrier", "type": "string"},
+          {"name": "departure_time", "type": "timestamp"}
+        ]
+      },
+      "snapshots": [
+        {"snapshotId": 8492017364550123456, "timestampMs": 1758700800000}
+      ],
+      "dataFiles": [
+        "s3://analytics-bucket/warehouse-v2/analytics_db/flights/data/00000-0-abc123.parquet"
+      ]
+    }
+  ]
+}
+----
+
+== See Also
+
+* xref:rest-api:external-catalogs-api.adoc[]
+* xref:rest-api:external-collections-api.adoc[]
+* xref:rest-api:scopes-and-collections-api.adoc[]

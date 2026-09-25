@@ -1,0 +1,324 @@
+= External Collections API
+:description: pass:q[Use the REST API to create, list, alter, and drop external collections.]
+:page-edition: Enterprise Edition
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+== HTTP Method and URI
+
+----
+GET /pools/default/buckets/<bucket-name>/scopes/?external=1
+
+POST /pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections?external=1
+
+PATCH /pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1
+
+DELETE /pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1
+----
+
+== Description
+
+An external collection points at one table inside an xref:rest-api:external-catalogs-api.adoc[external catalog]'s namespace.
+It does not hold any data itself.
+Every query against an external collection reads directly from the remote Iceberg table's data files.
+
+Couchbase Server creates an external collection inside an existing bucket and scope, the same way it creates a regular collection.
+The `?external=1` query parameter marks the request as targeting an external collection.
+Couchbase Server adds this parameter to the existing collections API rather than exposing a separate endpoint, so external collections share the same manifest, RBAC, and auditing infrastructure as regular collections.
+
+Creating an external collection only validates the syntax of the parameters you supply.
+Couchbase Server does not contact the catalog or storage backend until a query actually runs against the collection.
+A typo in `tableName` or `namespace` does not surface until you run a query, not at creation time.
+
+This feature requires the credential store, which is available only in Enterprise Edition.
+Community Edition cannot create or query external collections.
+
+NOTE: External collections do not currently appear under their scope in the Web Console's bucket, scope, and collection navigation view.
+You can still manage and query them through {sqlpp} or the REST API.
+
+== Parameters
+
+`name`::
+Required. The name of the external collection. You cannot change this after you create it.
+
+`catalog`::
+Required. The name of the xref:rest-api:external-catalogs-api.adoc[external catalog] that hosts the table.
+
+`credentialId`::
+Required. References a stored credential used to authenticate to the storage backend where the table's data files live.
+This is a different concern from the catalog's own credential, and the two often need different credential types.
+
+`namespace`::
+Required. The Iceberg namespace that contains the table, equivalent to a database or schema in the catalog.
+
+`tableName`::
+Required. The name of the Iceberg table to expose.
+
+`snapshotId`::
+Optional. Pins the collection to a specific Iceberg snapshot ID instead of always resolving the current snapshot.
+
+`snapshotTimestamp`::
+Optional. Pins the collection to the snapshot that was current at a specific timestamp.
+
+`decimal-to-double`::
+Optional boolean, defaults to `false`. Converts Iceberg `decimal` columns to native JSON numbers instead of exact-value strings.
+Setting this to `true` trades exactness for a native numeric type. Leave it at the default when you need exact decimal values.
+
+`parallelScans`::
+Optional integer, defaults to `1`. Controls how many of the table's underlying data files the scanner reads concurrently for one query.
++
+This setting only affects parallelism inside the Iceberg scanner itself. It does not change the Query service's own query-level parallelism, and a query against an external collection always runs as a single scan operator regardless of this value.
++
+Raising `parallelScans` can reduce query time for a table with many relevant files, at the cost of more simultaneous connections to storage. Set it too high for your storage backend's connection limits, and you risk connection resets or throttling instead of a speedup.
++
+Pass this parameter as a JSON integer. A quoted string value is not accepted.
+
+`format`::
+Optional. Couchbase Server accepts this parameter but currently ignores it. The scanner detects each data file's format from its file extension.
+
+TIP: Couchbase Server never mutates an external collection. `INSERT`, `UPSERT`, `UPDATE`, `DELETE`, and `MERGE` all fail with error 3510 against an external collection. Write support is not available in this release.
+
+== Listing External Collections
+
+Send a `GET` request to `/pools/default/buckets/<bucket-name>/scopes/?external=1` to list every scope and external collection in a bucket.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X GET "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/?external=1" \
+  -u <username>:<password>
+----
+
+=== Path Parameters
+
+`bucket-name`::
+Required. The name of the bucket to list external collections from.
+
+=== Required Privileges
+
+Your account needs the `bucket_admin` role or Full Admin.
+
+=== Responses
+
+200 OK::
+Couchbase Server returns a JSON object listing every scope in the bucket, with each scope's `collections` array limited to its external collections.
+
+404 Not Found::
+No bucket with that name exists.
+
+=== Example
+
+[source,bash]
+----
+curl -X GET -u Administrator:password \
+  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/?external=1" | jq
+----
+
+If successful, the call returns the bucket's scopes and their external collections:
+
+[source,json]
+----
+{
+  "uid": "4",
+  "scopes": [
+    {
+      "name": "external",
+      "collections": [
+        {
+          "name": "flights",
+          "catalog": "analytics_catalog",
+          "namespace": "analytics_db",
+          "tableName": "flights"
+        }
+      ]
+    }
+  ]
+}
+----
+
+== Creating an External Collection
+
+Send a `POST` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections?external=1` to create an external collection.
+The scope must already exist.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X POST "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections?external=1" \
+  -u <username>:<password> \
+  -d name=<collection-name> \
+  -d catalog=<catalog-name> \
+  -d credentialId=<credential-id> \
+  -d namespace=<iceberg-namespace> \
+  -d tableName=<iceberg-table-name> \
+  [-d snapshotId=<snapshot-id>] \
+  [-d snapshotTimestamp=<timestamp>] \
+  [-d decimal-to-double=<true|false>] \
+  [-d parallelScans=<integer>]
+----
+
+=== Path Parameters
+
+`bucket-name`::
+Required. The bucket that will hold the new external collection.
+
+`scope-name`::
+Required. An existing scope within the bucket.
+
+=== Parameters
+
+See <<Parameters>> for the full list.
+
+=== Required Privileges
+
+Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin.
+
+=== Responses
+
+200 OK::
+Couchbase Server creates the external collection and returns its assigned `uid`.
+
+400 Bad Request::
+The request is missing a required parameter, or a parameter's value fails validation.
+
+=== Example
+
+The following example creates an external collection that exposes the `flights` table from `analytics_catalog`:
+
+[source,bash]
+----
+curl -X POST -u Administrator:password \
+  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/external/collections?external=1" \
+  -d name=flights \
+  -d catalog=analytics_catalog \
+  -d credentialId=s3-data-cred \
+  -d namespace=analytics_db \
+  -d tableName=flights \
+  -d parallelScans=4
+----
+
+If successful, the call returns the collection's assigned `uid`:
+
+[source,json]
+----
+{"uid": 21}
+----
+
+== Altering an External Collection
+
+Send a `PATCH` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1` to change an external collection's parameters.
+`PATCH` applies a partial merge. Only the fields you supply change.
+
+You can change any parameter except `name`.
+This includes `catalog`, `credentialId`, `namespace`, `tableName`, `snapshotId`, `snapshotTimestamp`, `decimal-to-double`, and `parallelScans`.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X PATCH "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1" \
+  -u <username>:<password> \
+  [-d <parameter>=<value>]
+----
+
+=== Path Parameters
+
+`bucket-name`::
+Required. The bucket that holds the collection.
+
+`scope-name`::
+Required. The scope that holds the collection.
+
+`collection-name`::
+Required. The name of the external collection to alter.
+
+=== Parameters
+
+Any parameter from <<Parameters>> except `name`.
+
+=== Required Privileges
+
+Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin.
+
+=== Responses
+
+200 OK::
+Couchbase Server updates the collection and returns its stored definition.
+
+400 Bad Request::
+You supplied a value that fails validation, or tried to change `name`.
+
+404 Not Found::
+No collection with that name exists in the given bucket and scope.
+
+=== Example
+
+The following example switches on `decimal-to-double` for the `flights` collection:
+
+[source,bash]
+----
+curl -X PATCH -u Administrator:password \
+  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/external/collections/flights?external=1" \
+  -d decimal-to-double=true
+----
+
+If successful, the call returns the collection's updated definition.
+
+== Dropping an External Collection
+
+Send a `DELETE` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1` to drop an external collection.
+
+Dropping an external collection removes only the pointer to the Iceberg table.
+It does not touch the underlying Iceberg table or its data files, and it does not affect the catalog or any credential the collection referenced.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X DELETE "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1" \
+  -u <username>:<password>
+----
+
+=== Path Parameters
+
+`bucket-name`::
+Required. The bucket that holds the collection.
+
+`scope-name`::
+Required. The scope that holds the collection.
+
+`collection-name`::
+Required. The name of the external collection to drop.
+
+=== Required Privileges
+
+Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin.
+
+=== Responses
+
+200 OK::
+Couchbase Server drops the collection.
+
+404 Not Found::
+No collection with that name exists in the given bucket and scope.
+
+=== Example
+
+[source,bash]
+----
+curl -X DELETE -u Administrator:password \
+  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/external/collections/flights?external=1"
+----
+
+TIP: If you're decommissioning a whole integration rather than one table, also drop the xref:rest-api:external-catalogs-api.adoc[catalog] and any credential that's no longer in use.
+Dropping an external collection leaves both of those in place.
+
+== See Also
+
+* xref:rest-api:scopes-and-collections-api.adoc[]
+* xref:rest-api:external-catalogs-api.adoc[]
+* xref:rest-api:catalog-information-api.adoc[]

@@ -1,0 +1,376 @@
+= External Catalogs API
+:description: pass:q[Use the REST API to create, list, alter, and drop external catalogs.]
+:page-edition: Enterprise Edition
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+== HTTP Method and URI
+
+----
+GET /pools/default/externalCatalogs
+
+GET /pools/default/externalCatalogs/<catalog-name>
+
+POST /pools/default/externalCatalogs
+
+PATCH /pools/default/externalCatalogs/<catalog-name>
+
+DELETE /pools/default/externalCatalogs/<catalog-name>
+----
+
+== Description
+
+An external catalog is a named connection to an external Apache Iceberg catalog service, such as AWS Glue or a Nessie server.
+The catalog holds connection details and a reference to a stored credential.
+It does not hold any table data itself.
+
+Couchbase Server stores catalogs at the cluster level.
+A catalog is not scoped to a bucket, and you do not need an existing bucket to create one.
+
+One catalog typically serves many xref:rest-api:external-collections-api.adoc[external collections].
+Rather than repeating connection details for every table you expose, you create one catalog per external catalog service and point multiple external collections at it.
+This also lets you grant catalog-level access separately from collection-level access, so a user can query one table without seeing every table available through the same catalog.
+
+This feature requires the credential store, which is available only in Enterprise Edition.
+Community Edition cannot create or use external catalogs.
+
+NOTE: Couchbase Server manages external catalogs only through the REST API and {sqlpp} DDL statements.
+The Web Console, `couchbase-cli`, Backup and Restore, and XDCR do not support catalog management.
+
+== Catalog Sources and Parameters
+
+Every catalog requires a `name`, a `catalogType` (currently always `ICEBERG`), and a `catalogSource` that identifies the catalog provider.
+Most sources also require a `credentialId`, which references a stored credential used to authenticate to the catalog service.
+Nessie-based sources accept a credential but do not require one.
+
+The catalog's credential authenticates to the catalog *service*.
+It's a separate concern from the credential an external collection uses to authenticate to *storage*.
+Some providers, such as AWS Glue, use one AWS identity for both, so you can share one credential between a catalog and its collections.
+Other providers, such as Nessie, authenticate the catalog over HTTP and storage through a cloud-native mechanism, so you need two separate credentials.
+Reusing one credential across mismatched protocols does not fail at creation time.
+It surfaces later as an opaque connection error when a query actually reaches storage.
+
+The following table lists the parameters each `catalogSource` value accepts beyond the four universal parameters:
+
+[cols="1,2,2"]
+|===
+|Source |Required Parameters |Optional Parameters
+
+|`AWS_GLUE`
+|None beyond `credentialId`.
+|None.
+
+|`AWS_GLUE_REST`
+|`uri`, `sigv4SigningRegion`
+|None.
+
+|`S3_TABLES`
+|`uri`, `sigv4SigningRegion`, `sigv4SigningName`, `warehouse`
+|None.
+
+|`BIGLAKE_METASTORE`
+|`uri`, `warehouse`, `quotaProjectId`
+|None.
+
+|`NESSIE`
+|`uri`, `warehouse`
+|None.
+
+|`NESSIE_REST`
+|`uri`
+|`branch` selects a specific Nessie branch or ref. +
+`warehouse` is accepted but has no effect. Nessie's REST configuration endpoint rejects a warehouse value, so Couchbase does not forward it.
+
+|`REST` (also accepts `UNITY_CATALOG`)
+|`uri`
+|`warehouse`
+
+|`SQL`
+|`uri` (a PostgreSQL or SQLite connection string)
+|`sqlDialect` (`postgres` or `sqlite`) forces the dialect explicitly. +
+Without it, Couchbase Server only recognizes a `postgres://` or `postgresql://`-prefixed URI as PostgreSQL. Every other value, including a malformed PostgreSQL connection string, defaults to SQLite.
+|===
+
+TIP: `REST` is the source to use for Unity Catalog, Polaris, Snowflake Open Catalog, Apache Gravitino, and any other catalog that implements the generic Iceberg REST specification.
+
+CAUTION: A single catalog cannot span more than one storage provider (AWS S3, Google Cloud Storage, or Azure).
+The credential you assign to an external collection determines the provider it can read from.
+
+== Listing and Getting Catalogs
+
+Send a `GET` request to `/pools/default/externalCatalogs` to list every catalog in the cluster, or to `/pools/default/externalCatalogs/<catalog-name>` to get one catalog's details.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X GET http[s]://<host>:<port>/pools/default/externalCatalogs[/<catalog-name>] \
+  -u <username>:<password>
+----
+
+=== Path Parameters
+
+`catalog-name`::
+(optional) The name of the catalog to retrieve.
+Omit this parameter to list every catalog in the cluster.
+
+=== Required Privileges
+
+Your account needs at least one of the following roles:
+
+* `external_catalog_reader`
+* `external_catalog_admin`
+* Full Admin
+
+=== Responses
+
+200 OK::
+Couchbase Server returns a JSON object describing the requested catalog, or a JSON array of catalog objects when you omit `catalog-name`.
+
+404 Not Found::
+No catalog with that name exists.
+
+=== Example
+
+The following example retrieves the catalog named `analytics_catalog`:
+
+[source,bash]
+----
+curl -X GET -u Administrator:password \
+  http://localhost:8091/pools/default/externalCatalogs/analytics_catalog | jq
+----
+
+If successful, the call returns the catalog's stored definition:
+
+[source,json]
+----
+{
+  "name": "analytics_catalog",
+  "catalogType": "ICEBERG",
+  "catalogSource": "AWS_GLUE_REST",
+  "credentialId": "glue-catalog-cred",
+  "uri": "https://glue.us-east-1.amazonaws.com/iceberg",
+  "sigv4SigningRegion": "us-east-1",
+  "rev": 1
+}
+----
+
+== Creating a Catalog
+
+Send a `POST` request to `/pools/default/externalCatalogs` to create a catalog.
+Creating a catalog only validates the syntax of the parameters you supply.
+Couchbase Server does not contact the remote catalog service until you query an external collection built on it.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X POST http[s]://<host>:<port>/pools/default/externalCatalogs \
+  -u <username>:<password> \
+  -d name=<catalog-name> \
+  -d catalogType=ICEBERG \
+  -d catalogSource=<source> \
+  -d credentialId=<credential-id> \
+  [-d <source-specific-parameter>=<value>]
+----
+
+=== Parameters
+
+`name`::
+Required. The name of the catalog. You cannot change this after you create the catalog.
+
+`catalogType`::
+Required. Must be `ICEBERG`. This is the only supported value.
+
+`catalogSource`::
+Required. Identifies the catalog provider. See <<Catalog Sources and Parameters>> for the accepted values.
+
+`credentialId`::
+Required for every source except `NESSIE` and `NESSIE_REST`, where it's optional. References a stored credential used to authenticate to the catalog service.
+
+Additional parameters vary by `catalogSource`. See <<Catalog Sources and Parameters>> for the full list.
+
+=== Required Privileges
+
+Your account needs the `external_catalog_admin` role or Full Admin.
+
+NOTE: The equivalent `CREATE CATALOG` {sqlpp} statement enforces its own privilege check at the Query service before it calls this endpoint internally.
+Consult the {sqlpp} language reference for the DDL-side privilege requirement.
+
+=== Responses
+
+200 OK::
+Couchbase Server creates the catalog and returns its stored definition.
+
+400 Bad Request::
+The request is missing a required parameter, or a parameter's value fails validation. Couchbase Server returns a JSON object describing the error, including an error code from <<Catalog Error Codes>>.
+
+=== Example
+
+The following example creates a catalog that connects to an AWS Glue Iceberg REST endpoint:
+
+[source,bash]
+----
+curl -X POST -u Administrator:password \
+  http://localhost:8091/pools/default/externalCatalogs \
+  -d name=analytics_catalog \
+  -d catalogType=ICEBERG \
+  -d catalogSource=AWS_GLUE_REST \
+  -d credentialId=glue-catalog-cred \
+  -d uri=https://glue.us-east-1.amazonaws.com/iceberg \
+  -d sigv4SigningRegion=us-east-1
+----
+
+If successful, the call returns the new catalog's definition:
+
+[source,json]
+----
+{
+  "name": "analytics_catalog",
+  "catalogType": "ICEBERG",
+  "catalogSource": "AWS_GLUE_REST",
+  "credentialId": "glue-catalog-cred",
+  "uri": "https://glue.us-east-1.amazonaws.com/iceberg",
+  "sigv4SigningRegion": "us-east-1",
+  "rev": 1
+}
+----
+
+== Altering a Catalog
+
+Send a `PATCH` request to `/pools/default/externalCatalogs/<catalog-name>` to change a catalog's connection details.
+`PATCH` applies a partial merge. Only the fields you supply change, and every other field keeps its existing value.
+
+You can change any source-specific connection parameter, such as `uri`, `warehouse`, or `sigv4SigningRegion`.
+You cannot change `name`, `catalogType`, or `catalogSource`.
+Couchbase Server rejects an attempt to change any of these three fields, even when you supply the catalog's current value for them.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X PATCH http[s]://<host>:<port>/pools/default/externalCatalogs/<catalog-name> \
+  -u <username>:<password> \
+  [-d <source-specific-parameter>=<value>]
+----
+
+=== Path Parameters
+
+`catalog-name`::
+Required. The name of the catalog to alter.
+
+=== Parameters
+
+Any source-specific connection parameter from <<Catalog Sources and Parameters>>, except `name`, `catalogType`, and `catalogSource`.
+
+=== Required Privileges
+
+Your account needs the `external_catalog_admin` role or Full Admin.
+
+=== Responses
+
+200 OK::
+Couchbase Server updates the catalog and returns its new stored definition.
+
+400 Bad Request::
+You supplied a value that fails validation, or you tried to change `name`, `catalogType`, or `catalogSource`. Couchbase Server returns error code 12038 (`Invalid option 'catalogSource'`, or the equivalent message for `name` or `catalogType`) for that case.
+
+404 Not Found::
+No catalog with that name exists.
+
+=== Example
+
+The following example changes the warehouse location for `analytics_catalog`:
+
+[source,bash]
+----
+curl -X PATCH -u Administrator:password \
+  http://localhost:8091/pools/default/externalCatalogs/analytics_catalog \
+  -d warehouse=s3://analytics-bucket/warehouse-v2
+----
+
+If successful, the call returns the catalog's updated definition, with `rev` incremented.
+
+IMPORTANT: A dependent external collection can keep using a catalog's old connection details for a short time after you alter the catalog.
+Query nodes pick up catalog changes asynchronously.
+Do not assume an altered catalog takes effect immediately for every in-flight query.
+
+== Dropping a Catalog
+
+Send a `DELETE` request to `/pools/default/externalCatalogs/<catalog-name>` to remove a catalog.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X DELETE http[s]://<host>:<port>/pools/default/externalCatalogs/<catalog-name> \
+  -u <username>:<password>
+----
+
+=== Path Parameters
+
+`catalog-name`::
+Required. The name of the catalog to drop.
+
+=== Required Privileges
+
+Your account needs the `external_catalog_admin` role or Full Admin.
+
+=== Responses
+
+200 OK::
+Couchbase Server drops the catalog.
+
+404 Not Found::
+No catalog with that name exists.
+
+=== Example
+
+[source,bash]
+----
+curl -X DELETE -u Administrator:password \
+  http://localhost:8091/pools/default/externalCatalogs/analytics_catalog
+----
+
+WARNING: Dropping a catalog does not drop the external collections built on it, and Couchbase Server does not warn you before you drop a catalog with dependent collections.
+A query against an orphaned collection eventually fails with error code 12057 (`Catalog information not found for external collection`).
+Drop or repoint every dependent external collection before you drop its catalog.
+
+== Catalog Error Codes
+
+[cols="1,3"]
+|===
+|Code |Meaning
+
+|12051
+|The catalog already exists.
+
+|12052
+|The catalog does not exist.
+
+|12053
+|Couchbase Server could not create the catalog. The response includes a specific validation message.
+
+|12054
+|Couchbase Server could not alter the catalog. The response includes a specific validation message.
+
+|12055
+|Couchbase Server could not drop the catalog.
+
+|12056
+|Couchbase Server could not retrieve the catalog.
+
+|12057
+|Couchbase Server could not find the catalog information for an external collection. This usually means the collection's catalog was dropped.
+
+|12038
+|You tried to change a non-alterable field (`name`, `catalogType`, or `catalogSource`) with `PATCH` or `ALTER CATALOG`.
+|===
+
+== See Also
+
+* xref:rest-api:scopes-and-collections-api.adoc[]
+* xref:rest-api:external-collections-api.adoc[]
+* xref:rest-api:catalog-information-api.adoc[]

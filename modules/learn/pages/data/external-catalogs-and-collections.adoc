@@ -1,0 +1,307 @@
+= External Catalogs and Collections
+:description: pass:q[External catalogs and external collections let you query data stored in Apache Iceberg tables directly from Couchbase using {sqlpp}.]
+:page-edition: Enterprise Edition
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+https://iceberg.apache.org/[Apache Iceberg^] is an open table format for large analytic datasets stored in cloud object storage.
+It relies on a catalog provider (such as AWS Glue or Nessie) to track the table’s current version to enable ACID guarantees.
+The data for the Iceberg table is stored in a separate object store, such as S3 or Azure blob storage.
+
+You can define an external collection in Couchbase Server that lets you query an Iceberg table. 
+The table is mapped into Couchbase Server as a collection because that's a rough equivalent of a relational data table.
+When returning data from the query, Couchbase Server converts each row of tabular data in the result into a JSON object. 
+For details about this conversion, see <<data-conversion>>.
+
+NOTE: Using external catalogs and collections requires Couchbase Server version 8.5 or later.
+You cannot create or use them while the cluster is in a mixed-mode where some nodes are running a pre-8.5 version.
+
+== How Querying Works
+
+Writes to Iceberg tables are append-only, immutable file operations.
+Each change results in a new snapshot of the table's state stored in a metadata file.
+The catalog manages the table state by recording the location of the current metadata file that lists all files that belong to the snapshot. 
+
+When you query an external collection, Couchbase Server:
+
+. Contacts the catalog provider to find the location of the table's metadata file.
+The catalog returns the location of the table's metadata file in the storage location.
+. Couchbase Server reads the metadata file from the storage provider to learn which data files it needs to answer your query.
+. It reads just the data files it needs to resolve your query.
+By default, it uses the data files from the latest snapshot.
+However, you can also perform xref:manage:manage-scopes-and-collections/external-collection-options.adoc#perform-historic-queries[historical queries] that uses data files from past snapshots.
+
+Querying an Iceberg table does not copy the table's data into a bucket or cache it.
+Each query to the collection results in Couchbase Server performing all of the previous steps again. 
+
+External collections are read-only. 
+You can only perform queries on them using the {sqlpp} `SELECT` statement.
+Attempting to use `INSERT`, `UPDATE`, `UPSERT`, `DELETE`, or `MERGE` on an external collection fails with error `3510`.
+
+== Creating Catalogs and Collections
+
+An Iceberg table relies on 2 components: the Iceberg catalog and the data storage location. 
+To create an external collection, you need to tell Couchbase how to access both. 
+
+First, you create a catalog in Couchbase Server that tells it how to connect to the Iceberg catalog provider.
+An Apache Iceberg catalog provider can define multiple tables, letting you create multiple external collections using a single catalog definition.
+
+After creating the catalog, you create the external collection that represents a single Iceberg table.
+You must provide Couchbase Server with:
+
+* The bucket and scope you want to contain the collection. 
+You can choose any existing bucket and scope.
+You can create them to specifically hold external collections, or you can choose buckets and scopes that already contain Couchbase Server data. 
+* The catalog that you defined earlier containing details about the Iceberg catalog provider.
+* Which Iceberg table defined in the catalog you want the collection to query. 
+* The data storage provides that stores the Iceberg table's metadata and data and the name of the table in the catalog.
+
+=== Credentials for Catalog and Storage Location Providers
+
+When creating the catalog and the external collection, you must provide Couchbase Server with the credentials it needs to authenticate with the providers. 
+You create these credentials in the Couchbase Server credential store.
+For more information about the credential store, see xref:learn:security/credential-store.adoc[].
+
+When the catalog and the storage location use the same provider, you can often use the same credential for both of them. 
+For example, suppose an Iceberg table uses AWS Glue as its catalog provider and Amazon S3 as its storage location. 
+In this case, it's likely (but not guaranteed) you can use a single credential to authenticate with both.
+
+If the catalog provider and the storage location use different providers, you'll need separate credentials for each.
+For example, if the table uses Nessie as a catalog and GCS as the storage location, you need a credential for each.
+
+== Supported Catalogs and Storage
+
+Iceberg tables let you independently choose catalog and storage providers.
+Couchbase Server supports a set of catalog and storage location providers.
+Except for Azure, you can use any combination of catalog and storage provider that Couchbase Server supports.
+
+Couchbase Server supports these Iceberg catalog providers:
+
+* https://docs.aws.amazon.com/glue/latest/dg/what-is-glue.html[AWS Glue^]
+* https://docs.aws.amazon.com/glue/latest/dg/connect-glu-iceberg-rest.html[AWS Glue REST^]
+* https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables.html[AWS S3 Tables^]
+* https://docs.cloud.google.com/bigquery/docs/about-blms[Google BigLake Metastore^]
+* https://projectnessie.org/[Nessie and Nessie REST^]
+* A generic REST catalog, which covers services such as https://docs.databricks.com/aws/en/external-access/iceberg[Unity Catalog^], https://polaris.apache.org/[Polaris^], https://docs.snowflake.com/en/user-guide/opencatalog/overview[Snowflake Open Catalog^], and https://gravitino.apache.org/[Apache Gravitino^]
+* A SQL catalog backed by https://www.postgresql.org/docs/[PostgreSQL^] or https://sqlite.org/docs.html[SQLite^]
+
+Couchbase Server supports these storage providers: 
+
+* https://docs.aws.amazon.com/s3/[Amazon S3^]
+
+* https://cloud.google.com/storage/docs[Google Cloud Storage^]
+
+* https://learn.microsoft.com/en-us/azure/storage/blobs/[Azure storage^]
+
++
+NOTE: Azure access requires a REST catalog paired with Azure credentials.
+
+External collections do not support setting alternate endpoints for storage providers. 
+For example, you cannot define an external collection that uses an S3-compatible storage provider such as MinIO.
+
+== Supported File Formats
+
+Couchbase supports all 3 data file formats supported by Apache Iceberg:
+
+* https://parquet.apache.org/docs/[Parquet^]
+* https://avro.apache.org/docs/[Avro^]
+* https://orc.apache.org/docs/[ORC^]
+
+Couchbase Server directly reads data in these formats from the storage location during queries.
+
+[NOTE]
+====
+Couchbase Server's queries of Parquet files perform better for filtered queries than Avro or ORC files.
+Its query engine uses the file-level statistics that Parquet embeds to skip files that cannot match your filter.
+It does not use similar statistics from Avro and ORC. 
+Instead, it reads the entire files in these formats. 
+====
+
+[#data-conversion]
+== Data Type Conversion
+
+Iceberg tables use a schema-defined table format where each table column has a data type assigned to it.
+Couchbase converts Iceberg's data types into JSON when it returns query results.
+Most of the conversions work the way you'd expect.
+Some types need special handling because they do not cleanly convert to JSON values. 
+The following table shows the type conversions:
+
+|===
+|Iceberg Type |JSON Representation |Notes
+
+|`boolean`
+|Boolean
+|Converts directly.
+
+|`int`, `long`
+|Number
+|Converts directly.
+
+|`float`, `double`
+|Number
+|Converts directly.
+
+|`string`
+|String
+|Converts directly.
+
+|`decimal`
+|String, or number
+|Converts to a string by default, to preserve exact precision.
+Set the `decimal-to-double` option on the external collection to convert to a number instead.
+To learn more about the `decimal-to-double` setting, see xref:manage:manage-scopes-and-collections/external-collection-options.adoc#convert-decimals-to-doubles[Convert Decimals to Doubles].
+
+|`date`
+|Number
+|Integer count of days since the Unix epoch (midnight on January 1{nbsp}st, 1970 UTC).
+
+|`time`
+|Number
+|Integer count of microseconds since midnight.
+
+|`timestamp`, `timestamptz`
+|Number
+|Integer count of microseconds since the Unix epoch.
+
+|`timestamp_ns`, `timestamptz_ns`
+|Number
+|An integer count of nanoseconds since the Unix epoch.
+
+|`uuid`
+|String
+|Standard hyphenated UUID string.
+
+|`binary`
+|String
+|Base64-encoded string.
+
+|`fixed(L)`
+|String
+|Literal string representation of the underlying bytes, such as `"[222 173 190 239]"`.
+
+|`struct`
+|Object
+|JSON object with 1 field per struct field.
+Couchbase Server takes the JSON key names from the `struct` definition.
+
+|`list`
+|Array
+|JSON array.
+
+|`map`
+|Object
+|JSON object.
+The map's keys become the object's field names.
+|===
+
+For example, suppose you create an external collection with the keyspace path `travel-sample.external.orders` that maps to an Iceberg table with the following columns:
+
+[cols="1,1,2"]
+|===
+|Example Column |Iceberg Type |Example Value
+
+|`order_id`
+|`long`
+|`100234`
+
+|`unit_price`
+|`decimal(10,2)`
+|`49.99`
+
+|`ship_date`
+|`date`
+|`2026-09-01`
+
+|`pickup_time`
+|`time`
+|`14:30:00`
+
+|`created_at`
+|`timestamp`
+|`2026-09-01T14:30:00`
+
+|`tracking_id`
+|`uuid`
+|`f47ac10b-58cc-4372-a567-0e02b2c3d479`
+
+|`checksum`
+|`fixed(8)` 
+|8 raw bytes
+
+|`label_image`
+|`binary`
+|The bytes for the text `IMG_DATA`
+
+|`notes`
+|`string`
+|`Handle with care`
+
+|`shipping_address`
+|`struct<street: string, zip: string>`
+|`\{street: "500 Occidental Ave", zip: "98104"}`
+
+|`tags`
+|`list<string>`
+|`["fragile", "priority"]`
+
+|`item_counts`
+|`map<string, int>`
+|`\{"widgets": 3, "gadgets": 1}`
+|===
+
+You can then query the collection with a `SELECT` to get the row containing the example values: 
+
+[source,sql]
+----
+SELECT o.* FROM `travel-sample`.`external`.`orders` AS o
+       WHERE o.order_id = 100234;
+----
+
+The result shows how Couchbase Server converts the example data into a JSON object:
+
+[source,json]
+----
+{
+  "order_id": 100234,
+  "unit_price": "49.99",
+  "ship_date": 20697,
+  "pickup_time": 52200000000,
+  "created_at": 1788273000000000,
+  "tracking_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "checksum": "[161 178 195 212 229 246 7 24]",
+  "label_image": "SU1HX0RBVEE=",
+  "notes": "Handle with care",
+  "shipping_address": {
+    "street": "500 Occidental Ave",
+    "zip": "98104"
+  },
+  "tags": ["fragile", "priority"],
+  "item_counts": {
+    "widgets": 3,
+    "gadgets": 1
+  }
+}
+----
+
+Some things to notice in the output:
+
+* The `unit_price` decimal converts to the string `"49.99"` instead of a number, because Couchbase preserves exact precision by default.
+* The `ship_date`, `pickup_time`, and `created_at` fields all convert to plain numbers.
+Each number represents a count of time units since an epoch, not a formatted date or time string.
+* The `tracking_id` UUID converts to a readable string.
+* The `label_image` binary field converts to a base64 string you can decode.
+* The `checksum` fixed-length binary string converts to a string representation:  `"[161 178 195 212 229 246 7 24]"`.
+
+== See Also
+
+* xref:learn:data/scopes-and-collections.adoc[]
+* xref:learn:security/credential-store.adoc[]
+* xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc[]
+* xref:manage:manage-scopes-and-collections/maintain-external-catalogs-and-collections.adoc[]
+* xref:manage:manage-scopes-and-collections/external-collection-options.adoc[]
+* xref:manage:manage-scopes-and-collections/troubleshoot-external-collections.adoc[]
+* xref:rest-api:external-catalogs-api.adoc[]
+* xref:rest-api:external-collections-api.adoc[]
+* xref:rest-api:catalog-information-api.adoc[]
