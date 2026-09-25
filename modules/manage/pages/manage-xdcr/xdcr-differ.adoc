@@ -9,7 +9,7 @@ Previously, you'd build this utility from source using the xdcrDiffer GitHub rep
 
 == What is xdcrDiffer?
 
-`xdcrDiffer` is a Diff tool that helps you check data consistency between XDCR clusters.
+`xdcrDiffer` is a diff tool that helps you check data consistency between XDCR clusters.
 For full usage instructions and Q&A, see the https://github.com/couchbase/xdcrDiffer?tab=readme-ov-file#readme[xdcrDiffer ReadMe].
 
 The output report from `xdcrDiffer` provides information such as:
@@ -28,7 +28,7 @@ The utility includes these files:
 
 To run the utility, use the `runDiffer.sh` script.
 
-TIP: Run the xdcrDiffer utility on a cluster node that does not serve Data service, as the utility can consume significant resources.
+NOTE: Run the xdcrDiffer utility on a cluster node that does not serve Data Service, as the utility can consume significant resources.
 You can also run it on an arbiter node, which does not run any services.
 
 == How the xdcrDiffer Utility Works
@@ -36,7 +36,7 @@ You can also run it on an arbiter node, which does not run any services.
 `xdcrDiffer` acts as a Database Change Protocol (DCP) consumer and creates DCP streams from the Data nodes.
 Then it reads data from both the source and target clusters, and stores results in the directory you specify as `outputDir`.
 
-**Before you begin:**
+=== Before you begin:
 
 Estimate the required storage for utility output.
 Make sure the specified `outputDir` has enough space for collecting data.
@@ -49,13 +49,85 @@ Calculate the storage needed as follows:
 Storage needed = (102 bytes + key size) × number of documents in the source and target buckets being replicated
 ----
 
-NOTE: Ensure you check the details of usage, limitations, and information about how to read the output reports in the https://github.com/couchbase/xdcrDiffer?tab=readme-ov-file#readme[xdcrDiffer ReadMe].
+NOTE: Make sure you check the details of usage, limitations, and information about how to read the output reports in the https://github.com/couchbase/xdcrDiffer?tab=readme-ov-file#readme[xdcrDiffer ReadMe].
 
-The following is an example of running the `runDiffer.sh` file with an option to compare both metadata and body during the report generation portion of the utility run.
+The following example runs `runDiffer.sh` with an option to compare both metadata and document body:
 
 ----
 runDiffer.sh --username=Administrator --password=password --hostname=localhost:8091 --sourceBucket=travel-sample --targetBucket=travel-sample --remoteClusterName=cluster2 --compareType=both --outputDir=/has_enough_space/xdcr_differ_outputdir
 ----
+
+== Securing xdcrDiffer Temporary Files and Logs with Encryption
+
+`xdcrDiffer` processes and compares data across clusters, creating temporary files, logs, and output reports during execution.
+To protect sensitive data extracted during verification runs, `xdcrDiffer` includes standalone, client-side encryption using AES-256-GCM.
+
+=== Protected Artifacts
+
+When encryption is enabled, `xdcrDiffer` encrypts all generated operational artifacts on the local filesystem:
+
+* *DCP Stream Snapshots:* Temporary document dumps streamed from source and target vBuckets during inspection.
+* *Diff Output Files and Reports:* Output datasets containing missing, out-of-sync, or conflicting document keys and metadata.
+* *Manifest and State Metadata:* JSON manifests describing run configuration, execution state, and comparison progress.
+* *Execution Logs:* Tool runtime and diagnostic log files generated during the diff process.
+
+=== Enabling Encryption
+
+You can enable encryption by supplying an encryption passphrase when executing `xdcrDiffer`.
+Passphrases can be supplied interactively or through command-line flags and environment variables.
+
+==== Syntax and Options
+
+[cols="1,1,3",options="header"]
+|===
+| Parameter or Option | Environment Variable | Description
+
+| `--encrypt`
+| `XDCRDIFFER_ENCRYPT`
+| Enables AES-256-GCM encryption for all temporary files, diff results, manifests, and logs produced by the current run.
+
+| `--passphrase` `<PASSPHRASE>`
+| `XDCRDIFFER_PASSPHRASE`
+| Optional: Specifies the encryption passphrase directly.
+If omitted when `--encrypt` is specified, `xdcrDiffer` prompts interactively for the passphrase to prevent credential exposure in shell histories.
+|===
+
+==== Example: Running an Encrypted Diff
+
+.Interactive prompt (recommended for interactive shell sessions):
+[source,console]
+----
+$ xdcrdiffer -s http://source-cluster:8091 -d http://target-cluster:8091 \
+  -b sourceBucket -c targetBucket \
+  -u Administrator -p password \
+  --encrypt
+Enter encryption passphrase:
+Confirm encryption passphrase:
+----
+
+.Using environment variables (recommended for automated scripts and pipelines):
+[source,console]
+----
+$ export XDCRDIFFER_PASSPHRASE="your-strong-passphrase"
+$ xdcrdiffer -s http://source-cluster:8091 -d http://target-cluster:8091 \
+  -b sourceBucket -c targetBucket \
+  -u Administrator -p password \
+  --encrypt
+----
+
+=== Passphrase Requirements and Key Management
+
+[WARNING]
+====
+*Standalone Key Management:*
+`xdcrDiffer` encryption is completely independent of Couchbase Server cluster KMS integrations such as KMIP, GCP KMS, Azure KMS, or HashiCorp Vault.
+
+* Passphrase storage and lifecycle management are the sole responsibility of the administrator running the tool.
+* Couchbase Server cluster administrators and support cannot recover encrypted `xdcrDiffer` output files or manifests if the passphrase is lost.
+* The exact passphrase used during initial execution is required for any subsequent post-processing, report generation, or resumption of interrupted diff runs.
+====
+
+NOTE: Make sure temporary directory locations such as `/tmp` or paths specified via `--work-dir` have adequate storage capacity to hold encrypted stream buffers during high-volume bucket comparisons.
 
 == Comparison Process
 
@@ -66,3 +138,10 @@ runDiffer.sh --username=Administrator --password=password --hostname=localhost:8
 ** If a document is missing in either cluster, the utility reports the missing document.
 
 ** If all documents are present, the utility compares metadata and the body hash to verify if they match.
+
+== See Also
+
+* xref:manage:manage-xdcr/xdcr-management-overview.adoc[]
+* xref:manage:manage-xdcr/secure-xdcr-replication.adoc[]
+* xref:manage:manage-xdcr/recover-data-with-xdcr.adoc[]
+* xref:manage:manage-security/manage-native-encryption-at-rest.adoc[]

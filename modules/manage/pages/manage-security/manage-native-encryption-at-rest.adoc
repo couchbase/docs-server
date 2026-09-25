@@ -545,6 +545,30 @@ To learn how to drop DEKs for  audit, configuration, or log data using the REST 
 see xref:rest-api:security/encryption-at-rest/drop-encryption-deks.adoc#drop-type[Drop DEKs and Re-encrypt Data for a Bucket].
 
 
+=== Verify and Force Re-Encryption of XDCR Artifacts
+
+When validating or rotating encryption keys across the cluster using the REST API endpoint `POST /controller/forceEncryptionAtRest`, XDCR components are processed as part of their respective parent subsystems:
+
+* XDCR Metadata and Checkpoints:
+Replication specifications, remote cluster connection secrets and credentials, and active checkpoint tokens are re-encrypted as part of the cluster configuration (`ns_config` / `metakv`) re-encryption cycle.
+* XDCR Logs (`goxdcr.log`):
+Rotated and active `goxdcr.log` files are processed through the `ns_server` log management encryption workflow.
+* Replication Data and Conflict Logs:
+Target bucket data and conflict resolution logs are re-encrypted when bucket re-encryption is executed.
+
+To force re-encryption across all cluster configuration components (including XDCR metadata):
+
+[source,console]
+----
+$ curl -X POST -u $USERNAME:<password> \
+  http://$NODE_HOSTNAME:8091/controller/forceEncryptionAtRest \
+  -d 'component=config'
+----
+
+NOTE: No standalone `component=xdcr` parameter exists.
+To re-encrypt XDCR metadata, target `config`.
+To re-encrypt XDCR runtime logs, target `logs`.
+
 == Deleting Encryption Keys
 
 You can delete an encryption key using the Couchbase Server Web Console or the REST API.
@@ -568,3 +592,27 @@ To delete an encryption key using the REST API, send a DELETE request to the `/s
 The following example shows how to delete the encryption key with the `id` `13` using the REST API:
 
 include::rest-api:example$encryption-at-rest/manage-key-examples.adoc[tag=delete-key]
+
+== Troubleshooting XDCR under Encryption at Rest
+
+Because XDCR delegates encryption handling to the underlying cluster subsystems, encryption-related failures do not produce XDCR-specific error codes.
+Instead, issues surface at the storage and configuration layer as shown i nthe table below:
+
+[cols="1,2,2",options="header"]
+|===
+| Symptom / Failure | Root Cause Subsystem | Error Surface & Log Location
+
+| *Replication setup fails or remote cluster reference cannot be saved*
+| `ns_config` / `metakv` encryption failure (for example, KMS key unavailable, inaccessible Master Key)
+| Surfaced in `ns_server.log` as `metakv` read/write or decryption errors. XDCR UI/CLI reports a general failure to persist configuration.
+
+| *Checkpointing fails or replication state stalls*
+| Checkpoint metadata cannot be decrypted or updated in `metakv`
+| Surfaced as `metakv` transaction errors in `ns_server.log` and replication lag warnings in `goxdcr.log`.
+
+| *XDCR logging stops or fails to rotate*
+| Log encryption subsystem cannot access active encryption key
+| Surfaced via `ns_server` log manager alerts and system event logs.
+|===
+
+NOTE: If an XDCR pipeline fails immediately after KMS key rotation or cluster re-encryption, inspect `ns_server.log` for `metakv` or KMS connectivity errors before debugging individual XDCR replication streams.
