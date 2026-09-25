@@ -6,59 +6,80 @@
 [abstract]
 {description}
 
-An external catalog is a named connection to an external Apache Iceberg catalog, such as AWS Glue, Nessie, a generic Iceberg REST catalog, Google BigLake Metastore, or a SQL database. An external collection lives inside one of your buckets and scopes, but instead of holding data, it points at a single table in a catalog's namespace. Once you create both, you can query the table with {sqlpp} the same way you query any other collection. Couchbase never copies the remote data into the cluster. It reads directly from the table's data files every time you run a query.
+An external catalog is a named connection to an external Apache Iceberg catalog, such as AWS Glue, Nessie, or a generic Iceberg REST catalog.
+An external collection lives inside one of your buckets and scopes, but instead of holding data, it points at a single Iceberg table in a catalog's namespace.
+Once you create both, you can query the table with {sqlpp} the same way you query any other collection.
+Couchbase never copies the remote data into the cluster.
+It reads directly from the table's data files every time you run a query.
 
-You manage external catalogs and external collections through the REST API and {sqlpp} only. There's no Couchbase Web Console, `couchbase-cli`, Backup Service, or XDCR support for creating or configuring them. Once you create an external collection, though, you can query it from anywhere {sqlpp} runs, including the Query Workbench.
+For more information about catalogs and external collections, see xref:learn:data/external-catalogs-and-collections.adoc[].
 
-Every catalog and collection needs at least one credential from the credential store. A catalog authenticates to the catalog service itself (for example, Glue or a Nessie server), while a collection authenticates to the storage backend where the actual data files live (S3, GCS, or Azure). If your catalog source uses one cloud identity for both, such as AWS Glue with S3, you can reuse a single credential. If the catalog service and the storage use different authentication mechanisms, such as Nessie's HTTP authentication versus S3's access keys, you need 2 separate credentials.
+You manage external catalogs and external collections through the REST API and {sqlpp}.
 
-Creating a catalog or an external collection does not validate anything against the remote system. A typo in a namespace or table name, or an unreachable catalog endpoint, does not produce an error until you run a query against the collection.
+
+Every catalog and collection needs at least one credential from the credential store.
+A catalog authenticates to the catalog provider itself (for example, Glue or a Nessie server), while a collection authenticates to the storage backend where the actual data files live (S3, GCS, or Azure).
+If your catalog source uses one cloud identity for both, such as AWS Glue with S3, you can reuse a single credential.
+If the catalog provider and the storage use different authentication mechanisms, such as Nessie's HTTP authentication versus S3's access keys, you need 2 separate credentials.
+
+Creating a catalog or an external collection does not validate anything against the remote system.
+A typo in a namespace or table name, or an unreachable catalog endpoint, does not produce an error until you run a query against the collection.
 
 == Prerequisites
 
-* A Couchbase Server Enterprise Edition cluster running the Query service.
-* One or more credentials already stored in the credential store: one for the catalog service, and, unless your catalog source shares a single cloud identity for both, a separate one for the storage backend.
-* The connection details your catalog source requires, such as a URI, warehouse location, or signing region. These vary by source. See the reference documentation for the full list of required and optional options for each catalog source.
+* A Couchbase Server Enterprise Edition cluster running the Query Service.
+* One or more credentials already stored in the credential store.
+You must have a credential to authenticate with the catalog provider and 1 for the storage backend.
+If the same provider hosts both the catalog and the storage location, you can often use the same credential for both.
+For example, you can usually use a single AWS credential for authenticating with both AWS Glue and S3.
+* The connection details for your Iceberg catalog provider such as its URI, warehouse location, or signing region.
+Each provider has its own required and optonal settings. 
+For the list of settings for each catalog provider, see xref:rest-api:external-catalogs-api.adoc#catalog-sources-and-parameters[Catalog Sources and Parameters].
 * The Iceberg namespace and table name for the table you want to query.
-* The Query External Catalog Select, Query Select, and Credential Consumer roles for any non-admin user who needs to query the resulting collection. See xref:learn:security/roles.adoc#external-catalogs-and-collections[External Catalogs and Collections] for details on these roles.
 
-== Procedure
+== Create a Catalog and External Collection Using the REST API
 
-. Create the catalog with the `CREATE CATALOG` statement.
-Set `TYPE` to `ICEBERG`, choose a `SOURCE`, and reference the credential the catalog uses to authenticate.
+. Create the catalog with a `POST` request to `/pools/default/externalCatalogs`.
+Set `catalogType` to `ICEBERG`, choose a `catalogSource`, and reference the credential the catalog uses to authenticate.
 +
-[source,sql]
+[source,console]
 ----
-CREATE CATALOG sales_catalog TYPE ICEBERG SOURCE REST AT catalog_cred_id
-WITH { "uri": "https://iceberg-catalog.example.com" };
+curl -X POST -u Administrator:password \
+  http://localhost:8091/pools/default/externalCatalogs \
+  -d name=sales_catalog \
+  -d catalogType=ICEBERG \
+  -d catalogSource=REST \
+  -d credentialId=catalog_cred_id \
+  -d uri=https://iceberg-catalog.example.com
 ----
 +
-The options inside the `WITH` clause vary by catalog source.
+The parameters beyond `name`, `catalogType`, `catalogSource`, and `credentialId` vary by catalog source.
 A generic REST catalog only needs a `uri`.
-AWS Glue needs no options at all, while AWS S3 Tables needs a `uri`, `warehouse`, and signing information.
+AWS Glue needs no additional parameters at all, while AWS S3 Tables needs a `uri`, `warehouse`, and signing information.
+See xref:rest-api:external-catalogs-api.adoc#catalog-sources-and-parameters[Catalog Sources and Parameters] for the full list.
 
-. Create the external collection with the `CREATE EXTERNAL COLLECTION` statement.
+. Create the external collection with a `POST` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections?external=1`.
 Reference an existing bucket and scope, the catalog you just created, the credential for storage access, and the Iceberg namespace and table name.
 +
-[source,sql]
+[source,console]
 ----
-CREATE EXTERNAL COLLECTION `sales`.`_default`.`orders`
-ON sales_catalog AT collection_cred_id
-WITH {
-  "namespace": "sales_db",
-  "tableName": "orders"
-};
+curl -X POST -u Administrator:password \
+  "http://localhost:8091/pools/default/buckets/sales/scopes/_default/collections?external=1" \
+  -d name=orders \
+  -d catalog=sales_catalog \
+  -d credentialId=collection_cred_id \
+  -d namespace=sales_db \
+  -d tableName=orders
 ----
 +
 You can create an external collection in any bucket or scope, including an Ephemeral bucket or a bucket's `_default` scope.
-The collection's own name cannot be `_default`, and it cannot start with an underscore or a percent sign. This is the same naming rule that applies to every Couchbase collection.
-+
-NOTE: The `WITH` clause also accepts a `format` option, but it currently has no effect. Couchbase always detects the table's actual file format automatically.
+The collection's own name cannot be `_default`, and it cannot start with an underscore or a percent sign.
+This is the same naming rule that applies to every Couchbase collection.
 
 . Grant the roles a non-admin user needs to query the collection.
-Query External Catalog Select, Query Select, and Credential Consumer are each checked independently, so a user is missing exactly one and gets a clear error naming it.
+Query External Catalog Select, Query Select, and Credential Consumer are each checked independently, so a user missing exactly one gets a clear error naming it.
 +
-The Web Console's role picker currently cannot search for catalogs or credentials when you assign these 2 parameterized roles, so use the REST API instead:
+The Web Console's role picker cannot search for catalogs or credentials when you assign these 2 parameterized roles, so use the REST API instead:
 +
 [source,console]
 ----
@@ -74,7 +95,64 @@ curl -X PUT -u Administrator:password \
 SELECT o.* FROM `sales`.`_default`.`orders` AS o LIMIT 10;
 ----
 +
-External collections support `SELECT`, `EXPLAIN`, and time-travel queries with `AT SNAPSHOT` or `AT TIMESTAMP`. They do not support `INSERT`, `UPDATE`, `DELETE`, `UPSERT`, or `MERGE`, since Couchbase only reads external data today.
+External collections support `SELECT`, `EXPLAIN`, and time-travel queries with `AT SNAPSHOT` or `AT TIMESTAMP`.
+They do not support `INSERT`, `UPDATE`, `DELETE`, `UPSERT`, or `MERGE`, since external collections are read-only.
+
+== Create a Catalog and External Collection Using {sqlpp}
+
+. Create the catalog with the `CREATE CATALOG` statement.
+Set `TYPE` to `ICEBERG`, choose a `SOURCE`, and reference the credential the catalog uses to authenticate.
++
+[source,sql]
+----
+CREATE CATALOG sales_catalog TYPE ICEBERG SOURCE REST AT catalog_cred_id
+WITH { "uri": "https://iceberg-catalog.example.com" };
+----
++
+The options inside the `WITH` clause vary by catalog source.
+A generic REST catalog only needs a `uri`.
+AWS Glue needs no options at all, while AWS S3 Tables needs a `uri`, `warehouse`, and signing information.
+See xref:rest-api:external-catalogs-api.adoc#catalog-sources-and-parameters[Catalog Sources and Parameters] for the full list.
+
+. Create the external collection with the `CREATE EXTERNAL COLLECTION` statement.
+Reference an existing bucket and scope, the catalog you just created, the credential for storage access, and the Iceberg namespace and table name.
++
+[source,sql]
+----
+CREATE EXTERNAL COLLECTION `sales`.`_default`.`orders`
+ON sales_catalog AT collection_cred_id
+WITH {
+  "namespace": "sales_db",
+  "tableName": "orders"
+};
+----
++
+You can create an external collection in any bucket or scope, including an Ephemeral bucket or a bucket's `_default` scope.
+The collection's own name cannot be `_default`, and it cannot start with an underscore or a percent sign.
+This is the same naming rule that applies to every Couchbase collection.
+
+. Grant the roles a non-admin user needs to query the collection.
+Query External Catalog Select, Query Select, and Credential Consumer are each checked independently, so a user missing exactly one gets a clear error naming it.
++
+Grant Query External Catalog Select with the `GRANT SELECT CATALOG` statement, Credential Consumer with the `GRANT CONSUME CREDENTIALSTORE` statement, and Query Select with a standard `GRANT` statement.
+Each role needs its own `GRANT` statement.
++
+[source,sql]
+----
+GRANT SELECT CATALOG ON sales_catalog TO analyst;
+GRANT CONSUME CREDENTIALSTORE ON `catalog_cred_id`, `collection_cred_id` TO analyst;
+GRANT query_select ON `sales`.`_default`.`orders` TO analyst;
+----
+
+. Query the external collection with a standard `SELECT` statement.
++
+[source,sql]
+----
+SELECT o.* FROM `sales`.`_default`.`orders` AS o LIMIT 10;
+----
++
+External collections support `SELECT`, `EXPLAIN`, and time-travel queries with `AT SNAPSHOT` or `AT TIMESTAMP`.
+They do not support `INSERT`, `UPDATE`, `DELETE`, `UPSERT`, or `MERGE`, since external collections are read-only.
 
 == Next Steps
 
