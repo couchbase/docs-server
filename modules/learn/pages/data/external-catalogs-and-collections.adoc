@@ -40,6 +40,15 @@ External collections are read-only.
 You can only perform queries on them using the {sqlpp} `SELECT` statement.
 Attempting to use `INSERT`, `UPDATE`, `UPSERT`, `DELETE`, or `MERGE` on an external collection fails with error `3510`.
 
+=== Required Roles to Query External Collections
+
+A non-administrative user querying an external collection requires 2 more roles than querying a standard Couchbase Server collection.
+The roles they need are:
+
+* xref:learn:security/roles.adoc#query-select[Query Select] role for the collection (the same as standard collections).
+* xref:learn:security/roles.adoc#query-select-external-catalog[Query External Catalog Select] role which grants access to the catalog the external collection relies on.
+* xref:learn:security/roles.adoc#credential-consumer[Credential Consumer] role granting access to the credentials Couchbase Server uses when authenticating with the Iceberg catalog and storage location providers.
+
 == Creating Catalogs and Collections
 
 An Iceberg table relies on 2 components: the Iceberg catalog and the data storage location. 
@@ -75,7 +84,7 @@ For example, if the table uses Nessie as a catalog and GCS as the storage locati
 
 Iceberg tables let you independently choose catalog and storage providers.
 Couchbase Server supports a set of catalog and storage location providers.
-Except for Azure, you can use any combination of catalog and storage provider that Couchbase Server supports.
+You can create an external collection for an Iceberg table that uses any combination of catalog and storage providers that Couchbase Server supports.
 
 Couchbase Server supports these Iceberg catalog providers:
 
@@ -84,21 +93,21 @@ Couchbase Server supports these Iceberg catalog providers:
 * https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables.html[AWS S3 Tables^]
 * https://docs.cloud.google.com/bigquery/docs/about-blms[Google BigLake Metastore^]
 * https://projectnessie.org/[Nessie and Nessie REST^]
-* A generic REST catalog, which covers services such as https://docs.databricks.com/aws/en/external-access/iceberg[Unity Catalog^], https://polaris.apache.org/[Polaris^], https://docs.snowflake.com/en/user-guide/opencatalog/overview[Snowflake Open Catalog^], and https://gravitino.apache.org/[Apache Gravitino^]
-* A SQL catalog backed by https://www.postgresql.org/docs/[PostgreSQL^] or https://sqlite.org/docs.html[SQLite^]
-
-Couchbase Server supports these storage providers: 
-
-* https://docs.aws.amazon.com/s3/[Amazon S3^]
-
-* https://cloud.google.com/storage/docs[Google Cloud Storage^]
-
-* https://learn.microsoft.com/en-us/azure/storage/blobs/[Azure storage^]
+* A generic REST catalog, which covers services such as https://docs.databricks.com/aws/en/external-access/iceberg[Unity Catalog^], https://polaris.apache.org/[Polaris^], https://docs.snowflake.com/en/user-guide/opencatalog/overview[Snowflake Open Catalog^], https://gravitino.apache.org/[Apache Gravitino^], and https://learn.microsoft.com/en-us/fabric/onelake/table-apis/iceberg-table-apis-overview[Microsoft Fabric OneLake^]
 
 +
-NOTE: Azure access requires a REST catalog paired with Azure credentials.
+NOTE: Couchbase Server can authenticate with a generic REST catalog using a bearer token, basic auth, mTLS, AWS Signature Version 4, GCP OAuth, or Microsoft Entra ID.
+Always use a Microsoft Entra ID credential for Microsoft Fabric OneLake's Iceberg REST Catalog endpoints.
 
-External collections do not support setting alternate endpoints for storage providers. 
+* A SQL catalog backed by https://www.postgresql.org/docs/[PostgreSQL^] or https://sqlite.org/docs.html[SQLite^]
+
+Couchbase Server supports these storage providers:
+
+* https://docs.aws.amazon.com/s3/[Amazon S3^]
+* https://cloud.google.com/storage/docs[Google Cloud Storage^]
+* https://learn.microsoft.com/en-us/azure/storage/blobs/[Azure storage^]
+
+External collections do not support setting alternate endpoints for storage providers.
 For example, you cannot define an external collection that uses an S3-compatible storage provider such as MinIO.
 
 == Supported File Formats
@@ -293,6 +302,57 @@ Each number represents a count of time units since an epoch, not a formatted dat
 * The `tracking_id` UUID converts to a readable string.
 * The `label_image` binary field converts to a base64 string you can decode.
 * The `checksum` fixed-length binary string converts to a string representation:  `"[161 178 195 212 229 246 7 24]"`.
+
+== Frequently Asked Questions
+
+Can I write to an external collection?::
+No. 
+External collections are read-only.
+`INSERT`, `UPDATE`, `UPSERT`, `DELETE`, and `MERGE` all fail against an external collection with error `3510`.
+
+Does querying an external collection copy the Iceberg data into Couchbase?::
+No. 
+Couchbase Server reads the table's metadata and data files directly from the storage provider on every query.
+It does not cache or copy any of the data into a Couchbase bucket.
+
+Is this feature available in Community Edition?::
+No. 
+External catalogs and external collections require the credential store, and Couchbase Server only supports the credential store in Enterprise Edition.
+
+Can I query Iceberg tables whose storage location is in an S3-compatible storage service such as MinIO?::
+No. 
+Couchbase Server does not support alternate storage endpoints in this release.
+It only supports the storage providers listed earlier on this page.
+
+What roles does a user need to query an external collection?::
+A non-administrator user needs 3 separate roles: xref:learn:security/roles.adoc#query-select[Query Select] on the external collection, xref:learn:security/roles.adoc#query-select-external-catalog[Query External Catalog Select] on the catalog, and xref:learn:security/roles.adoc#credential-consumer[Credential Consumer] on each credential the catalog and collection reference.
+
+Does dropping a catalog also drop the external collections that use it?::
+No. 
+Dropping a catalog does not cascade to its dependent external collections, and nothing prevents you from dropping a catalog that still has dependents.
+A query against an orphaned collection fails once the drop finishes propagating.
+See xref:manage:manage-scopes-and-collections/troubleshoot-external-collections.adoc[] to diagnose and resolve this.
+
+Do external collections appear in the Web Console?::
+No. 
+External collections do not appear in the Web Console's bucket, scope, and collection navigation view.
+You can still manage and query them using {sqlpp} or the REST API.
+
+Can I query a table as it existed at a past point in time?::
+Yes. 
+Use `AT SNAPSHOT` or `AT TIMESTAMP` to query a specific historical snapshot instead of the table's current state.
+See xref:manage:manage-scopes-and-collections/external-collection-options.adoc#perform-historic-queries[] for details.
+
+Does Couchbase Server validate the table name and namespace when I create an external collection?::
+No. 
+Creating an external collection only validates the syntax of the parameters you supply.
+Couchbase Server does not contact the catalog or storage provider until the first query against the collection.
+Therefore, a typo in the namespace or table name does not surface until you actually query the collection.
+
+Can more than 1 external collection point to the same Iceberg table?::
+Yes. 
+You can create multiple external collections against the same catalog and the same table, each with different options.
+For example, you can give 2 collections different `decimal-to-double` settings, so 1 returns exact decimal strings and the other returns native numbers.
 
 == See Also
 
