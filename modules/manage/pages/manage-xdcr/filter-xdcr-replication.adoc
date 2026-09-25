@@ -183,7 +183,7 @@ Note that the replication of deletions, expirations, and/or TTLs is _not_ preven
 == Filter Deletions and Expirations with Key ID Expressions
 
 By default, XDCR deletion filters operate across all documents in a replication stream.
-Starting in Couchbase Server 8.1.0 (and 7.6.10), you can apply granular expression-based filtering to document deletions and expirations using **Key ID filter expressions** (`META().id`).
+Starting in Couchbase Server 8.5.0 (and 8.0.1, 7.6.10), you can apply granular expression-based filtering to document deletions and expirations using **Key ID filter expressions** (`META().id`).
 
 When enabled, XDCR evaluates the document key ID of incoming deletion and expiration events against the replication's filter expression before replicating them to the target cluster.
 
@@ -193,13 +193,18 @@ When enabled, XDCR evaluates the document key ID of incoming deletion and expira
 In the Couchbase Web Console, under *Advanced replication settings*, the following controls manage deletion and expiration expression filtering:
 
 * *Do not replicate document expirations* (`filterExpirations`): When selected, prevents document expirations from replicating to the target.
+
 * *Apply Filter Expression to Expirations* (`filterExpirationsWithExpression`): Evaluates the replication's filter expression against expiring documents.
 Document expirations replicate to the target *only* if the document ID matches the filter expression.
 
 * *Do not replicate DELETE operations* (`filterDeletions`): When selected, prevents document deletions from replicating to the target.
-** *Apply Filter Expression to Deletions* (`filterDeletionsWithExpression`): Evaluates the replication's filter expression against deleted documents. Document deletions replicate to the target *only* if the document ID matches the filter expression.
 
-* *Remove TTL from replicated items* (`filterExpirationTTL`): Removes Time-To-Live (TTL) expiration timestamps from replicated documents.
+** *Apply Filter Expression to Deletions* (`filterDeletionsWithExpression`): Evaluates the replication's filter expression against deleted documents.
+Document deletions replicate to the target *only* if the document ID matches the filter expression.
+
+* *Remove TTL from replicated items* (`filterBypassExpiry`): The filterBypassExpiry flag indicates whether a document’s TTL should be replicated with the document or not. 
+A value of true means that the TTL is removed from the document.
+The default value is false.
 
 [#ui-prerequisites-and-validation]
 === UI Prerequisites and Validation Rules
@@ -223,34 +228,50 @@ The Web Console enforces the following validation dependencies:
 | The checkbox remains disabled/greyed out until both prerequisites are satisfied. The filter expression must reference *only* `META().id`.
 |===
 
-NOTE: Because document deletions (tombstones) and expiration notices retain only the document key and metadata—not the document body or extended attributes (xattrs)—the filter expression must evaluate **only** the document ID (`META().id` or key-matching regular expressions). 
-Expressions attempting to match document JSON fields (such as `type = "hotel"`) or extended attributes will evaluate to `false` on deletions and expirations, preventing them from replicating.
-
+NOTE: Because document deletions (tombstones) and expiration notices retain only the document key and metadata (not the document body or extended attributes, xattrs), the filter expression must evaluate only the document ID (META().id or key-matching regular expressions).
 ---
 
 [#enable-expression-filtering-create]
 === Enable Key ID Deletion Filtering During Replication Creation
 
-To enable Key ID deletion and expiration filtering when creating a new replication:
+By default, XDCR filter expressions are not evaluated on deleted documents (tombstones) or expired documents because they lack document bodies. Consequently, deletions and expirations are replicated even when an expression filters out regular mutations. 
+
+When your filter expression evaluates only document keys (`META().id`), you can configure XDCR to apply the expression to deletions and expirations.
+
+To enable Key ID deletion and expiration filtering when creating a replication:
 
 . In the Couchbase Web Console, navigate to menu:XDCR[Add Replication].
 . Specify the *Cluster Reference*, *Source Bucket*, and *Target Bucket*.
-. In the *Filter Expression* field, enter an expression that filters by document key ID.
+. In the *Filter Expression* field, enter an expression that filters exclusively by document key ID (`META().id`).
++
 For example:
 +
 [source,sql]
 ----
 REGEXP_CONTAINS(META().id, "^eu:")
 ----
-. Click *Advanced replication settings* to expand the configuration panel.
-. Under deletion filtering:
-.. Select *Do not replicate DELETE operations*.
-.. Select the nested checkbox *Apply Filter Expression to Deletions*.
-.. (Optional) Select *Do not replicate document expirations* and then select *Apply Filter Expression to Expirations*.
-. Configure any additional advanced replication settings as needed.
-. Click *Save* to start the replication.
++
+[IMPORTANT]
+====
+The filter expression must reference *only* the document key (`META().id`). If the expression references document body fields or extended attributes (`xattrs`), key-filter evaluation for deletions and expirations cannot be enabled.
+====
 
----
+. Expand *Advanced replication settings* and configure the deletion and expiration filters:
+* To filter deleted documents by key ID:
+.. Select *Do not replicate DELETE operations*.
+.. Select *Except those matching key-filter expression*.
+* To filter expired documents by key ID:
+.. Select *Do not replicate document expirations*.
+.. Select *Except those matching key-filter expression*.
++
+[NOTE]
+====
+The *Except those matching key-filter expression* checkbox is only active when its parent option (*Do not replicate DELETE operations* or *Do not replicate document expirations*) is selected.
+====
+
+. Configure any additional replication settings as needed.
+. Click *Save* to create and start the replication.
+
 
 [#enable-expression-filtering-edit]
 === Modify Key ID Deletion Filtering on an Existing Replication
@@ -258,17 +279,12 @@ REGEXP_CONTAINS(META().id, "^eu:")
 You can dynamically enable or disable Key ID deletion and expiration filtering on an active replication without restarting or restreaming the replication:
 
 . In the Couchbase Web Console, navigate to the *XDCR* screen.
-. Locate the replication stream in the *Ongoing Replications* table.
-. Click the *Edit* (gear) icon in the row corresponding to the replication.
-. In the *Edit Replication* dialog, expand *Advanced replication settings*.
-. Modify the *Apply Filter Expression to Deletions* and/or *Apply Filter Expression to Expirations* checkboxes as required.
-. Click *Save*.
+. Locate the replication stream in the *Outgoing Replications* table.
+. Click the *Edit* button in the row corresponding to the replication.
+. In the Filter Expression panel, unselect the checkbox for *Replicate deletions and expirations only if they match the key only filter expression* or the *Deletion Filters* options.
+. Click Save Replication
 
 NOTE: Unlike changing the primary *Filter Expression* (which triggers a restream of data from sequence number 0), updating `filterDeletionsWithExpression` or `filterExpirationsWithExpression` applies dynamically to mutations processed after the setting update without restreaming.
-
-
-
-
 
 [#filtering-binary-documents]
 === Filtering Binary Documents
