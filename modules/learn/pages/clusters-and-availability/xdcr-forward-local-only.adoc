@@ -1,0 +1,66 @@
+= XDCR Forward Local Only
+:description: Use the forwardLocalOnly replication setting to reduce metadata transfer costs in full-mesh, Active-Active XDCR topologies.
+:page-topic-type: concept
+
+[abstract]
+{description}
+
+The replication setting `forwardLocalOnly` allows you to replicate *only* mutations that originated on the source bucket, and withhold mutations that arrived at the source bucket through replication from elsewhere in the topology.
+
+== Why Use This Setting
+
+Generally, XDCR replicates all changes to a bucket's documents. These changes, or mutations, may come from inserts and updates made by local clients, or from replications arriving from other clusters. In a full-mesh, Active-Active topology, every bucket, by default, re-forwards the mutations it receives from other buckets.
+
+This is useful for ensuring that changes propagate through the replication topology as quickly as possible, regardless of network conditions between any two clusters. However, re-forwarding a mutation requires fetching metadata from the target cluster to determine whether the mutation still needs to be replicated—an overhead that may be undesirable in public cloud environments where data transfer costs apply.
+
+If network reliability is not a concern, but data transfer costs are, you can use the `forwardLocalOnly` setting to replicate only the changes made locally on the current cluster, and never re-forward changes that were themselves replicated to the current cluster. With this setting enabled across a mesh topology, no cluster forwards mutations it received from another cluster -- so the responsibility for ensuring a change reaches every cluster in the topology falls entirely on the cluster where that change was originally made by a client application.
+
+== What Counts as a Local Mutation
+
+A mutation is local when an application or client connects directly to the cluster and makes a change -- an insert or an update -- to a document on that cluster. A restore performed on the cluster using `cbbackupmgr` with the `--force-updates` option is also treated as a local mutation.
+
+A mutation is non-local when it reaches the cluster through replication from another cluster. When `forwardLocalOnly` is enabled, the replication does not forward non-local mutations.
+
+== Prerequisites and Restrictions
+
+[WARNING]
+====
+Enabling `forwardLocalOnly` in either of the following situations causes permanent data loss:
+
+* *Any topology other than full mesh.* This setting is safe only in a full-mesh, Active-Active topology, where every bucket replicates directly to every other bucket. On any topology with a relay hop -- a chain, ring, hub-and-spoke, or tree -- a bucket that depends on another bucket relaying a mutation onward will never receive it.
+* *Different filter settings between replications.* Every replication in the same full-mesh topology must use identical filter settings (`filterExpression`, and the binary, expiry, and deletion filter options). Otherwise, a document that one replication filters out is never relayed to that bucket by any other path -- even in an otherwise correctly configured full mesh.
+
+Missed documents are not recovered by disabling the setting afterward. Recovery requires deleting and recreating the replication to force a full re-stream.
+====
+
+Before enabling `forwardLocalOnly` on a replication, confirm that:
+
+* *Cross Cluster Versioning (ECCV)* -- `enableCrossClusterVersioning` -- is enabled on both the source and target buckets of that replication. See xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[].
+* All nodes in the replication topology are running Server version 8.0.3 or later.
+* Filter settings are identical across every replication in the mesh.
+* All replications in the topology have `mobile` set to `Off`. This setting is not supported for a replication configured for XDCR Active-Active with Sync Gateway (`mobile=Active`).
+
+== Enabling the Setting
+
+`forwardLocalOnly` is set per replication, using the advanced settings for an individual XDCR replication. It cannot be set or retrieved as part of the global XDCR default settings, so it must be configured on each replication in the mesh individually.
+
+Changing this setting on an existing replication takes effect immediately and does not restart the replication.
+
+To retrieve the replication's `settings_URI`, first use the `GET /pools/default/tasks` method described in xref:rest-api:rest-get-cluster-tasks.adoc[Getting Cluster Tasks]. Then enable the setting as follows:
+
+[source,bash]
+----
+curl -X POST -u Administrator:password \
+http://localhost:8091/settings/replications/<settings_URI> \
+-d forwardLocalOnly=true
+----
+
+Replace `<settings_URI>` with the replication ID portion of the `settingsURI` value returned by `GET /pools/default/tasks` -- that is, the part after `/settings/replications/`. The ID is already URL-encoded, with each `/` written as `%2F`; for example, `0ad6c74d0f9fee5e447688933df6b281%2Ftravel-sample%2Fts2`.
+
+For the full REST API parameter reference, see xref:rest-api:rest-xdcr-adv-settings.adoc[Managing Advanced Settings].
+
+== See Also
+
+* xref:learn:clusters-and-availability/xdcr-overview.adoc[XDCR Overview]
+* xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[]
+* xref:rest-api:rest-xdcr-adv-settings.adoc[Managing Advanced Settings]
