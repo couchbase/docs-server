@@ -44,7 +44,7 @@ The Web Console, `couchbase-cli`, Backup and Restore, and XDCR do not support ca
 
 Every catalog requires a `name`, a `catalogType` of `ICEBERG`, and a `catalogSource` that identifies the catalog provider.
 Most sources also require a `credentialId`, which references a stored credential used to authenticate to the catalog provider.
-Nessie-based sources accept a credential but do not require one.
+Nessie-based sources accept an empty `credentialId`, since they don't always need a credential.
 
 The catalog's credential authenticates to the catalog *provider*.
 It's a separate concern from the credential an external collection uses to authenticate to *storage*.
@@ -96,11 +96,16 @@ Without it, Couchbase Server only recognizes a `postgres://` or `postgresql://`-
 Every other value, including a malformed PostgreSQL connection string, defaults to SQLite.
 |===
 
+The `warehouse` parameter's expected format varies by source.
+For `NESSIE`, `REST`, and `BIGLAKE_METASTORE`, `warehouse` is a storage location URI, such as `s3://bucket/path` or `gs://bucket/path`.
+For `S3_TABLES`, `warehouse` is the table bucket's ARN, such as `arn:aws:s3tables:us-east-1:123456789012:bucket/analytics-bucket`, not a plain S3 URI.
+
 TIP: `REST` is the source to use for Unity Catalog, Polaris, Snowflake Open Catalog, Apache Gravitino, and any other catalog that implements the generic Iceberg REST specification.
 
 CAUTION: A single catalog cannot span more than one storage provider (AWS S3, Google Cloud Storage, or Azure).
 The credential you assign to an external collection determines the provider it can read from.
 
+[#listing-and-getting-catalogs]
 == Listing and Getting Catalogs
 
 Send a `GET` request to `/pools/default/externalCatalogs` to list every catalog in the cluster, or to `/pools/default/externalCatalogs/<catalog-name>` to get one catalog's details.
@@ -141,8 +146,8 @@ The following example retrieves the catalog named `analytics_catalog`:
 
 [source,bash]
 ----
-curl -X GET -u Administrator:password \
-  http://localhost:8091/pools/default/externalCatalogs/analytics_catalog | jq
+curl -X GET -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs/analytics_catalog | jq
 ----
 
 If successful, the call returns the catalog's stored definition:
@@ -198,8 +203,9 @@ Identifies the catalog provider.
 See <<Catalog Sources and Parameters>> for the accepted values.
 
 `credentialId`::
-Required for every source except `NESSIE` and `NESSIE_REST`, where it's optional.
+Required.
 References a stored credential used to authenticate to the catalog provider.
+For `NESSIE` and `NESSIE_REST`, you can pass an empty string, since these sources don't always need a credential.
 
 Additional parameters vary by `catalogSource`.
 See <<Catalog Sources and Parameters>> for the full list.
@@ -226,14 +232,14 @@ The following example creates a catalog that connects to an AWS Glue Iceberg RES
 
 [source,bash]
 ----
-curl -X POST -u Administrator:password \
-  http://localhost:8091/pools/default/externalCatalogs \
+curl -X POST -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs \
   -d name=analytics_catalog \
   -d catalogType=ICEBERG \
   -d catalogSource=AWS_GLUE_REST \
   -d credentialId=glue-catalog-cred \
   -d uri=https://glue.us-east-1.amazonaws.com/iceberg \
-  -d sigv4SigningRegion=us-east-1
+  -d sigv4SigningRegion=us-east-1 | jq
 ----
 
 If successful, the call returns the new catalog's definition:
@@ -251,6 +257,7 @@ If successful, the call returns the new catalog's definition:
 }
 ----
 
+[#altering-a-catalog]
 == Altering a Catalog
 
 Send a `PATCH` request to `/pools/default/externalCatalogs/<catalog-name>` to change a catalog's connection details.
@@ -302,8 +309,8 @@ The following example changes the warehouse location for `analytics_catalog`:
 
 [source,bash]
 ----
-curl -X PATCH -u Administrator:password \
-  http://localhost:8091/pools/default/externalCatalogs/analytics_catalog \
+curl -X PATCH -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs/analytics_catalog \
   -d warehouse=s3://analytics-bucket/warehouse-v2
 ----
 
@@ -313,6 +320,7 @@ IMPORTANT: A dependent external collection can keep using a catalog's old connec
 Query nodes pick up catalog changes asynchronously.
 Do not assume an altered catalog takes effect immediately for every in-flight query.
 
+[#dropping-a-catalog]
 == Dropping a Catalog
 
 Send a `DELETE` request to `/pools/default/externalCatalogs/<catalog-name>` to remove a catalog.
@@ -347,8 +355,8 @@ No catalog with that name exists.
 
 [source,bash]
 ----
-curl -X DELETE -u Administrator:password \
-  http://localhost:8091/pools/default/externalCatalogs/analytics_catalog
+curl -X DELETE -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs/analytics_catalog
 ----
 
 WARNING: Dropping a catalog does not drop the external collections built on it, and Couchbase Server does not warn you before you drop a catalog with dependent collections.

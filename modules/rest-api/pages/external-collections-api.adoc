@@ -9,13 +9,7 @@
 == HTTP Method and URI
 
 ----
-GET /pools/default/buckets/<bucket-name>/scopes/?external=1
-
 POST /pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections?external=1
-
-PATCH /pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1
-
-DELETE /pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1
 ----
 
 == Description
@@ -38,6 +32,7 @@ Community Edition cannot create or query external collections.
 NOTE: External collections do not appear under their scope in the Web Console's bucket, scope, and collection navigation view.
 You can still manage and query them through {sqlpp} or the REST API.
 
+[#parameters]
 == Parameters
 
 `name`::
@@ -97,65 +92,12 @@ A quoted string value is not accepted.
 TIP: Couchbase Server never mutates an external collection.
 `INSERT`, `UPSERT`, `UPDATE`, `DELETE`, and `MERGE` all fail with error 3510 against an external collection.
 
+[#listing-external-collections]
 == Listing External Collections
 
-Send a `GET` request to `/pools/default/buckets/<bucket-name>/scopes/?external=1` to list every scope and external collection in a bucket.
-
-=== curl Syntax
-
-[source,bash]
-----
-curl -X GET "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/?external=1" \
-  -u <username>:<password>
-----
-
-=== Path Parameters
-
-`bucket-name`::
-Required.
-The name of the bucket to list external collections from.
-
-=== Required Privileges
-
-Your account needs the `bucket_admin` role or Full Admin.
-
-=== Responses
-
-200 OK::
-Couchbase Server returns a JSON object listing every scope in the bucket, with each scope's `collections` array limited to its external collections.
-
-404 Not Found::
-No bucket with that name exists.
-
-=== Example
-
-[source,bash]
-----
-curl -X GET -u Administrator:password \
-  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/?external=1" | jq
-----
-
-If successful, the call returns the bucket's scopes and their external collections:
-
-[source,json]
-----
-{
-  "uid": "4",
-  "scopes": [
-    {
-      "name": "external",
-      "collections": [
-        {
-          "name": "flights",
-          "catalog": "analytics_catalog",
-          "namespace": "analytics_db",
-          "tableName": "flights"
-        }
-      ]
-    }
-  ]
-}
-----
+External collections don't have a dedicated listing endpoint.
+List them with the same endpoint used to list a bucket's regular scopes and collections, using its `external` query parameter.
+See xref:rest-api:listing-scopes-and-collections.adoc#external-query-parameter[Listing Scopes and Collections] for the request, response format, and a worked example.
 
 [#creating-an-external-collection]
 == Creating an External Collection
@@ -213,15 +155,15 @@ The following example creates an external collection that exposes the `flights` 
 
 [source,bash]
 ----
-curl -X POST -u Administrator:password \
-  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/external/collections?external=1" \
+curl -X POST -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8091/pools/default/buckets/travel-sample/scopes/external/collections?external=1" \
   -d name=flights \
   -d catalogType=ICEBERG \
   -d catalog=analytics_catalog \
   -d credentialId=s3-data-cred \
   -d namespace=analytics_db \
   -d tableName=flights \
-  -d parallelScans=4
+  -d parallelScans=4 | jq
 ----
 
 If successful, the call returns the collection's assigned `uid`:
@@ -231,124 +173,26 @@ If successful, the call returns the collection's assigned `uid`:
 {"uid": 21}
 ----
 
+[#altering-an-external-collection]
 == Altering an External Collection
 
-Send a `PATCH` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1` to change an external collection's parameters.
-`PATCH` applies a partial merge.
-Only the fields you supply change.
+External collections don't have a dedicated alter endpoint.
+Alter them with the same endpoint used to edit a bucket's regular collections, using its `external` query parameter.
+You can change any parameter from <<Parameters>> except `name`.
+See xref:rest-api:creating-a-collection.adoc#external-collections[Creating and Editing a Collection] for the request, response format, and a worked example.
 
-You can change any parameter except `name`.
-This includes `catalog`, `credentialId`, `namespace`, `tableName`, `snapshotId`, `snapshotTimestamp`, `decimal-to-double`, and `parallelScans`.
-
-=== curl Syntax
-
-[source,bash]
-----
-curl -X PATCH "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1" \
-  -u <username>:<password> \
-  [-d <parameter>=<value>]
-----
-
-=== Path Parameters
-
-`bucket-name`::
-Required.
-The bucket that holds the collection.
-
-`scope-name`::
-Required.
-The scope that holds the collection.
-
-`collection-name`::
-Required.
-The name of the external collection to alter.
-
-=== Parameters
-
-Any parameter from <<Parameters>> except `name`.
-
-=== Required Privileges
-
-Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin.
-
-=== Responses
-
-200 OK::
-Couchbase Server updates the collection and returns its stored definition.
-
-400 Bad Request::
-You supplied a value that fails validation, or tried to change `name`.
-
-404 Not Found::
-No collection with that name exists in the given bucket and scope.
-
-=== Example
-
-The following example switches on `decimal-to-double` for the `flights` collection:
-
-[source,bash]
-----
-curl -X PATCH -u Administrator:password \
-  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/external/collections/flights?external=1" \
-  -d decimal-to-double=true
-----
-
-If successful, the call returns the collection's updated definition.
-
+[#dropping-an-external-collection]
 == Dropping an External Collection
 
-Send a `DELETE` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1` to drop an external collection.
-
-Dropping an external collection removes only the pointer to the Iceberg table.
-It does not touch the underlying Iceberg table or its data files, and it does not affect the catalog or any credential the collection referenced.
-
-=== curl Syntax
-
-[source,bash]
-----
-curl -X DELETE "http[s]://<host>:<port>/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1" \
-  -u <username>:<password>
-----
-
-=== Path Parameters
-
-`bucket-name`::
-Required.
-The bucket that holds the collection.
-
-`scope-name`::
-Required.
-The scope that holds the collection.
-
-`collection-name`::
-Required.
-The name of the external collection to drop.
-
-=== Required Privileges
-
-Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin.
-
-=== Responses
-
-200 OK::
-Couchbase Server drops the collection.
-
-404 Not Found::
-No collection with that name exists in the given bucket and scope.
-
-=== Example
-
-[source,bash]
-----
-curl -X DELETE -u Administrator:password \
-  "http://localhost:8091/pools/default/buckets/travel-sample/scopes/external/collections/flights?external=1"
-----
-
-TIP: If you're decommissioning a whole integration rather than one table, also drop the xref:rest-api:external-catalogs-api.adoc[catalog] and any credential that's no longer in use.
-Dropping an external collection leaves both of those in place.
+External collections don't have a dedicated drop endpoint.
+Drop them with the same endpoint used to drop a bucket's regular collections, using its `external` query parameter.
+See xref:rest-api:dropping-a-collection.adoc#external-collections[Dropping a Collection] for the request, response format, and a worked example.
 
 == See Also
 
 * xref:rest-api:scopes-and-collections-api.adoc[]
+* xref:rest-api:listing-scopes-and-collections.adoc[]
+* xref:rest-api:creating-a-collection.adoc[]
+* xref:rest-api:dropping-a-collection.adoc[]
 * xref:rest-api:external-catalogs-api.adoc[]
 * xref:rest-api:catalog-information-api.adoc[]
