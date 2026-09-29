@@ -13,12 +13,16 @@ You can change any of these settings on an existing collection with `ALTER COLLE
 == Convert Decimals to Doubles
 
 Apache Iceberg's `decimal` type stores an exact, arbitrary-precision numeric value.
-Couchbase represents numbers as double-precision floats, which cannot always represent an arbitrary-precision decimal exactly.
+Couchbase represents numbers as double-precision floats.
+This data type is less precise and cannot represent the full range of an arbitrary-precision decimal.
 
-By default, Couchbase returns `decimal` column values as strings, so you do not lose precision.
+To prevent any loss of precision, Couchbase returns `decimal` column values as strings.
 For example, a `unit_price` column with the value `49.99` returns as the string `"49.99"`, not the number `49.99`.
 
-If you'd rather work with a native number and can accept the possibility of losing some precision, set `decimal-to-double` to `true`:
+If you'd rather work with a native number and can accept the possibility of losing some precision, set the external collection's `decimal-to-double` setting to `true`.
+You can enable this setting when you xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc#create-an-external-collection-using-sqlpp[create the collection], or later by xref:manage:manage-scopes-and-collections/maintain-external-catalogs-and-collections.adoc#alter-an-external-collection-using-sqlpp[altering an existing collection].
+
+The following example creates an external collection with `decimal-to-double` set to `true`:
 
 [source,sql]
 ----
@@ -31,22 +35,48 @@ WITH {
 };
 ----
 
+The following example sets `decimal-to-double` on an existing external collection instead:
+
+[source,sql]
+----
+ALTER COLLECTION `travel-sample`.`external`.`orders`
+WITH { "decimal-to-double": true };
+----
+
 With `decimal-to-double` set, the same `unit_price` column returns as the number `49.99` instead of a string.
 
 This setting applies only to the collection where you set it.
-You can create 2 external collections that both point to the same catalog and the same Iceberg table, and give each one a different `decimal-to-double` setting.
-Querying one collection returns decimal values as strings, and querying the other returns the same values as numbers.
+You can create 2 external collections that both point to the same catalog and the same Iceberg table, and give each a different `decimal-to-double` setting.
+Querying 1 collection returns decimal values as strings, and querying the other returns the same values as numbers.
+
+For more information about creating an external collection, see xref:rest-api:external-collections-api.adoc#creating-an-external-collection[Creating an External Collection].
+For more information about altering an external collection, see xref:rest-api:creating-a-collection.adoc#external-collections[Creating and Editing a Collection].
 
 [#perform-historic-queries]
 == Perform Historic Queries
 
-Apache Iceberg keeps a history of snapshots for every table.
+For every change made to a table, Apache Iceberg creates a https://iceberg.apache.org/docs/latest/maintenance/[snapshot^].
 A snapshot represents the state of a table at the moment of a specific commit.
-Couchbase gives you 2 separate ways to query a historic snapshot instead of the current one.
+Snapshots let you query the table as it was at a specific moment in time.
+Couchbase gives you 2 ways to query historic snapshots.
+
+Apache Iceberg does not expire snapshots automatically.
+Many production tables run periodic maintenance jobs that expire older snapshots to control storage costs, so a table's actual snapshot history often only covers a recent window, not its full lifetime.
+Whether a given historic snapshot is still available depends on how the Iceberg table's data pipeline manages retention.
 
 === Query a Snapshot in a Single Statement
 
-Add an `AT SNAPSHOT` or `AT TIMESTAMP` clause directly to a `FROM` clause that references an external collection:
+To perform a single historical query, use the `AT SNAPSHOT` or `AT TIMESTAMP` clause in a query of an external collection:
+
+* `AT SNAPSHOT` takes a literal integer snapshot ID.
+* `AT TIMESTAMP` takes either a literal integer (Unix epoch milliseconds) or a literal RFC 3339 timestamp string.
+When you use `AT TIMESTAMP`, Couchbase queries the most recent snapshot committed at or before that timestamp.
+It never returns a snapshot from after the timestamp you specify.
+
+The expression you provide must be a static value.
+You cannot use a named parameter, a positional parameter, a subquery, or a function call in an `AT SNAPSHOT` or `AT TIMESTAMP` clause.
+
+The following example queries the `orders` external collection as it existed at midnight UTC on June 1, 2026:
 
 [source,sql]
 ----
@@ -54,16 +84,10 @@ SELECT o.* FROM `travel-sample`.`external`.`orders` AS o
 AT TIMESTAMP "2026-06-01T00:00:00Z";
 ----
 
-`AT SNAPSHOT` takes a literal integer snapshot ID.
-`AT TIMESTAMP` takes either a literal integer (Unix epoch milliseconds) or a literal RFC 3339 timestamp string.
-When you use `AT TIMESTAMP`, Couchbase queries the most recent snapshot committed at or before that timestamp.
-It never returns a snapshot from after the timestamp you specify.
-
-The expression you provide must be a static value.
-You cannot use a named parameter, a positional parameter, a subquery, or a function call in an `AT SNAPSHOT` or `AT TIMESTAMP` clause.
-
 You can only use these clauses on external collections, and you cannot use them inside a subquery.
-If your query joins more than 1 external collection, each collection can specify its own independent `AT` clause:
+If your query joins more than 1 external collection, each collection can specify its own independent `AT` clause.
+
+The following example joins the `orders` collection at a specific snapshot ID with the `shipments` collection at a specific point in time:
 
 [source,sql]
 ----
@@ -75,7 +99,11 @@ ON o.order_id = s.order_id;
 
 === Pin a Collection to a Snapshot
 
-If you need to run many historic queries against the same fixed point in time, set `snapshotId` or `snapshotTimestamp` in the collection's `WITH` clause instead of repeating an `AT` clause on every query:
+If you need to run multiple historic queries  you can set `snapshotId` or `snapshotTimestamp` in the collection's `WITH` clause.
+This setting makes all queries on the external collection use the same snapshot.
+This saves you from having to repeat an `AT` clause on every query.
+
+The following example pins the `orders` external collection to the snapshot that was current at midnight UTC on June 1, 2026:
 
 [source,sql]
 ----
@@ -85,32 +113,26 @@ WITH { "snapshotTimestamp": "2026-06-01T00:00:00Z" };
 
 Every query against the collection now reflects that fixed point in time, until you alter the setting again.
 
-Apache Iceberg does not expire old snapshots by default.
-Some data pipelines run their own maintenance jobs that expire old snapshots to reduce storage costs.
-Whether and when this happens depends entirely on how the source table's data pipeline manages the table, not on Couchbase.
-
-Couchbase does not verify that a snapshot or timestamp exists when you create or alter a collection.
-If you reference a snapshot that no longer exists, you only find out when you query the collection.
+NOTE: You pin the external collection once when you create or alter it.
+If the Iceberg table expires its snapshots, your external collection will eventually return errors when the snapshot it's pinned to expires.
 For the error you'll see, and how to resolve it, see xref:manage-scopes-and-collections/troubleshoot-external-collections.adoc[].
 
 == Adjust Query Parallelism
 
-By default, Couchbase fetches a table's data files from the storage backend one at a time.
-Set `parallelScans` to a value greater than 1 to fetch multiple files concurrently instead:
+By default, Couchbase fetches a table's data from the storage backend a single file at a time.
+This behavior querying Iceberg tables from consuming too much network bandwidth and causing latency issues with other Couchbase Server operations.
+However, it also limits the performance of external collections.
+You can increase number of files that Couchbase Server transfers in parallel from the external collection's storage location using the `parallelScans` setting. 
+Set this value to greater than 1 to fetch multiple files concurrently instead.
+
+This setting is separate from the Query Service's general parallelism settings, such as `maxParallelism`.
+A query against an external collection always runs as a single operation at the Query Service's execution level, regardless of the `parallelScans` value.
+Only the work of fetching files from the storage backend runs in parallel.
+
+The following example sets `parallelScans` to `4` for the `orders` external collection:
 
 [source,sql]
 ----
 ALTER COLLECTION `travel-sample`.`external`.`orders`
 WITH { "parallelScans": 4 };
 ----
-
-Raising `parallelScans` can improve query performance against tables with many data files, since fetching files from the storage backend is usually the slowest part of the query.
-It also increases the number of simultaneous requests against the storage backend and the amount of network bandwidth the query uses.
-
-This setting is separate from the Query Service's general parallelism settings, such as `maxParallelism`.
-A query against an external collection always runs as a single operation at the Query Service's execution level, regardless of the `parallelScans` value.
-Only the work of fetching files from the storage backend runs in parallel.
-
-== Automatic File Format Detection
-
-Couchbase detects a data file's format automatically from its file extension and always reads it correctly.
