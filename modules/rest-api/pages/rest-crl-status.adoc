@@ -1,0 +1,211 @@
+= Get CRL Status
+:description: The certificate revocation status of every node can be retrieved with the REST API.
+:page-topic-type: reference
+:page-edition: Enterprise Edition
+
+[abstract]
+{description}
+
+[#http-methods-and-uris]
+== HTTP Methods and URIs
+
+----
+GET  /settings/crl/diagnostics/status[?nodes=<host:port>,<host:port>]
+POST /settings/crl/diagnostics/status        body: {"nodes": ["<host:port>", ...]}
+----
+
+[#description]
+== Description
+
+Returns, for each node, every CRL the node knows about and whether it is usable, plus the state of the watched directory.
+Each node re-checks its CRLs before answering, so the result reflects the current time and the current trust store.
+If no nodes are listed, all nodes are queried.
+Use `POST` when the list of nodes is too long for a URL.
+
+== Required Privileges
+
+`cluster.admin.security!read` (xref:learn:security/roles.adoc#full-admin[Full Admin], xref:learn:security/roles.adoc#security-admin[Security Admin], xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]).
+
+[#responses]
+== Responses
+
+* `200`: an object with one key per node.
+* `400`: `{"errors": {"nodes": "unknown node: <host>"}}` for `GET`, or `"unknown node"` for `POST`.
+* A node that does not answer within 60 seconds appears as `{"error": "<reason>"}`.
+
+[#example]
+== Example
+
+[source,bash]
+----
+curl -s -u Administrator:password http://localhost:8091/settings/crl/diagnostics/status
+----
+
+[source,json]
+----
+{
+  "10.0.0.1:8091": {
+    "crlFiles": [
+      {
+        "filename": "issuing-ca.crl",
+        "source": "uploaded",
+        "cacheStatus": "active",
+        "entries": [
+          {
+            "issuer": "CN=Example Issuing CA,O=Example",
+            "status": "active",
+            "thisUpdate": "2026-09-22T00:00:00.000Z",
+            "nextUpdate": "2026-09-29T00:00:00.000Z",
+            "checksum": "9a41...07",
+            "crlNumber": 42
+          }
+        ],
+        "lastReload": {"result": "uploaded", "time": "2026-09-22T10:00:01.000Z", "errors": []}
+      },
+      {
+        "filename": "ootb.crl",
+        "source": "generated",
+        "cacheStatus": "active",
+        "entries": [
+          {
+            "issuer": "CN=Couchbase Server 1a2b3c4d",
+            "status": "active",
+            "thisUpdate": "2026-09-01T12:00:00.000Z",
+            "nextUpdate": "2049-12-31T23:59:59.000Z",
+            "checksum": "c3d2...8f",
+            "crlNumber": 1
+          }
+        ],
+        "lastReload": {"result": "loaded", "time": "2026-09-22T09:00:00.000Z", "errors": []}
+      }
+    ],
+    "pollDirectory": {
+      "directory": "/opt/couchbase/var/lib/couchbase/inbox/crls",
+      "status": "notFound",
+      "lastScan": "2026-09-22T10:05:00.000Z",
+      "errors": []
+    }
+  }
+}
+----
+
+This node uses one uploaded CRL and the OOTB CA's CRL.
+Both are usable.
+The watched directory has not been created, which is normal if you do not use it.
+
+[#status-field-reference]
+== Status Field Reference
+
+[cols="2,2,4"]
+|===
+| Field | Value | Meaning
+
+.4+| `source`
+| `uploaded`
+| Uploaded through the REST API (cluster-wide)
+
+| `localDir`
+| Found in this node's watched directory
+
+| `url`
+| Downloaded from a URL; filename shows the URL
+
+| `generated`
+| The OOTB CA's own CRL, maintained automatically
+
+.6+| `cacheStatus` (per file) and `status` (per CRL entry)
+| `active`
+| In use
+
+| `expired`
+| Past its `nextUpdate`; certificates it covers are undetermined
+
+| `notYetValid`
+| Its `thisUpdate` is in the future (check the node's clock)
+
+| `untrusted`
+| Its signing CA is no longer in the trust store
+
+| `invalid`
+| It can no longer be verified
+
+| `notLoaded`
+| (file only) Not loaded on this node; see `lastReload`
+
+.5+| `lastReload.result`
+| `loaded`
+| Last load succeeded
+
+| `uploaded`
+| Uploaded file present and matching
+
+| `failed`
+| Last load failed; the previous good copy (if any) is still used; see `errors`
+
+| `notAttempted`
+| Not tried yet
+
+| `notYetSynced`
+| An uploaded file has not reached this node yet (retried every minute)
+
+| `checksumMismatch`
+| This node's copy of an uploaded file differs; being re-synchronized
+
+.3+| `pollDirectory.status`
+| `readable`
+| Directory scanned successfully
+
+| `notFound`
+| Directory does not exist (normal if unused)
+
+| `unreadable`
+| Directory cannot be read; see `errors`
+|===
+
+If a file contains several CRLs, the file's `cacheStatus` shows the worst of their states.
+
+Messages that can appear in `lastReload.errors`:
+
+[cols="2,3"]
+|===
+| Message | Meaning
+
+| `Failed to read file. Reason: <reason>`
+| File permission or I/O problem
+
+| `Failed to decode file. Reason: <reason>`
+| Not a valid CRL file
+
+| `Entry issued by '<issuer>': CRL expired` (or `CRL not yet valid`, `CRL issuer not trusted`, `unrecognized critical extension <OID>`)
+| The CRL was rejected
+
+| `HTTP <code> <start of response>`
+| The URL returned an error status
+
+| `HTTP Request failed: <reason>`
+| The URL could not be reached
+
+| `Synchronization in progress (file is missing)`
+| Uploaded file not yet copied to this node
+
+| `Synchronization in progress (checksum mismatch: expected <x>, got <y>)`
+| This node's copy is being replaced
+
+| `The out-of-the-box CRL is missing. Check whether the cluster's own CA needs to be regenerated to issue one.`
+| The OOTB CA cannot sign CRLs (see xref:manage:manage-security/manage-certificate-revocation.adoc#requirements[Requirements])
+|===
+
+Messages that can appear in `pollDirectory.errors`:
+
+[cols="2,3"]
+|===
+| Message | Meaning
+
+| `Failed to list directory. Reason: <reason>`
+| Watched directory not readable
+|===
+
+[#see-also]
+== See Also
+
+xref:learn:security/certificate-revocation.adoc[Certificate Revocation], xref:manage:manage-security/manage-certificate-revocation.adoc#check-the-status-of-loaded-crls[Check the Status of Loaded CRLs].
