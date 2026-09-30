@@ -1,12 +1,12 @@
 = External Catalogs API
-:description: pass:q[Use the REST API to create, list, alter, and drop external catalogs.]
+:description: pass:q[Use this REST API to create, list, alter, and drop external catalogs.]
 :page-edition: Enterprise Edition
 :page-toclevels: 3
 
 [abstract]
 {description}
 
-== HTTP Method and URI
+== HTTP Methods and URIs
 
 ----
 GET /pools/default/externalCatalogs
@@ -23,87 +23,91 @@ DELETE /pools/default/externalCatalogs/<catalog-name>
 == Description
 
 An external catalog is a named connection to an external Apache Iceberg catalog provider, such as AWS Glue or a Nessie server.
-The catalog holds connection details and a reference to a stored credential.
-It does not hold any table data itself.
+It supports creating 1 or more external collections that let users query Iceberg tables the same way they query Couchbase collections.
+For more information about external catalogs and collections, see xref:learn:data/external-catalogs-and-collections.adoc[].
 
-Couchbase Server stores catalogs at the cluster level.
-A catalog is not scoped to a bucket, and you do not need an existing bucket to create one.
+[#catalog-providers-and-parameters]
+== Catalog Providers and Parameters
 
-One catalog typically serves many xref:rest-api:creating-a-collection.adoc#external-collections[external collections].
-Rather than repeating connection details for every table you expose, you create one catalog per external catalog provider and point multiple external collections at it.
-This also lets you grant catalog-level access separately from collection-level access, so a user can query one table without seeing every table available through the same catalog.
+Every catalog requires:
 
-This feature requires the credential store, which is available only in Enterprise Edition.
-Community Edition cannot create or use external catalogs.
+*  A `name` that identifies it. 
+You use this name when creating external collections based on the catalog.
+* a `catalogType` of `ICEBERG` (the only type of catalog that is supported).
+* a `catalogSource` that identifies the catalog provider.
 
-NOTE: Couchbase Server manages external catalogs only through the REST API and {sqlpp} DDL statements.
-The Web Console, `couchbase-cli`, Backup and Restore, and XDCR do not support catalog management.
+Most catalog providers also require a `credentialId`, which references a stored credential used to authenticate to the catalog provider.
+Nessie-based providers accept an empty `credentialId`, because they can be configured to not require a credential.
 
-[#catalog-sources-and-parameters]
-== Catalog Sources and Parameters
-
-Every catalog requires a `name`, a `catalogType` of `ICEBERG`, and a `catalogSource` that identifies the catalog provider.
-Most sources also require a `credentialId`, which references a stored credential used to authenticate to the catalog provider.
-Nessie-based sources accept an empty `credentialId`, since they don't always need a credential.
-
-The catalog's credential authenticates to the catalog *provider*.
-It's a separate concern from the credential an external collection uses to authenticate to *storage*.
+The catalog's credential authenticates to the catalog provider.
+It's a separate concern from the credential an external collection uses to authenticate to storage.
 Some providers, such as AWS Glue, use one AWS identity for both, so you can share one credential between a catalog and its collections.
-Other providers, such as Nessie, authenticate the catalog over HTTP and storage through a cloud-native mechanism, so you need two separate credentials.
+Other providers, such as Nessie, authenticate the catalog over HTTP and storage through a cloud-native mechanism, so you need 2 separate credentials.
 Reusing one credential across mismatched protocols does not fail at creation time.
 It surfaces later as an opaque connection error when a query actually reaches storage.
 
-The following table lists the parameters each `catalogSource` value accepts beyond the four universal parameters:
+The following table lists the parameters each `catalogSource` value accepts beyond the 4 universal parameters:
 
-[cols="1,2,2"]
+[cols="1,2a,2a"]
 |===
-|Source |Required Parameters |Optional Parameters
+|Provider |Required Parameters |Optional Parameters
 
 |`AWS_GLUE`
-|None beyond `credentialId`.
+|* `credentialId`
 |None.
 
 |`AWS_GLUE_REST`
-|`uri`, `sigv4SigningRegion`
+|* `credentialId`
+* `uri`
+* `sigv4SigningRegion`
 |None.
 
 |`S3_TABLES`
-|`uri`, `sigv4SigningRegion`, `sigv4SigningName`, `warehouse`
+|* `credentialId`
+* `uri`
+* `sigv4SigningRegion`
+* `sigv4SigningName`
+* `warehouse`
 |None.
 
 |`BIGLAKE_METASTORE`
-|`uri`, `warehouse`, `quotaProjectId`
+|* `credentialId`
+* `uri`
+* `warehouse`
+* `quotaProjectId`
 |None.
 
 |`NESSIE`
-|`uri`, `warehouse`
+|* `uri`
+* `warehouse`
 |None.
 
 |`NESSIE_REST`
-|`uri`
-|`branch` selects a specific Nessie branch or ref. +
-`warehouse` is accepted but has no effect.
+|* `uri`
+|* `branch` selects a specific Nessie branch or ref.
+* `warehouse` is accepted but has no effect.
++
 Nessie's REST configuration endpoint rejects a warehouse value, so Couchbase does not forward it.
 
 |`REST` (also accepts `UNITY_CATALOG`)
-|`uri`
-|`warehouse`
+|* `credentialId`
+* `uri`
+|* `warehouse`
 
 |`SQL`
-|`uri` (a PostgreSQL or SQLite connection string)
-|`sqlDialect` (`postgres` or `sqlite`) forces the dialect explicitly. +
+|* `uri` (a PostgreSQL or SQLite connection string)
+|* `credentialId` references a stored credential for the connection, instead of embedding credentials directly in `uri`.
+* `sqlDialect` (`postgres` or `sqlite`) forces the dialect explicitly.
++
 Without it, Couchbase Server only recognizes a `postgres://` or `postgresql://`-prefixed URI as PostgreSQL.
 Every other value, including a malformed PostgreSQL connection string, defaults to SQLite.
 |===
 
-The `warehouse` parameter's expected format varies by source.
+The `warehouse` parameter's expected format varies by provider.
 For `NESSIE`, `REST`, and `BIGLAKE_METASTORE`, `warehouse` is a storage location URI, such as `s3://bucket/path` or `gs://bucket/path`.
 For `S3_TABLES`, `warehouse` is the table bucket's ARN, such as `arn:aws:s3tables:us-east-1:123456789012:bucket/analytics-bucket`, not a plain S3 URI.
 
-TIP: `REST` is the source to use for Unity Catalog, Polaris, Snowflake Open Catalog, Apache Gravitino, and any other catalog that implements the generic Iceberg REST specification.
-
-CAUTION: A single catalog cannot span more than one storage provider (AWS S3, Google Cloud Storage, or Azure).
-The credential you assign to an external collection determines the provider it can read from.
+TIP: `REST` is the provider to use for Unity Catalog, Polaris, Snowflake Open Catalog, Apache Gravitino, and any other catalog that implements the generic Iceberg REST specification.
 
 [#listing-and-getting-catalogs]
 == Listing and Getting Catalogs
@@ -126,11 +130,11 @@ Omit this parameter to list every catalog in the cluster.
 
 === Required Privileges
 
-Your account needs at least one of the following roles:
+Your account needs at least 1 of the following roles:
 
-* `external_catalog_reader`
-* `external_catalog_admin`
-* Full Admin
+* xref:learn:security/roles.adoc#external-catalog-reader[External Catalog Read-Only Admin]
+* xref:learn:security/roles.adoc#external-catalog-admin[External Catalog Admin]
+* xref:learn:security/roles.adoc#full-admin[Full Admin]
 
 === Responses
 
@@ -158,7 +162,7 @@ If successful, the call returns the catalog's stored definition:
   "name": "analytics_catalog",
   "catalogType": "ICEBERG",
   "catalogSource": "AWS_GLUE_REST",
-  "credentialId": "glue-catalog-cred",
+  "credentialId": "query/external/iceberg-analytics-catalog",
   "uri": "https://glue.us-east-1.amazonaws.com/iceberg",
   "sigv4SigningRegion": "us-east-1",
   "rev": 1
@@ -180,9 +184,9 @@ curl -X POST http[s]://<host>:<port>/pools/default/externalCatalogs \
   -u <username>:<password> \
   -d name=<catalog-name> \
   -d catalogType=ICEBERG \
-  -d catalogSource=<source> \
+  -d catalogSource=<provider> \
   -d credentialId=<credential-id> \
-  [-d <source-specific-parameter>=<value>]
+  [-d <provider-specific-parameter>=<value>]
 ----
 
 === Parameters
@@ -200,19 +204,21 @@ This is the only supported value.
 `catalogSource`::
 Required.
 Identifies the catalog provider.
-See <<Catalog Sources and Parameters>> for the accepted values.
+See <<Catalog Providers and Parameters>> for the accepted values.
 
 `credentialId`::
-Required.
+Required for most catalog providers.
 References a stored credential used to authenticate to the catalog provider.
-For `NESSIE` and `NESSIE_REST`, you can pass an empty string, since these sources don't always need a credential.
+`NESSIE` and `NESSIE_REST` accept an empty string, since these providers do not always need a credential.
+`SQL` does not require this parameter at all, but accepts one if you want to store the connection credential separately from `uri`.
+See <<Catalog Providers and Parameters>> for which providers require it.
 
 Additional parameters vary by `catalogSource`.
-See <<Catalog Sources and Parameters>> for the full list.
+See <<Catalog Providers and Parameters>> for the full list.
 
 === Required Privileges
 
-Your account needs the `external_catalog_admin` role or Full Admin.
+Your account needs the xref:learn:security/roles.adoc#external-catalog-admin[External Catalog Admin] role or xref:learn:security/roles.adoc#full-admin[Full Admin].
 
 NOTE: The equivalent `CREATE CATALOG` {sqlpp} statement enforces its own privilege check at the Query service before it calls this endpoint internally.
 Consult the {sqlpp} language reference for the DDL-side privilege requirement.
@@ -237,7 +243,7 @@ curl -X POST -u $CB_USER:$CB_PASS \
   -d name=analytics_catalog \
   -d catalogType=ICEBERG \
   -d catalogSource=AWS_GLUE_REST \
-  -d credentialId=glue-catalog-cred \
+  -d credentialId=query/external/iceberg-analytics-catalog \
   -d uri=https://glue.us-east-1.amazonaws.com/iceberg \
   -d sigv4SigningRegion=us-east-1 | jq
 ----
@@ -250,7 +256,7 @@ If successful, the call returns the new catalog's definition:
   "name": "analytics_catalog",
   "catalogType": "ICEBERG",
   "catalogSource": "AWS_GLUE_REST",
-  "credentialId": "glue-catalog-cred",
+  "credentialId": "query/external/iceberg-analytics-catalog",
   "uri": "https://glue.us-east-1.amazonaws.com/iceberg",
   "sigv4SigningRegion": "us-east-1",
   "rev": 1
@@ -264,9 +270,9 @@ Send a `PATCH` request to `/pools/default/externalCatalogs/<catalog-name>` to ch
 `PATCH` applies a partial merge.
 Only the fields you supply change, and every other field keeps its existing value.
 
-You can change any source-specific connection parameter, such as `uri`, `warehouse`, or `sigv4SigningRegion`.
+You can change any provider-specific connection parameter, such as `uri`, `warehouse`, or `sigv4SigningRegion`.
 You cannot change `name`, `catalogType`, or `catalogSource`.
-Couchbase Server rejects an attempt to change any of these three fields, even when you supply the catalog's current value for them.
+Couchbase Server rejects an attempt to change any of these 3 fields, even when you supply the catalog's current value for them.
 
 === curl Syntax
 
@@ -274,7 +280,7 @@ Couchbase Server rejects an attempt to change any of these three fields, even wh
 ----
 curl -X PATCH http[s]://<host>:<port>/pools/default/externalCatalogs/<catalog-name> \
   -u <username>:<password> \
-  [-d <source-specific-parameter>=<value>]
+  [-d <provider-specific-parameter>=<value>]
 ----
 
 === Path Parameters
@@ -285,11 +291,11 @@ The name of the catalog to alter.
 
 === Parameters
 
-Any source-specific connection parameter from <<Catalog Sources and Parameters>>, except `name`, `catalogType`, and `catalogSource`.
+Any provider-specific connection parameter from <<Catalog Providers and Parameters>>, except `name`, `catalogType`, and `catalogSource`.
 
 === Required Privileges
 
-Your account needs the `external_catalog_admin` role or Full Admin.
+Your account needs the xref:learn:security/roles.adoc#external-catalog-admin[External Catalog Admin] role or xref:learn:security/roles.adoc#full-admin[Full Admin].
 
 === Responses
 
@@ -341,7 +347,7 @@ The name of the catalog to drop.
 
 === Required Privileges
 
-Your account needs the `external_catalog_admin` role or Full Admin.
+Your account needs the xref:learn:security/roles.adoc#external-catalog-admin[External Catalog Admin] role or xref:learn:security/roles.adoc#full-admin[Full Admin].
 
 === Responses
 
