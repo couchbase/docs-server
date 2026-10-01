@@ -1,5 +1,5 @@
 = Create External Catalogs and Collections
-:description: Connect Couchbase to an external Apache Iceberg catalog, then create an external collection to query 1 of its tables with {sqlpp}.
+:description: To query an Iceberg Table from within Couchbase Server, create an external catalog and then an external collection.
 :page-edition: Enterprise Edition
 :page-toclevels: 3
 
@@ -294,7 +294,12 @@ Couchbase Server checks each role independently, so a user missing exactly one g
 Grant Query External Catalog Select using the `GRANT SELECT CATALOG` statement, Credential Consumer with the `GRANT CONSUME CREDENTIALSTORE` statement, and Query Select with a standard `GRANT` statement.
 Each role needs its own `GRANT` statement.
 
-The following example grants the user `analyst` the Query External Catalog Select role on `sales_catalog`, the Credential Consumer role for the `query/external/iceberg-sales-catalog` and `query/external/iceberg-sales-table` credentials, and the Query Select role on the `orders` collection:
+The following example grants the user `analyst`:
+
+* the Query External Catalog Select role on `sales_catalog`
+* the Credential Consumer role for the `query/external/iceberg-sales-catalog` 
+and `query/external/iceberg-sales-table` credentials
+* the Query Select role on the `orders` collection
 
 [source,sql]
 ----
@@ -320,11 +325,18 @@ SELECT o.* FROM `sales`.`_default`.`orders` AS o LIMIT 10;
 External collections support `SELECT`, `EXPLAIN`, and time-travel queries with `AT SNAPSHOT` or `AT TIMESTAMP`.
 They do not support `INSERT`, `UPDATE`, `DELETE`, `UPSERT`, or `MERGE`, since external collections are read-only.
 
-Iceberg queries can be expensive both in terms of time and 
-You can still save a query's results into a regular Couchbase collection.
-Target the `INSERT` statement at an existing regular collection, and drive its `SELECT` clause from the external collection.
+=== Saving Query Results
 
-The following example copies every shipped row from the `orders` external collection into the regular `shipped_orders` collection:
+Couchbase Server does not cache or copy data from the Iceberg table when querying an external collection.
+Therefore, each query re-reads the metadata and data files directly from the storage provider.
+Repeated queries of the external collection can cost time as each query requires data transfers from the cloud storage.
+It can also cost money, as cloud storage providers impose a per-access cost.
+These access charges can add up if data is stored in cold storage tiers such as cold storage provided by Amazon S3 Glacier or Google Cloud Storage Coldline. 
+
+If you need to repeatedly use the results from an Iceberg query, you can s save its results into a regular Couchbase collection.
+Use an xref:n1ql:n1ql-language-reference/insert.adoc[`INSERT`] statement on an existing regular collection, to save the result of a xref:n1ql:n1ql-language-reference/selectintro.adoc[`SELECT`] clause from the external collection.
+
+The following example copies every row whose `status` column contains `shipped` from the `orders` external collection into the regular `shipped_orders` collection:
 
 [source,sql]
 ----
@@ -335,12 +347,9 @@ RETURNING META().id;
 ----
 
 This copies a point-in-time snapshot of the matching rows into Couchbase.
-Couchbase Server does not keep the copy in sync with the Iceberg table afterward, so a later change to the source data has no effect on the documents you already inserted.
+Couchbase Server does not keep the copy in sync with the Iceberg table afterwards.
+Changes to the source data has no effect on the documents you already inserted.
 Re-run the `INSERT` statement whenever you need a fresh copy.
-
-For more information about the `SELECT` statement, see xref:n1ql:n1ql-language-reference/selectintro.adoc[].
-For more information about the `INSERT` statement, see xref:n1ql:n1ql-language-reference/insert.adoc[].
-For more information about executing {sqlpp} statements with the REST API, see xref:n1ql:n1ql-rest-api/intro.adoc#sql-statement-execution[Query Service REST API].
 
 == Next Steps
 
