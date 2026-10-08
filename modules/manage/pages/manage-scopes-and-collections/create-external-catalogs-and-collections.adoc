@@ -26,17 +26,18 @@ You must have the following to create external catalogs and collections:
 
 * A Couchbase Server Enterprise Edition cluster running the Query Service.
 * One or more credentials already stored in the credential store.
-You must have a credential to authenticate with the catalog provider and 1 for the storage backend.
+You must have a credential to authenticate with the catalog provider and one for the storage backend.
 If the same provider hosts both the catalog and the storage location, you can often use the same credential for both.
 For example, you can usually use a single AWS credential for authenticating with both AWS Glue and S3.
 * The connection details for your Iceberg catalog provider such as its URI, warehouse location, or signing region.
 Each provider has its own required and optional settings.
 For the list of settings for each catalog provider, see xref:rest-api:external-catalogs/creating-a-catalog.adoc#catalog-providers-and-parameters[Catalog Providers and Parameters].
 * The Iceberg namespace and table name for the table you want to query.
+* The connection details for the storage location that stores the Iceberg table's data.
 
 == Create a Catalog and External Collection Using the REST API
 
-Creating an external collection using the REST API requires 2 calls: 1 to create the catalog and another to create the collection.
+Creating an external collection using the REST API requires 2 calls: one to create the catalog and another to create the collection.
 
 === Create a Catalog Using the REST API
 
@@ -83,7 +84,6 @@ If successful, the call returns the catalog's stored definition:
 }
 ----
 
-AWS Glue paired with Amazon S3 is one of the most common Iceberg catalog and storage combinations in production use.
 The following example creates a catalog for an AWS Glue catalog provider:
 
 [source,console]
@@ -112,7 +112,7 @@ For more information about creating a catalog with the REST API, see xref:rest-a
 
 === Create an External Collection Using the REST API
 
-Once you have created a catalog, you can create 1 or more external collections based on it.
+Once you have created a catalog, you can create one or more external collections based on it.
 To create an external collection, send a `POST` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections?external=1`.
 The bucket and scope in the URI must already exist.
 This call has the following required values:
@@ -152,7 +152,7 @@ If successful, the call returns the collection's assigned `uid`:
 {"uid": "1"}
 ----
 
-The following example creates an external collection named `flights` that exposes the Iceberg table `flights` in the `flight_data` namespace, using the `flights_catalog` catalog created above:
+The following example creates an external collection named `flights` that exposes the Iceberg table `flights` in the `flight_data` namespace, using the `flights_catalog` catalog created earlier:
 
 [source,console]
 ----
@@ -177,10 +177,15 @@ For more information about creating an external collection with the REST API, se
 
 === Grant Users Roles to Query the External Collection
 
-Before a non-administrative user can query an external collection, you must grant them 3 roles: xref:learn:security/roles.adoc#query-select-external-catalog[Query External Catalog Select], xref:learn:security/roles.adoc#query-select[Query Select], and xref:learn:security/roles.adoc#credential-consumer[Credential Consumer].
+Before a non-administrative user can query an external collection, you must grant them 3 roles: 
+
+* xref:learn:security/roles.adoc#query-select-external-catalog[Query External Catalog Select].
+* xref:learn:security/roles.adoc#query-select[Query Select]
+* xref:learn:security/roles.adoc#credential-consumer[Credential Consumer]
+
 For more information about the required roles, see xref:learn:data/external-catalogs-and-collections.adoc#roles[Required Roles to Query External Collections].
 
-Couchbase Server checks each role independently, so a user missing 1 role gets a clear error naming it.
+Couchbase Server checks each role independently, so a user missing 1 role gets an error that names the missing role.
 
 The following example grants the user `analyst` the Credential Consumer role for the `query/external/iceberg-sales-catalog` and `query/external/iceberg-sales-table` credentials, the Query Select role on the `orders` collection, and the Query External Catalog Select role on `sales_catalog`:
 
@@ -188,7 +193,10 @@ The following example grants the user `analyst` the Credential Consumer role for
 ----
 curl -X PUT -u $CB_USER:$CB_PASS \
   http://node1.example.com:8091/settings/rbac/users/local/analyst \
-  -d roles=credential_consumer[query/external/iceberg-sales-catalog,query/external/iceberg-sales-table],query_select[sales:_default.orders],query_select_external_catalog[sales_catalog]
+  -d 'roles=credential_consumer[query/external/iceberg-sales-catalog],'\
+'credential_consumer[query/external/iceberg-sales-table],'\
+'query_select[sales:_default:orders],'\
+'query_select_external_catalog[sales_catalog]'
 ----
 
 For more information about creating users and assigning roles with the REST API, see xref:rest-api:rbac.adoc#create-a-local-user-and-assign-roles[Create a Local User, and Assign Roles].
@@ -221,7 +229,7 @@ The following example creates a catalog for a REST catalog provider:
 
 [source,sql]
 ----
-CREATE CATALOG sales_catalog TYPE ICEBERG SOURCE REST AT query/external/iceberg-sales-catalog
+CREATE CATALOG sales_catalog TYPE ICEBERG SOURCE REST AT `query/external/iceberg-sales-catalog`
 WITH { "uri": "https://iceberg-catalog.example.com" };
 ----
 
@@ -232,7 +240,7 @@ The following example creates a catalog for an AWS Glue catalog provider:
 
 [source,sql]
 ----
-CREATE CATALOG flights_catalog TYPE ICEBERG SOURCE AWS_GLUE AT query/external/iceberg-flights-catalog WITH {};
+CREATE CATALOG flights_catalog TYPE ICEBERG SOURCE AWS_GLUE AT `query/external/iceberg-flights-catalog` WITH {};
 ----
 
 If successful, the statement returns no results.
@@ -265,7 +273,7 @@ The following example creates an external collection that exposes the `orders` t
 [source,sql]
 ----
 CREATE EXTERNAL COLLECTION `sales`.`_default`.`orders`
-ON sales_catalog AT query/external/iceberg-sales-table
+ON sales_catalog AT `query/external/iceberg-sales-table`
 WITH {
   "namespace": "sales_db",
   "tableName": "orders"
@@ -279,7 +287,7 @@ The following example creates an external collection that exposes the `flights` 
 [source,sql]
 ----
 CREATE EXTERNAL COLLECTION `travel-sample`.`external`.`flights`
-ON flights_catalog AT query/external/iceberg-flights-table
+ON flights_catalog AT `query/external/iceberg-flights-table`
 WITH {
   "namespace": "flight_data",
   "tableName": "flights"
@@ -306,7 +314,9 @@ and `query/external/iceberg-sales-table` credentials
 [source,sql]
 ----
 GRANT SELECT CATALOG ON sales_catalog TO analyst;
-GRANT CONSUME CREDENTIALSTORE ON `query/external/iceberg-sales-catalog`, `query/external/iceberg-sales-table` TO analyst;
+GRANT CONSUME CREDENTIALSTORE
+  ON `query/external/iceberg-sales-catalog`, `query/external/iceberg-sales-table`
+  TO analyst;
 GRANT query_select ON `sales`.`_default`.`orders` TO analyst;
 ----
 
