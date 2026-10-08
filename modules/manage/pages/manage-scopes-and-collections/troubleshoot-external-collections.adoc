@@ -1,0 +1,164 @@
+= Troubleshoot External Collections
+:description: pass:q[Diagnose and resolve the errors you're most likely to encounter when you work with external catalogs and external collections.]
+:keywords: external catalog, external collection, troubleshooting, apache iceberg, error codes
+:page-edition: Enterprise Edition
+:page-topic-type: guide
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+== Keyspace Not Found in CB Datastore (12003)
+
+=== Symptom
+
+A query against a collection you just created, or a catalog you just created, fails with an error similar to:
+
+[source,json]
+----
+{
+  "code": 12003,
+  "msg": "Keyspace not found in CB datastore: default:travel-sample.external.orders"
+}
+----
+
+=== Cause
+
+This error is not specific to external collections.
+Couchbase's metadata for a newly created scope, collection, or catalog takes a few seconds to propagate across the cluster.
+If you query the object before propagation finishes, the Query Service cannot find it yet.
+
+=== Resolution
+
+Wait a few seconds and run the query again.
+If the error persists for longer than 30 seconds, confirm the collection or catalog actually exists with a `DESCRIBE` statement, or by xref:rest-api:external-catalogs/listing-catalogs.adoc[listing the catalog] or xref:rest-api:listing-scopes-and-collections.adoc#external-query-parameter[listing the collection] through the REST API.
+
+== Catalog Information Not Found for External Collection (12057)
+
+=== Symptom
+
+A query against an external collection fails with:
+
+[source,json]
+----
+{
+  "code": 12057,
+  "msg": "Catalog information not found for external collection: orders"
+}
+----
+
+=== Cause
+
+The external collection's catalog no longer exists.
+Dropping a catalog does not cascade to the external collections that reference it, and nothing prevents you from dropping a catalog that still has dependent collections.
+Couchbase's distributed metadata architecture does not track these dependencies for enforcement, so it's your responsibility to drop dependent collections first, or recreate the catalog.
+
+=== Resolution
+
+xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc[Recreate the catalog] with the same name and connection details, or xref:manage:manage-scopes-and-collections/maintain-external-catalogs-and-collections.adoc[drop the orphaned external collection] if you no longer need it.
+Before you drop a catalog, check whether any external collections still depend on it.
+
+== No Snapshot Found for Timestamp (12057)
+
+=== Symptom
+
+A historic query against an external collection fails with:
+
+[source,json]
+----
+{
+  "code": 12057,
+  "msg": "no snapshot found for timestamp 1748736000000"
+}
+----
+
+You might see this error on a query that uses xref:manage:manage-scopes-and-collections/external-collection-options.adoc#query-a-snapshot-in-a-single-statement[`AT SNAPSHOT` or `AT TIMESTAMP`], or on any query against a collection xref:manage:manage-scopes-and-collections/external-collection-options.adoc#pin-a-collection-to-a-snapshot[pinned to a snapshot] with `snapshotId` or `snapshotTimestamp`.
+
+=== Cause
+
+Couchbase does not verify that a snapshot exists when you create a collection, alter a collection, or run a historic query.
+It only resolves the snapshot at query time.
+If the snapshot you referenced has expired, most commonly because the source table's data pipeline ran a maintenance job that expired old snapshots, the query fails with this error.
+
+=== Resolution
+
+Check with the team that owns the source Iceberg table to find out which snapshots it still retains.
+Update your query, or xref:manage:manage-scopes-and-collections/maintain-external-catalogs-and-collections.adoc#alter-an-external-collection-using-sqlpp[alter the collection's] `snapshotId` or `snapshotTimestamp` setting, to reference a snapshot the table still has.
+
+== Table or Namespace Not Found (12057)
+
+=== Symptom
+
+A query against an external collection fails with an error that names the underlying Iceberg table or namespace, for example:
+
+[source,json]
+----
+{
+  "code": 12057,
+  "msg": "NoSuchTableException: Table does not exist: sales_db.orders"
+}
+----
+
+=== Cause
+
+Couchbase does not validate that the `namespace` and `tableName` you provide actually exist when you run xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc#create-an-external-collection-using-sqlpp[`CREATE EXTERNAL COLLECTION`].
+It only resolves them the first time you query the collection.
+If you misspelled the namespace or table name, or the table was renamed or dropped after you created the collection, you'll only find out at query time.
+
+=== Resolution
+
+Confirm the namespace and table name directly against the catalog, using whatever client or API the table's data pipeline provides.
+Correct the collection's `namespace` and `tableName` settings with xref:manage:manage-scopes-and-collections/maintain-external-catalogs-and-collections.adoc#alter-an-external-collection-using-sqlpp[`ALTER COLLECTION`], or drop and recreate the collection with the correct values.
+
+== Missing Role Errors (13014)
+
+=== Symptom
+
+A user with some, but not all, of the roles an external collection requires sees an error naming a specific missing role, for example:
+
+[source,json]
+----
+{
+  "code": 13014,
+  "msg": "User does not have credential consumer role on repro/placeholder"
+}
+----
+
+=== Cause
+
+Querying an external collection requires 3 separate roles, checked independently:
+
+* xref:learn:security/roles.adoc#query-select[Query Select] on the external collection itself.
+* xref:learn:security/roles.adoc#query-select-external-catalog[Query External Catalog Select] on the catalog the collection uses.
+* xref:learn:security/roles.adoc#credential-consumer[Credential Consumer] on the specific credential the catalog uses.
+
+A user can hold any 2 of these roles and still fail, since Couchbase checks all 3 before it runs the query.
+The error message always names the specific role and object that's missing, so check the message carefully rather than assuming it's the same role each time.
+
+=== Resolution
+
+Grant the missing role to the user.
+Use xref:learn:security/roles.adoc[] to confirm the exact role name and the object you need to scope it to.
+If you cannot determine which object a role should target, check the collection's catalog and the catalog's credential with `DESCRIBE`, or xref:rest-api:external-catalogs/listing-catalogs.adoc[look up the catalog] through the REST API.
+
+== Web Console Limitations
+
+=== Parameterized Role Pickers Do Not Load
+
+In the Web Console's **Add User** and **Edit User** dialogs, the search fields for parameterized roles, such as xref:learn:security/roles.adoc#query-select-external-catalog[Query External Catalog Select] and xref:learn:security/roles.adoc#credential-consumer[Credential Consumer], do not load a list of matching objects to pick from.
+The field shows a loading indicator that never resolves.
+
+Grant these roles with the xref:rest-api:rbac.adoc#create-a-local-user-and-assign-roles[REST API] or a {sqlpp} xref:n1ql:n1ql-language-reference/grant.adoc[`GRANT`] statement instead.
+See xref:learn:security/roles.adoc[] for the syntax.
+
+=== Dropping a Catalog Does Not Warn You About Dependent Collections
+
+The Web Console does not warn you before you drop a catalog that still has dependent external collections.
+Confirm you have no dependent collections before you drop a catalog, since any collections left behind stop working immediately and require you to either recreate the catalog or drop the collections individually.
+
+== Next Steps
+
+* xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc[] to create a new external catalog or collection.
+* xref:manage:manage-scopes-and-collections/maintain-external-catalogs-and-collections.adoc[] to list, alter, or drop an external catalog or collection.
+* xref:manage:manage-scopes-and-collections/external-collection-options.adoc[] for details on the optional settings referenced on this page.
+* xref:learn:security/roles.adoc#external-catalogs-and-collections[] for details on the roles that control access to external catalogs and collections.

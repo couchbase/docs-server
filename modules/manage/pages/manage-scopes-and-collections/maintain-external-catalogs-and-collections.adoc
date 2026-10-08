@@ -1,0 +1,453 @@
+= Maintain External Catalogs and Collections
+:description: You can list, alter, and drop external catalogs and external collections after you create them.
+:keywords: external catalog, external collection, list catalog, edit catalog, drop catalog, apache iceberg
+:page-edition: Enterprise Edition
+:page-topic-type: guide
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+After you xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc[create an external catalog and collection], you can list them, change a catalog's connection details, or remove them entirely.
+You manage external catalogs and collections through the REST API and {sqlpp} only.
+
+== Prerequisites
+
+* An existing external catalog or external collection to maintain.
+* The xref:learn:security/roles.adoc#external-catalog-admin[External Catalog Admin] role to alter or drop a catalog.
+The xref:learn:security/roles.adoc#manage-scopes[Manage Scopes] role, xref:learn:security/roles.adoc#bucket-admin[Bucket Admin] role, or xref:learn:security/roles.adoc#full-admin[Full Admin] role to alter or drop a collection.
+
+== List, Alter, and Drop Using the REST API
+
+You can maintain external catalogs and collections using REST API calls.
+Some of these endpoints are the same ones you use to maintain standard collections.
+They only differ by adding the query parameter `?external=1` to target just external collections.
+
+=== List External Catalogs Using the REST API
+
+To list all external catalogs defined on the cluster, make a `GET` request to `/pools/default/externalCatalogs`.
+
+The following example lists every catalog on the cluster:
+
+[source,console]
+----
+curl -X GET -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs | jq
+----
+
+If successful, the call returns every catalog's stored definition:
+
+[source,json]
+----
+{
+  "uid": 9,
+  "flights_catalog": {
+    "rev": 8,
+    "credentialId": "query/external/iceberg-flights-catalog",
+    "catalogSource": "AWS_GLUE",
+    "catalogType": "ICEBERG"
+  },
+  "nessie_catalog": {
+    "rev": 9,
+    "credentialId": "",
+    "warehouse": "s3://logistics-bucket/warehouse",
+    "uri": "http://localhost:19120/iceberg",
+    "catalogSource": "NESSIE",
+    "catalogType": "ICEBERG"
+  },
+  "sales_catalog": {
+    "rev": 7,
+    "uri": "https://iceberg-catalog.example.com",
+    "credentialId": "query/external/iceberg-sales-catalog",
+    "catalogSource": "REST",
+    "catalogType": "ICEBERG"
+  }
+}
+----
+
+For more information, see xref:rest-api:external-catalogs/listing-catalogs.adoc[Listing Catalogs].
+
+=== List External Collections Using the REST API
+
+To list all external collections defined in a bucket, make a `GET` request to `/pools/default/buckets/<bucket-name>/scopes/?external=1`.
+This is the same endpoint you use to xref:rest-api:listing-scopes-and-collections.adoc[list a bucket's regular scopes and collections].
+The `external=1` query parameter limits each scope's `collections` array to external collections instead of regular ones.
+The response always includes every scope in the bucket, even a scope that contains no external collections.
+
+The following example lists every scope in the `travel-sample` bucket, including scopes that have no external collections:
+
+[source,console]
+----
+curl -X GET -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8091/pools/default/buckets/travel-sample/scopes/?external=1" \
+  | jq
+----
+
+If successful, the call returns every scope in the bucket, with external collections listed in each scope's `collections` array:
+
+[source,json]
+----
+{
+  "uid": "9",
+  "scopes": [
+    {
+      "name": "external",
+      "uid": "f",
+      "collections": [
+        {
+          "name": "shipments",
+          "uid": "1c",
+          "external": true,
+          "rev": 0,
+          "catalogType": "ICEBERG",
+          "catalog": "nessie_catalog",
+          "credentialId": "query/external/iceberg-logistics-table",
+          "namespace": "logistics",
+          "tableName": "shipments"
+        },
+        {
+          "name": "flights",
+          "uid": "1b",
+          "external": true,
+          "rev": 0,
+          "catalogType": "ICEBERG",
+          "catalog": "flights_catalog",
+          "credentialId": "query/external/iceberg-flights-table",
+          "namespace": "flight_data",
+          "tableName": "flights"
+        }
+      ]
+    },
+    {
+      "name": "inventory",
+      "uid": "e",
+      "collections": []
+    },
+    {
+      "name": "tenant_agent_00",
+      "uid": "d",
+      "collections": []
+    },
+    {
+      "name": "tenant_agent_01",
+      "uid": "c",
+      "collections": []
+    },
+    {
+      "name": "tenant_agent_02",
+      "uid": "b",
+      "collections": []
+    },
+    {
+      "name": "tenant_agent_03",
+      "uid": "a",
+      "collections": []
+    },
+    {
+      "name": "tenant_agent_04",
+      "uid": "9",
+      "collections": []
+    },
+    {
+      "name": "_default",
+      "uid": "0",
+      "collections": []
+    },
+    {
+      "name": "_system",
+      "uid": "8",
+      "collections": []
+    }
+  ]
+}
+----
+
+For more information, see xref:rest-api:listing-scopes-and-collections.adoc#external-query-parameter[Listing Scopes and Collections].
+
+=== Alter an External Catalog Using the REST API
+
+To change a catalog's details, make a `PATCH` request to `/pools/default/externalCatalogs/<catalog-name>`.
+You can update any source-specific connection parameter, such as `uri`, `warehouse`, or a signing region.
+You cannot change the catalog's name, `catalogSource`, or type.
+If you want to change these values, create a new catalog with the updated settings and delete the existing one.
+
+The following example changes the warehouse location for `sales_catalog`:
+
+[source,console]
+----
+curl -X PATCH -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs/sales_catalog \
+  -d warehouse=s3://sales-bucket/warehouse2 | jq
+----
+
+If successful, the call returns the catalog's updated definition, with `rev` incremented:
+
+[source,json]
+----
+{
+  "rev": 10,
+  "warehouse": "s3://sales-bucket/warehouse2",
+  "uri": "https://iceberg-catalog.example.com",
+  "credentialId": "query/external/iceberg-sales-catalog",
+  "catalogSource": "REST",
+  "catalogType": "ICEBERG"
+}
+----
+
+For more information, see xref:rest-api:external-catalogs/editing-a-catalog.adoc[Editing a Catalog].
+
+=== Alter an External Collection Using the REST API
+
+To change an external collection's settings, make a `PATCH` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1`.
+This is the same endpoint you use to xref:rest-api:creating-a-collection.adoc[edit a bucket's regular collections].
+The `external=1` query parameter targets an external collection instead, and unlocks a different, larger set of editable parameters.
+You can alter any of the collection's settings except its name.
+
+The following example enables the `decimal-to-double` setting which converts Iceberg decimal values to Couchbase double-precision for the `orders` collection:
+
+[source,console]
+----
+curl -X PATCH -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8091/pools/default/buckets/sales/scopes/_default/collections/orders?external=1" \
+  -d decimal-to-double=true | jq
+----
+
+If successful, the call returns the collection's assigned `uid`:
+
+[source,json]
+----
+{"uid": "1"}
+----
+
+For more information about editing collections, see xref:rest-api:creating-a-collection.adoc#editing-an-external-collection[Creating and Editing a Collection].
+
+=== Drop an External Collection Using the REST API
+
+To drop an external collection, make a `DELETE` request to `/pools/default/buckets/<bucket-name>/scopes/<scope-name>/collections/<collection-name>?external=1`.
+This is the same endpoint you use to xref:rest-api:dropping-a-collection.adoc[drop a bucket's regular collections].
+The `external=1` query parameter targets an external collection instead of a regular one.
+
+The following example drops the `orders` collection:
+
+[source,console]
+----
+curl -X DELETE -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8091/pools/default/buckets/sales/scopes/_default/collections/orders?external=1" \
+  | jq
+----
+
+If successful, the call returns the bucket manifest's updated `uid`:
+
+[source,json]
+----
+{"uid": "4"}
+----
+
+Dropping an external collection works the same as dropping a regular collection.
+It does not affect the catalog or credentials the collection referenced.
+Both remain intact and reusable afterwards.
+
+For more information, see xref:rest-api:dropping-a-collection.adoc#external-collections[Dropping a Collection].
+
+=== Drop an External Catalog Using the REST API
+
+To drop an external catalog, make a `DELETE` request to `/pools/default/externalCatalogs/<catalog-name>`.
+
+include::partial$drop-catalog-info.adoc[]
+
+The following example drops `sales_catalog`:
+
+[source,console]
+----
+curl -X DELETE -u $CB_USER:$CB_PASS \
+  http://node1.example.com:8091/pools/default/externalCatalogs/sales_catalog
+----
+
+If successful, the call returns an empty response.
+
+For more information, see xref:rest-api:external-catalogs/dropping-a-catalog.adoc[Dropping a Catalog].
+
+== List, Alter, and Drop Using {sqlpp}
+
+You can maintain external catalogs and collections using {sqlpp} statements.
+Some of these statements are the same ones you use to maintain standard collections.
+They only differ by adding additional settings for external collections.
+
+=== List External Catalogs Using {sqlpp}
+
+To list external catalogs defined in the cluster, query the `system:catalogs` keyspace.
+
+The following example lists every catalog on the cluster:
+
+[source,sql]
+----
+SELECT c.* FROM system:catalogs AS c;
+----
+
+If successful, the statement returns every catalog's stored definition:
+
+[source,json]
+----
+[
+  {
+    "catalogSource": "REST",
+    "catalogType": "ICEBERG",
+    "credentialId": "query/external/iceberg-sales-catalog",
+    "name": "sales_catalog",
+    "rev": 7,
+    "uri": "https://iceberg-catalog.example.com"
+  },
+  {
+    "catalogSource": "AWS_GLUE",
+    "catalogType": "ICEBERG",
+    "credentialId": "query/external/iceberg-flights-catalog",
+    "name": "flights_catalog",
+    "rev": 8
+  },
+  {
+    "catalogSource": "NESSIE",
+    "catalogType": "ICEBERG",
+    "name": "nessie_catalog",
+    "rev": 9,
+    "uri": "http://localhost:19120/iceberg",
+    "warehouse": "s3://logistics-bucket/warehouse"
+  }
+]
+----
+
+=== List External Collections Using {sqlpp}
+
+To list every external collection in the cluster, query the `system:keyspaces` keyspace to find entries that have a `catalog` field.
+
+The following example lists every external collection on the cluster:
+
+[source,sql]
+----
+SELECT k.* FROM system:keyspaces AS k WHERE k.catalog IS NOT MISSING;
+----
+
+If successful, the statement returns every external collection's stored definition:
+
+[source,json]
+----
+[
+  {
+    "bucket": "sales",
+    "catalog": "sales_catalog",
+    "catalogType": "ICEBERG",
+    "credentialId": "query/external/iceberg-sales-table",
+    "name": "orders",
+    "path": "default:sales._default.orders",
+    "scope": "_default",
+    "with": {
+      "namespace": "sales_db",
+      "tableName": "orders"
+    }
+  },
+  {
+    "bucket": "travel-sample",
+    "catalog": "nessie_catalog",
+    "catalogType": "ICEBERG",
+    "credentialId": "query/external/iceberg-logistics-table",
+    "name": "shipments",
+    "path": "default:travel-sample.external.shipments",
+    "scope": "external",
+    "with": {
+      "namespace": "logistics",
+      "tableName": "shipments"
+    }
+  },
+  {
+    "bucket": "travel-sample",
+    "catalog": "flights_catalog",
+    "catalogType": "ICEBERG",
+    "credentialId": "query/external/iceberg-flights-table",
+    "name": "flights",
+    "path": "default:travel-sample.external.flights",
+    "scope": "external",
+    "with": {
+      "namespace": "flight_data",
+      "tableName": "flights"
+    }
+  }
+]
+----
+
+=== Alter an External Catalog Using {sqlpp}
+
+To change a catalog's connection details, use the `ALTER CATALOG` statement.
+You can update any option in the `WITH` clause, such as `uri`, `warehouse`, or a signing region.
+
+The following example changes the warehouse location for `sales_catalog`:
+
+[source,sql]
+----
+ALTER CATALOG sales_catalog WITH
+      { "warehouse": "s3://sales-bucket/warehouse2" };
+----
+
+If successful, the statement returns no results.
+
+NOTE: You cannot change a catalog's `name`, `catalogType`, or `catalogSource` after you create it.
+Attempting to change `catalogSource` fails with `"Invalid option 'catalogSource'"` (error 12038).
+If you want to change any of these values, you must create a new catalog and drop the old one.
+
+[#alter-an-external-collection-using-sqlpp]
+=== Alter an External Collection Using {sqlpp}
+
+You can change an external collection's settings with the `ALTER COLLECTION` statement.
+This is the same statement you use to alter a regular collection.
+The `WITH` clause accepts a different, larger set of parameters for an external collection.
+
+The following example enables the `decimal-to-double` setting which converts Iceberg decimal values to Couchbase double-precision for the `orders` collection:
+
+[source,sql]
+----
+ALTER COLLECTION `sales`.`_default`.`orders` WITH { "decimal-to-double": true };
+----
+
+If successful, the statement returns no results.
+
+You can alter any of the collection's optional settings this way, including `decimal-to-double` and `parallelScans`, without dropping and re-creating the collection.
+
+=== Drop an External Collection Using {sqlpp}
+
+To drop an external collection, use the `DROP COLLECTION` statement.
+This is the same statement you use to drop a regular collection.
+
+The following example drops the `orders` collection:
+
+[source,sql]
+----
+DROP COLLECTION `sales`.`_default`.`orders`;
+----
+
+If successful, the statement returns no results.
+
+Dropping an external collection works the same as dropping a regular collection.
+It does not affect the catalog or credentials the collection referenced.
+Both remain intact and reusable afterwards.
+
+For more information, see xref:n1ql:n1ql-language-reference/dropcollection.adoc[DROP COLLECTION].
+
+=== Drop an External Catalog Using {sqlpp}
+
+To drop a catalog, use the `DROP CATALOG` statement.
+
+include::partial$drop-catalog-info.adoc[]
+
+The following example drops `sales_catalog`:
+
+[source,sql]
+----
+DROP CATALOG sales_catalog;
+----
+
+If successful, the statement returns no results.
+
+== Next Steps
+
+* xref:manage:manage-scopes-and-collections/create-external-catalogs-and-collections.adoc[] to create a new external catalog or collection.
+* xref:manage:manage-scopes-and-collections/external-collection-options.adoc[] for details on the optional settings you can configure on an external collection.
+* xref:manage:manage-scopes-and-collections/troubleshoot-external-collections.adoc[] if you run into an error.
+* xref:learn:security/roles.adoc#external-catalogs-and-collections[] for details on the roles that control access to external catalogs and collections.
