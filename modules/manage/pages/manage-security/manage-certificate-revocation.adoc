@@ -1,0 +1,437 @@
+= Manage Certificate Revocation
+:description: Load Certificate Revocation Lists into the cluster, choose how strictly revocation is enforced, and monitor the lists that are in use.
+:page-topic-type: guide
+:page-edition: Enterprise Edition
+:page-toclevels: 3
+
+[abstract]
+{description}
+
+For a conceptual overview of certificate revocation, see xref:learn:security/certificate-revocation.adoc[Certificate Revocation].
+
+All examples on this page use `curl` against a cluster node.
+Replace `Administrator:password` and the host with your own values.
+Use `\https://<host>:18091` instead of `http://<host>:8091` if non-secure console access is disabled.
+
+There is no Web Console or `couchbase-cli` support for certificate revocation in Couchbase Server 8.5.
+Configuration is done entirely through the REST API.
+
+[#before-you-begin]
+== Before You Begin
+
+[#requirements]
+=== Requirements
+
+* Couchbase Server Enterprise Edition 8.5 on every node.
+In a cluster that is still being upgraded, the revocation endpoints return `404`.
+* Role: xref:learn:security/roles.adoc#full-admin[Full Admin] or xref:learn:security/roles.adoc#security-admin[Security Admin] to change settings, upload or delete CRLs, and reload.
+Reading settings and status requires the `cluster.admin.security!read` permission, which Full Admin, Security Admin and xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin] have.
+* CRLs from every CA that issues certificates you want checked.
+This includes intermediate CAs.
+Each signing CA must be in the cluster's trust store.
+* For `nodeToNode` checking: an OOTB CA that can sign CRLs.
++
+--
+* Clusters whose self-generated CA was created by Couchbase Server 7.2 or earlier have a CA that cannot sign CRLs.
+The cluster then has no CRL for its own CA.
+* In that case, enabling `nodeToNode` fails with the error `Revocation checking of node-to-node traffic requires a revocation list for the cluster's own CA, ...`.
+* To fix it, regenerate the OOTB CA while keeping your uploaded certificates:
++
+[source,bash]
+----
+curl -X POST -u Administrator:password \
+  "http://localhost:8091/controller/regenerateCertificate?forceResetCACertificate=true&dropUploadedCertificates=false"
+----
++
+This re-issues the cluster's self-generated certificates, so clients that trust the old OOTB CA must be given the new one.
+See xref:rest-api:rest-regenerate-all-certs.adoc[Regenerate All Certificates].
+* `clientAuth` checking does not need this step.
+--
+* A way to keep CRLs current.
+A CA publishes a new CRL before each `nextUpdate`.
+Under `Require`, an expired CRL causes connections to be refused, so plan how new CRLs will reach the cluster: a URL, directory automation, or a scheduled upload.
+
+[#recommended-rollout]
+=== Recommended Rollout
+
+. Load CRLs for all your issuing CAs (see <<upload-a-crl-file>> to <<load-crls-from-a-directory-on-each-node>>) while both policies are still `Disabled`.
+. Check their status (<<check-the-status-of-loaded-crls>>).
+Every CRL should show `cacheStatus: "active"` on every node.
+. Test your real certificates with the validate endpoint (<<test-certificates-against-the-loaded-crls>>) using `"policy": "Require"`.
+Include the cluster's own certificates, which is what validate checks when you give it no certificates.
+Continue only when `allAllowed` is `true`.
+. Enable `Permissive`, first for `clientAuth`, then for `nodeToNode`.
+Watch the logs and the `cm_crl_status_checks_total` metric for undetermined results.
+Each one is a certificate that `Require` would refuse.
+. Switch to `Require` only when there are no undetermined results and CRL renewal is automated.
+Consider keeping `nodeToNode` at `Permissive` unless your security policy demands hard-fail for internal traffic.
+. Keep the watched directory configured (the default) even if you do not use it, so that the recovery procedure in <<recovery>> remains available.
+
+[#risks]
+=== Risks
+
+WARNING: Setting `nodeToNode` to `Require` makes node-to-node communication depend on current CRLs.
+Nodes refuse each other's connections, and the cluster can lose contact with some or all of its nodes, if a CRL covering the node certificates expires without being replaced, is removed, or becomes unusable (for example, because its CA was removed from the trust store).
++
+While nodes cannot communicate, most configuration changes, including changes to revocation settings, fail with `503`: the cluster has lost quorum, and a configuration change can only be committed when a majority of the nodes can reach each other.
+Test with `Permissive` first, automate CRL renewal, and keep the recovery procedure in <<recovery>> at hand.
+
+CAUTION: Setting `clientAuth` to `Require` refuses every client certificate whose issuer has no current CRL loaded.
+Make sure you load CRLs for every CA that issues client certificates, including intermediate CAs.
+
+[#tasks]
+== Tasks
+
+[#view-the-current-revocation-settings]
+=== View the Current Revocation Settings
+
+Goal: see the policies and CRL sources in effect.
+
+[source,bash]
+----
+curl -s -u Administrator:password http://localhost:8091/settings/crl
+----
+
+Example output:
+
+[source,json]
+----
+{
+  "policyPerScope": {"clientAuth": "Disabled", "nodeToNode": "Disabled"},
+  "dirPollIntervalMs": 60000,
+  "directory": "/opt/couchbase/var/lib/couchbase/inbox/crls",
+  "checkIntermediateCerts": false,
+  "urls": [],
+  "urlPollIntervalMs": 3600000
+}
+----
+
+[#set-the-revocation-policy]
+=== Set the Revocation Policy
+
+Goal: turn checking on, change its strictness, or turn it off.
+Before you start: complete steps 1 to 3 of <<recommended-rollout>>.
+
+Send only the settings you want to change.
+Settings you leave out, including the other scope, keep their current values.
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/settings/crl \
+  -H 'Content-Type: application/json' \
+  -d '{"policyPerScope": {"clientAuth": "Permissive"}}'
+----
+
+The response shows the full settings after the change.
+To check intermediate CA certificates as well, add `"checkIntermediateCerts": true`.
+
+Check that it worked: `GET /settings/crl` shows the new policy.
+The change takes effect on all nodes within seconds, for new connections only.
+
+Undo: set the scope back to `"Disabled"`.
+Disabling is always allowed.
+
+[#upload-a-crl-file]
+=== Upload a CRL File
+
+Goal: give the whole cluster a CRL that you have received from your CA.
+Before you start: the CRL's signing CA must be in the trust store, and the CRL must not be expired.
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/settings/crl/files \
+  -F "file=@issuing-ca.crl"
+----
+
+* The name of the uploaded file (here `issuing-ca.crl`) becomes the CRL's name in the cluster.
+It may contain only letters, digits, `.`, `-` and `_`.
+* A PEM file may contain several CRLs, for example a base CRL and its delta CRL.
+Every CRL in the file must be valid, or the whole upload is rejected.
+* Uploading a file with the same name as an existing one replaces it.
+This is how you renew an uploaded CRL.
+
+Check that it worked: the response lists all uploaded CRLs with their issuer, `thisUpdate`, `nextUpdate` and CRL number.
+After a few seconds, <<check-the-status-of-loaded-crls>> shows the file as `"source": "uploaded"` and `"cacheStatus": "active"` on every node.
+
+Undo: delete the file (<<list-or-delete-uploaded-crl-files>>).
+
+[#list-or-delete-uploaded-crl-files]
+=== List or Delete Uploaded CRL Files
+
+List:
+
+[source,bash]
+----
+curl -s -u Administrator:password http://localhost:8091/settings/crl/files
+----
+
+Delete: this removes the file from every node.
+
+[source,bash]
+----
+curl -s -u Administrator:password -X DELETE \
+  http://localhost:8091/settings/crl/files/issuing-ca.crl
+----
+
+WARNING: Under `Require`, deleting the only CRL for a CA causes certificates from that CA to be refused.
+
+[#load-crls-from-a-directory-on-each-node]
+=== Load CRLs from a Directory on Each Node
+
+Goal: let existing automation deliver CRL files to each server.
+
+. On every node, create the watched directory if it does not exist.
+The default is:
++
+[cols="1,3"]
+|===
+| OS | Default Directory
+
+| Linux
+| `/opt/couchbase/var/lib/couchbase/inbox/crls`
+
+| Windows
+| `C:\Program Files\Couchbase\Server\var\lib\couchbase\inbox\crls`
+
+| macOS
+| `/Users/<username>/Library/Application Support/Couchbase/var/lib/couchbase/inbox/crls`
+|===
+
+. Copy the CRL files into it.
+The files must be readable by the `couchbase` user.
+Files whose names start with `.` are ignored.
+Every other file is treated as a CRL.
+. Within one minute (`dirPollIntervalMs`), each node loads new or changed files and stops using files that have been removed.
+To apply the change immediately, reload the node (<<reload-crls-on-a-node>>).
+
+To use a different directory, or to change how often it is checked:
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/settings/crl \
+  -H 'Content-Type: application/json' \
+  -d '{"directory": "/etc/pki/couchbase-crls", "dirPollIntervalMs": 300000}'
+----
+
+Setting `"directory": ""` turns the watched directory off, and stops using every CRL that came from it.
+A directory that does not exist is not an error.
+The status output reports it as `notFound`.
+
+[#download-crls-from-urls]
+=== Download CRLs from URLs
+
+Goal: keep CRLs current automatically from your CA's CRL Distribution Point.
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/settings/crl \
+  -H 'Content-Type: application/json' \
+  -d '{"urls": ["http://pki.example.com/crl/issuing-ca.crl"], "urlPollIntervalMs": 3600000}'
+----
+
+* Each node checks each URL once per `urlPollIntervalMs` (default one hour), using a conditional HTTP request.
+The node remembers the ETag the web server returned with the last CRL and sends it back in an `If-None-Match` header.
+If the server answers `304 Not Modified`, the CRL has not changed: nothing is downloaded, and the node keeps using its current copy.
+If the server does not return an ETag, the full CRL is downloaded on every check.
+* A manual reload (<<reload-crls-on-a-node>>) always downloads the full CRL, without the conditional header.
+* A failed download is retried after one minute.
+The last good copy stays in use.
+* The `urls` list you send replaces the existing list.
+To add a URL, send the complete list.
+To remove all URLs, send `"urls": []`.
+* Up to 100 URLs can be configured.
+* Choose a polling interval well below the CRL's validity period.
+For example, for CRLs issued daily, poll every hour.
+
+[#check-the-status-of-loaded-crls]
+=== Check the Status of Loaded CRLs
+
+Goal: confirm what each node is actually using.
+
+[source,bash]
+----
+curl -s -u Administrator:password http://localhost:8091/settings/crl/diagnostics/status
+----
+
+This asks every node.
+To ask specific nodes, add `?nodes=10.0.0.1:8091,10.0.0.2:8091`.
+A node that cannot be reached is reported with an `error` field instead of being left out.
+
+What to look for:
+
+* Each CRL's `cacheStatus` should be `active`.
+* `lastReload.result` should be `loaded` (for uploads, `uploaded`).
+* `lastReload.errors` explains any failure.
+* `pollDirectory.status` should be `readable` if you use the watched directory.
+
+The meaning of each value is given in xref:rest-api:rest-crl-status.adoc#status-field-reference[Status Field Reference].
+
+[#test-certificates-against-the-loaded-crls]
+=== Test Certificates Against the Loaded CRLs
+
+Goal: find out, before enforcing a policy, whether certificates would be accepted.
+
+To test the cluster's own node and client certificates on all nodes:
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST \
+  http://localhost:8091/settings/crl/diagnostics/validate \
+  -H 'Content-Type: application/json' -d '{"policy": "Require"}'
+----
+
+The result has `"allAllowed": true` if every certificate would be accepted under the tested policy.
+Any that would not are listed under `disallowed`.
+
+To test specific certificates, for example a client certificate:
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST \
+  http://localhost:8091/settings/crl/diagnostics/validate \
+  -H 'Content-Type: application/json' \
+  -d "{\"policy\": \"Require\", \"certs\": [$(jq -Rs . < client-chain.pem)]}"
+----
+
+* The test uses the policy you give it (`Permissive` or `Require`, default `Require`).
+It ignores the configured policies, so you can run it while checking is still `Disabled`.
+* Every certificate in a PEM chain is checked.
+* The check uses the CRLs loaded on the node you send the request to.
+If you use the watched directory, repeat the test on each node.
+
+[#reload-crls-on-a-node]
+=== Reload CRLs on a Node
+
+Goal: apply changes immediately, rather than waiting for the next directory scan or URL download.
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/node/controller/reloadCrl
+----
+
+This affects only the node you send it to.
+It re-reads the watched directory, re-downloads every URL, and restores the OOTB CA's CRL if it is missing.
+The response is that node's status, in the same format as <<check-the-status-of-loaded-crls>>.
+Repeat it on each node as needed.
+
+[#recovery]
+=== Recovery: Nodes Cannot Communicate Because of Revocation
+
+When to use: `nodeToNode` is `Require`, and a CRL covering the node certificates has expired, was removed or became unusable.
+Nodes now refuse each other's connections, and changes to settings fail with `503 ... possibly due to loss of quorum`.
+
+This procedure works without the nodes being able to reach each other.
+Each step acts on one node at a time.
+It relies on the watched directory still being configured (see step 6 of <<recommended-rollout>>).
+
+. Obtain a current CRL from the CA that issued the node certificates.
+. On each node, copy it into the watched directory (<<load-crls-from-a-directory-on-each-node>>).
+Create the directory if necessary.
+. On each node, either wait one minute or reload it directly:
++
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/node/controller/reloadCrl
+----
++
+Confirm in the response that the new CRL has `"cacheStatus": "active"`.
+. When all nodes have the CRL, they reconnect by themselves.
+Check with <<check-the-status-of-loaded-crls>> that every node responds.
+. Fix the underlying cause: renew the uploaded CRL (<<upload-a-crl-file>>), fix the URL (<<download-crls-from-urls>>), or restore the CA in the trust store.
+Then decide whether `nodeToNode` should stay at `Require`.
+
+[#renew-crls]
+=== Renew CRLs
+
+CAs issue new CRLs regularly.
+Couchbase Server warns you 3 days before a CRL expires (see xref:manage:manage-settings/configure-alerts.adoc#available-alerts[Available Alerts]).
+
+* Uploaded CRL: upload the new CRL under the same file name (<<upload-a-crl-file>>).
+* Watched directory: replace the file on every node.
+* URL: nothing to do; the new CRL is downloaded automatically when the CA publishes it.
+
+[#turn-revocation-checking-off]
+=== Turn Revocation Checking Off
+
+[source,bash]
+----
+curl -s -u Administrator:password -X POST http://localhost:8091/settings/crl \
+  -H 'Content-Type: application/json' \
+  -d '{"policyPerScope": {"clientAuth": "Disabled", "nodeToNode": "Disabled"}}'
+----
+
+Loaded CRLs are kept, so you can turn checking on again later without reloading them.
+
+[#settings-reference]
+== Settings Reference
+
+All of these settings apply to the whole cluster.
+
+[cols="2,3,2,1,2"]
+|===
+| REST Name | Meaning | Allowed Values | Default | Takes Effect
+
+| `policyPerScope.clientAuth`
+| Policy for client certificates
+| `Disabled`, `Permissive`, `Require` (case-sensitive)
+| `Disabled`
+| Immediately, for new connections
+
+| `policyPerScope.nodeToNode`
+| Policy for node-to-node certificates
+| `Disabled`, `Permissive`, `Require`
+| `Disabled`
+| Immediately, for new connections
+
+| `checkIntermediateCerts`
+| Also check intermediate CA certificates in the presented chain
+| `true`, `false`
+| `false`
+| Immediately
+
+| `directory`
+| Watched directory on each node. `""` turns it off.
+| Absolute path, or `""`
+| `<data directory>/inbox/crls`
+| Next scan (immediately rescanned)
+
+| `dirPollIntervalMs`
+| How often each node checks the watched directory
+| 1000 to 86400000 (ms)
+| 60000 (1 minute)
+| Next scan
+
+| `urls`
+| CRL download addresses
+| List of up to 100 `http://` or `https://` URLs
+| `[]`
+| Immediately (downloaded right away)
+
+| `urlPollIntervalMs`
+| How often each node re-downloads each URL
+| 1000 to 86400000 (ms)
+| 3600000 (1 hour)
+| Next download
+|===
+
+The alert settings are configured through `POST /settings/alerts/limits` (see xref:manage:manage-settings/configure-alerts.adoc[Alerts]):
+
+[cols="2,4,2,1"]
+|===
+| REST Name | Meaning | Allowed Values | Default
+
+| `crlExpirationDays`
+| Start warning this many days before a CRL's `nextUpdate`
+| Positive integer
+| `3`
+
+| `crlWarningValidityFraction`
+| Limits the warning period to 1/N of each CRL's own validity period, so short-lived CRLs (for example, those issued daily) do not trigger constant warnings.
+`0` removes the limit.
+| Integer >= 0
+| `4`
+|===
+
+Example: a CRL valid for 24 hours, with the defaults, raises the warning only in its last 6 hours (24 / 4), not for its whole lifetime.
+
+See xref:rest-api:rest-certificate-revocation.adoc[Certificate Revocation API] for the full REST API reference, including responses and error messages.
