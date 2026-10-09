@@ -1,5 +1,6 @@
 = Creating and Editing a Collection
 :description: pass:q[Collections can be created by means of the REST API.]
+:keywords: collection, create collection, edit collection, external collection, apache iceberg
 :page-topic-type: reference
 
 [abstract]
@@ -86,7 +87,135 @@ This parameter is ignored unless the following settings have been made _at bucke
 See xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets], for information about bucket parameters.
 For an overview of change history, see xref:learn:data/change-history.adoc[Change History].
 
-NOTE: `history` and `maxTTL` are the only parameters that you can edit after you create the collection.
+NOTE: `history` and `maxTTL` are the only parameters that you can edit after you create a regular collection.
+
+[#external-collections]
+== External Collections
+
+Both the `POST` and `PATCH` endpoints on this page also manage xref:learn:data/external-catalogs-and-collections.adoc[external collections] when you add the `external=1` query parameter.
+An external collection points at one table inside an xref:rest-api:external-catalogs/creating-a-catalog.adoc[external catalog]'s namespace.
+It does not hold any data itself, and every query against it reads directly from the remote Iceberg table's data files.
+
+Creating or altering an external collection only validates the syntax of the parameters you supply.
+Couchbase Server does not contact the catalog or storage backend until a query actually runs against the collection.
+A typo in `tableName` or `namespace` does not surface until you run a query, not at creation time.
+
+This feature requires the xref:learn:security/credential-store.adoc[credential store], which is available only in Couchbase Server Enterprise Edition.
+Couchbase Server Community Edition cannot create or query external collections.
+
+NOTE: External collections do not appear under their scope in the Couchbase Server Web Console's bucket, scope, and collection navigation view.
+You can still manage and query them through {sqlpp} or the REST API.
+
+[#external-collections-parameters]
+=== Parameters
+
+An external collection accepts a different, larger set of parameters than a regular collection.
+
+`name`::
+Required.
+The name of the external collection.
+You cannot change this after you create it.
+
+`catalogType`::
+Required.
+Must be `ICEBERG`.
+This is the only supported value.
+
+`catalog`::
+Required.
+The name of the xref:rest-api:external-catalogs/creating-a-catalog.adoc[external catalog] that hosts the table.
+
+`credentialId`::
+Required.
+References a stored credential used to authenticate to the storage backend where the table's data files live.
+This is a different concern from the catalog's own credential, and the two often need different credential types.
+
+`namespace`::
+Required.
+The Iceberg namespace that contains the table, equivalent to a database or schema in the catalog.
+
+`tableName`::
+Required.
+The name of the Iceberg table to expose.
+
+`snapshotId`::
+Optional.
+Pins the collection to a specific Iceberg snapshot ID instead of always resolving the current snapshot.
+
+`snapshotTimestamp`::
+Optional.
+Pins the collection to the snapshot that was current at a specific timestamp.
+
+`decimal-to-double`::
+Optional boolean, defaults to `false`.
+Converts Iceberg `decimal` columns to native JSON numbers instead of exact-value strings.
+Setting this to `true` trades exactness for a native numeric type.
+Leave it at the default when you need exact decimal values.
+
+`parallelScans`::
+Optional integer, defaults to `1`.
+Controls how many of the table's underlying data files the scanner reads concurrently for one query.
++
+This setting only affects parallelism inside the Iceberg scanner itself.
+It does not change the Query Service's own query-level parallelism, and a query against an external collection always runs as a single scan operator regardless of this value.
++
+Raising `parallelScans` can reduce query time for a table with many relevant files, at the cost of more simultaneous connections to storage.
+Set it too high for your storage backend's connection limits, and you risk connection resets or throttling instead of a speedup.
++
+Pass this parameter as a JSON integer.
+A quoted string value is not accepted.
+
+TIP: Couchbase Server never mutates an external collection.
+`INSERT`, `UPSERT`, `UPDATE`, `DELETE`, and `MERGE` all fail with error 3510 against an external collection.
+
+[#creating-an-external-collection]
+=== Creating an External Collection
+
+Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin to create an external collection this way.
+
+The following example creates an external collection that exposes the `flights` table from `flights_catalog`:
+
+[source,console]
+----
+curl -X POST -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8091/pools/default/buckets/travel-sample/scopes/external/collections?external=1" \
+  -d name=flights \
+  -d catalogType=ICEBERG \
+  -d catalog=flights_catalog \
+  -d credentialId=query/external/iceberg-flights-table \
+  -d namespace=flight_data \
+  -d tableName=flights \
+  -d parallelScans=4 | jq
+----
+
+If successful, the call returns the collection's assigned `uid`:
+
+[source,json]
+----
+{"uid": 21}
+----
+
+[#editing-an-external-collection]
+=== Editing an External Collection
+
+You can change any parameter except `name`.
+Your account needs the `scope_admin` role, the `bucket_full_access` role, or Full Admin to alter an external collection this way.
+
+The following example switches on `decimal-to-double` for the `flights` external collection:
+
+[source,console]
+----
+curl -X PATCH -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8091/pools/default/buckets/travel-sample/scopes/external/collections/flights?external=1" \
+  -d decimal-to-double=true | jq
+----
+
+If successful, the call returns the collection's assigned `uid`:
+
+[source,json]
+----
+{"uid": "1"}
+----
 
 == Responses
 
@@ -133,3 +262,4 @@ See also the CLI reference page for the xref:cli:cbcli/couchbase-cli-collection-
 
 For an overview of change history, see xref:learn:data/change-history.adoc[Change History].
 For information on establishing change history defaults for collections within a bucket, see xref:rest-api:rest-bucket-create.adoc[Creating and Editing Buckets].
+For an overview of external catalogs and external collections, see xref:learn:data/external-catalogs-and-collections.adoc[].
