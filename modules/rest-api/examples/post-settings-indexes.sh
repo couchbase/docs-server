@@ -15,5 +15,7 @@ curl -X POST http://<host>:8091/settings/indexes -d enableShardAffinity=false -u
 # end::disable-ftb-rebalance[]
 
 # tag::enable-scan-report[]
-curl -X POST http://<host>:8091/settings/indexes -d generateScanReport=true -u Administrator:<password>
+curl -X POST http://<host>:8091/settings/indexes \
+-d generateScanReport=true \
+-u Administrator:<password>
 # end::enable-scan-report[]
