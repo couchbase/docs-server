@@ -1,0 +1,278 @@
+
+
+[#release-850]
+== Release 8.5.0 (Private Preview)
+
+Couchbase Server 8.5.0 is currently available as a private preview build (see link:https://jira.issues.couchbase.com/browse/MB-73229[MB-73229]).
+This section is a first-pass draft, compiled from Jira issues labeled `Totoro`, `Totoro-Preview`, or `totoro-planned` together with `releasenote`.
+It has not been reviewed against the final GA scope, and several entries still need release-note text from engineering -- these are marked below.
+
+[#dlist-fixed-issues-850]
+== Fixed Issues
+
+
+
+
+[#dlist-fixed-issues-850-cluster-manager]
+=== Cluster Manager
+
+*https://jira.issues.couchbase.com/browse/MB-61479/[MB-61479]*::
+
+_Release note text not yet provided by engineering._
+Alerting for reprovisioned ephemeral buckets.
+
+*https://jira.issues.couchbase.com/browse/MB-67213/[MB-67213]*::
+
+The _Cache Miss Ratio_ metric name suggested it measured memory or disk caching performance.
+In reality, as of version 7.6.2, it was redefined to measure the proportion of read (`get`) operations that fail because the requested key is not present in the bucket at all.
+To eliminate this confusion, the metric has been renamed to *Get Miss Ratio*.
+
+*https://jira.issues.couchbase.com/browse/MB-70629/[MB-70629]* (also published in the 8.0.1 release notes)::
+
+RBAC groups containing `security_admin_local`, `security_admin_external`, or `ro_admin` roles were not handled correctly on upgrade to 8.0.
+The upgrade handling now replaces:
++
+--
+* `security_admin_local` with `security_admin` + `local_user_admin`
+* `security_admin_external` with `security_admin` + `external_user_admin`
+* `ro_admin` with `ro_admin` + `ro_security_admin`
+--
++
+The issue also occurred when restoring users from a backup taken on a release prior to 8.0.
+
+*https://jira.issues.couchbase.com/browse/MB-70951/[MB-70951]* (also published in the 8.0.1-8.0.3 release notes)::
+
+The following stats were reported twice by the `/metrics` REST API.
+This has been corrected so each is reported only once: `cm_rest_request_enters_total` and `cm_rest_request_leaves_total`.
+
+*https://jira.issues.couchbase.com/browse/MB-72985/[MB-72985]*::
+
+Prior to Totoro, the Cluster Manager supported two ways to set `rebalanceMovesPerNode` in the REST API, a tunable that governs the number of vBucket moves performed simultaneously during a rebalance.
+The setting has been removed from the `internalSettings` endpoint, since it also exists in the better-documented and supported `settings/rebalance` API.
+This API supports a range of values between 1 and 64, although Couchbase does not recommend changing the value from the default without comprehensive performance testing in a non-production environment.
+
+
+
+
+[#dlist-fixed-issues-850-security]
+=== Security
+
+*https://jira.issues.couchbase.com/browse/MB-68379/[MB-68379]*::
+
+The default list of TLS cipher suites accepted by the server has been restricted to only include `AES-256-GCM`, `AES-128-GCM`, and `CHACHA20-POLY1305`.
+This removes the use of SHA1 and the CBC mode for TLS.
+
+
+
+
+[#dlist-fixed-issues-850-data-service]
+=== Data Service
+
+*https://jira.issues.couchbase.com/browse/MB-61385/[MB-61385]* (also published in the 7.6.12/7.6.13 release notes)::
+
+`SET` and `DELETE` with Meta operations could distort a vBucket's `max_cas` if a faulty CAS value was provided in the operation, inadvertently affecting the Hybrid Logical Clock (HLC) and Last-Write-Wins (LWW) conflict resolution via XDCR.
+In certain cases, this resulted in legitimate mutations being skipped or ignored during replication.
+The system now fails front-end operations with a CAS value that exceeds the `hlc_max_future_threshold` (default 65 minutes), to prevent a vBucket's `max_cas` from getting distorted.
+
+*https://jira.issues.couchbase.com/browse/MB-68779/[MB-68779]*::
+
+The `kv_ep_commit_time_total_seconds` statistic was reported 1000x too small, because the underlying counter was accumulated in milliseconds while being declared as microseconds.
+The counter now uses microseconds.
+
+*https://jira.issues.couchbase.com/browse/MB-69568/[MB-69568]*::
+
+The bucket state named `clients` tracked all sorts of clients currently holding a reference to the bucket, including other subcomponents within the same process iterating over buckets.
+A new stat, `curr_bucket_connections`, has been introduced to track client connections specifically.
+
+*https://jira.issues.couchbase.com/browse/MB-70471/[MB-70471]*::
+
+The `magma_max_default_storage_threads` and `magma_flusher_thread_percentage` bucket configuration parameters have been removed.
+These values have been set via their memcached global-settings equivalents since 7.6.10, so setting them through a bucket's extra config string no longer has any effect.
+
+*https://jira.issues.couchbase.com/browse/MB-70640/[MB-70640]* (also published in the 7.6.12/8.0.2/8.0.3 release notes)::
+
+Fixed a rebalance hang observed during node scaling and swap rebalance operations, related to socket receive buffer management on specific Linux kernels.
+
+*https://jira.issues.couchbase.com/browse/MB-72266/[MB-72266]*::
+
+The Data Service no longer explicitly sets the socket receive buffer size by default -- the behavior introduced in 7.6.12 and 8.0.2 -- and again relies on the operating system's socket buffer auto-tuning, with explicit buffer limits available through configuration where required.
+
+*https://jira.issues.couchbase.com/browse/MB-74199/[MB-74199]* (also approved for 7.6.13)::
+
+_Release note text not yet provided by engineering._
+DCP xattr-only mutations were sent with a stale Snappy datatype bit after `removeBody()` decompressed them, causing `gocbcore` to drop them as corrupt.
+
+
+
+
+[#dlist-fixed-issues-850-query-service]
+=== Query Service
+
+*https://jira.issues.couchbase.com/browse/MB-68969/[MB-68969]* (also published in the 8.0.1 release notes)::
+
+* With multi-collection indexes that contained fields with the `include in _all` setting enabled, there was a possibility for false positives to show up for field-agnostic (composite field) queries. This has been addressed by denying sargability for such indexes.
+* Addressed an issue where fields not belonging to a particular keyspace were being included in multi-collection indexes.
+* Addressed a bug that could influence composite field (`_all`) availability based on the order in which fields were processed.
+
+*https://jira.issues.couchbase.com/browse/MB-69081/[MB-69081]* (also published in the 8.0.1 release notes)::
+
+To retrieve a document's expiration, the user had to specify the sub-path explicitly, for example `META().expiration`.
+A call to the `META()` function without the sub-path would always incorrectly return the default expiration value of 0.
++
+Now, when a query invokes `META()` without explicitly specifying the subpath, the document's expiration value is returned.
+
+*https://jira.issues.couchbase.com/browse/MB-69083/[MB-69083]* (also published in the 8.0.1 release notes)::
+
+A query could return an incorrect result when all of the following conditions were met:
++
+* the query contains one or more joins
+* one of the joins involves a sub-query (FROM clause subquery)
+* the FROM clause sub-query has a `GROUP BY` and/or aggregates
+* the FROM clause sub-query can take advantage of index group/aggregate pushdown (this requires an appropriate secondary index)
+* CBO is on, and `UPDATE STATISTICS` has been run on all keyspaces/indexes involved
+
+*https://jira.issues.couchbase.com/browse/MB-69955/[MB-69955]* (also published in the 8.0.1 release notes)::
+
+`CYCLE` was added as a keyword for `RECURSIVE WITH`'s `CYCLE` subclause.
+This caused a syntax error when a path or subpath's case-insensitive identifier was named `cycle`.
+This is now handled by allowing `cycle` as a permitted identifier.
+
+*https://jira.issues.couchbase.com/browse/MB-70112/[MB-70112]* (also published in the 8.0.1 release notes)::
+
+When a prepared request was made with the `auto_execute` request parameter set to `true`, the request would incorrectly error out with `Unrecognizable prepared statement - cause: JSON unmarshalling error: auto_execute did not produce a prepared statement`.
+The server now silently ignores the `auto_execute` request parameter when the request is a prepared request.
+
+*https://jira.issues.couchbase.com/browse/MB-70543/[MB-70543]* (also published in the 7.6.11/8.0.1 release notes)::
+
+Execution of a scope-level UDF (user-defined function) could fail with an `Invalid Function` error when a query node was starting (and not being upgraded from an earlier version), a scope-level UDF already existed, and a call to execute it was issued shortly after the query node started.
+
+*https://jira.issues.couchbase.com/browse/MB-73773/[MB-73773]*::
+
+When `ORDER BY SPARSE_VECTOR_DISTANCE(...)` (or `APPROX_VECTOR_DISTANCE()`) was used without a `LIMIT` clause, the query optimizer incorrectly pushed the vector scan down to the ANN index, causing only a fraction of matching documents to be considered and severely degrading recall.
+Vector indexes are now only considered sargable for ANN ordering when a `LIMIT` clause is present.
+
+
+
+
+[#dlist-fixed-issues-850-index-service]
+=== Index Service
+
+*https://jira.issues.couchbase.com/browse/MB-67016/[MB-67016]*::
+
+_Release note text not yet provided by engineering._
+Queries returning fewer results than the requested `LIMIT k` for vector-only queries against a bhive index with default settings.
+
+*https://jira.issues.couchbase.com/browse/MB-67169/[MB-67169]*::
+
+_Release note text not yet provided by engineering._
+Added a GPU (CUDA/FAISS) build option for accelerating vector index builds.
+
+*https://jira.issues.couchbase.com/browse/MB-70968/[MB-70968]*::
+
+Deleted indexes present on shared files could leave some encrypted data on disk whose encryption keys were no longer tracked.
+This data is now deleted asynchronously from disk.
+
+*https://jira.issues.couchbase.com/browse/MB-71712/[MB-71712]*::
+
+During index file-based rebalance, if a cluster had buckets with mixed encryption levels (one bucket with encryption enabled, another disabled), the encrypted bucket could temporarily show as having unencrypted data during the rebalance.
+This resolves itself once the rebalance completes.
+
+
+
+
+[#dlist-fixed-issues-850-search-service]
+=== Search Service
+
+*https://jira.issues.couchbase.com/browse/MB-55637/[MB-55637]*::
+
+_Release note text not yet provided by engineering._
+FTS storage could crash on disk-full conditions; this is now handled gracefully.
+
+*https://jira.issues.couchbase.com/browse/MB-68681/[MB-68681]*::
+
+_Release note text not yet provided by engineering._
+Added a guardrail capping the maximum number of partitions (no greater than the number of vBuckets) per index, since the Search Service could crash when the partition count was set too high in a resource-constrained environment.
+
+*https://jira.issues.couchbase.com/browse/MB-69641/[MB-69641]* (also published in the 8.0.1 release notes)::
+
+_Release note text not yet provided by engineering._
+FTS vector search did not support multi-vector document retrieval.
+
+*https://jira.issues.couchbase.com/browse/MB-69654/[MB-69654]* (also published in the 8.0.1 release notes)::
+
+_Release note text not yet provided by engineering._
+Unable to create a vector index mapping when a nested field name duplicated across other child mappings.
+
+*https://jira.issues.couchbase.com/browse/MB-69655/[MB-69655]* (also published in the 8.0.1 release notes)::
+
+_Release note text not yet provided by engineering._
+Nested vectors did not work correctly with cosine similarity.
+
+*https://jira.issues.couchbase.com/browse/MB-69751/[MB-69751]*::
+
+_Release note text not yet provided by engineering._
+Added a guardrail capping the number of collections a Search index can ingest data from.
+
+*https://jira.issues.couchbase.com/browse/MB-70388/[MB-70388]* (also published in the 8.0.1 release notes)::
+
+Fixed an issue where `docvalues` were not set internally for `geopoint` fields, causing them to be computed on demand for every query.
+
+*https://jira.issues.couchbase.com/browse/MB-70770/[MB-70770]* (also published in the 8.0.3 release notes)::
+
+In extremely rare scenarios, document deletions were not consistently reflected in the index, so a small number of documents successfully deleted from the KV layer could continue to persist in the index as stale entries.
+This condition is highly infrequent and non-deterministic, and typically affects only a very small number of documents.
+
+
+
+
+[#dlist-fixed-issues-850-xdcr]
+=== XDCR
+
+*https://jira.issues.couchbase.com/browse/MB-68340/[MB-68340]*::
+
+To allow finer-grained control over the footprint of an individual replication pipeline, the internal settings `UprFeedDataChanLength` and `UprFeedBufferSize` (which applied one value to all replications) are deprecated in favor of a new replication setting, `dcpFlowControlThrottle`.
+`dcpFlowControlThrottle` is a percentage (valid range 5-100) applied to the previous default values of both settings, so a single percentage can be specified instead of configuring them individually.
+Until all nodes in a cluster are upgraded, new replications and changes to the new settings should be made via the upgraded nodes.
+
+*https://jira.issues.couchbase.com/browse/MB-70444/[MB-70444]*::
+
+_Release note text not yet provided by engineering._
+Enforcement of Community Edition restrictions for XDCR.
+
+*https://jira.issues.couchbase.com/browse/MB-70844/[MB-70844]*::
+
+Starting from version 8.0, a change in KV-engine behavior for `SUBDOC_MULTI_LOOKUP` on locked documents caused a locked document on the target cluster to be misinterpreted by XDCR as always newer than any mutation of the same document key on the source cluster, causing those mutations to be skipped from replication.
+It is advised to upgrade all source clusters that replicate ECCV-enabled buckets to a target cluster running 8.0 or higher.
+
+*https://jira.issues.couchbase.com/browse/MB-71244/[MB-71244]*::
+
+When pausing or deleting a replication that was replicating to or from a cluster that recently underwent a failover and needed to roll back to 0, a race condition could cause the replication's goroutines to hang indefinitely.
+This has been fixed.
+
+*https://jira.issues.couchbase.com/browse/MB-71476/[MB-71476]*::
+
+Previously, if a node was rebalanced out of the cluster while a replication was running, the replication and its buckets were deleted, the buckets were re-created with the same name, and the node was rebalanced back in, the node could lack awareness of the deletion and continue to hold stale manifests for the re-created bucket.
+This could cause replication issues, such as documents not being backfilled properly once a broken mapping was fixed.
+With the fix, nodes in an upgraded cluster correctly handle being rebalanced back in either before or after the replication is re-created.
++
+To maintain backward compatibility, an upgraded node can still accept stale manifests from a legacy node that experienced the bug prior to upgrade; until all source-cluster nodes are upgraded, avoid deleting and re-creating a source/target bucket and its replication while any cluster node is rebalanced out.
+
+
+
+
+[#dlist-fixed-issues-850-tools]
+=== Tools
+
+*https://jira.issues.couchbase.com/browse/MB-68392/[MB-68392]*::
+
+Cloud storage providers require additional permissions to create WORM backups.
+If the permissions required to read old object versions and object locks are missing, the user is unable to create or restore WORM backups.
+
+*https://jira.issues.couchbase.com/browse/MB-70255/[MB-70255]* (also published in the 8.0.1 release notes)::
+
+Addressed a bug where buckets with cross-cluster versioning enabled (see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning]) would cause a backup merge to fail.
+
+*https://jira.issues.couchbase.com/browse/MB-70745/[MB-70745]* (also published in the 7.6.11/8.0.3 release notes)::
+
+A restore could fail when CBO (Cost-Based Optimizer) was enabled, an index existed where one of the index keys contained `::` (for example, `SPLIT(<field>, "::")`), `UPDATE STATISTICS` had been run on the index, and a backup taken after that was restored.
+This has been fixed.

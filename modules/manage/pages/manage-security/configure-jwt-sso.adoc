@@ -1,0 +1,120 @@
+= Set Up Single Sign-On for the Web Console
+:description: pass:q[Add a button to the Web Console sign-in page that sends users to your identity provider, so they can sign in without a Couchbase Server password.]
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[.edition]#{enterprise}#
+
+An issuer set up for JWT authentication lets applications present a token they already hold.
+Adding _OpenID Connect_ (OIDC) login on top gives people a way to sign in to the Web Console itself: they click a button, sign in at your identity provider, and come back to the console already authenticated.
+
+This is optional.
+Set up the issuer first --- see xref:manage:manage-security/configure-jwt-issuer.adoc[Configure a JWT Issuer] --- then add these settings to it.
+
+== How It Looks to a User
+
+. On the sign-in page, the user clicks *Sign In Using SSO*.
+This button appears as soon as one issuer has OIDC login enabled.
+. The next page lists a button for each available method, labelled with each issuer's display name.
+. The user clicks their provider, signs in there, and is returned to the Web Console.
+
+== What You Need From Your Identity Provider
+
+* *A registered client (application).*
+Create one in your IdP for Couchbase Server.
+It gives you a *client ID* and a *client secret*.
++
+IMPORTANT: The issuer's `audiences` list must include this client ID.
+Tokens issued for single sign-on name the client as their audience, so if the client ID is missing from `audiences`, every sign-in is rejected with an invalid audience error.
+* *A redirect URI.*
+Register the address your IdP should send users back to.
+Couchbase Server takes each base URI you configure and appends `/oidc/callback`.
+So if you configure `https://console.example.com:18091`, register `https://console.example.com:18091/oidc/callback` with your IdP.
+* *Either a discovery URI or the endpoint URLs.*
+Most providers publish a discovery document at `+https://<idp-host>/.well-known/openid-configuration+`, and Couchbase Server can read everything it needs from there.
+Otherwise you supply the authorization and token endpoint URLs yourself.
+
+[IMPORTANT]
+====
+Single sign-on requires a client secret, and Couchbase Server refuses to store a secret unless configuration encryption at rest is enabled and node-to-node encryption is enabled on every node.
+See xref:manage:manage-security/configure-jwt-issuer.adoc#store-secrets-without-encryption[Store Secrets Without Encryption] if you need to work around that.
+====
+
+=== Base Redirect URIs
+
+A base redirect URI must be just a scheme and a host, optionally with a port --- for example `https://console.example.com:18091`.
+Couchbase Server rejects anything with a path (other than `/`), a query string, a fragment, a username, or a wildcard.
+
+List one base URI for each address users reach the console on.
+
+== Configure Single Sign-On with the Web Console
+
+. In the navigation bar, click *Security*.
+. In the sub-navigation bar, click *JWT*.
+. Click the name of the issuer you want to add single sign-on to.
+. Enter a *Display Name* in *General Settings* if the issuer does not already have one.
+This becomes the button text on the sign-in page, so make it something users will recognise.
+It is required for single sign-on.
+. Expand *OIDC / OAuth2 Login Integration* and turn on *Enable OIDC / OAuth2 Login Integration*.
+. Enter the *Client Id* and client secret from your identity provider.
+. Set the endpoint source:
++
+--
+* *Discovery* --- enter the *OIDC Discovery URI*.
+Couchbase Server reads the endpoints, including the signing key location, from your IdP.
+* *Manual* --- enter the *Authorization Endpoint* and token endpoint yourself, and optionally an end session endpoint for signing out.
+--
+. Add one or more *Base Redirect URIs*.
+. Set *Scopes*, which must include `openid`.
+`profile` and `email` are common additions.
+. Click *Save Issuer*, then click *Save* on the *JWT* page.
+
+Check the sign-in page: the *Sign In Using SSO* button should now appear.
+
+== Configure Single Sign-On with the REST API
+
+Add an `oidcSettings` object to the issuer, and give the issuer a `displayName`:
+
+----
+include::rest-api:example$put-jwt-oidc.sh[]
+----
+
+For every parameter, see xref:rest-api:rest-configure-jwt.adoc#oidc-settings[OIDC Settings] in the REST API reference.
+
+NOTE: When you use discovery, leave `jwksUri` out.
+Couchbase Server gets the signing key location from the discovery document, and rejects a configuration that supplies both.
+
+== Security Settings Worth Keeping
+
+Couchbase Server turns on two protections by default.
+Leave them on unless your identity provider cannot support them.
+
+* *PKCE* (`pkceEnabled`) stops an intercepted authorization code from being exchanged for a token by anyone else.
+* *Nonce validation* (`nonceValidation`) stops a token from being replayed.
+
+Couchbase Server also uses _pushed authorization requests_ (PAR) when your IdP supports them, which keeps request details off the browser's address bar.
+If your provider advertises PAR but does not handle it correctly, set `disablePushedAuthorizationRequests` to `true`, or select *Disable Pushed Authorization Requests* in the Web Console.
+
+== Session Lifetime and Load Balancers
+
+A console session created through single sign-on lasts as long as the ID token the identity provider issued.
+Couchbase Server does not refresh it, so when that token expires the user is signed out and has to sign in again.
+If sessions are ending sooner or later than you want, change the ID token lifetime at the identity provider.
+
+If your cluster sits behind a load balancer, the identity provider's callback has to come back to the *same node* that started the sign-in.
+Enable sticky sessions on the load balancer, or sign-ins will fail intermittently.
+
+== Signing Users Out
+
+To have Couchbase Server sign a user out of the identity provider as well as the console, configure an end session endpoint.
+With discovery, Couchbase Server finds it automatically.
+Without discovery, supply `endSessionEndpoint`.
+
+You can also list `postLogoutRedirectUris` to control where the IdP sends users after they sign out.
+
+== Next Steps
+
+* xref:manage:manage-security/authenticate-using-jwt.adoc[Authenticate Using a JWT]
+* xref:manage:manage-security/troubleshoot-jwt.adoc[Troubleshoot JWT Authentication]

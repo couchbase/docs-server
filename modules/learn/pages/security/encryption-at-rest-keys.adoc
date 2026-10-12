@@ -1,0 +1,150 @@
+= Encryption-at-Rest Keys 
+:description: To encrypt data at rest, you must create at least 1 encryption key. Couchbase Server uses the keys you create to encrypt data encryption keys.
+:page-toclevels: 2
+:page-edition: Enterprise Edition
+
+It then uses those data encryption keys to encrypt data on disk.
+This two-tier system lets Couchbase Server manage the rotation and expiration of the DEKs, even when another system manages the encryption keys.
+
+You have 2 primary choices to make when creating an encryption key:
+
+* The system you want to manage the key.
+You can have Couchbase Server manage encryption keys or have a third-party Key Management Service (KMS) manage them.
+For more information, see xref:learn:security/encryption-key-management-services.adoc[Encryption Key Management Services].
+
+* The data that Couchbase Server can use the encryption key to encrypt.
+You can restrict the key to encrypting 1 or more types of data:
+
+** *Other encryption keys:* You can enable an encryption-at-rest key to be a Key Encryption Key (KEK) for other encryption-at-rest keys.
+KEKs are useful when you want to use multiple layers of encryption keys.
+For example, you can use a KEK managed by a third-party KMS as a primary encryption key that encrypts encryption-at-rest keys managed by Couchbase Server.
+
+** *Buckets:* You can enable a key to encrypt all buckets or restrict it to specific buckets.
+
+** *Configuration:* By default, Couchbase Server uses the master password to encrypt configuration data.
+You can choose to use an encryption-at-rest key instead.
+
+** *Logs:* You can choose to use an encryption-at-rest key to encrypt logs.
+You can also use the master password instead.
+
+** *Audits:* As with configuration and log data, you can choose to use an encryption-at-rest key or the master password to encrypt audit data.
+
+** *Other:* You can enable a key to encrypt service-generated data, such as Query Service temporary spill files.
+ For more information, see xref:learn:security/service-specific-details.adoc[Service Specific Details].
+
+[#two-tier-encryption-model]
+== Two-Tier Encryption Model (KEK to DEK)
+
+Couchbase Server uses a two-tier key hierarchy to encrypt data at rest:
+
+=== Key Encryption Keys (KEKs)
+You create and manage KEKs through the Couchbase Server REST API or UI.
+A KEK encrypts and decrypts 1 or more Data Encryption Keys.
+You can store a KEK locally (managed by Couchbase Server) or in an external KMS such as AWS KMS, Azure Key Vault, GCP KMS, HashiCorp Vault, or a KMIP-compatible server.
+
+For more information, see xref:learn:security/encryption-key-management-services.adoc[Encryption Key Management Services].
+
+=== Data Encryption Keys (DEKs)
+Couchbase Server generates and manages DEKs automatically on each node.
+A DEK encrypts the actual data written to disk.
+Each node maintains separate DEKs for each encryption data type (buckets, configuration, logs, audit, and other).
+
+For more information, see xref:learn:security/per-node-per-bucket.adoc[Per-Node and Per-Bucket Encryption Principles]
+
+This design provides the following benefits:
+
+Reduced external KMS calls::
+Couchbase Server only contacts the external KMS to decrypt KEKs.
+After decryption, it uses the KEKs locally to encrypt and decrypt DEKs.
+This reduces latency and avoids an availability dependency on the external KMS during normal operations.
+
+Independent key rotation::
+You can rotate KEKs and DEKs independently.
+Couchbase Server automatically rotates DEKs at a configurable interval without contacting the external KMS for each rotation.
+ For more information, see xref:learn:security/encryption-key-rotation-expiration.adoc[Encryption Key Rotation and Expiration].
+
+Granular data isolation::
+You can assign different KEKs to different data types.
+For example, you can use 1 KEK for bucket data and a different KEK for configuration data.
+In multi-tenant configurations, each tenant's bucket can use its own KEK.
+ <<using-multiple-kmss-and-multiple-keys>> for more information.
+
+IMPORTANT: Use an external KMS key only as a KEK for locally managed keys.
+Do not assign an external KMS key directly to encrypt data.
+Doing so causes Couchbase Server to call the external KMS for every DEK decryption, which increases latency and creates an availability dependency.
+ For more information, see xref:learn:/security/encryption-key-management-services.adoc#remote-kms-best-practice[Remote KMS Best Practice].
+
+== Encrypting Bucket Data
+
+When using native encryption at rest to encrypt data in buckets, you choose which buckets to encrypt.
+For example, you can decide to just encrypt buckets containing sensitive data such as customer information.
+Then you would leave less-sensitive data unencrypted, such as product catalog data.
+Encrypting just sensitive data can help reduce the overhead of encrypting and decrypting data on your cluster.
+
+Each bucket can have its own encryption key.
+This configuration is useful in multi-tenancy configurations where each customer may want to manage their own encryption key.
+For more information, see  For more information, see <<bucket-encryption-data-type>>.
+
+== Encrypting Audit, Logs, and Configuration Data
+
+In addition to data, you can encrypt audit, logs, and most configuration data. 
+You enable the encryption of each of these types of data separately.
+You can use either an encryption-at-rest key or the master password to encrypt data.
+
+== Encrypting Configuration Data
+
+Configuration data includes cluster topology, security settings, passwords, certificates, and service configuration files.
+
+By default, Couchbase Server uses the master password to encrypt configuration data.
+Couchbase Server does not set the master password by default.
+You must set it on each node in the cluster.
+For more information, see xref:manage:manage-security/manage-system-secrets.adoc#setting-the-master-password[Setting the Master Password].
+
+IMPORTANT: You may notice that Couchbase Server reports that the configuration data as partially encrypted using the master password, even if you have not set it.
+When you first create the Couchbase Cluster, the master password is set to the empty string (`""`).
+Couchbase Server uses this empty password to encrypt the configuration data.
+Because the password is known, the encryption does not provide any security.
+Be sure to set the master password on each node in the cluster to make sure that the configuration data is encrypted with a secure password.
+You can also assign an encryption-at-rest key to encrypt configuration data instead of the master password.
+
+[NOTE]
+====
+* Some configuration data cannot be encrypted.
+This includes:
+
+** Bootstrap information.
+** Node and internal client certificates.
+** Prometheus configuration, metric data, and tokens used to gather metrics.
+
+* Logs of some services are not encrypted by NS Server.
+For example, Analytics log files such as `analytics_debug.log` and `analytics_periodic_dump.log` remain unencrypted even when encryption-at-rest for logs is enabled.
+====
+
+==== Log Data
+
+When you enable log encryption, Couchbase Server encrypts all new log entries it writes to disk.
+Now, this also includes service-specific log artifacts:
+
+Server log files::
+Standard Couchbase Server log files.
+
+First Failure Data Capture (FFDC) files:: 
+Diagnostic files that contain sensitive information, including xref:n1ql-rest-admin:index.adoc#Requests[completed and active requests] data and xref:n1ql-rest-admin:index.adoc#Vitals[Vitals] information.
+Only FFDC files that contain sensitive data are encrypted.
+
+Archive request files::
+Files that persist completed query requests when xref:n1ql:n1ql-manage/monitoring-n1ql-query.adoc#sys-history[streaming of completed requests] is enabled.
+
+Index Service statistics logs::
+The `indexer_stats.log` and `projector_stats.log` files.
+
+==== Audit Data
+
+Audit data includes the audit event files that Couchbase Server generates.
+You can assign an encryption-at-rest key or use the master password to encrypt audit data.
+
+== See Also 
+
+* xref:encryption-overview.adoc[]
+* xref:encryption-key-management-services.adoc[]
+* xref:encryption-key-rotation-expiration.adoc[]

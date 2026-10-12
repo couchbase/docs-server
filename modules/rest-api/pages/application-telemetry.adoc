@@ -9,10 +9,40 @@
 == Description
 
 Having Couchbase Server collect telemetry from your applications can help you troubleshoot client issues.
-This telemetry data is useful to diagnose issues such as poor performance or timeouts.
+This visibility into metrics data from the application's point of view is useful to diagnose issues such as poor performance or timeouts.
 
-When you enable application telemetry, Couchbase Server advertises to SDK clients that it can collect telemetry data.
-When an SDK client connects to a cluster with application telemetry enabled, it opens a WebSocket connection to a node in the cluster.
+[mermaid]
+.Telemetry Architecture
+----
+flowchart LR
+Client@{shape:rectange, label: "SDK Client"}
+
+subgraph Node1 [Couchbase Node]
+    direction LR
+    Server1@{shape:rectangle, label: "Couchbase Server Cluster Manager"}
+    Prometheus1@{shape:rectangle, label: "Prometheus"}
+    Server1 -----> Prometheus1
+end
+
+subgraph Node2 [Couchbase Node]
+    direction LR
+    Server2@{shape:rectangle, label: "Couchbase Server Cluster Manager"}
+    Prometheus2@{shape:rectangle, label: "Prometheus"}
+    Server2 --> Prometheus2
+
+end
+
+Client --> Node1
+Client --> Node2
+Client -. websocket .-> Server2
+Server2 -. metrics forwarding .-> Server1
+
+----
+
+
+When you enable application telemetry, Couchbase Server advertises to SDK clients that it can collect telemetry data. 
+When an SDK client connects to a cluster with application telemetry enabled, it opens a WebSocket connection to a node in the cluster. +
+The clients send metrics to any node in the cluster — the cluster forwards the metrics on to other nodes. +
 Couchbase Server uses this connection to periodically gather telemetry data from the client in Prometheus format.
 
 NOTE: Application telemetry is off by default in Couchbase Server 8.0.
@@ -33,7 +63,6 @@ You cannot enable application telemetry if your cluster is running in mixed mode
 
 * Your applications must use a recent SDK version that supports application telemetry.
 The following table lists the SDKs that support application telemetry along with the version where they added support.
-
 +
 |===
 | SDK | Minimum Version with Application Telemetry Support
@@ -72,6 +101,41 @@ The following table lists the SDKs that support application telemetry along with
 * Your clients must be able to connect to the node's management port to create the WebSocket connection for telemetry data collection.
 The default management port is 8091 for unencrypted connections and 18091 for encrypted connections.
 Make sure any firewall rules between your clients and the nodes allow traffic on the management port.
+
+[IMPORTANT]
+.Enabling telemetry
+====
+
+Telemetry is turned off by default on Couchbase Server.
+
+Use the following `curl` command to view the telemetry state on your server:
+
+[source, bash]
+----
+curl -u Administrator:password -X GET http://localhost:8091/settings/appTelemetry | jq
+----
+
+This returns a JSON object that contains the telemetry state as `true` or `false`.
+
+[source, json]
+----
+{
+  "enabled": false,
+  "maxScrapeClientsPerNode": 1024,
+  "scrapeIntervalSeconds": 60
+}
+----
+
+Execute the following `curl` command to enable telemetry on your cluster.
+
+[source, bash, subs="+quotes"]
+----
+curl -u Administrator:password -X POST \
+http://localhoast:8091/settings/appTelemetry \
+-d enabled=true 
+----
+
+====
 
 == HTTP Methods 
 
@@ -228,7 +292,7 @@ The default value is `60`.
 
 +
 You can increase this value to reduce the overhead of collecting telemetry data on your nodes.
-However, increasing this value means Couchbase Server will miss collecting more telemetry data from clients before they disconnect.
+However, increasing this value means Couchbase Server misses collecting more telemetry data from clients before they disconnect.
 For example, suppose you set this value to `300`.
 Then Couchbase Server could lose up to 5 minutes of telemetry data from a client that disconnects just before the next scheduled telemetry collection.
 
@@ -251,7 +315,7 @@ This object has the same format as the <<#get-status-responses,response from the
 
 `400 Bad Request`::
 Returned if you attempt to enable application telemetry on a cluster that's running in mixed mode where some nodes are running a version earlier than 8.0. 
-All of the nodes in the cluster must be running version 8.0 or later to enable application telemetry.
+All the nodes in the cluster must be running version 8.0 or later to enable application telemetry.
 See <<prerequisites>> for more requirements.
 
 `403 Forbidden`::
@@ -259,7 +323,7 @@ Returned if you do not have the proper roles to call this API.
 See <<#config-privs>> for a list of the required roles.
 
 `404 Not Found`::
-Returned if you attempt to call the endpoint on a running a version of Couchbase Server earlier than 8.0. 
+Returned if you attempt to call the endpoint on a version of Couchbase Server earlier than 8.0. 
 
 [#config-examples]
 === Examples

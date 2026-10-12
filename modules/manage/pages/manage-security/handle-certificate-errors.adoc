@@ -98,3 +98,104 @@ See xref:manage:manage-security/configure-server-certificates.adoc[Configure Ser
 | Recreate the node certificate, specifying the the correct IP-address Subject Alternative Name.
 See xref:manage:manage-security/configure-server-certificates.adoc[Configure Server Certificates].
 |===
+
+[#certificate-revocation-errors]
+== Certificate Revocation Errors
+
+The following error messages may be encountered when configuring certificate revocation.
+For an overview, see xref:learn:security/certificate-revocation.adoc[Certificate Revocation].
+
+|===
+| Couchbase Error Message | Description | Suggested User Action
+
+| `CRL feature not yet enabled in this cluster`
+| Not all nodes run 8.5.
+| Complete the upgrade.
+
+| `This http API endpoint requires enterprise edition`
+| Community Edition.
+| Revocation checking requires Enterprise Edition.
+
+| `Revocation checking of node-to-node traffic requires a revocation list for the cluster's own CA, ...`
+| The OOTB CA was created by an older version and cannot sign CRLs.
+| Regenerate the OOTB CA (see xref:manage:manage-security/manage-certificate-revocation.adoc#requirements[Requirements]), then retry.
+
+| `CRL validation failed: Entry issued by '<issuer>': CRL issuer not trusted`
+| The CA that signed the CRL is not in the trust store.
+| Load that CA (for an intermediate CA, load the intermediate certificate) with xref:rest-api:load-trusted-cas.adoc[Load Root Certificates], then upload again.
+
+| `CRL validation failed: Entry issued by '<issuer>': CRL expired`
+| The CRL's `nextUpdate` has passed.
+| Get a current CRL from the CA.
+
+| `CRL validation failed: Entry issued by '<issuer>': CRL not yet valid`
+| The CRL's `thisUpdate` is in the future.
+| Check the node's clock (NTP), or wait.
+
+| `CRL validation failed: Entry issued by '<issuer>': unrecognized critical extension <OID>`
+| The CRL uses a critical extension Couchbase Server does not support.
+| Ask your PKI team for a CRL without that extension.
+
+| `Failed to decode CRL: Invalid CRL`
+| The file is not a CRL, or is corrupt.
+| Check it with `openssl crl -in <file> -noout -text` (add `-inform DER` for DER files).
+
+| `Content-Type must be multipart/form-data`
+| The file was not sent as a form upload.
+| Use `curl -F "file=@<file>"`.
+
+| `Invalid filename: ...`
+| The file name contains characters that are not allowed.
+| Rename the file using only letters, digits, `.`, `-` and `_`.
+
+| `CRL file not found`
+| Deleting a name that is not uploaded.
+| Check the name with `GET /settings/crl/files`.
+
+| `Operation temporarily cannot be performed possibly due to loss of quorum`
+| Nodes cannot reach each other.
+| If revocation caused it, see xref:manage:manage-security/manage-certificate-revocation.adoc#recovery[Recovery: Nodes Cannot Communicate Because of Revocation].
+|===
+
+[#certificate-revocation-symptoms]
+== Certificate Revocation Symptoms
+
+|===
+| Symptom | Likely Cause | What to Do
+
+| A client with a valid-looking certificate can no longer connect, and gets a TLS alert such as `certificate revoked` or `bad certificate`
+| The certificate is revoked, or `clientAuth` is `Require` and its issuer has no current CRL.
+| Test the certificate with xref:manage:manage-security/manage-certificate-revocation.adoc#test-certificates-against-the-loaded-crls[Test Certificates Against the Loaded CRLs].
+The `details` field explains why.
+
+| A revoked certificate still works
+| The connection was already open; XDCR is used; the policy for that scope is `Disabled`; client-certificate authentication is off; or the CRL is not loaded on the node the client connects to.
+| Check the policy (xref:manage:manage-security/manage-certificate-revocation.adoc#view-the-current-revocation-settings[View the Current Revocation Settings]) and the status on that node (xref:manage:manage-security/manage-certificate-revocation.adoc#check-the-status-of-loaded-crls[Check the Status of Loaded CRLs]).
+Reconnect the client.
+
+| An uploaded CRL shows `notYetSynced` on some nodes
+| Copying is still in progress, or that node cannot reach the others.
+| Wait a minute.
+If it persists, check node connectivity and the CRL file sync log message.
+
+| `untrusted` status and the `crl_unusable` alert
+| The CRL's CA was removed from the trust store, or the CA was rotated.
+| Load the CA again, or load a CRL signed by the new CA.
+
+| `expired` status and connections refused under `Require`
+| The CRL was not renewed.
+| Load a current CRL (xref:manage:manage-security/manage-certificate-revocation.adoc#renew-crls[Renew CRLs]).
+Automate renewal with a URL (xref:manage:manage-security/manage-certificate-revocation.adoc#download-crls-from-urls[Download CRLs from URLs]).
+
+| A URL source always shows `failed` with `HTTP Request failed: ...`
+| The URL is unreachable from that node.
+| Check the URL, and the firewall and proxy settings on every node.
+
+| `pollDirectory` shows `unreadable`
+| Permissions.
+| Make the directory readable by the `couchbase` user.
+
+| Nodes stop communicating after enabling `nodeToNode: Require`
+| Missing or expired CRL for the node certificates.
+| Follow xref:manage:manage-security/manage-certificate-revocation.adoc#recovery[Recovery: Nodes Cannot Communicate Because of Revocation].
+|===

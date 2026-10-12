@@ -29,6 +29,8 @@ curl -v -X POST -u [admin]:[password]
   -d toCluster=[cluster-name]
   -d toBucket=[bucket-name]
   -d conflictLogging=[JSON-Document]
+  -d cLogPauseReplThreshold=[Integer]
+  -d cLogMonitorDuration=[Integer]
   -d collectionsExplicitMapping=[true | false]
   -d collectionsMigrationMode=[true | false]
   -d colMappingRules=[JSON-Document]
@@ -38,7 +40,9 @@ curl -v -X POST -u [admin]:[password]
   -d desiredLatency=[Integer]
   -d filterExpression=[Expression]
   -d filterDeletion=[true | false]
+  -d filterDeletionsWithExpression=[true | false]
   -d filterExpiration=[true | false]
+  -d filterExpirationsWithExpression=[true | false]
   -d filterBypassExpiry=[true | false]
   -d filterSkipRestream=[true | false]
   -d filterBinary=[true | false]
@@ -54,6 +58,7 @@ curl -v -X POST -u [admin]:[password]
   -d logLevel=[String]
   -d networkUsageLimit=[Integer]
   -d mobile=[Off | Active]
+  -d forwardLocalOnly=[true | false]
 ----
 
 The `type` value must be `xmem`; which is sometimes referred to as *Version 2*, and corresponds to the _Memcached Binary_ protocol, used in XDCR communications.
@@ -67,6 +72,16 @@ For configuration information and examples, see xref:learn:clusters-and-availabi
 NOTE: To configure and enable Conflict Logging, you must enable the bucket property `enableCrossClusterVersioning` on all buckets of the XDCR topology.
 This bucket property cannot be disabled after it is enabled.
 For information about the bucket property `enableCrossClusterVersioning`, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
+
+The `replicationType` value is always `continuous`.
+This value must be specified.
+
+The `conflictLogging` setting is used to configure and enable or disable logging conflicts for the replication.
+For configuration information and examples, see xref:learn:clusters-and-availability/xdcr-conflict-logging.adoc[Enabling and Configuring Conflict Logging].
+
+To configure and enable Conflict Logging, you must enable the bucket property `enableCrossClusterVersioning` on all buckets of the XDCR topology.
+This bucket property cannot be disabled after it is enabled.
+For information about the bucket property `enableCrossClusterVersioning`, see xref:rest-api:rest-bucket-create.adoc#xdcr-enablecrossclusterversioning[XDCR enableCrossClusterVersioning].
 
 If the optional parameters `collectionsExplicitMapping`, `colMappingRules`, and `collectionsMigrationMode` are all _unspecified_, replication occurs between the specified `fromBucket` and `toBucket` according to whatever _implicit mappings_ can be determined at bucket-level: that is, if a collection in the source bucket has the same _keyspace_ as a collection in the target bucket (i.e., the name of a collection and the name of the scope within which it is located form the identical _scope-name.collection-name_ pattern, on both source and target), data is replicated between those collections; with the optional application of a filter expression.
 At a minimum, this ensures that data is replicated between the default collections.
@@ -102,6 +117,16 @@ The `filterDeletion` and `filterExpiration` flags indicate whether mutations cor
 For each flag, a value of `true` means that the mutation _is_ filtered out, ensuring that it is _not_ replicated to the target cluster; while a value of `false` (the default) means that the mutation is _not_ filtered out, ensuring that it _is_ replicated to the target cluster.
 The default value for both flags is `false`.
 
+The `filterDeletionsWithExpression` and `filterExpirationsWithExpression` flags specify whether document deletions and expirations should be selectively filtered based on the replication's `filterExpression`:
+
+* `filterDeletionsWithExpression`: When `true`, document deletion mutations (tombstones) are evaluated against `filterExpression` and replicated only if the document key matches the expression.
+Requires `filterDeletion=true` and a `filterExpression` that references only the document ID (`META().id`).
+Default is `false`.
+
+* `filterExpirationsWithExpression`: When `true`, document expiration mutations are evaluated against `filterExpression` and replicated only if the document key matches the expression.
+Requires `filterExpiration=true` and a `filterExpression` that references only the document ID (`META().id`).
+Default is `false`.
+
 The `filterBypassExpiry` flag indicates whether a document's TTL should be replicated with the document or not.
 A value of `true` means that the TTL is removed from the document.
 The default value is `false`.
@@ -135,6 +160,14 @@ Use the `mobile=[Off | Active]` flag to enable the setting _XDCR Active-Active w
 
 [NOTE]
 To enable the setting `mobile=[Off | Active]`, ensure you have enabled the property `enableCrossClusterVersioning` on all the participating buckets, which is a prerequisite. For information about the bucket property `enableCrossClusterVersioning`, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
+
+Use the `forwardLocalOnly=[true | false]` flag to replicate only mutations that originated on the source bucket, and not forward mutations that arrived at the source bucket through replication from another cluster.
+The default value is `false`.
+
+Set this flag to `true` only in a full-mesh, Active-Active topology in which every replication uses identical filter settings; in any other topology, it can cause data loss.
+This flag requires `enableCrossClusterVersioning` to be enabled for all buckets in the replication topology, and is not supported for topologies with mobile buckets (buckets linked to Sync Gateway or App Services).
+
+For all prerequisites and restrictions, see xref:learn:clusters-and-availability/xdcr-forward-local-only.adoc[].
 
 For information on all other flags, see xref:rest-api:rest-xdcr-adv-settings.adoc[Managing Advanced XDCR Settings].
 
@@ -247,6 +280,29 @@ If the command is successful, output containing the id of the replication is dis
 
 ----
 {"id":"ac41764b9e261725e874dbd34c7eda6b/beer-sample/beerSampleByLocation"}
+----
+
+=== Auto-Pause on Conflict Rate
+
+The following example creates a continuous replication from `travel-sample` to `ts` on remote cluster 10.144.210.102.
+XDCR pauses the replication if any source node records 100 or more conflicts within 60 seconds:
+
+----
+curl -v -X POST -u Administrator:password \ 
+http://localhost:8091/controller/createReplication \
+-d replicationType=continuous \
+-d fromBucket=travel-sample \
+-d toCluster=10.144.210.102 \
+-d toBucket=ts \
+-d cLogPauseReplThreshold=100 \
+-d cLogMonitorDuration=60 \
+-d conflictLogging='{ "disabled": false, "bucket": "conflictlogs", "collection": "travel-sample.defaultlogs" }'
+----
+
+If the command succeeds, it returns a replication ID:
+
+----
+{"id":"ac41764b9e261725e874dbd34c7eda6b/travel-sample/ts"}
 ----
 
 [#see-also]

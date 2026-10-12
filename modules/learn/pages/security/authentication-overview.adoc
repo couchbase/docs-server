@@ -1,111 +1,122 @@
 = Understanding Authentication
 :description: pass:q[To access Couchbase Server, users must be authenticated. \
 _Authentication_ is a process for identifying who is attempting to access a system.]
+:page-toclevels: 2
 
 [abstract]
 {description}
-Subsequent to successful authentication, _authorization_ can be performed, whereby the user's appropriate access-level is determined.
+Once a user is authenticated, _authorization_ decides what they are allowed to do.
 
-== Authentication for Administrators
+== What Authentication Protects
 
-Administrators log into Couchbase Server Web Console either by providing their username and password to the administrative UI, or by selecting the _Single Sign-On_ option, at `https://hostname:18091`.
+Every way into Couchbase Server requires authentication:
 
-Optionally, the _unencrypted_ port, 8091 can be used: specified as `http://hostname:8091`.
-Note this is _not_ recommended, as username and password are passed in the clear, from the browser to the console.
+* The *Web Console*, where administrators inspect and change the cluster.
+* The *REST API*, used for configuration and management.
+* The *CLI* tools, such as `couchbase-cli`.
+* *Client connections* from applications built with the Couchbase SDKs.
 
-The best practice for administrator-authentication is to use _single sign-on_, with a provider that is configured to require _Multi-Factor Authentication_ (MFA).
-For more information about securing the network with encryption, see xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
-For more information about single sign-on, see xref:learn:security/authentication-domains.adoc#saml-authentication[SAML Authentication].
+Not every authentication method covers all four.
+See <<comparison,Compare Authentication Methods>>.
 
-== Authentication for Applications
+Always connect over TLS.
+The encrypted Web Console port is 18091; the unencrypted port, 8091, passes credentials in the clear from the browser to the console and is not recommended.
+See xref:learn:security/on-the-wire-security.adoc[On-the-Wire Security].
 
-The recommended method for application-authentication when connecting to Couchbase Server is to use x.509 _certificate-based_ authentication.
-This ensures that only approved users, machines, or endpoints are authenticated, and provides what is known as _mutual authentication_.
+== Available Methods
 
-Mutual-TLS (mTLS) certificate-based authentication relies on a _Certificate Authority_ (CA) to validate identities and issue certificates.
-When using this method, no sensitive credentials are shared over the network; and all communication between application and server is performed over an _encrypted channel_, to prevent eavesdropping and impersonation.
+Couchbase Server groups authentication methods into two kinds.
 
-For a complete overview of Couchbase Server’s certificate-handling mechanisms, see xref:learn:security/certificates.adoc[Certificates].
-For practical steps required to set up client and server certificates, see xref:manage:manage-security/manage-certificates.adoc[Manage Certificates].
+*xref:learn:security/native-authentication.adoc[Native authentication]* is built into Couchbase Server, which stores the credentials itself:
 
-[#authentication-with-username-and-password]
-=== Authentication with Username and Password
+* Usernames and passwords
+* X.509 client certificates
 
-In cases where x.509 certificate-based authentication cannot be used, a _username and password_ combination must be provided in the application, to authenticate to Couchbase Server.
-When an application authenticates to the Data Service, one of four mechanisms provided by the Simple Authentication and Security Layer (SASL) framework are used.
-All other Couchbase services use _HTTP Basic Authentication_.
+*xref:learn:security/external-authentication.adoc[External authentication]* hands the check to a system you already run:
 
-It is strongly recommended to always deploy TLS network encryption and use the defined TLS ports when connecting an application to Couchbase Server.
+* PAM, using the Linux host's own accounts
+* LDAP, including Microsoft Active Directory
+* SAML, for Web Console single sign-on
+* JWT, using signed tokens from an identity provider
 
-[#data-service-username-password-authentication]
-==== Data-Service Authentication with Username and Password
+[#comparison]
+== Compare Authentication Methods
 
-During initial client-server negotiation with the Data Service, when utilizing TLS network encryption, the SASL PLAIN method is always used, with the credentials being secured inside the encrypted network connection.
-For cases where TLS network-encryption is not in use, the strongest authentication protocol supported by both Couchbase Server and the client application is selected for authentication. This is either PLAIN or one of the revisions of SCRAM-SHA challenge-response mechanisms for authenticating.  In ascending order of strength, the Couchbase password-authentication mechanisms are as follows:
+[cols="2,1,1,1,3"]
+|===
+| Method | Web Console | Clients | REST API and CLI | Notes
 
-* PLAIN: The client sends the password in plaintext-form.
+| Native usernames and passwords
+| Yes
+| Yes
+| Yes
+| Always available.
+The first Administrator account always uses this method.
 
-* SCRAM-SHA1:   160-bit credential.
+| X.509 client certificates
+| Yes
+| Yes
+| Yes
+| Mutual TLS.
+No password crosses the network.
+Web Console sign-in requires a TLS connection and client certificate authentication to be enabled.
 
-* SCRAM-SHA256: 256-bit credential.
+| PAM
+| Yes
+| Not documented
+| Yes
+| Linux only, and documented for administrator accounts.
+[.edition]#{enterprise}#
 
-* SCRAM-SHA512:  512-bit credential.
+| LDAP
+| Yes
+| Yes
+| Yes
+| Can also supply the user's groups.
+[.edition]#{enterprise}#
 
-Instead of the client sending the password directly to Couchbase Server, SCRAM uses a challenge-response mechanism, to exchange derived cryptographic credentials using a combination of PBKDF2, HMAC and SHA, so that the application-credential is not exposed to eavesdroppers on the network.
-Note that other communication-data, including queries and database-values, are _not_ encrypted with the SCRAM mechanism: therefore, the SCRAM mechanism should only be used where TLS network-encryption is not an option.
+| SAML
+| Yes
+| No
+| No
+| Web Console single sign-on only.
+[.edition]#{enterprise}#
 
-[#other-service-username-password-authentication]
-==== Authenticating with Other Services, with Username and Password
+| JWT
+| Yes
+| Yes
+| Yes
+| Can also supply the user's groups and roles, when just-in-time provisioning is enabled.
+Web Console sign-in requires OIDC to be configured.
+[.edition]#{enterprise}#
+|===
 
-Application-authentication for all services other than the Data Service uses the HTTP Basic Authentication mechanism, with username and password.
-In consequence, it is essential that TLS network encryption _always_ be deployed, so as to avoid credentials being sent over the network insecurely.
+== Choosing an Authentication Method
 
-[#secure-credential-storage]
-== Secure Credential Storage
+*Prefer an external method.*
+LDAP and JWT both cover the Web Console, clients, the CLI, and the REST API, so one system can serve your whole cluster.
+They give you a single place to grant and revoke access, one password policy across every application, and features Couchbase Server does not provide itself &#8212; multi-factor authentication, self-service password reset, and single sign-on.
+That last point matters most in environments where Couchbase Server is one of several applications your users reach.
 
-Locally managed user-account credentials are stored in Couchbase Server using both the _Argon2ID_ and _PBKDF2_ algorithms.
+Revocation works differently under JWT, though.
+Removing a user at the identity provider stops it issuing new tokens, but tokens it has already issued remain valid until they expire.
+There is no way to cancel a token that is already in circulation, so choose token lifetimes with that in mind.
 
-_Argon2ID_ is a state of the art password hashing function, designed to be resistant to various password-cracking attacks: including both time-memory trade-off attacks, and side-channel attacks.
-_PBKDF2_ is another powerful password hashing function; and is required to allow SCRAM-SHA capabilities.
-By default, the PBKDF2 credentials are stored with 5,000 iterations: this can be configured with the `POST settings/security/scramShaIterations` REST API method and URI, with a higher specified number increasing the security of the credentials, with the trade-off of higher resource requirements when authentication is performed.
-Following guidance from NIST, it is recommended to disable SCRAM-SHA1 unless it is absolutely required.
+*Use the special-purpose methods where they fit.*
+X.509 client certificates are an excellent choice for applications: they are mutually authenticated, and no credential travels over the network.
+SAML is a good choice for Web Console sign-in if you already run a SAML identity provider, though it cannot authenticate applications.
+You can combine methods &#8212; certificates for applications and single sign-on for administrators, for instance.
 
-include::learn:partial$argon2-overhead.adoc[]
+*If you stay with native usernames and passwords*, tighten them up:
 
-The various levels of SCRAM SHA can be disabled with `POST /settings/security/scramSha1Enabled`,
-`POST /settings/security/scramSha256Enabled` and
-`POST /settings/security/scramSha512Enabled`.
-For more information on the using the REST API to configure security settings, see xref:rest-api:rest-setting-security.adoc[Configure On-the-Wire Security].
+* Set a password policy that enforces length and complexity.
+See xref:learn:security/native-authentication.adoc#password-strength[Password Strength].
+* Issue temporary passwords to new users, so they must choose their own on first sign-in.
+See xref:manage:manage-security/manage-native-passwords.adoc#force-password-update[Force Password Update].
+* Store credentials with Argon2ID, and disable SCRAM-SHA where you use TLS.
+See xref:learn:security/native-authentication.adoc#secure-credential-storage[Secure Credential Storage].
 
-For cases that do not use SCRAM-SHA, such as those that implement TLS network encryption, it is recommended to _disable_ all variations of SCRAM-SHA; as this will prevent the SCRAM-SHA PBKDF2 hashes from being generated, when Argon2ID provides stronger security for those credentials.
-
-
-[#password-hash-migration]
-=== Automatic Password Hash Migration
-
-You can select which algorithm Couchbase Server uses to hash locally stored passwords by setting `passwordHashAlg` using the `/settings/security` REST API. 
-When you change the hash algorithm Couchbase Server uses, it does not update all of the stored passwords using the new algorithm.
-It cannot rehash the existing passwords as it does not have access to the original, unhashed password.
-Instead, existing passwords remain hashed using the previous hashing algorithm.
-Couchbase Server uses the newly-set hashing algorithm for passwords when you create new accounts or when an existing account changes its password. 
-Users can authenticate using passwords hashed with any hashing algorithm Couchbase Server supports.
-
-You can enable Couchbase Server's password hash migration feature that automatically rehashes user's password when they authenticate.
-Couchbase Server is able to hash the user's password with the currently enabled hashing algorithm because it has access to the unhashed password during authentication.
-This rehashing is transparent to users--they do not have to change their password to have it hashed with the more new hashing algorithm.
-
-You enable automatic password hash by calling the `/settings/security` endpoint to set the `allowHashMigrationDuringAuth` setting to `true`. 
-ifeval::['{page-component-version}' == '7.6'] 
-This setting has an effect only if the entire database cluster is running Couchbase Server 7.6 or later. 
-endif::[]
-See xref:rest-api:rest-setting-security.adoc[] for more information.
-
-ifeval::['{page-component-version}' == '7.6'] 
-NOTE: Versions of Couchbase Server prior to 7.6 defaulted to using SHA-1 hashing to store passwords for local accounts.
-This algorithm is obsolete and is no longer considered secure by security experts. 
-After upgrading to 7.6 or later, Couchbase Server defaults to using the Argon2id algorithm to hash newly created passwords for new users and users who change their password.
-Because Argon2id provides better security, you should enable `allowHashMigrationDuringAuth` to allow Couchbase Server to migrate passwords from SHA-1 to Argon2id.
-endif::[]
+For the practical steps for each method, see xref:manage:manage-security/manage-authentication.adoc[Manage Authentication].
 
 [#authorization]
 == Authorization
@@ -125,7 +136,9 @@ A Couchbase-Server _user-group_ is defined, and roles are assigned to the user-g
 The user is made a member of the user-group, and thereby inherits all the roles of the group.
 A user can be a member of any number of groups.
 
-Note that by means of _LDAP Group Support_, the roles assigned to a Couchbase-Server user-group can be inherited by users not defined on Couchbase Server; as described in xref:learn:security/authentication-domains.adoc[Authentication Domains].
+An external authentication provider can also supply a user's groups or roles.
+With LDAP group support, the roles assigned to a Couchbase-Server user-group can be inherited by users not defined on Couchbase Server, as described in xref:learn:security/authentication-domains.adoc[Authentication Domains].
+JWT can carry a user's roles and groups in the token itself, as described in xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token].
 
 See
 xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users, Groups, and Roles], for details on creating users and groups, and assigning roles.
@@ -133,12 +146,18 @@ xref:manage:manage-security/manage-users-and-roles.adoc[Manage Users, Groups, an
 [#authentication-domains]
 == Authentication Domains
 
-Couchbase Server assigns each user to one of two _authentication domains_; which are _local_ and _external_.
-The _local_ domain contains users defined locally, on Couchbase Server.
-The _external_ domain contains users defined externally on an LDAP server, a SAML IdP provider, or Linux systems that are accessed by means of _PAM_.
+Couchbase Server assigns each user to one of two _authentication domains_: _local_ and _external_.
+
+The _local_ domain contains users defined locally, on Couchbase Server, which stores their credentials.
+The _external_ domain contains users whose credentials live elsewhere &#8212; on an LDAP server, a SAML identity provider, a JWT identity provider, or Linux systems accessed by means of PAM.
+
 For a complete overview, see xref:learn:security/authentication-domains.adoc[Authentication Domains].
 
-In addition to a username and password requirement, 
+Some external methods can authenticate a user who has no Couchbase Server account at all.
+JWT calls this _just-in-time provisioning_: the token supplies the identity and the permissions, and Couchbase Server creates no account.
+See xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token].
+
+In addition to a username and password requirement,
 SAML can require _Two-Factor Authentication_ (TFA) such as a one-time code sent via text message or a code generated by an authentication module or app.
 SAML can also provide _Single Sign On_ (SSO), where a user that has already authenticated with another application is automatically authenticated to use.
 
