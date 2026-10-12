@@ -11,7 +11,9 @@ curl -v -X POST http://127.0.0.1:8091/settings/indexes \
 # end::gsi-settings[]
 
 # tag::disable-ftb-rebalance[]
-curl -X POST http://<host>:8091/settings/indexes -d enableShardAffinity=false -u Administrator:<password>
+curl -X POST http://<host>:8091/settings/indexes \
+-d enableShardAffinity=false \
+-u Administrator:<password>
 # end::disable-ftb-rebalance[]
 
 # tag::enable-scan-report[]
