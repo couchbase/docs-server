@@ -18,8 +18,8 @@ These release notes are subject to change before general availability (GA).
 
 *https://jira.issues.couchbase.com/browse/MB-61479/[MB-61479]*::
 
-_Release note text not yet provided by engineering._
-Alerting for reprovisioned ephemeral buckets.
+When an ephemeral bucket gets reprovisioned, this can reduce the number of replicas it has, requiring a rebalance to rebuild them.
+An alert is now triggered to let you know that you need to perform this rebalance.
 
 *https://jira.issues.couchbase.com/browse/MB-67213/[MB-67213]*::
 
@@ -62,13 +62,18 @@ This API supports a range of values between 1 and 64, although Couchbase does no
 The default list of TLS cipher suites accepted by the server has been restricted to only include `AES-256-GCM`, `AES-128-GCM`, and `CHACHA20-POLY1305`.
 This removes the use of SHA1 and the CBC mode for TLS.
 
+*https://jira.issues.couchbase.com/browse/MB-73874/[MB-73874]*::
+
+_Release note text not yet provided by engineering._
+Internal identity password check under mTLS.
+
 
 
 
 [#dlist-fixed-issues-850-data-service]
 === Data Service
 
-*https://jira.issues.couchbase.com/browse/MB-61385/[MB-61385]* (also published in the 7.6.12/7.6.13 release notes)::
+*https://jira.issues.couchbase.com/browse/MB-61385/[MB-61385]* (also published in the 7.6.12 release notes)::
 
 `SET` and `DELETE` with Meta operations could distort a vBucket's `max_cas` if a faulty CAS value was provided in the operation, inadvertently affecting the Hybrid Logical Clock (HLC) and Last-Write-Wins (LWW) conflict resolution via XDCR.
 In certain cases, this resulted in legitimate mutations being skipped or ignored during replication.
@@ -97,10 +102,12 @@ Fixed a rebalance hang observed during node scaling and swap rebalance operation
 
 The Data Service no longer explicitly sets the socket receive buffer size by default -- the behavior introduced in 7.6.12 and 8.0.2 -- and again relies on the operating system's socket buffer auto-tuning, with explicit buffer limits available through configuration where required.
 
-*https://jira.issues.couchbase.com/browse/MB-74199/[MB-74199]* (also approved for 7.6.13)::
+*https://jira.issues.couchbase.com/browse/MB-74199/[MB-74199]*::
 
-_Release note text not yet provided by engineering._
-DCP xattr-only mutations were sent with a stale Snappy datatype bit after `removeBody()` decompressed them, causing `gocbcore` to drop them as corrupt.
+Documents that were stored compressed and carried extended attributes (xattrs) could be streamed over DCP with an incorrect datatype.
+When a DCP connection requested a document's xattrs without its body, the server decompressed the document and discarded the body before sending, but the resulting mutation still advertised the Snappy datatype bit even though the payload on the wire was uncompressed.
+A DCP consumer that acted on the advertised datatype and attempted to decompress the payload could treat the mutation as corrupt and drop it, so the change was never delivered to the consumer.
+Affected releases are 7.6.0 through 7.6.12 and 8.0.0 through 8.0.3.
 
 
 
@@ -162,11 +169,6 @@ Vector indexes are now only considered sargable for ANN ordering when a `LIMIT` 
 _Release note text not yet provided by engineering._
 Queries returning fewer results than the requested `LIMIT k` for vector-only queries against a bhive index with default settings.
 
-*https://jira.issues.couchbase.com/browse/MB-67169/[MB-67169]*::
-
-_Release note text not yet provided by engineering._
-Added a GPU (CUDA/FAISS) build option for accelerating vector index builds.
-
 *https://jira.issues.couchbase.com/browse/MB-70968/[MB-70968]*::
 
 Deleted indexes present on shared files could leave some encrypted data on disk whose encryption keys were no longer tracked.
@@ -185,37 +187,50 @@ This resolves itself once the rebalance completes.
 
 *https://jira.issues.couchbase.com/browse/MB-55637/[MB-55637]*::
 
-_Release note text not yet provided by engineering._
-FTS storage could crash on disk-full conditions; this is now handled gracefully.
+Before this fix, the Search service exited with a fatal error if writing index data to disk failed, for example with no space left on device, making Search unavailable on that node.
+Now, errors while saving index data to disk (persisting) or while removing old index files (cleanup) are logged as errors and the Search service keeps running; other searches on the node keep working.
+Indexing on the affected index can't make progress until disk space is freed.
+Search still exits on internal panics and configuration-parsing errors.
 
 *https://jira.issues.couchbase.com/browse/MB-68681/[MB-68681]*::
 
-_Release note text not yet provided by engineering._
-Added a guardrail capping the maximum number of partitions (no greater than the number of vBuckets) per index, since the Search Service could crash when the partition count was set too high in a resource-constrained environment.
+When you create a Search index, the number of index partitions (`planParams.indexPartitions`) can no longer be higher than the number of vBuckets in the source bucket, since each index partition must cover at least one vBucket.
+A request that goes over this limit now fails with HTTP 400 and the message `rest_create_index: cannot create index with <N> partitions, source bucket '<bucket>' has <M> vbuckets`.
 
 *https://jira.issues.couchbase.com/browse/MB-69641/[MB-69641]* (also published in the 8.0.1 release notes)::
 
-_Release note text not yet provided by engineering._
-FTS vector search did not support multi-vector document retrieval.
+Before this fix, a vector (KNN) search returned the top K vectors rather than the top K documents.
+When one document held several vectors, such as an array of embeddings, the results depended on how the index was partitioned: a multi-partition index could return the same document several times, once for each matching vector, while a single-partition index returned the document once but with a score taken at random from one of its matching vectors.
+Search now returns the top K documents instead, each scored by its single best-matching vector and appearing at most once, with the same results however the index is partitioned.
+Queries against documents with multiple vectors may now return more distinct documents than before.
 
 *https://jira.issues.couchbase.com/browse/MB-69654/[MB-69654]* (also published in the 8.0.1 release notes)::
 
-_Release note text not yet provided by engineering._
-Unable to create a vector index mapping when a nested field name duplicated across other child mappings.
+An index having two fields at different levels, one a normal field mapping and the other a nested field mapping, but with the same name, were treated as the same entity, so creating the index failed if they needed different configurations.
+The Search engine now distinguishes between the two fields as separate entities, so each can be configured independently.
 
 *https://jira.issues.couchbase.com/browse/MB-69655/[MB-69655]* (also published in the 8.0.1 release notes)::
 
-_Release note text not yet provided by engineering._
-Nested vectors did not work correctly with cosine similarity.
+When indexing multiple vectors in the same field configured to use cosine similarity for scoring, a bug in the normalization function did not treat the multiple vectors in the field as independent entities.
+Normalization is now accurate, so scoring is sound and results are as expected.
 
 *https://jira.issues.couchbase.com/browse/MB-69751/[MB-69751]*::
 
-_Release note text not yet provided by engineering._
-Added a guardrail capping the number of collections a Search index can ingest data from.
+A Search index can source data from at most 100 collections by default.
+Creating or editing an index that names more than 100 source collections now fails with an error such as `number of source collections: 1000 exceeds limit: 100`.
+Existing indexes are not affected by an upgrade and keep working and rebalancing as before; the limit is checked only when an index is created or its definition is changed.
+Self-managed clusters can raise or lower the limit for the whole cluster through the Search service's `managerOptions` REST endpoint:
++
+[source,console]
+----
+$ curl -XPUT -H "Content-Type: application/json" -u <user>:<password> <http://<host>>:8094/api/managerOptions -d '{"collectionsLimitPerIndex": "1000"}'
+----
 
 *https://jira.issues.couchbase.com/browse/MB-70388/[MB-70388]* (also published in the 8.0.1 release notes)::
 
-Fixed an issue where `docvalues` were not set internally for `geopoint` fields, causing them to be computed on demand for every query.
+`docvalues` is a required field for `geopoint` fields.
+If it is not provided by the index, it is calculated on demand during query time, which affects query latency.
+Fixed an issue where `docvalues` was not set internally for `geopoint` fields.
 
 *https://jira.issues.couchbase.com/browse/MB-70770/[MB-70770]* (also published in the 8.0.3 release notes)::
 
@@ -236,8 +251,8 @@ Until all nodes in a cluster are upgraded, new replications and changes to the n
 
 *https://jira.issues.couchbase.com/browse/MB-70444/[MB-70444]*::
 
-_Release note text not yet provided by engineering._
-Enforcement of Community Edition restrictions for XDCR.
+XDCR from a Community Edition cluster to another Community Edition cluster is no longer supported, and this is now strictly enforced.
+New CE-to-CE replications can't be created, and existing CE-to-CE replications can't continue -- they're automatically paused and can't be resumed.
 
 *https://jira.issues.couchbase.com/browse/MB-70844/[MB-70844]*::
 
