@@ -1,0 +1,136 @@
+= Get External Catalog Information
+:description: pass:q[The Query Service exposes detailed Apache Iceberg catalog metadata through a dedicated diagnostic endpoint.]
+:keywords: external catalog, apache iceberg, query service, catalog metadata, snapshot
+:page-edition: Enterprise Edition
+:page-topic-type: reference
+:page-toclevels: 3
+
+[abstract]
+{description}
+An external catalog defines a connection to an external Apache Iceberg catalog provider such as AWS Glue or a Nessie server.
+For more information about external catalogs and collections, see xref:learn:data/external-catalogs-and-collections.adoc[].
+
+== HTTP Method and URI
+
+----
+GET /admin/catalogs
+----
+
+== Description
+
+This endpoint returns detailed metadata about the external catalogs a Couchbase Server cluster knows about, straight from the Query Service.
+Unlike xref:rest-api:external-catalogs/listing-catalogs.adoc[Listing Catalogs], which manages a catalog's stored connection details, this endpoint reports what the Query Service currently sees: resolved schemas, snapshot history, and data file listings for tables the catalog exposes.
+
+This endpoint runs on the Query Service's own port (`8093`), not the cluster-manager port (`8091`) that the rest of the Couchbase REST API uses.
+Query it directly against a node running the Query Service.
+
+Use this endpoint to diagnose a query that returns unexpected results, or to confirm which snapshot an external collection currently resolves to, without running a {sqlpp} query yourself.
+
+== Getting Catalog Information
+
+Send a `GET` request to `/admin/catalogs` on the Query Service port.
+
+=== curl Syntax
+
+[source,bash]
+----
+curl -X GET "http[s]://<query-node>:8093/admin/catalogs[?name=<catalog-name>][&infoFlags=<bitmask>]" \
+  -u <username>:<password>
+----
+
+=== Parameters
+
+`name`::
+Optional.
+Limits the response to one catalog.
+Omit this parameter to return every catalog the Query Service knows about.
+
+`infoFlags`::
+Optional bitmask, defaults to `0`.
+Controls how much detail the response includes for each catalog.
++
+[cols="1,3"]
+|===
+|Value |Includes
+
+|1
+|Schema information for each table.
+
+|2
+|Snapshot history for each table.
+
+|4
+|Data file listings for each table.
+
+|7
+|All of the above (1 + 2 + 4).
+|===
+
+=== Required Privileges
+
+Your account needs xref:learn:security/roles.adoc#full-admin[Full Admin].
+
+NOTE: This endpoint requires Full Admin specifically, a stricter requirement than the xref:learn:security/roles.adoc#external-catalog-reader[External Catalog Read-Only Admin] role that satisfies xref:rest-api:external-catalogs/listing-catalogs.adoc[Listing Catalogs]'s `GET` requests.
+The endpoint can expose sensitive information such as a table's full data file listing.
+
+=== Responses
+
+200 OK::
+Couchbase Server returns a JSON object describing the requested catalog, or every catalog when you omit `name`.
+
+403 Forbidden::
+Your account does not have Full Admin.
+
+=== Example
+
+The following example retrieves full information, including snapshot history and file listings, for `flights_catalog`:
+
+[source,bash]
+----
+curl -X GET -u $CB_USER:$CB_PASS \
+  "http://node1.example.com:8093/admin/catalogs?name=flights_catalog&infoFlags=7" | jq
+----
+
+If successful, the call returns the catalog's resolved metadata:
+
+[source,json]
+----
+{
+  "name": "flights_catalog",
+  "catalogSource": "AWS_GLUE_REST",
+  "tables": [
+    {
+      "namespace": "flight_data",
+      "tableName": "flights",
+      "currentSnapshotId": 8492017364550123456,
+      "schema": {
+        "fields": [
+          {"name": "flight_id", "type": "long"},
+          {"name": "carrier", "type": "string"},
+          {"name": "departure_time", "type": "timestamp"}
+        ]
+      },
+      "snapshots": [
+        {"snapshotId": 8492017364550123456, "timestampMs": 1758700800000}
+      ],
+      "dataFiles": [
+        "s3://flights-bucket/warehouse-v2/flight_data/flights/data/00000-0-abc123.parquet"
+      ]
+    }
+  ]
+}
+----
+
+WARNING: `currentSnapshotId` and `snapshotId` are 64-bit integers that can exceed the 53-bit safe integer range (`Number.MAX_SAFE_INTEGER`, 9,007,199,254,740,991) that JavaScript's `Number` type represents exactly.
+A JavaScript client that parses this response with `JSON.parse` can silently corrupt these values, since `JSON.parse` converts every number into a double-precision float.
+The corrupted value does not raise an error, and it can later cause an `AT SNAPSHOT` query to fail with a confusing error, or worse, silently return data from a different, real snapshot.
+If your client is JavaScript-based, parse this response with a library that preserves large integers, such as one that supports `BigInt`, instead of relying on the default `JSON.parse` behavior.
+
+== See Also
+
+* xref:rest-api:external-catalogs/listing-catalogs.adoc[]
+* xref:rest-api:external-catalogs/creating-a-catalog.adoc[]
+* xref:rest-api:external-catalogs/editing-a-catalog.adoc[]
+* xref:rest-api:external-catalogs/dropping-a-catalog.adoc[]
+* xref:rest-api:creating-a-collection.adoc[]
+* xref:rest-api:scopes-and-collections-api.adoc[]
