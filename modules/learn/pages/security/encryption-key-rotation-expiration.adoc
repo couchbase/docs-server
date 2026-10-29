@@ -3,6 +3,9 @@
 :page-toclevels: 2
 :page-edition: Enterprise Edition
 
+[abstract]
+{description}
+
 Frequent rotations limit the amount of data encrypted with any particular key.
 It helps limit the exposure of data if a data breach compromises an encryption key.
 
@@ -21,7 +24,8 @@ You choose how frequently Couchbase Server rotates DEKs and (if you enable it) t
 When Couchbase Server generates a new encryption-at-rest key or DEK during rotation, it does not immediately delete the deactivated key.
 It keeps deactivated keys so it can decrypt the data that's still encrypted by it. 
 It uses the new key to encrypt data as it writes it to disk.
-When rotating DEKs, Couchbase Server does not re-encrypt existing data unless it's mutated.
+Rotating a DEK does not rewrite existing data.
+Data is re-encrypted with the new DEK when it's mutated or compacted, when the old DEK's lifetime expires, or when you drop DEKs.
 
 Couchbase Server only deletes a deactivated DEK when either:
 
@@ -114,19 +118,13 @@ Reserve the Drop DEKs operation for situations where you need to guarantee that 
 [#encryption-key-rotation-and-expiration]
 == KMS Rotation Behavior Table
 
-Key rotation periodically deactivates old keys and generates new encryption keys to replace them.
-Frequent rotations limit the amount of data encrypted with any particular key.
-It helps limit the exposure of data if a data breach compromises an encryption key.
-
-You can choose to have Couchbase Server rotate DEKs automatically.
-You can also have it automatically rotate encryption keys that it manages.
 Rotation of an externally managed encryption key is handled by the KMS that manages it:
 
 [cols="1,2"]
 |===
 | KMS | Rotation Behavior
 
-| Couchbase Server (CBSM)
+| Couchbase Server Secret Management
 | Can be rotated automatically or on-demand.
 When rotated, Couchbase Server generates new key material.
 After rotation, all keys encrypted by this key are re-wrapped with the new key material.
@@ -150,39 +148,24 @@ When you rotate a Transit key in Vault, trigger a rotation in Couchbase Server t
 
 | KMIP
 | You must manually generate a new key in the KMIP server and update the KMIP key ID in Couchbase Server.
-See <<kmip-kms>> for details.
+For more information, see xref:learn:security/encryption-key-management-services.adoc#kmip-kms[KMIP].
 |===
 
-By default, Couchbase Server automatically rotates DEKs but not the encryption keys it manages.
-When Couchbase Server rotates a DEK, it generates a new DEK and uses the active encryption key to encrypt it.
-You choose how frequently Couchbase Server rotates DEKs and (if you enable it) the encryption keys it manages.
-
-When Couchbase Server generates a new encryption-at-rest key or DEK during rotation, it does not immediately delete the deactivated key.
-It keeps deactivated keys so it can decrypt the data that is still encrypted by them.
-It uses the new key to encrypt data as it writes it to disk.
-When rotating DEKs, Couchbase Server does not re-encrypt existing data unless you force re-encryption.
-
-Couchbase Server only deletes a deactivated DEK when either:
-
-* No data uses the DEK for encryption.
-Once the last piece of data that relies on the deactivated DEK for decryption is either mutated or deleted, Couchbase Server deletes the unused DEK.
-
-* The DEK's lifetime elapses.
-You can set a maximum lifetime for DEKs, which limits how long Couchbase Server can keep a DEK after rotation.
-When a DEK's lifetime elapses, Couchbase Server uses the active DEK to re-encrypt data that is still encrypted with the expired DEK.
-It then deletes the expired DEK.
-
-You can adjust the rotation interval and lifetime for encryption keys to suit your environment.
-See xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest] to learn how to manage these settings.
+See xref:manage:manage-security/manage-native-encryption-at-rest.adoc[Manage Native Encryption at Rest] to learn how to manage rotation and lifetime settings.
 
 [#drop-deks-force-re-encryption]
 == Drop DEKs and Force Re-encryption
 
-The endpoints are available for managing Data Encryption Keys (DEKs) are:
+The following endpoints manage Data Encryption Keys (DEKs).
+For system data, `<type>` is `config`, `log`, `audit`, or `other`.
 
-Drop DEKs (POST /controller/dropEncryptionAtRestDeks/*) — Drops all existing DEKs and re-encrypts all data when encryption is enabled.
+Drop DEKs::
+`POST /controller/dropEncryptionAtRestDeks/bucket/<bucket-name>` or `POST /controller/dropEncryptionAtRestDeks/<type>`.
+Drops all existing DEKs and re-encrypts all data when encryption is enabled.
 
-Force Encryption (POST /controller/forceEncryptionAtRest/*) — Encrypts all currently unencrypted data, typically data that existed before encryption was enabled. This endpoint does not generate new keys or re-encrypt data that is already encrypted.
+Force Encryption::
+`POST /controller/forceEncryptionAtRest/bucket/<bucket-name>` or `POST /controller/forceEncryptionAtRest/<type>`.
+Encrypts all currently unencrypted data, typically data that existed before encryption was enabled. This endpoint does not generate new keys or re-encrypt data that is already encrypted.
 
 === When to use Drop DEKs:
 
@@ -211,12 +194,12 @@ During re-encryption, the cluster continues to serve read and write requests, bu
 You can monitor the progress of re-encryption using the REST API.
 Check the `encryptionAtRestInfo` field in the bucket or system data status:
 
-* A `dataStatus` of `"partially encrypted"` indicates that re-encryption is in progress or that some data has not yet been re-encrypted.
+* A `dataStatus` of `"partiallyEncrypted"` indicates that re-encryption is in progress or that some data has not yet been re-encrypted.
 * A `dataStatus` of `"encrypted"` indicates that all data for that type is encrypted.
 
 Couchbase Server also exposes the `cm_encr_at_rest_drop_deks_events_total` metric, which tracks the total number of Drop DEKs events.
 
-For the steps to force re-encryption, see xref:manage:manage-security/manage-encryption-at-rest.adoc#drop-deks[Drop DEKs and Re-encrypt Data].
+For the steps to force re-encryption, see xref:manage:manage-security/manually-drop-DEKs-reencrypt-data.adoc[Drop DEKs and Re-encrypt Data].
 
 [#minimum-rotation-interval]
 == Minimum Rotation Interval
@@ -248,7 +231,8 @@ The minimum DEK rotation interval is *7 days*.
 | 30 days
 
 | DEK lifetime
-| Must be greater than or equal to the rotation interval
+| 30 days.
+Must also be at least 5 minutes longer than the DEK rotation interval, and no more than 50 times the rotation interval.
 | 365 days
 
 | Encryption key (KEK) rotation interval
@@ -256,9 +240,12 @@ The minimum DEK rotation interval is *7 days*.
 | Not enabled by default
 |===
 
-NOTE: The DEK lifetime must be greater than or equal to the rotation interval.
-If you set a lifetime shorter than the rotation interval, the DEK may expire before the next rotation occurs, causing Couchbase Server to force re-encryption of all data protected by the expired DEK.
-This is by design — it ensures that expired DEKs are not kept indefinitely — but it can be expensive if it happens frequently.
+NOTE: Couchbase Server rejects a DEK lifetime that is not at least 5 minutes longer than the DEK rotation interval, or that is more than 50 times the rotation interval.
+To turn off both DEK rotation and DEK expiration, set both the rotation interval and the lifetime to 0.
+You cannot set only one of them to 0.
+
+Couchbase Server keeps at most 50 DEKs for each encryption data type on a node (for bucket data, for each bucket).
+When it reaches this limit, it reports a `too_many_deks` error.
 
 === Log Retention Rationale
 
@@ -272,5 +259,5 @@ This also applies to on-demand rotation using the drop DEKs procedure. Initiatin
 * If you shorten the rotation interval, also shorten the DEK lifetime proportionally.
 * Monitor the `cm_encr_at_rest_deks_in_use` metric to ensure the number of active DEKs remains stable over time.
 * If you see `too_many_deks` errors in your logs, increase the rotation interval or investigate why old DEKs are not being retired.
-For information on configuring rotation intervals, see the xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest].
+For information on configuring rotation intervals, see xref:manage:manage-security/manage-native-encryption-at-rest.adoc[Manage Native Encryption at Rest].
 
