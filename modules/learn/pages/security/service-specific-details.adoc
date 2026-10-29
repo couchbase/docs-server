@@ -98,7 +98,7 @@ Encrypting Search index data adds overhead to both write and read operations.
 You may observe increased latency and reduced throughput for Search queries, especially for vector search workloads.
 Test your workload with encryption enabled to understand the performance impact in your environment.
 
-For more information about the Search Service, see xref:learn/services-and-indexes/services/search-service.adoc[Search Service].
+For more information about the Search Service, see xref:learn:services-and-indexes/services/search-service.adoc[Search Service].
 
 === Backup Service
 
@@ -113,15 +113,23 @@ The changes described here are about encrypting the Backup Service's own operati
 When you enable encryption at rest, the Backup Service encrypts the following:
 
 Backup log files::
-The Backup Service encrypts its log output when you enable log encryption.
-This includes logs written by `cbbackupmgr` within the backup archive (under the `logs/` directory).
+The Backup Service's own log files follow the cluster's log encryption setting.
+When you enable log encryption, the Backup Service encrypts the log entries it writes.
++
+The cluster's log encryption setting does not control the logs that `cbbackupmgr` writes inside a backup archive:
++
+* Repository logs (`<archive>/<repository>/logs`) are encrypted with the repository key when the repository is encrypted.
+* Archive-level logs (`<archive>/logs`) are never encrypted, because a single archive can hold repositories with different keys.
++
+For more information, see xref:backup-restore:cbbackupmgr-encryption.adoc[].
 
 Continuous backup metadata::
 When you use continuous backup (point-in-time recovery), the Backup Service encrypts metadata files that track backup state and restore points.
 
 ==== Bucket Identifiers in Backup Paths
 
-Now, the Backup Service uses bucket UUIDs instead of bucket names in backup storage paths when encryption is enabled.
+Starting with Couchbase Server 8.5, backup repositories name bucket directories by bucket UUID instead of bucket name.
+This applies to every repository, whether it's encrypted or not.
 This prevents bucket names from being exposed through the filesystem, consistent with the Index Service's approach to path obfuscation.
 
 === Query Service
@@ -135,7 +143,7 @@ For more information, see xref:learn:services-and-indexes/services/query-service
 
 When you enable "other" encryption, the Query Service encrypts temporary spill files used during query processing, such as files created for spilled sorting operations.
 
-For more information, see xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest].
+For more information, see xref:manage:manage-security/manage-native-encryption-at-rest.adoc[Manage Native Encryption at Rest].
 
 [#bucket-encryption-data-type]
 ==== Bucket Encryption Data Type
@@ -146,7 +154,7 @@ IndexScan backfill files::
 The Index and Search Service clients create temporary backfill files when scan results exceed the capacity of the buffered channel between the client and the Query Service.
 The Query Service encrypts these files with the associated bucket's encryption key.
 +
-The size of the buffered channel is managed by the xref:n1ql:n1ql-manage/query-settings.adoc#scan-cap-srv[pipeline-batch] setting.
+The size of the buffered channel is managed by the xref:n1ql:n1ql-manage/query-settings.adoc#scan-cap-srv[scan-cap] setting.
 
 Sequential scan spill files::
 When the Query Service performs a xref:indexes:query-without-index.adoc[sequential scan] over a bucket, it creates temporary spill files on disk.
@@ -161,11 +169,18 @@ Diagnostic files created when the Query Service detects incidents or conditions 
 Only FFDC files that contain sensitive data are encrypted, including files with xref:n1ql-rest-admin:index.adoc#Requests[completed and active requests] information and xref:n1ql-rest-admin:index.adoc#Vitals[Vitals] information.
 
 Archive request files::
-Files that persist completed requests when xref:n1ql:n1ql-manage/monitoring-n1ql-query.html#sys-history[streaming of completed requests] is enabled.
+Files that persist completed requests when xref:n1ql:n1ql-manage/monitoring-n1ql-query.adoc#sys-history[streaming of completed requests] is enabled.
 
 ==== Decrypting Query Service Files
 
-Use the `cbcat` CLI tool to decrypt encrypted FFDC files and archived request files.
+Use the xref:cli:cbcat.adoc[`cbcat`] CLI tool to decrypt encrypted FFDC files and archived request files.
+
+For example, to decrypt the archived requests in `$FILE` encrypted with the master password `$MASTER`, use:
+
+[source,sh]
+----
+cbcat --password $MASTER $FILE
+----
 
 ==== Observability
 
@@ -209,7 +224,8 @@ The Eventing Service encrypts the following when encryption is enabled:
 * DCP stream metadata
 * Application log (applog) files — encrypted when you enable log encryption
 
-Eventing application log files are stored in the `/opt/couchbase/var/lib/couchbase/data/@eventing/` directory.
+Eventing application log files are stored in the `@eventing` directory under the node's data path.
+On Linux, the default location is `/opt/couchbase/var/lib/couchbase/data/@eventing/`.
 When you enable log encryption, the Eventing Service encrypts new log entries as it writes them.
 
 ==== Log Rotation Requirement
@@ -221,15 +237,36 @@ If you attempt to set `enable_applog_rotation` to `false` while encryption at re
 
 ==== Decrypting Eventing Files
 
-Use the `cbcat` CLI tool to decrypt encrypted Eventing log files and metadata.
+Use the xref:cli:cbcat.adoc[`cbcat`] CLI tool to decrypt encrypted Eventing log files and metadata.
 Run `cbcat` with the `--with-gosecrets` flag and the path to `gosecrets.cfg`.
+
+[#xdcr]
+=== Cross Data Center Replication (XDCR)
+
+XDCR adopts the centralized encryption-at-rest framework.
+You do not configure XDCR encryption separately.
+
+==== What XDCR Encrypts
+
+[cols="2,1"]
+|===
+| Data | Encryption Data Type
+
+| XDCR metadata: remote cluster references, replication specifications, checkpoints, and collection mappings
+| Configuration
+
+| The XDCR log file (`goxdcr.log`)
+| Log
+|===
+
+For more information about XDCR, see xref:learn:clusters-and-availability/xdcr-overview.adoc[].
 
 === Diagnostic and Tool-Generated Files
 
 Several services generate diagnostic files that contain potentially sensitive information.
 When you enable encryption at rest, these files are encrypted as they are written.
 
-Use the `cbcat` CLI tool to decrypt any encrypted service-generated file.
+Use the xref:cli:cbcat.adoc[`cbcat`] CLI tool to decrypt any encrypted service-generated file.
 Run `cbcat` with the `--with-gosecrets` flag and the path to `gosecrets.cfg`.
 
 IMPORTANT: Encryption at rest does not retroactively encrypt service-generated files that were written before you enabled encryption.
