@@ -95,6 +95,8 @@ curl -X POST -u <administrator>:<password>
   -d memoryLowWatermark=<integer>
   -d memoryHighWatermark=<integer>
   -d dataServiceRebalanceType=[ auto | preferFileBased | preferDcp ]
+  -d throttleReserved=<integer>
+  -d throttleHardLimit=<integer>
   -d continuousBackupEnabled=[ true | false]
   -d continuousBackupLocation=<string>
   -d continuousBackupCloudStorageCredId=<string>
@@ -148,6 +150,8 @@ All other parameters are optional and have a default value.
 ** <<memorylowwatermark,memoryLowWatermark>>
 ** <<memoryhighwatermark,memoryHighWatermark>>
 ** <<dataservicerebalancetype,dataServiceRebalanceType>>
+** <<throttlereserved,throttleReserved>>
+** <<throttlehardlimit,throttleHardLimit>>
 ** <<continuousBackupEnabled,continuousBackupEnabled>>
 ** <<continuousBackupLocation,continuousBackupLocation>>
 ** <<continuousBackupCloudStorageCredId,continuousBackupCloudStorageCredId>>
@@ -621,7 +625,9 @@ Success returns `200 OK`, and changes the `rank` of `testBucket` to `200`.
 [.edition]#{enterprise}#
 
 Controls the rebalance method used for this bucket's vBucket moves during Data Service rebalance.
-This setting overrides the cluster-level `dataServiceFileBasedRebalanceEnabled` setting for the bucket you set it on.
+The cluster-level `dataServiceFileBasedRebalanceEnabled` setting takes precedence over this setting.
+When the cluster-level setting is `false`, all buckets use DCP, whatever their `dataServiceRebalanceType`.
+When it is `true`, this setting controls whether the bucket can use FBR.
 
 The valid values are:
 
@@ -637,6 +643,14 @@ Otherwise it uses DCP.
 Couchbase Server never uses FBR for the bucket when you select this setting.
 
 You can set this parameter when creating or modifying the bucket.
+
+[NOTE]
+====
+* Couchbase Server rejects this parameter until every node in the cluster runs Couchbase Server 8.5 or later.
+* FBR applies only to Couchbase (persistent) buckets.
+Ephemeral buckets always use DCP.
+* Buckets with Fusion enabled do not use FBR.
+====
 
 For more information about FBR and how the `dataServiceRebalanceType` bucket-level setting interacts with the cluster-level `dataServiceFileBasedRebalanceEnabled` setting, see xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)].
 
@@ -671,6 +685,50 @@ curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
 Success returns `200 OK`.
 
 For conceptual information about FBR and the bucket-level setting, see xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)].
+
+[#throttlereserved]
+=== throttleReserved
+[.edition]#{enterprise}#
+[.status]#Couchbase Server 8.5#
+
+The throughput reserved for this bucket by Data Service rate limiting, in bytes per second.
+The default is `0` (no reservation).
+The value can be from `0` to `18446744073709551615` (2^64^ - 1).
+
+* `throttleReserved` cannot be greater than <<throttlehardlimit,throttleHardLimit>>.
+* The sum of `throttleReserved` across all buckets cannot be greater than the node capacity set for Data Service rate limiting.
+If it is, the request fails with an error such as `Sum of throttleReserved across all buckets (...) exceeds node_capacity (...)`.
+
+You can set this parameter when creating or modifying the bucket.
+Couchbase Server rejects it in Community Edition, and until every node in the cluster runs Couchbase Server 8.5 or later.
+
+[#throttlehardlimit]
+=== throttleHardLimit
+[.edition]#{enterprise}#
+[.status]#Couchbase Server 8.5#
+
+The maximum throughput allowed for this bucket by Data Service rate limiting, in bytes per second.
+The default is `18446744073709551615` (2^64^ - 1), which means no limit.
+The value can be from `0` to `18446744073709551615`.
+It cannot be less than <<throttlereserved,throttleReserved>>.
+
+You can set this parameter when creating or modifying the bucket.
+Couchbase Server rejects it in Community Edition, and until every node in the cluster runs Couchbase Server 8.5 or later.
+
+[#example-throttle-edit]
+==== Example: Setting Rate Limits for a Bucket
+
+The following reserves 10 MB/s for `testBucket` and limits it to 50 MB/s:
+
+[source,bash]
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+  -u Administrator:password \
+  -d throttleReserved=10485760 \
+  -d throttleHardLimit=52428800
+----
+
+Success returns `200 OK`.
 
 [#replicanumber]
 === replicaNumber
@@ -1588,6 +1646,12 @@ See the examples provided above, in xref:rest-api:rest-bucket-create.adoc#exampl
 Specifies the tombstone (or metadata) purge interval.
 The value can be either an integer (indicating a number of days), or a float (indicating an interval that may be greater or less than one day, and entails a number of hours, with `0.04` indicating one hour).
 The default value is three days.
+
+The valid range is `0.01` (about 14 minutes) to `1095` days (3 years) for Couchbase buckets, and from `0.0007` days for Ephemeral buckets.
+Until every node in the cluster runs Couchbase Server 8.5 or later, the maximum is `60` days.
+
+CAUTION: A long purge interval keeps tombstones on disk for longer, so disk use grows.
+Set a long interval only if you need it, for example to give XDCR or other DCP clients time to catch up.
 
 If this parameter is incorrectly specified, an error-notification such as the following is returned: `{"purgeInterval":"metadata purge interval must be a number"}`.
 
