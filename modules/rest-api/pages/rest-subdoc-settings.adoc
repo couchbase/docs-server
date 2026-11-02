@@ -1,0 +1,217 @@
+= Managing Sub-Document Settings
+:description: Use the REST API to raise the maximum number of paths in a single Sub-Document request, and to control when the Data Service moves Sub-Document operations off its front-end threads.
+:page-topic-type: reference
+
+[abstract]
+{description}
+
+== HTTP Methods and URI
+
+[source,url]
+----
+GET /pools/default/settings/memcached/global
+
+POST /pools/default/settings/memcached/global
+----
+
+[#description]
+== Description
+
+A multi-path Sub-Document request can contain up to 16 paths by default.
+A request with more paths than the limit fails, and the client receives an error such as `Request must contain at most 16 paths`.
+To allow more paths in a single request, raise `subdoc_multi_max_paths`.
+For more information about Sub-Documents, see xref:learn:data/data.adoc#sub-documents-overview[Sub-Documents].
+
+WARNING: The server does the work for every path in a Sub-Document request, so a higher limit uses more CPU on the cluster.
+Before you raise it, make sure the cluster has the capacity: adding application servers is usually easier than adding Couchbase Server nodes.
+If the application changes most of a document, it can be cheaper to fetch the whole document, change it on the client, and store it again.
+
+The 2 offload settings decide where the Data Service runs a Sub-Document operation.
+By default, it runs on the front-end thread that serves the client connection.
+When the document is larger than `subdoc_offload_size_threshold` bytes, or the request contains more paths than `subdoc_offload_paths_threshold`, the operation runs on the NonIO thread pool instead.
+This stops a single large operation from delaying every other connection served by the same thread.
+
+Because `subdoc_offload_paths_threshold` defaults to 16, raising `subdoc_multi_max_paths` also moves every request with more than 16 paths to the NonIO thread pool.
+If the NonIO thread pool is too small for the workload, offloaded operations wait for a thread.
+To add NonIO threads, see xref:rest-api:rest-reader-writer-thread-config.adoc[].
+
+All 3 settings apply to the whole cluster and take effect without a restart.
+They apply to buckets that use either storage engine, in both Couchbase Server Enterprise Edition and Couchbase Server Community Edition.
+Each change is recorded in the event log as a `memcached_cfg_changed` event.
+
+Keep these points in mind:
+
+* Raise `subdoc_multi_max_paths` only after every Data Service node in the cluster runs Couchbase Server 8.5 or later.
+Earlier releases keep a fixed limit of 16 paths.
+* The client must also accept more than 16 paths in a request.
+Some Couchbase SDKs check for a limit of 16 themselves, report their own error, and never send the request to the cluster.
+See the Sub-Document documentation for your SDK, for example xref:java-sdk:howtos:subdocument-operations.adoc[Sub-Document Operations] for the Java SDK.
+* Clients cannot read the configured limit from the cluster.
+Tell application developers the value you set.
+
+[#required-privileges]
+=== Required Privileges
+
+To read the settings with a GET request, your account must have at least 1 of the following roles:
+
+* xref:learn:security/roles.adoc#full-admin[Full Admin]
+* xref:learn:security/roles.adoc#cluster-admin[Cluster Admin]
+* xref:learn:security/roles.adoc#security-admin[Security Admin]
+* xref:learn:security/roles.adoc#ro-security-admin[Read-Only Security Admin]
+* xref:learn:security/roles.adoc#local-user-security-admin[Local User Admin]
+* xref:learn:security/roles.adoc#external-user-security-admin[External User Admin]
+
+To change the settings with a POST request, your account must have the Full Admin or Cluster Admin role.
+
+[#curl-syntax]
+== curl Syntax
+
+[source,bash]
+----
+curl -X GET http[s]://{HOST}:{PORT}/pools/default/settings/memcached/global
+  -u $USER:$PASSWORD
+
+curl -X POST http[s]://{HOST}:{PORT}/pools/default/settings/memcached/global
+  -u $USER:$PASSWORD
+  [-d subdoc_multi_max_paths=<integer>]
+  [-d subdoc_offload_size_threshold=<integer>]
+  [-d subdoc_offload_paths_threshold=<integer>]
+----
+
+=== Path Parameters
+
+:required-privileges: required-privileges
+include::partial$user_pwd_host_port_params.adoc[]
+
+[#parameters]
+== Parameters
+
+All parameters are optional.
+Set only the ones you want to change.
+
+[cols="2,1,2,4"]
+|===
+| Parameter | Default | Range | Description
+
+| `subdoc_multi_max_paths`
+| 16
+| 16 to 2,147,483,647
+| The maximum number of paths in a single multi-path Sub-Document lookup or mutation.
+The minimum is 16, so that applications written for the previous fixed limit keep working.
+
+| `subdoc_offload_size_threshold`
+| 1,048,576 (1{nbsp}MiB)
+| 0 to 2,147,483,647
+| The document size, in bytes, above which a Sub-Document operation runs on the NonIO thread pool instead of the front-end thread.
+
+| `subdoc_offload_paths_threshold`
+| 16
+| 0 to 2,147,483,647
+| The number of paths above which a Sub-Document request runs on the NonIO thread pool instead of the front-end thread.
+|===
+
+[#responses]
+== Responses
+
+200 OK::
+The GET request was successful.
+Returns a JSON object containing every global setting on this endpoint that has been set.
+A setting that has never been set does not appear, even though its default applies.
+
+202 Accepted::
+The POST request was successful.
+Returns the same JSON object as a GET request, including the new values.
+
+400 Bad Request::
+A parameter value is not valid.
+Returns a JSON object that names the parameter and the problem: `too_small`, `too_large`, or `invalid` for a value that's not an integer.
+For example, `{"subdoc_multi_max_paths":"too_small"}`.
+An unrecognized parameter name returns an object such as `{"_":"Unknown POST parameters: [\"subdocMultiMaxPath\"]"}`.
+
+401 Unauthorized::
+Authentication failed.
+
+403 Forbidden::
+The account does not have the role the request needs.
+See <<required-privileges>>.
+
+[#examples]
+== Examples
+
+The following examples raise the limit, check it, and restore the default.
+
+=== Raise the Path Limit
+
+The following example raises the limit to 32 paths per request:
+
+[source,bash]
+----
+curl -X POST -u $USER:$PASSWORD \
+  http://localhost:8091/pools/default/settings/memcached/global \
+  -d subdoc_multi_max_paths=32
+----
+
+If successful, the call returns the global settings that have been set, such as:
+
+[source,json]
+----
+{"subdoc_multi_max_paths":32}
+----
+
+=== Check the Current Settings
+
+The following example returns the global settings that have been set:
+
+[source,bash]
+----
+curl -X GET -u $USER:$PASSWORD \
+  http://localhost:8091/pools/default/settings/memcached/global
+----
+
+After the previous example, the response includes the new limit:
+
+[source,json]
+----
+{"subdoc_multi_max_paths":32}
+----
+
+If `subdoc_multi_max_paths` is not in the response, it has never been set, and the limit is 16.
+
+=== Restore the Default Limit
+
+You cannot remove these settings with a `DELETE` request.
+To return to the default, set the value back to 16:
+
+[source,bash]
+----
+curl -X POST -u $USER:$PASSWORD \
+  http://localhost:8091/pools/default/settings/memcached/global \
+  -d subdoc_multi_max_paths=16
+----
+
+GET responses then show the setting with the value 16.
+
+=== A Request Over the Limit
+
+When a request contains more paths than the limit, the Data Service rejects it with the status `SUBDOC_INVALID_COMBO`, and the error context names the limit.
+The Python SDK, for example, raises an `InvalidArgumentException` that includes:
+
+[source,text]
+----
+'context': 'Request must contain at most 16 paths'
+----
+
+[#monitoring]
+== Monitoring Offloaded Operations
+
+The `kv_subdoc_offload_count` metric counts the Sub-Document operations that ran on the NonIO thread pool.
+Watch it after you change any of these settings, to see how much work moved off the front-end threads.
+To read Data Service metrics, see xref:rest-api:rest-statistics.adoc[Statistics].
+
+== See Also
+
+* xref:learn:clusters-and-availability/size-limitations.adoc[Size Limits]
+* xref:learn:data/data.adoc#sub-documents-overview[Sub-Documents]
+* xref:rest-api:rest-reader-writer-thread-config.adoc[]
+* xref:rest-api:rest-manage-cluster-connections.adoc[Managing Cluster Connections]
+* xref:java-sdk:howtos:subdocument-operations.adoc[Sub-Document Operations] in the Java SDK documentation
