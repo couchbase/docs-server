@@ -1,0 +1,73 @@
+= XDCR Memory Management and Efficiency
+:description: XDCR is designed to support high-density, multi-tenant environments with optimized memory management to ensure efficient replication without performance degradation.
+
+[abstract]
+{description}
+
+To support high-density, multi-tenant environments—such as serverless configurations—XDCR utilizes an optimized memory management architecture 
+designed to handle more than 100 simultaneous replications.
+
+== Memory Allocation Architecture
+
+XDCR employs a custom manual memory allocator for document processing buffers to bypass the non-deterministic timing of standard Garbage Collection (GC). 
+This architecture ensures that large data movements do not cause unpredictable memory spikes or performance degradation.
+
+* *Pipeline Allocator:* Each replication utilizes a dedicated instance of a Pipeline Allocator to isolate memory usage per tenant.
+* *Sticky Memory:* This is the minimum required memory maintained by a replication to make sure continuous progress, even during high mutation rates.
+* *Borrowed Memory:* Transient buffers requested from a Global Pool for processing large documents (more than 20MB); this memory is returned to the pool immediately after use.
+* *Global Pool:* A shared reservoir that enforces a hard upper limit on overall XDCR memory usage across all replications.
+
+== Priority-Based Resource Handling
+
+The Global Pool manages allocation requests using a weighted-round-robin algorithm to prevent resource starvation.
+
+* *Urgent Priority:* Used for the initial memory required when a replication receives its first mutation.
+* *Standard Priorities:* Requests are processed based on inherited replication weights (High, Medium, or Low).
+
+== Configuration and Tunables
+
+Administrators can optimize memory footprint by adjusting the following tunables within the replication settings or global XDCR configuration.
+
+[cols="2,1,1,3", options="header"]
+|===
+| Tunable | Scope | Default | Description
+
+| `Overall Memory Limit`
+
+| Global
+| 5 GB
+| The maximum resident memory allowed for all XDCR document buffers.
+
+| `StickyTimeout`
+| Replication
+| 300s
+| The duration before idle sticky memory is released back to the global pool.
+
+| `AsyncListener Chan Size`
+| Replication
+| 100
+| The capacity of internal event channels. Reducing this from legacy levels significantly lowers the idle memory footprint of each replication.
+
+| `Source Nozzle Chan Size`
+| Replication
+| 20000
+| The capacity of the DCP stream channel; adjustable to balance throughput against memory consumption.
+|===
+
+== Developer Guidelines for Custom Extensions
+
+When developing extensions or interacting with internal XDCR components, manual memory management rules must be followed to prevent system-wide stalls.
+
+[source,go]
+----
+// Manual buffer allocation example
+buf, allocSz, err := pipealloc.Alloc(sz)
+if err != nil {
+    return err // Handle allocation failure
+}
+
+// Buffers must be explicitly freed to avoid leaks
+defer pipealloc.Free(buf)
+----
+
+CAUTION: Failure to call `Free()` on allocated buffers leads to memory leaks, causing the Global Pool to block all replications.
