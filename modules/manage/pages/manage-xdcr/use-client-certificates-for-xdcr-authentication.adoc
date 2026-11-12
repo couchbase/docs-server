@@ -1,0 +1,255 @@
+= Use Client Certificates for XDCR Authentication
+:description: An XDCR source cluster can authenticate with its target cluster by presenting a client certificate and private key, instead of a username and password.
+
+[abstract]
+{description}
+
+[#understanding-client-certificate-authentication-for-xdcr]
+== Understanding Client-Certificate Authentication for XDCR
+
+When you create a fully secure XDCR reference, the source cluster authenticates with the target cluster in one of two ways: with a username and password, or with a client certificate and its private key.
+This page explains the second way.
+
+In this exchange, the source cluster acts as the _client_ and the target cluster acts as the _server_.
+The client certificate is the certificate that the source cluster presents to the target cluster.
+See xref:xdcr-reference:xdcr-security-and-networking.adoc#defining-client-and-server[].
+
+This page is for administrators who receive their certificates from a security team or a certificate authority, rather than create them.
+To create test certificates yourself, see xref:manage:manage-security/configure-client-certificates.adoc[].
+
+Before the source cluster can authenticate with a client certificate, the target cluster must:
+
+* Have a user whose name matches the username in the client certificate, with the Full Admin or XDCR Inbound role.
+* Have client-certificate handling enabled, with a path that tells Couchbase Server where to find the username in the certificate.
+* Trust the root certificate that issued the client certificate, and every intermediate certificate between them.
+
+A fully secure reference also needs the root certificate of the target cluster.
+The source cluster uses this certificate to verify the target cluster's nodes.
+It's a different certificate from the root certificate that issued the client certificate, unless one certificate authority issued both.
+
+The steps below take you through this setup on the target cluster, and then create the reference on the source cluster.
+
+[#example-certificate-files]
+== Example Certificate Files
+
+The steps on this page use a typical bundle that a security team issues for a client certificate request:
+
+----
+file1.pem
+file2.pem
+file3.pem
+file4.key
+----
+
+The `.key` file is the client private key.
+Step 1 shows how to tell which `.pem` file is the root certificate, which is the intermediate certificate, and which is the client certificate.
+Your bundle might contain more than one intermediate certificate.
+
+[#identify-the-certificates-and-username]
+== Step 1: Identify the Certificates and the Username
+
+. Display the contents of each `.pem` file:
++
+[source,console]
+----
+openssl x509 -text -noout -in file1.pem
+openssl x509 -text -noout -in file2.pem
+openssl x509 -text -noout -in file3.pem
+----
+
+. Use the following fields to identify each certificate:
++
+[cols="1,2,1,2",options="header"]
+|===
+| Certificate | Issuer and Subject | Basic Constraints | Key Usage
+
+| Root certificate
+| The same
+| `CA:TRUE`
+| Certificate Sign, CRL Sign
+
+| Intermediate certificate
+| Different
+| `CA:TRUE`
+| Certificate Sign, CRL Sign
+
+| Client certificate
+| Different
+| `CA:FALSE`
+| Digital Signature, with the Extended Key Usage TLS Web Client Authentication
+|===
+
+. In the client certificate, find the username.
+The username is usually in the Subject Alternative Name, and sometimes in the Subject Common Name.
+For example, the following client certificate holds the username in an email Subject Alternative Name:
++
+----
+Certificate:
+    Data:
+        ...
+        Issuer: C = UA, O = MyCompany, OU = People, CN = ClientSigningCA
+        ...
+        Subject: C = UA, O = MyCompany, OU = People, CN = clientuser
+        ...
+        X509v3 extensions:
+            X509v3 Basic Constraints:
+                CA:FALSE
+            X509v3 Extended Key Usage:
+                TLS Web Client Authentication
+            X509v3 Key Usage:
+                Digital Signature
+            X509v3 Subject Alternative Name:
+                email:xdcruser@mycompany.com
+----
++
+In this example, the username is `xdcruser`: Step 3 configures the target cluster to take the part of the email address that comes before the `@` character.
++
+A client certificate can also hold the username in its Subject Common Name only.
+See xref:learn:security/certificates.adoc#deprecation-of-subject-common-name[].
+
+. Copy or rename the files so that their names show what each one is.
+The names themselves don't matter.
+For example:
++
+[source,console]
+----
+cp file1.pem ca.pem
+cp file2.pem int.pem
+cp file3.pem clientuser.pem
+cp file4.key clientuser.key
+----
+
+. Verify that the root and intermediate certificates validate the client certificate:
++
+[source,console]
+----
+openssl verify -trusted ca.pem -untrusted int.pem clientuser.pem
+----
++
+If the certificates form a valid chain, the command returns:
++
+----
+clientuser.pem: OK
+----
+
+[#create-the-user-on-the-target-cluster]
+== Step 2: Create the User on the Target Cluster
+
+On the target cluster, check whether a user with the username from Step 1 exists.
+If the user doesn't exist, create it.
+See xref:manage:manage-security/manage-users-and-roles.adoc#add-a-user[].
+
+Give the user the Full Admin role, or the xref:learn:security/roles.adoc#xdcr-inbound[XDCR Inbound] role for the target bucket or for all buckets on the target cluster.
+
+[#enable-client-certificate-handling-on-the-target-cluster]
+== Step 3: Enable Client-Certificate Handling on the Target Cluster
+
+On the target cluster, set *Require Client Certificate* to *Enable* or *Mandatory*, and add a path that matches where your client certificates hold the username.
+See xref:manage:manage-security/enable-client-certificate-handling.adoc[] for the UI, CLI, and REST API procedures.
+
+*Mandatory* requires every client of the target cluster to authenticate with a certificate.
+*Enable* also accepts clients that authenticate with a username and password.
+
+For the example certificate in Step 1, add the following path:
+
+[cols="1,1,1",options="header"]
+|===
+| Path | Prefix | Delimiter
+
+| `san.email`
+| (blank)
+| `@`
+|===
+
+The default path is `subject.cn`, which reads the username from the Subject Common Name.
+If your client certificates hold the username in a Subject Alternative Name, add a path for it.
+Add a path for every place where your client certificates can hold the username.
+For an explanation of paths, prefixes, and delimiters, see xref:learn:security/certificates.adoc#identity-encoding-in-client-certificates[].
+
+[#make-the-target-cluster-trust-the-client-certificate]
+== Step 4: Make the Target Cluster Trust the Client Certificate
+
+The target cluster must trust the root certificate that issued the client certificate, and every intermediate certificate in between.
+You can supply the intermediate certificates in either of two ways:
+
+* *Load the intermediate certificates into the trust store.*
+Load the root certificate and the intermediate certificates into the target cluster's trust store.
+In Step 5, supply the client certificate on its own.
+If your certificate authority later issues client certificates from a new intermediate certificate, load that intermediate certificate too.
+
+* *Supply the intermediate certificates in a chain.*
+Load only the root certificate into the target cluster's trust store.
+In Step 5, supply a chain file that starts with the client certificate and continues with each intermediate certificate in order, ending with the one that the root certificate signed.
+The chain must be in the correct order, or authentication fails.
++
+[source,console]
+----
+cat clientuser.pem int.pem > chain.pem
+----
+
+See xref:learn:security/using-multiple-cas.adoc#adding-intermediate-certificates-to-the-trust-store[].
+
+To load certificates into the trust store, copy them into the `inbox/CA` directory on a target cluster node, and then call xref:rest-api:load-trusted-cas.adoc[] on that node.
+For example, on Linux, to load the root and intermediate certificates:
+
+[source,console]
+----
+sudo mkdir -p /opt/couchbase/var/lib/couchbase/inbox/CA
+sudo cp ca.pem int.pem /opt/couchbase/var/lib/couchbase/inbox/CA/
+sudo chown couchbase /opt/couchbase/var/lib/couchbase/inbox/CA/*.pem
+
+curl -X POST http://localhost:8091/node/controller/loadTrustedCAs \
+  -u Administrator:password
+----
+
+* Run the commands on the target cluster node whose `inbox/CA` directory holds the certificates.
+* Replace `Administrator:password` with the credentials of a Full Admin on the target cluster.
+* For the `inbox/CA` location on Windows and macOS, see xref:rest-api:load-trusted-cas.adoc[].
+
+After loading, the certificates appear under *Trusted Root Certificates* on the target cluster's *Security* > *Certificates* screen.
+
+[#create-the-reference-on-the-source-cluster]
+== Step 5: Create the Reference on the Source Cluster
+
+On the source cluster, create a fully secure reference that authenticates with the client certificate and private key.
+Supply the client certificate as `clientuser.pem` if you loaded the intermediate certificates into the trust store, or as `chain.pem` if you created a chain in Step 4.
+Don't supply a username and password: the reference uses either a username and password or a client certificate, not both.
+
+In the UI, follow xref:manage:manage-xdcr/enable-full-secure-replication.adoc#specify-full-xdcr-security-with-certificates[].
+
+With the REST API, run a command like the following:
+
+[source,console]
+----
+curl -X POST -u Administrator:password \
+  http://source.example.com:8091/pools/default/remoteClusters \
+  -d name=TargetCluster \
+  -d hostname=target.example.com:8091 \
+  -d secureType=full \
+  --data-urlencode "certificate=$(cat ./target-ca.pem)" \
+  --data-urlencode "clientCertificate=$(cat ./clientuser.pem)" \
+  --data-urlencode "clientKey=$(cat ./clientuser.key)"
+----
+
+* Replace `Administrator:password` with the credentials of a user on the source cluster with the Full Admin, Cluster Admin, or XDCR Admin role.
+* Replace `source.example.com` with a node of the source cluster, and `target.example.com` with a node of the target cluster.
+* Replace `TargetCluster` with a name for the reference.
+* For `target-ca.pem`, use the root certificate of the target cluster.
+See xref:manage:manage-security/manage-security-settings.adoc#root-certificate-security-screen-display[].
+* For `clientuser.pem`, use `chain.pem` instead if you created a chain in Step 4.
+
+For all parameters, see xref:rest-api:rest-xdcr-create-ref.adoc[].
+
+[#troubleshoot-client-certificate-authentication]
+== Troubleshoot Client-Certificate Authentication
+
+If the target cluster rejects the client certificate, the source cluster reports an authentication error when you save the reference.
+Check the following on the target cluster:
+
+* The username that the path from Step 3 extracts from the certificate matches the user from Step 2.
+* The user has the Full Admin role, or the XDCR Inbound role for the target bucket.
+* *Require Client Certificate* is set to *Enable* or *Mandatory*.
+* The trust store holds the root certificate that issued the client certificate.
+* The trust store holds every intermediate certificate, or the source cluster supplied them in a chain in the correct order.
+
+After you correct the setup, save the reference again.
