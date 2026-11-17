@@ -1,0 +1,303 @@
+= Managing Sub-Document Settings
+:description: Raise the maximum number of paths a multi-path Sub-Document request can contain, and control when the Data Service moves Sub-Document work off its front-end threads.
+:page-topic-type: reference
+
+[abstract]
+{description}
+
+[#http-methods-and-uris]
+== HTTP Methods and URIs
+
+.Get the Sub-Document settings
+[source]
+----
+GET /pools/default/settings/memcached/global
+----
+
+.Change the Sub-Document settings
+[source]
+----
+POST /pools/default/settings/memcached/global
+----
+
+[#description]
+== Description
+
+A multi-path Sub-Document request, such as a `lookupIn` or `mutateIn` call from an SDK, reads or changes several paths in a single document at once.
+By default, a request can contain at most 16 paths: this is the path limit.
+The Data Service rejects a request with more paths than the path limit, with status `0xCB` (`SUBDOC_INVALID_COMBO`) and this context:
+
+----
+Request must contain at most 16 paths
+----
+
+Whether the application sees that text depends on its SDK.
+Some SDKs report only an invalid-argument error with status 203, so an application team may describe the problem that way instead.
+
+The `subdoc_multi_max_paths` setting raises the path limit for the whole cluster.
+It accepts any integer from `16` to `2147483647`.
+You cannot set it below 16, so that existing applications and Couchbase components keep working.
+For information about Sub-Documents, see xref:learn:data/data.adoc#sub-documents-overview[Sub-Documents].
+
+CAUTION: Each extra path costs CPU time on the Data Service nodes, and servers are harder to scale out than clients.
+Raise the path limit only as far as your application needs.
+If an application reads or changes many paths in a single document, consider fetching the whole document, changing it in the application, and storing it back.
+
+The Data Service normally runs Sub-Document operations on its front-end threads, each of which serves many client connections.
+To stop a single large operation from holding up the other connections on its thread, the Data Service runs a Sub-Document operation on the NonIO thread pool instead when either of the following is true:
+
+* The document is larger than `subdoc_offload_size_threshold`, which defaults to 1,048,576 bytes (1{nbsp}MiB).
+* The request contains more paths than `subdoc_offload_paths_threshold`, which defaults to 16.
+
+Because the default path limit and the default `subdoc_offload_paths_threshold` are both 16, no request is offloaded for its path count until you raise the path limit.
+After you raise it, while `subdoc_offload_paths_threshold` is at its default, every request with 17 or more paths runs on the NonIO thread pool.
+If that pool is too small for your workload, offloaded operations wait for a thread.
+For information about the NonIO thread pool and how to resize it, see xref:rest-api:rest-reader-writer-thread-config.adoc[].
+
+These settings apply to every Data Service node in the cluster, to Couchbase and Ephemeral buckets, and to both Couchbase Server Enterprise Edition and Couchbase Server Community Edition.
+A change takes effect immediately, without a restart.
+Couchbase Server records each change in the system event log as event 8202, `Memcached configuration changed`, with the old and new settings.
+For how to read the log, see xref:rest-api:rest-get-system-events.adoc[Getting System Events], and for the event itself, see xref:system-event-reference:system-event-reference.adoc[].
+
+Before you raise the path limit:
+
+* Upgrade every Data Service node in the cluster to Couchbase Server 8.5.
+The cluster accepts the setting before then, but nodes on earlier releases still refuse requests with more than 16 paths.
+* Check that your application's SDK accepts more than 16 paths in a request.
+Some SDKs enforce the limit of 16 themselves, and some SDK documentation still describes 16 as fixed because it predates this setting.
+* Tell your application developers the new path limit.
+Clients cannot read it from the cluster.
+
+[#get-settings]
+== Getting the Sub-Document Settings
+
+[#get-curl-syntax]
+=== curl Syntax
+
+[source,bash]
+----
+curl -X GET http[s]://$HOST:$PORT/pools/default/settings/memcached/global
+     -u $USER:$PASSWORD
+----
+
+==== Path Parameters
+:required-privileges: required-privileges-get
+include::partial$user_pwd_host_port_params.adoc[]
+
+[#required-privileges-get]
+=== Required Privileges
+
+Your account must have at least 1 of the following roles to make a GET request to this endpoint:
+
+* xref:learn:security/roles.adoc#full-admin[Full Admin]
+* xref:learn:security/roles.adoc#cluster-admin[Cluster Admin]
+* xref:learn:security/roles.adoc#security-admin[Security Admin]
+* xref:learn:security/roles.adoc#ro-security-admin[Read-Only Security Admin]
+* xref:learn:security/roles.adoc#local-user-security-admin[Local User Admin]
+* xref:learn:security/roles.adoc#external-user-security-admin[External User Admin]
+
+[#get-responses]
+=== Responses
+
+200 OK::
+The request was successful.
+Returns a JSON object containing every setting on this endpoint that has been set, including any set back to its default value.
+A setting that has never been set does not appear: it has its default value.
+
+401 Unauthorized::
+The user name or password is missing or incorrect.
+
+403 Forbidden::
+The user does not have at least 1 of the roles listed in <<required-privileges-get>>.
+
+[#get-example]
+=== Example
+
+The following example gets the settings on a cluster where only the path limit has been changed:
+
+[source,bash]
+----
+curl -X GET -u $USER:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global
+----
+
+The call returns:
+
+[source,json]
+----
+{"subdoc_multi_max_paths":32}
+----
+
+On a cluster where none of the settings on this endpoint has been changed, the call returns an empty object, `{}`.
+
+[#set-settings]
+== Changing the Sub-Document Settings
+
+[#post-curl-syntax]
+=== curl Syntax
+
+[source,bash]
+----
+curl -X POST http[s]://$HOST:$PORT/pools/default/settings/memcached/global
+     -u $USER:$PASSWORD
+     [-d subdoc_multi_max_paths=<integer>]
+     [-d subdoc_offload_size_threshold=<integer>]
+     [-d subdoc_offload_paths_threshold=<integer>]
+----
+
+==== Path Parameters
+:required-privileges: required-privileges-post
+include::partial$user_pwd_host_port_params.adoc[]
+
+[#parameters]
+==== Parameters
+
+`subdoc_multi_max_paths`::
+(optional) The maximum number of paths a multi-path Sub-Document request can contain.
+An integer from `16` to `2147483647`.
+The default is `16`.
+
+`subdoc_offload_size_threshold`::
+(optional) The document size, in bytes, above which a Sub-Document operation runs on the NonIO thread pool.
+An integer from `0` to `2147483647`.
+The default is `1048576` (1{nbsp}MiB).
+
+`subdoc_offload_paths_threshold`::
+(optional) The number of paths above which a Sub-Document request runs on the NonIO thread pool.
+An integer from `0` to `2147483647`.
+The default is `16`.
+
+[#required-privileges-post]
+=== Required Privileges
+
+Your account must have at least 1 of the following roles to make a POST request to this endpoint:
+
+* xref:learn:security/roles.adoc#full-admin[Full Admin]
+* xref:learn:security/roles.adoc#cluster-admin[Cluster Admin]
+
+[#post-responses]
+=== Responses
+
+202 Accepted::
+The request was successful.
+Returns a JSON object containing every setting on this endpoint that has been set.
+
+400 Bad Request::
+A value is out of range, a value is not an integer, or a parameter name is not recognized.
+For a value out of range or not an integer, returns a JSON object naming the setting and the problem: `too_small`, `too_large`, or `invalid`.
+For example, setting `subdoc_multi_max_paths` to `15` returns:
++
+[source,json]
+----
+{"subdoc_multi_max_paths":"too_small"}
+----
++
+An unrecognized parameter name, such as `subdocMultiMaxPath`, returns the message under a `_` key:
++
+[source,json]
+----
+{"_":"Unknown POST parameters: [\"subdocMultiMaxPath\"]"}
+----
+
+401 Unauthorized::
+The user name or password is missing or incorrect.
+
+403 Forbidden::
+The user does not have at least 1 of the roles listed in <<required-privileges-post>>.
+
+[#post-examples]
+=== Examples
+
+[#raise-limit]
+==== Raise the Path Limit
+
+The following example raises the path limit to 32 paths per request:
+
+[source,bash]
+----
+curl -X POST -u $USER:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global \
+     -d subdoc_multi_max_paths=32
+----
+
+The call returns:
+
+[source,json]
+----
+{"subdoc_multi_max_paths":32}
+----
+
+A GET request now returns the same object.
+Requests with up to 32 paths succeed at once, without a restart.
+A request with 33 paths fails with the context `Request must contain at most 32 paths`.
+
+[#restore-default]
+==== Restore the Default Path Limit
+
+To go back to the default, set the path limit to `16`.
+You cannot delete these settings: a `DELETE` request to `/pools/default/settings/memcached/global/setting/subdoc_multi_max_paths` returns `404 Not Found` with `{"_":"Unknown/unsupported setting: \"subdoc_multi_max_paths\""}`.
+
+[source,bash]
+----
+curl -X POST -u $USER:$PASSWORD \
+     http://node1.example.com:8091/pools/default/settings/memcached/global \
+     -d subdoc_multi_max_paths=16
+----
+
+The call returns:
+
+[source,json]
+----
+{"subdoc_multi_max_paths":16}
+----
+
+After this, a GET request still lists `subdoc_multi_max_paths`, with the value `16`.
+
+[#monitor-offload]
+== Monitoring Offloaded Operations
+
+The `kv_subdoc_offload_count` metric counts, for each bucket, the Sub-Document operations the Data Service has run on the NonIO thread pool.
+It counts operations offloaded for either reason: document size or path count.
+To see the effect of raising the path limit, compare the count before and after the change: the size threshold has not changed, so the increase comes from requests with more paths than `subdoc_offload_paths_threshold`.
+
+The following example gets the metric through the Statistics REST API:
+
+[source,bash]
+----
+curl -X GET -u $USER:$PASSWORD \
+     http://node1.example.com:8091/pools/default/stats/range/kv_subdoc_offload_count
+----
+
+The reply holds an entry for each bucket, with the bucket name under `metric` and the count over time under `values`, as `[timestamp, "count"]` pairs.
+The following trimmed reply shows the count for the bucket `travel-sample` rising from 0 to 3:
+
+[source,json]
+----
+{
+  "data": [
+    {
+      "metric": {
+        "bucket": "travel-sample",
+        "name": "kv_subdoc_offload_count"
+      },
+      "values": [
+        [1794919667, "0"],
+        [1794919677, "0"],
+        [1794919687, "3"]
+      ]
+    }
+  ]
+}
+----
+
+For more information, see xref:rest-api:rest-statistics-single.adoc[Getting a Single Statistic].
+
+[#see-also]
+== See Also
+
+* xref:learn:data/data.adoc#sub-documents-overview[Sub-Documents]
+* xref:learn:clusters-and-availability/size-limitations.adoc[Size Limits]
+* xref:rest-api:rest-reader-writer-thread-config.adoc[]
+* xref:rest-api:rest-manage-cluster-connections.adoc[Managing Cluster Connections]
+* xref:rest-api:rest-get-system-events.adoc[Getting System Events]
+* xref:system-event-reference:system-event-reference.adoc[]
