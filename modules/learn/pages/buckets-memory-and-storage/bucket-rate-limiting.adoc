@@ -1,0 +1,222 @@
+= Bucket Rate Limiting
+:description: pass:q[Bucket rate limiting lets you guarantee each bucket a share of a Data Service node's throughput, cap how much a single bucket can use, and delay requests that go over.]
+:page-edition: Enterprise Edition
+
+[abstract]
+{description}
+
+When several buckets share the same Data Service nodes, they compete for the same CPU, network, and disk.
+By default, a node serves requests first come, first served, so a single busy bucket can slow down every other bucket on the node.
+Bucket rate limiting lets you give each bucket a guaranteed minimum throughput and a maximum it never exceeds.
+
+[#how-it-works]
+== How Bucket Rate Limiting Works
+
+Bucket rate limiting measures throughput in units per second rather than operations per second, because a large document costs a node more to read or write than a small document.
+It uses 4 settings:
+
+Node capacity::
+The total units per second that all buckets on a Data Service node can consume.
+By default, node capacity is unlimited.
+
+Reservation::
+The units per second guaranteed to a bucket.
+A bucket that stays within its reservation is never throttled.
+By default, a bucket has no reservation.
+
+Hard limit::
+The most units per second a bucket can consume.
+A bucket that reaches its hard limit is always throttled.
+By default, a bucket has no hard limit.
+
+Enabled::
+A cluster-wide switch, labeled *Bucket throughput throttling* in the UI and `throttle_enabled` in the REST API.
+Until you enable bucket rate limiting, Couchbase Server does not throttle requests.
+It still counts the units each bucket consumes, and keeps your node capacity, reservations, and hard limits.
+
+The node capacity left after subtracting every bucket's reservation is the node's free capacity.
+A bucket that has used its reservation takes units from the free capacity, first come, first served, until it reaches its hard limit or the free capacity runs out.
+A reservation belongs to its bucket even while that bucket is idle: other buckets cannot use it.
+
+Couchbase Server refills each bucket's units once a second.
+A newly created bucket can take up to 1 second to receive its first units.
+
+The bucket is the unit of rate limiting.
+Every connection and every user working on a bucket draws on the same units.
+
+[#read-and-write-units]
+== Read and Write Units
+
+A read consumes 1 read unit for every 4{nbsp}KiB it returns, rounded up.
+A write consumes 1 write unit for every 1{nbsp}KiB it stores, rounded up.
+A write costs more than a read of the same size, because a write also has to be persisted and replicated.
+A durable write consumes twice the write units of the same write without durability.
+When a document expires, its bucket consumes write units for the deletion.
+
+Node capacity, reservations, and hard limits count read units and write units together.
+
+For example, a bucket serving 1,000 reads per second and 500 writes per second without durability, where every document is 3{nbsp}KiB, consumes:
+
+* 1,000 read units per second: each 3{nbsp}KiB read rounds up to 1 read unit.
+* 1,500 write units per second: each 3{nbsp}KiB write is 3 write units.
+
+That's 2,500 units per second in total.
+
+You can change the size of a read unit and a write unit with the `read_unit_size` and `write_unit_size` settings.
+The defaults suit most workloads.
+For details, see xref:rest-api:rest-bucket-rate-limiting.adoc[].
+
+[#examples]
+== Examples
+
+The following examples show how the settings interact on a single node.
+
+[#example-reservations-and-hard-limits]
+=== Two Buckets with Reservations and Hard Limits
+
+Node capacity is 10,000 units per second.
+The buckets `orders` and `inventory` each reserve 2,000 units per second and have a hard limit of 8,000.
+The free capacity is 10,000 - 2,000 - 2,000 = 6,000 units per second.
+
+[cols="2,1,1"]
+|===
+| Workload | `orders` can use | `inventory` can use
+
+| `orders` uses 3,000 units per second
+| 3,000
+| Up to 7,000
+
+| `inventory` uses 6,000 units per second
+| Up to 4,000
+| 6,000
+
+| `orders` is idle
+| 0
+| Up to 8,000, its hard limit
+|===
+
+[#example-hard-limits-only]
+=== Hard Limits Only
+
+Leave node capacity unset and set only a hard limit on each bucket.
+Each bucket can use up to its hard limit, and nothing is reserved.
+This is the simplest configuration: use it to stop a single bucket using more than a fixed amount of throughput.
+
+[#example-mixed]
+=== Reserved and Unreserved Buckets Together
+
+Node capacity is 10,000 units per second.
+
+* `orders` reserves 3,000 units per second, with a hard limit of 6,000.
+* `inventory` reserves 2,000 units per second, with a hard limit of 5,000.
+* `reports` has no reservation and no hard limit.
+
+`orders` and `inventory` can always use 3,000 and 2,000 units per second.
+The free capacity is 5,000 units per second, and all 3 buckets share it, first come, first served.
+`reports` can use only the free capacity, so it gets up to 5,000 units per second, even when the other 2 buckets are idle.
+
+[#throttled-requests]
+== What a Throttled Request Sees
+
+Couchbase Server delays any request over its bucket's limit until the bucket's units refill, then runs it.
+The application sees added latency, not an error, and needs no code or SDK changes.
+
+If a bucket is throttled for long enough, requests can reach the client's timeout.
+Set reservations and hard limits from measured throughput, as described in <<choose-node-capacity>>, so that normal traffic stays within them.
+
+[#xdcr-backup-sync-gateway]
+== XDCR, Backup, and Sync Gateway
+
+Bucket rate limiting applies to every client of a bucket, including:
+
+* XDCR replications to and from the bucket.
+* Backups and restores with `cbbackupmgr`.
+* Sync Gateway.
+
+Their reads and writes consume the bucket's units in the same way as an application's.
+Plan for XDCR and backups in either of these ways:
+
+* Leave part of the node capacity unreserved, so that XDCR and backups can use the free capacity without reducing any bucket's reservation.
+* Include their throughput in the reservation of each bucket they work on.
+
+Bucket rate limiting is not recommended for buckets that serve Sync Gateway.
+
+Only Couchbase Server's own internal processes are exempt from bucket rate limiting.
+
+[#choose-node-capacity]
+== Choosing a Node Capacity
+
+Set node capacity to the throughput a node sustains while still meeting your latency targets.
+Couchbase Server counts units whether or not bucket rate limiting is enabled, so you can measure before you turn it on:
+
+. Run your production workload, or a test of it, at its busiest, with acceptable 99.9th percentile latency.
+. For each bucket, add its read unit rate and write unit rate: `kv_ru_total` plus `kv_wu_total`, as a per-second rate.
+. Add the totals for all buckets on the node.
+That sum is a starting value for node capacity.
+
+You can also create a single bucket on a test cluster that matches production, and increase its workload until latency degrades.
+The unit rate just before that point is the node's capacity.
+
+Leave some capacity unreserved for XDCR, backups, and bursts.
+
+Node capacity is a cluster-wide setting.
+If your Data Service nodes are not all the same size, you can xref:manage:manage-buckets/configure-bucket-rate-limiting.adoc#set-node-capacity-one-node[set a different capacity for a node].
+
+[#monitoring]
+== Monitoring
+
+The Data Service reports these statistics for each bucket:
+
+[cols="1,2"]
+|===
+| Statistic | What it tells you
+
+| `kv_ru_total`
+| Read units the bucket has consumed.
+As a rate, its read throughput in units per second.
+
+| `kv_wu_total`
+| Write units the bucket has consumed.
+As a rate, its write throughput in units per second.
+
+| `kv_throttle_count_total`
+| Requests delayed because the bucket was over its limit.
+A rising count means the bucket is being throttled.
+
+| `kv_throttle_duration_seconds`
+| A histogram of how long throttled requests waited, in seconds.
+This is the latency that throttling adds.
+
+| `kv_reject_count_total`
+| Requests rejected rather than delayed.
+
+| `kv_throttle_reserved`
+| The bucket's current reservation, in units per second.
+
+| `kv_throttle_hard_limit`
+| The bucket's current hard limit, in units per second.
+|===
+
+The Data Service also reports `kv_node_capacity`, the node capacity in effect on the node.
+
+For how to query statistics, see xref:manage:monitor/set-up-prometheus-for-monitoring.adoc[].
+
+[#requirements]
+== Requirements and Limits
+
+* Bucket rate limiting is available in Couchbase Server Enterprise Edition only.
+* Every node in the cluster must run Couchbase Server 8.5 or later before you can change any bucket rate limiting setting.
+* It applies to Couchbase and Ephemeral buckets.
+* A bucket's reservation cannot be greater than its hard limit.
+* The sum of all buckets' reservations cannot be greater than the smallest node capacity of any Data Service node.
+
+For each setting's range and default, see xref:rest-api:rest-bucket-rate-limiting.adoc[].
+
+[#see-also]
+== See Also
+
+* xref:manage:manage-buckets/configure-bucket-rate-limiting.adoc[]
+* xref:rest-api:rest-bucket-rate-limiting.adoc[]
+* xref:cli:cbcli/couchbase-cli-setting-cluster.adoc[]
+* xref:cli:cbcli/couchbase-cli-bucket-edit.adoc[]
+* xref:learn:buckets-memory-and-storage/buckets.adoc[]

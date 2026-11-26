@@ -1,0 +1,233 @@
+= Bucket Rate Limiting API
+:description: pass:q[Use the REST API to set the node capacity, enable bucket rate limiting, and set each bucket's reservation and hard limit.]
+:page-edition: Enterprise Edition
+:stem: asciimath
+
+[abstract]
+{description}
+
+[#http-methods-and-uris]
+== HTTP Methods and URIs
+
+Node settings, for every node in the cluster:
+
+[source,uri]
+----
+GET  /pools/default/settings/memcached/global
+POST /pools/default/settings/memcached/global
+----
+
+Node settings, for a single node:
+
+[source,uri]
+----
+GET    /pools/default/settings/memcached/node/{NODE}
+POST   /pools/default/settings/memcached/node/{NODE}
+DELETE /pools/default/settings/memcached/node/{NODE}/setting/node_capacity
+GET    /pools/default/settings/memcached/effective/{NODE}
+----
+
+Bucket settings:
+
+[source,uri]
+----
+POST /pools/default/buckets
+POST /pools/default/buckets/{BUCKET}
+GET  /pools/default/buckets/{BUCKET}
+----
+
+[#description]
+== Description
+
+Bucket rate limiting has node settings, which apply to every bucket on a Data Service node, and bucket settings, which apply to a single bucket.
+For how the settings work together, and the edition and version they require, see xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc[].
+
+[#node-settings]
+== Node Settings
+
+Set node settings for every node with `POST /pools/default/settings/memcached/global`.
+
+To give a single node a different `node_capacity`, use `POST /pools/default/settings/memcached/node/\{NODE}`, where `\{NODE}` is the node's name, such as `ns_1@10.143.192.101`, or `self` for the node that receives the request.
+A per-node `node_capacity` overrides the global value on that node.
+To return the node to the global value, use `DELETE /pools/default/settings/memcached/node/\{NODE}/setting/node_capacity`.
+
+`GET /pools/default/settings/memcached/global` and `GET /pools/default/settings/memcached/node/\{NODE}` return only the values set at that level.
+To see the values a node uses, including defaults, use `GET /pools/default/settings/memcached/effective/\{NODE}`.
+
+[cols="1,3,2"]
+|===
+| Setting | Description | Values
+
+| `throttle_enabled`
+| Enables or disables bucket rate limiting for the cluster.
+While disabled, Couchbase Server does not throttle requests.
+| `true` or `false`.
+Default: `false`.
+
+| `node_capacity`
+| The total units per second that all buckets on a node can consume.
+| stem:[1 … 2^64 - 1].
+Default: `18446744073709551615`, unlimited.
+
+| `read_unit_size`
+| The number of bytes a read can return for 1 read unit.
+| stem:[0 … 2^31 - 1].
+Default: `4096`.
+
+| `write_unit_size`
+| The number of bytes a write can store for 1 write unit.
+| stem:[0 … 2^31 - 1].
+Default: `1024`.
+|===
+
+`node_capacity` cannot be less than the sum of every bucket's `throttleReserved`.
+
+[#bucket-settings]
+== Bucket Settings
+
+Set bucket settings when you create a bucket with `POST /pools/default/buckets`, or change them with `POST /pools/default/buckets/\{BUCKET}`.
+`GET /pools/default/buckets/\{BUCKET}` returns their current values.
+
+[cols="1,3,2"]
+|===
+| Setting | Description | Values
+
+| `throttleReserved`
+| The units per second guaranteed to the bucket.
+| stem:[0 … 2^64 - 1].
+Default: `0`, no reservation.
+
+| `throttleHardLimit`
+| The most units per second the bucket can consume.
+To remove a hard limit, set it to `18446744073709551615`.
+| stem:[1 … 2^64 - 1].
+Default: `18446744073709551615`, no hard limit.
+|===
+
+`throttleReserved` cannot be greater than `throttleHardLimit`.
+The sum of `throttleReserved` across all buckets cannot be greater than the smallest `node_capacity` of any Data Service node.
+
+`throttleHardLimit` can be greater than `node_capacity`.
+
+[#required-permissions]
+== Required Permissions
+
+* Reading or changing node settings: *Full Admin* or *Cluster Admin*.
+* Creating a bucket: *Full Admin* or *Cluster Admin*.
+* Changing an existing bucket's settings: *Full Admin*, *Cluster Admin*, or *Bucket Admin* for that bucket.
+
+[#responses]
+== Responses and Errors
+
+A successful `POST` to a node settings URI returns `202 Accepted` and the settings stored at that level.
+A successful `DELETE` returns `202 Accepted`.
+
+A request that breaks a rule returns `400 Bad Request` with a JSON object of errors.
+Errors about node settings are under the `node_capacity` key.
+Errors about bucket settings are under the `errors.throttleReserved` key, whichever setting caused them.
+
+[cols="2,3"]
+|===
+| Message | Cause
+
+| `node_capacity (N) cannot be less than the sum of throttleReserved across all buckets (M)`
+| The new `node_capacity` is less than the total of all bucket reservations.
+Lower some reservations first.
+
+| `Sum of throttleReserved across all buckets (N) exceeds node_capacity (M)`
+| The new `throttleReserved`, added to every other bucket's reservation, is greater than the node capacity.
+
+| `throttleReserved cannot exceed throttleHardLimit`
+| The bucket's reservation is greater than its hard limit.
+
+| `The value of throttleReserved (N) must be in the range 0 to 18446744073709551615 inclusive`
+| The value is negative or too large.
+`throttleHardLimit` has the same check, with a range starting at `1`.
+|===
+
+A request for a node outside the cluster returns `404 Not Found`.
+A `DELETE` for a node with no per-node `node_capacity` also returns `404 Not Found`.
+
+[#examples]
+== Examples
+
+[#example-enable]
+=== Set Node Capacity and Enable Bucket Rate Limiting
+
+The following example sets the node capacity to 25,000 units per second and enables bucket rate limiting:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/settings/memcached/global \
+  -u Administrator:password \
+  -d throttle_enabled=true \
+  -d node_capacity=25000
+----
+
+[#example-node]
+=== Set a Different Node Capacity for a Single Node
+
+The following example sets the node capacity of node `ns_1@10.143.192.102` to 15,000 units per second:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/settings/memcached/node/ns_1@10.143.192.102 \
+  -u Administrator:password \
+  -d node_capacity=15000
+----
+
+[#example-effective]
+=== See the Settings a Node Uses
+
+[source,shell]
+----
+curl http://localhost:8091/pools/default/settings/memcached/effective/self \
+  -u Administrator:password
+----
+
+[#example-create-bucket]
+=== Create a Bucket with a Reservation and Hard Limit
+
+The following example creates a bucket named `orders` that reserves 2,000 units per second and is limited to 3,000:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/buckets \
+  -u Administrator:password \
+  -d name=orders \
+  -d ramQuota=256 \
+  -d throttleReserved=2000 \
+  -d throttleHardLimit=3000
+----
+
+[#example-edit-bucket]
+=== Change a Bucket's Hard Limit
+
+The following example raises the hard limit of the `orders` bucket to 4,000 units per second:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/buckets/orders \
+  -u Administrator:password \
+  -d throttleHardLimit=4000
+----
+
+[#example-disable]
+=== Disable Bucket Rate Limiting
+
+The following example disables bucket rate limiting and keeps every other setting:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/settings/memcached/global \
+  -u Administrator:password \
+  -d throttle_enabled=false
+----
+
+[#see-also]
+== See Also
+
+* xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc[]
+* xref:manage:manage-buckets/configure-bucket-rate-limiting.adoc[]
+* xref:rest-api:rest-bucket-create.adoc#throttlereserved[`throttleReserved`] and xref:rest-api:rest-bucket-create.adoc#throttlehardlimit[`throttleHardLimit`] in xref:rest-api:rest-bucket-create.adoc[]
+* xref:cli:cbcli/couchbase-cli-setting-cluster.adoc[]
