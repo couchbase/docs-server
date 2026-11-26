@@ -149,6 +149,59 @@ Fast failover can be achieved by deploying an arbiter node, which is a node that
 Such a deployment ensures that the Cluster Manager automatically deploys critical system infrastructure on the arbiter node, rather than on any other, so as to avoid clashes.
 This may lead to several seconds of latency reduction, when a busy cluster undergoes failover.
 
+The critical system infrastructure is the orchestrator: the node on which the Cluster Manager coordinates cluster-wide tasks, such as rebalance and failover.
+If the node that fails is also the orchestrator, the remaining nodes must first time out and elect a new orchestrator before they can fail the node over.
+Because an arbiter node runs no services, the Cluster Manager prefers it as the orchestrator, as described in <<orchestrator-placement>>.
+With the orchestrator on an arbiter node, the failure of a Data Service node does not also require a new orchestrator to be elected.
+This makes the failover of a Data Service node faster and more consistent, which gives more reliable write availability.
+The same applies to nodes that run other services.
+
+If you rely on an arbiter node for fast failover, upgrade the arbiter node before any other node.
+See xref:install:upgrade.adoc#upgrade-arbiter-nodes[Upgrading a Cluster with Arbiter Nodes].
+
+[#orchestrator-placement]
+=== Orchestrator Placement
+
+The Cluster Manager chooses which node is the orchestrator by comparing the nodes on the following criteria, in order.
+The first criterion on which the nodes differ decides between them.
+
+. *Version.*
+A node running a later version of Couchbase Server is preferred.
+In Couchbase Server 8.5 and later, the comparison includes the maintenance version: for example, a node running 8.5.1 is preferred to a node running 8.5.0.
+
+. *Services.*
+The node whose services have the lowest total weight is preferred.
+Each service has the following weight, and a node's total is the sum of the weights of the services it runs:
++
+[cols="2,1"]
+|===
+| Service | Weight
+
+| Data | 10000
+| Index, Search, Analytics | 1000 each
+| Query, Eventing | 100 each
+| Backup | 10
+| No services (an arbiter node) | 0
+|===
++
+The Data Service has the highest weight because a failover of a Data Service node has the greatest effect on availability.
+A node that does not run the Data Service is always preferred to a Data Service node of the same version, and an arbiter node is preferred to every node of the same version that runs a service.
+
+. *Server group.*
+When the cluster elects a new orchestrator, a node in a different server group from the previous orchestrator is preferred.
+See xref:learn:clusters-and-availability/groups.adoc[Server Group Awareness].
+
+. *Node name.*
+The node whose name is lowest in lexicographical order is preferred.
+
+When a node joins the cluster or is upgraded, it takes over as the orchestrator if it's preferred on version or services.
+The server group and node name criteria apply only when the cluster elects a new orchestrator, for example after the orchestrator fails: they do not move an existing orchestrator.
+
+The orchestrator does not move while a rebalance is running.
+If you add a preferred node and rebalance straight away, the current orchestrator remains in place until the rebalance finishes, and the preferred node then takes over.
+
+To find out which node is the orchestrator, see xref:rest-api:rest-identify-orchestrator.adoc[].
+
 === Deploying Services on a Node
 
 You can add services to a new node when adding the node to a cluster.
