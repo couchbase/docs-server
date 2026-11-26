@@ -1,0 +1,191 @@
+= Configure Bucket Rate Limiting
+:description: pass:q[Set a node capacity, give buckets a reservation and a hard limit, and enable bucket rate limiting.]
+:page-edition: Enterprise Edition
+
+[abstract]
+{description}
+
+Configure bucket rate limiting in this order:
+
+. Set the node capacity, unless you only want hard limits.
+. Set each bucket's reservation and hard limit.
+. Enable bucket rate limiting.
+
+Until you enable it, your settings are saved but have no effect.
+For how node capacity, reservations, and hard limits work together, see xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc[].
+
+NOTE: Bucket rate limiting is not recommended for buckets that serve Sync Gateway.
+XDCR and backups are rate limited too.
+See xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc#xdcr-backup-sync-gateway[XDCR, Backup, and Sync Gateway].
+
+[#prerequisites]
+== Prerequisites
+
+* A cluster that meets the xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc#requirements[requirements].
+* The *Full Admin* or *Cluster Admin* role.
+To change the settings of a single existing bucket, *Bucket Admin* for that bucket is enough.
+* A node capacity value.
+To find a value, see xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc#choose-node-capacity[Choosing a Node Capacity].
+
+[#set-node-capacity-and-enable]
+== Set Node Capacity and Enable Bucket Rate Limiting
+
+[tabs]
+====
+UI::
++
+--
+. Go to menu:Settings[General].
+. Expand *Advanced Data Settings*.
+. Under *Bucket Rate Limiting*, select *Node capacity limit*.
+. In the *Node capacity limit* field, enter the node capacity in units per second.
+. Select *Bucket throughput throttling*.
+. Click btn:[Save].
+--
+
+Command line::
++
+--
+Run `couchbase-cli setting-cluster` with `--node-capacity` and `--throttle-enabled 1`:
+
+[source,shell]
+----
+couchbase-cli setting-cluster -c localhost:8091 \
+  -u Administrator -p password \
+  --node-capacity 25000 \
+  --throttle-enabled 1
+----
+
+You can also set both options when you initialize a cluster with xref:cli:cbcli/couchbase-cli-cluster-init.adoc[`couchbase-cli cluster-init`].
+--
+
+REST API::
++
+--
+Send `node_capacity` and `throttle_enabled` to `/pools/default/settings/memcached/global`:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/settings/memcached/global \
+  -u Administrator:password \
+  -d node_capacity=25000 \
+  -d throttle_enabled=true
+----
+--
+====
+
+To set hard limits only, leave *Node capacity limit* clear, or leave out `node_capacity`, and enable bucket rate limiting.
+
+[#set-bucket-limits]
+== Set a Bucket's Reservation and Hard Limit
+
+[tabs]
+====
+UI::
++
+--
+. Go to *Buckets*.
+. Click btn:[Add Bucket] to create a bucket, or click the bucket's row and then btn:[Edit] to change an existing bucket.
+. Expand *Advanced bucket settings*.
+. Under *Bucket Rate Limiting*, select *Set reserved capacity*.
+. In the reservation field, enter the bucket's reservation in units per second.
+. Select *Set hard limit*.
+. In the hard limit field, enter the bucket's hard limit in units per second.
+. Click btn:[Add Bucket] or btn:[Save Changes].
+--
+
+Command line::
++
+--
+Run `couchbase-cli bucket-edit`, or `couchbase-cli bucket-create` for a new bucket, with `--throttle-reserved` and `--throttle-hard-limit`:
+
+[source,shell]
+----
+couchbase-cli bucket-edit -c localhost:8091 \
+  -u Administrator -p password \
+  --bucket orders \
+  --throttle-reserved 2000 \
+  --throttle-hard-limit 3000
+----
+--
+
+REST API::
++
+--
+Send `throttleReserved` and `throttleHardLimit` to the bucket's URI:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/buckets/orders \
+  -u Administrator:password \
+  -d throttleReserved=2000 \
+  -d throttleHardLimit=3000
+----
+--
+====
+
+To remove a bucket's reservation, set it to `0`.
+To remove a bucket's hard limit, clear *Set hard limit* in the UI, or set it to `18446744073709551615` with the command line or REST API.
+If a change is refused, see xref:rest-api:rest-bucket-rate-limiting.adoc#responses[Responses and Errors] for what each message means.
+
+[#distribute-node-capacity]
+== Distribute Node Capacity Across Buckets
+
+To give every bucket an equal reservation in a single step, use the UI:
+
+. Go to menu:Settings[General].
+. Expand *Advanced Data Settings*.
+. Under *Bucket Rate Limiting*, select *Node capacity limit* and enter the node capacity, if it's not already set.
+. Select *Distribute*.
+. Enter the percentage of the node capacity to reserve across all buckets.
+. Click btn:[Save].
+
+Couchbase Server divides that percentage of the node capacity between the buckets you can edit, rounding down, and replaces each bucket's reservation with the result.
+If the new reservation is at or above a bucket's hard limit, the hard limit is raised to match it.
+For example, with a node capacity of 20,000 units per second, 80% across 4 buckets gives each bucket a reservation of 4,000.
+
+IMPORTANT: *Distribute* overwrites every bucket's reservation, including reservations you set by hand.
+
+[#set-node-capacity-one-node]
+== Set a Different Capacity for a Single Node
+
+If a Data Service node can handle more or less throughput than the others, give it its own node capacity with the REST API:
+
+[source,shell]
+----
+curl -X POST http://localhost:8091/pools/default/settings/memcached/node/ns_1@10.143.192.102 \
+  -u Administrator:password \
+  -d node_capacity=15000
+----
+
+To return the node to the cluster's node capacity:
+
+[source,shell]
+----
+curl -X DELETE http://localhost:8091/pools/default/settings/memcached/node/ns_1@10.143.192.102/setting/node_capacity \
+  -u Administrator:password
+----
+
+Couchbase Server checks bucket reservations against the smallest node capacity of any Data Service node.
+
+[#disable]
+== Disable Bucket Rate Limiting
+
+Disabling bucket rate limiting stops all throttling and keeps your node capacity, reservations, and hard limits, so you can enable it again later without reconfiguring.
+
+* In the UI, clear *Bucket throughput throttling* in menu:Settings[General] under *Advanced Data Settings*, and click btn:[Save].
+* With the command line, run `couchbase-cli setting-cluster` with `--throttle-enabled 0`.
+* With the REST API, send `throttle_enabled=false` to `/pools/default/settings/memcached/global`.
+
+[#check]
+== Check Throttling
+
+A rising `kv_throttle_count_total` for a bucket means it's being throttled.
+If a bucket is throttled more than you expect, raise its reservation or hard limit, or leave more of the node capacity unreserved.
+For every statistic, see xref:learn:buckets-memory-and-storage/bucket-rate-limiting.adoc#monitoring[Monitoring].
+
+[#next-steps]
+== Next Steps
+
+* xref:rest-api:rest-bucket-rate-limiting.adoc[] for every setting, its range, and its errors.
+* xref:manage:monitor/set-up-prometheus-for-monitoring.adoc[] to collect the statistics.
