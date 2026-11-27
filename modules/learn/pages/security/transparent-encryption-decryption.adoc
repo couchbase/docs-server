@@ -1,0 +1,62 @@
+= Transparent Encryption and Decryption
+:description: Encryption at rest is transparent to applications and users. You do not need to change your application code, SDKs, or queries to use encryption at rest.
+:page-toclevels: 2
+:page-edition: Enterprise Edition
+
+When encryption at rest is enabled:
+
+Write path::
+When Couchbase Server writes data to disk, it encrypts the data in memory using the active DEK(AES-256-GCM) and writes the encrypted result to the file system.
++
+[source]
+----
+Application data → encrypt with DEK (in memory) → write encrypted data to disk
+----
+
+Read path::
+When Couchbase Server reads data from disk, it decrypts the data in memory using the appropriate DEK and returns the plaintext to the requesting service or client.
++
+[source]
+----
+Read encrypted data from disk → decrypt with DEK (in memory) → return plaintext
+----
+
+== Cold Start (Node Startup)
+
+When a node starts, Couchbase Server must decrypt the key hierarchy before it can read any encrypted data:
+
+. Couchbase Server obtains the master password (from the environment variable, a prompt, or a script).
+. It uses the master password to decrypt locally stored KEKs.
+  If a KEK is managed by an external KMS, Couchbase Server sends a decrypt request to the KMS.
+  This is the only time Couchbase Server contacts the external KMS during normal operation.
+. It uses the decrypted KEKs to decrypt the DEKs stored on disk.
+. It uses the decrypted DEKs to decrypt data as services read it from disk.
+
+After startup, DEKs and KEKs are cached in memory.
+Couchbase Server contacts the external KMS periodically to test configured encryption keys. 
+
+== What Transparency Means for Your Application
+
+* *SDKs:* No changes required.
+  All Couchbase SDKs work the same way whether encryption at rest is enabled or disabled.
+* *Queries:* {sqlpp} queries and Full Text Search queries work identically.
+  The Query service and Search service decrypt data transparently as they read it from disk.
+* *XDCR:* Cross Data Center Replication works transparently.
+  Data is decrypted on the source cluster before transmission and can be re-encrypted at rest on the destination cluster if encryption is enabled there.
+* *Backup and Restore:* The Backup service and `cbbackupmgr` read decrypted data through the normal Couchbase Server APIs.
+  Backup repositories have their own independent encryption mechanism.
+  For more information, see xref:manage:manage-backup-and-restore/manage-backup-and-restore.adoc[Manage Backup and Restore].
+
+== Performance Considerations
+
+Encryption and decryption add CPU overhead to every disk read and write operation.
+The impact depends on your workload, hardware, and storage backend:
+
+* *Write-heavy workloads* see the most impact because every document mutation requires encryption
+  before the write to disk.
+* *Read-heavy workloads* with high cache hit ratios see minimal impact because most reads are
+  served from the managed cache (in memory) rather than from disk.
+* *Index operations* may see increased latency during index builds and scans that read heavily
+  from disk.
+
+Test your workload with encryption enabled to understand the performance impact in your environment.

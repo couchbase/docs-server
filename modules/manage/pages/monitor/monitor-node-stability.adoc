@@ -1,0 +1,322 @@
+= Monitor Node Stability
+:page-topic-type: guide
+:description: Nodes that periodically become unavailable but recover before the auto failover timeout expires are considered unstable. This page describes how to monitor for unstable nodes and investigate the causes of instability.
+
+[abstract]
+{description}
+
+To learn more about unstable nodes, see xref:learn:clusters-and-availability/unstable-nodes.adoc[].
+
+
+== Prerequisites
+
+* You must have some way of monitoring Couchbase Server metrics.
+You can either use scripts that call the Couchbase Server xref:rest-api:rest-statistics.adoc[] REST API or xref:manage:monitor/set-up-prometheus-for-monitoring.adoc[configure Prometheus] to monitor the metric.
+
+* To troubleshoot the causes of instability, you may need access to the node's operating system logs and other diagnostic information.
+
+== Monitor for Unstable Nodes
+
+To monitor for unstable nodes, you track Couchbase Server's xref:metrics-reference:ns-server-metrics.adoc#cm_node_unreachable_total[`cm_node_unreachable_total`] metric for each node in your cluster.
+This metric records each time a node cannot reach another node in the cluster.
+When you see a pattern of multiple nodes reporting the same node as unreachable, but that node recovers, it may be unstable.
+
+=== Use Prometheus to Monitor for Unstable Nodes
+
+If you're using Prometheus to monitor Couchbase Server, you can create alerts that trigger when multiple nodes report the same node as being unreachable over time.
+The following example Prometheus alert rule triggers when 2 or more nodes report the same node as being unreachable over a 5 minute period:
+
+[source,yaml]
+----
+groups:
+  - name: couchbase-stability
+    rules:
+      - alert: CouchbaseUnstableNode
+        expr: |
+          count by (node) (
+            increase(cm_node_unreachable_total[5m]) > 0
+          ) >= 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unstable Couchbase node detected"
+          description: >
+            {{ $value }} nodes have reported {{ $labels.node }} as unreachable.
+----
+
+The `expr` field in the alert rule uses the `increase` function to see if there have been any increments in the `cm_node_unreachable_total` metric for each node during the last 5 minutes.
+It then counts how many nodes have reported each node as unreachable.
+It triggers the alert if 2 or more nodes have reported the same node as unreachable.
+
+You can use this example as a starting point to monitor for unstable nodes.
+You should customize the alert further to reduce false positives.
+
+For example, before triggering an alert, you may want to determine whether Couchbase Server has performed an auto failover on the node.
+By the time Couchbase Server performs an auto failover on a node, its peers have already reported it as unreachable by incrementing their `cm_node_unreachable_total` counters.
+In this case, there's no need to trigger the unstable node alert because the auto failover should alert administrators to the issue.
+
+[#stat-rest-api]
+=== Use the Statistics REST API to Monitor Node Instability
+
+You can use the `/pools/default/stats/range/cm_node_unreachable_total` REST API endpoint to get the values of the metric over time.
+The following example demonstrates getting the starting and ending values of the  `cm_node_unreachable_total` metric counters from the last 20 minutes:
+
+[source,bash]
+----
+ curl -u Administrator:password -X GET \
+    'http://localhost:8091/pools/default/stats/range/cm_node_unreachable_total?start=-1200&step=1200' \
+           | jq
+----
+
+The previous example returns a JSON object whose `data` field contains a list of metric counters for different nodes and reasons.
+The following JSON is an example of the response to the previous example:
+
+[source,json]
+----
+{
+  "data": [
+    {
+      "metric": {
+        "nodes": [
+          "node1.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node3.example.com",
+        "reason": "connection_closed"
+      },
+      "values": [
+        [
+          1775762638,
+          "3"
+        ],
+        [
+          1775763838,
+          "4"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node1.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node3.example.com",
+        "reason": "net_tick_timeout"
+      },
+      "values": [
+        [
+          1775762638,
+          "36"
+        ],
+        [
+          1775763838,
+          "39"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node2.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node3.example.com",
+        "reason": "net_tick_timeout"
+      },
+      "values": [
+        [
+          1775762638,
+          "34"
+        ],
+        [
+          1775763838,
+          "40"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node3.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node1.example.com",
+        "reason": "connection_closed"
+      },
+      "values": [
+        [
+          1775762638,
+          "5"
+        ],
+        [
+          1775763838,
+          "7"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node3.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node1.example.com",
+        "reason": "disconnect"
+      },
+      "values": [
+        [
+          1775762638,
+          "3"
+        ],
+        [
+          1775763838,
+          "4"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node3.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node1.example.com",
+        "reason": "net_tick_timeout"
+      },
+      "values": [
+        [
+          1775762638,
+          "16"
+        ],
+        [
+          1775763838,
+          "16"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node3.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node2.example.com",
+        "reason": "connection_closed"
+      },
+      "values": [
+        [
+          1775762638,
+          "7"
+        ],
+        [
+          1775763838,
+          "9"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node3.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node2.example.com",
+        "reason": "disconnect"
+      },
+      "values": [
+        [
+          1775762638,
+          "3"
+        ],
+        [
+          1775763838,
+          "3"
+        ]
+      ]
+    },
+    {
+      "metric": {
+        "nodes": [
+          "node3.example.com:8091"
+        ],
+        "instance": "ns_server",
+        "name": "cm_node_unreachable_total",
+        "node": "ns_1@node2.example.com",
+        "reason": "net_tick_timeout"
+      },
+      "values": [
+        [
+          1775762638,
+          "20"
+        ],
+        [
+          1775763838,
+          "23"
+        ]
+      ]
+    },
+  ],
+  "errors": [],
+  "startTimestamp": 1775762638,
+  "endTimestamp": 1775763838
+}
+----
+
+Each `metric` contains the following information:
+
+* The `nodes` list tells you which node is reporting the metric. 
+* The `node` field contains the target of the metric. 
+* The `reason` is why the reporting node could not reach the target node.
+See xref:learn:clusters-and-availability/unstable-nodes.adoc#what-metric-reports[What the Metric Reports] for a description.
+
+The associated `values` list contains the starting and ending value for the counter. 
+The key for these entries is the Unix epoch timestamp of when the value was recorded, and the value is the value of the counter at that time.
+
+From the example output, you can see that during the 20 minutes, `node1` and `node2` reported `node3` as being unreachable due to `net_tick_timeout` 3 times and 6 times respectively (the end value minus the start value).
+Meanwhile, neither `node1` nor `node2` reported issues with each other. 
+This suggests `node3` is unstable, rather than a wider issue in the cluster.
+
+NOTE: You can also see that `node3` reported connection issues with the other 2 nodes. 
+However, because neither `node1` nor `node2` had issues with each other, the issue is probably localized to `node3`.
+
+You can use the REST API call in the previous example as the basis for monitoring for unstable nodes.
+For example, suppose you have a custom monitoring script or monitoring tool that queries Couchbase Server's statistics API.
+You can have the script or tool find unstable nodes by performing the following steps:
+
+. Make a REST API call similar to the previous example to get a snapshot of the `cm_node_unreachable_total` metric over a time period.
+. Compare the beginning and end values for each metric to spot new increments.
+. Correlate the reports to see whether multiple peers have reported the same node as unavailable.
+
+If it finds an unstable node, have the script or tool alert an administrator so they can investigate.
+
+== Troubleshooting Unstable Nodes
+
+When you find an unstable node, you should investigate the causes of instability.
+Nodes can increment their `cm_node_unreachable_total` metric for multiple reasons, not all of which point to an unstable node:
+
+* Planned downtime, such as graceful failovers. 
+If your alerts do not verify that the node is still up, then you may get these false positives.
+* Network partitioning. 
+When network issues such as partitioning happen, groups of nodes report each other as unreachable. 
+To resolve, investigate the health of the network including routers, switches, and bridges.
+
+When multiple peers have connection issues with a specific node, you should investigate that node. 
+Node investigation can include looking at the Couchbase Server logs for more information.
+This information can include messages telling you when other nodes noticed that the unstable node became available again.
+The length of the outage may provide clues about the cause of the instability.
+
+Also examine the system log of the unstable node to look for potential hardware issues such as network port or disk errors.
+Error messages often appear in the `syslog` or `dmesg` logs on Linux nodes.
+
+On Linux nodes, consider whether the kernel's TCP memory pool is under pressure or is full. 
+See xref:install:tcp_mem_settings.adoc[] for more information about the symptoms a kernel TCP/IP memory shortage.

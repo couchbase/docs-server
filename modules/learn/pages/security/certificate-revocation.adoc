@@ -1,0 +1,243 @@
+= Certificate Revocation
+:description: Couchbase Server can check certificates against Certificate Revocation Lists (CRLs), so that a certificate revoked by its issuer can no longer be used to connect to the cluster.
+:page-topic-type: concept
+:page-edition: Enterprise Edition
+:page-toclevels: 2
+
+[abstract]
+{description}
+
+[#the-problem-revocation-solves]
+== The Problem Revocation Solves
+
+A certificate is normally trusted until it expires.
+Sometimes, though, a certificate has to stop working before then: its private key may have been lost or stolen, the person or application it was issued to may no longer be entitled to access, or it may have been issued in error.
+Removing the user from Couchbase Server does not help if the certificate maps to a user who still exists, and replacing the CA would invalidate every certificate it has issued.
+
+Certificate authorities solve this by revoking the certificate, which means adding its serial number to a signed list called a Certificate Revocation List (CRL).
+When revocation checking is enabled, Couchbase Server consults these lists during every new TLS handshake.
+It refuses any certificate that appears on one, even though the certificate is otherwise valid and unexpired.
+
+For an overview of certificates in general, see xref:learn:security/certificates.adoc[Certificates].
+For step-by-step instructions for configuring revocation checking, see xref:manage:manage-security/manage-certificate-revocation.adoc[Manage Certificate Revocation].
+
+[#key-terms]
+== Key Terms
+
+[cols="2,5"]
+|===
+| Term | Meaning in Couchbase Server
+
+| CRL
+| A list, signed by a CA, of the serial numbers of certificates that CA has revoked.
+It is defined by RFC 5280.
+Couchbase Server accepts CRLs in PEM (`-----BEGIN X509 CRL-----`) or DER format.
+
+| `thisUpdate` / `nextUpdate`
+| The time a CRL was issued, and the time by which the CA promises to publish a newer one.
+Couchbase Server treats a CRL as expired after its `nextUpdate`.
+
+| CRL number
+| A sequence number the CA increases with each new CRL.
+It is shown in status output and alerts to help you tell versions apart.
+
+| Delta CRL
+| A smaller CRL that lists only changes since a full ("base") CRL.
+Couchbase Server accepts delta CRLs alongside their base CRL.
+
+| Revoked
+| The certificate's serial number appears on a valid CRL from its issuer.
+
+| Undetermined
+| Couchbase Server cannot tell whether the certificate is revoked.
+Usually there is no CRL for its issuer, or the only CRL has expired.
+
+| Revocation policy
+| How strictly Couchbase Server acts on the result: `Disabled`, `Permissive` or `Require` (see <<revocation-policies>>).
+
+| Scope
+| Which kind of connection a policy applies to: `clientAuth` (client certificates) or `nodeToNode` (certificates the cluster's own nodes and services use to talk to each other).
+|===
+
+[#how-revocation-checking-works]
+== How Revocation Checking Works
+
+. You give the cluster the CRLs published by the CAs you trust.
+There are three ways to do this (see <<where-crls-come-from>>), and you can combine them.
+. Each node verifies every CRL before using it.
+The CRL must be signed by a CA in the cluster's trust store, and it must be current (between its `thisUpdate` and `nextUpdate` times).
+A CRL that fails these checks is not used.
+If an earlier good copy of it was loaded, that copy stays in use.
+. When a new TLS connection is opened, the side that verifies a certificate checks it.
+For a client certificate, that is the service receiving the connection.
+For a node certificate, it is whichever node is checking the other.
+The verifying side finds the CRLs from the certificate's issuer and checks whether the certificate's serial number is listed.
+. The result (good, revoked or undetermined) is then combined with the policy for that kind of connection, which decides whether the connection is allowed.
+. Results are remembered until the CRL's `nextUpdate`, so repeated connections with the same certificate are fast.
+Any change to CRLs, policies or the trust store clears these remembered results immediately.
+
+Couchbase Server also creates and maintains a CRL for its own cluster CA (the out-of-the-box, or OOTB, CA) automatically.
+That CRL is empty, because Couchbase Server never revokes the certificates it generates for itself.
+With it in place, the default certificates are checked in exactly the same way as your own certificates, and pass.
+You do not need to manage this CRL.
+
+[#revocation-policies]
+== Revocation Policies
+
+A policy is set separately for each scope:
+
+[cols="1,4"]
+|===
+| Scope | What It Covers
+
+| `clientAuth`
+| Certificates presented by clients (applications, SDKs, tools and users) that authenticate with a client certificate.
+
+| `nodeToNode`
+| Certificates presented by the cluster's own nodes and services when they connect to each other.
+|===
+
+Each scope takes one of three policies:
+
+[cols="1,2,2,3"]
+|===
+| Policy | Certificate Is Good | Certificate Is Revoked | Revocation Status Is Undetermined (No Usable CRL)
+
+| `Disabled` (default)
+| allowed
+| allowed (not checked)
+| allowed (not checked)
+
+| `Permissive`
+| allowed
+| refused
+| allowed, and a warning is logged
+
+| `Require`
+| allowed
+| refused
+| refused
+|===
+
+* `Permissive` is sometimes called soft-fail.
+It blocks certificates that are known to be revoked, but it does not lock anyone out when a CRL is missing or has expired.
+* `Require` is hard-fail.
+It guarantees that no certificate is accepted unless a current CRL shows it has not been revoked.
+The cost is that missing or expired CRLs cause connections to be refused.
+* A certificate whose CRL has a problem the server cannot interpret (for example, a CRL with a critical extension Couchbase Server does not support) is also treated as undetermined.
+See <<limitations>>.
+
+NOTE: Revocation is checked only when a connection is opened.
+Connections that are already open when you revoke a certificate, load a new CRL or change a policy are not closed.
+They continue until the client or node disconnects.
+
+[#what-is-checked]
+== What Is Checked
+
+Client certificates (`clientAuth` scope) are checked according to the xref:manage:manage-security/enable-client-certificate-handling.adoc[client-certificate authentication] setting:
+
+[cols="2,4"]
+|===
+| Client-Certificate Authentication | Is the Client Certificate's Revocation Status Checked?
+
+| Disable
+| No. Client certificates are not requested, so their status is not checked.
+
+| Enable or Hybrid
+| Only when the client presents a certificate.
+A client that connects without one (for example, with a username and password) is not affected.
+
+| Mandatory
+| Always.
+The client must present a certificate, so its status is always checked.
+|===
+
+Node certificates (`nodeToNode` scope) are checked whenever one node or service connects to another over TLS.
+This includes cluster-manager traffic when node-to-node encryption is on, and connections between services.
+Certificates that Couchbase Server uses internally to authenticate its own services are always treated as `nodeToNode`, even when they arrive on a port normally used by clients.
+
+WARNING: This documentation covers only the revocation checks that Couchbase Server itself performs on the certificates presented to it.
+It does not cover Couchbase SDKs.
+Whether an application's SDK checks the server's certificate against CRLs is determined by the SDK, not by these settings.
+
+* Cross Data Center Replication (XDCR) does not check certificates against CRLs in 8.5.
+This applies to connections within a cluster and to connections to remote clusters.
+* Root CAs. A self-signed root CA certificate cannot be revoked by a CRL and is never checked.
+* Intermediate CAs. By default only the end certificate (the leaf) is checked.
+To also check intermediate CA certificates in the chain, enable `checkIntermediateCerts`.
+The CRLs for the CAs above them must then be loaded too.
+
+[#where-crls-come-from]
+== Where CRLs Come From
+
+You can use any combination of the following sources:
+
+[cols="1,4,2"]
+|===
+| Source | How It Works | Shared Across the Cluster?
+
+| Upload
+| You upload a CRL file through the REST API once.
+Couchbase Server stores it and copies it to every node, including nodes that are down at the time (they receive it when they return) and nodes added later.
+Each node re-verifies the file before using it.
+| Yes
+
+| Watched directory
+| Each node checks a directory on its own disk (by default `/opt/couchbase/var/lib/couchbase/inbox/crls` on Linux) every 60 seconds.
+It loads new or changed files and stops using files that are removed.
+The path is a cluster-wide setting, but the files are not copied between nodes.
+| No: place the files on every node
+
+| URL
+| Each node downloads CRLs from the web addresses you configure, by default once an hour.
+Each node downloads independently.
+A failed download is retried after one minute, and the previous copy stays in use.
+| Configuration is shared; each node downloads
+
+| Generated
+| The empty CRL for the OOTB CA.
+It is created and distributed automatically.
+| Yes
+|===
+
+Use upload when you receive CRLs manually from your PKI team.
+Use a URL when your CA publishes CRLs on a web server (the usual CRL Distribution Point).
+Use the watched directory when an existing automation already delivers CRL files to each server.
+The watched directory is also the recovery path if the cluster's nodes cannot communicate: see xref:manage:manage-security/manage-certificate-revocation.adoc#recovery[Recovery: Nodes Cannot Communicate Because of Revocation].
+
+Loaded CRLs are kept under `/opt/couchbase/var/lib/couchbase/config/crls/` (Linux) and are reloaded after a restart.
+Do not edit this directory by hand.
+
+[#which-crl-applies]
+== Which CRL Applies to a Certificate
+
+* Couchbase Server matches a certificate with the CRLs from the same issuer.
+It uses the issuer name and, when the certificate lists them, its CRL Distribution Points.
+* If several CRLs from the same issuer are loaded, the most recently issued one is used first.
+* The CA that issued the certificate must sign the CRL, and that CA must be in the cluster's trust store.
+For certificates issued by an intermediate CA, add the intermediate CA certificate to the trust store (see xref:rest-api:load-trusted-cas.adoc[Load Root Certificates]), because the intermediate CA signs that CRL.
+* Couchbase Server does not support CRLs signed by a separate, dedicated CRL-signing certificate, or indirect CRLs issued by a different CA.
+* If you remove a CA from the trust store, its CRLs stop being usable.
+Their status becomes untrusted, and an alert is raised.
+
+[#limitations]
+== Limitations
+
+* Existing connections are not dropped.
+Revocation is checked when a connection starts.
+To force a revoked client off, restart the application or close its connections by other means.
+* XDCR is not covered (see <<what-is-checked>>).
+* No Web Console or CLI support in 8.5.
+Configuration is done through the REST API.
+* No CRL-signing delegation.
+Dedicated CRL signers and indirect CRLs are not supported (see <<which-crl-applies>>).
+* Unsupported critical extensions.
+A CRL that contains a critical extension other than those defined for CRLs in RFC 5280 (authority key identifier, issuer alternative name, CRL number, delta CRL indicator, issuing distribution point, freshest CRL, certificate issuer) is rejected.
+* CRLs partitioned by reason.
+A CA can split its CRLs by revocation reason (the `onlySomeReasons` field of the issuing distribution point), so that each CRL covers only some reasons.
+If the CRLs you load do not cover all possible reasons between them, Couchbase Server cannot rule out a revocation for a missing reason, and the certificate is undetermined.
+Load every CRL in such a set.
+* Expired CRLs are not loaded.
+A CRL whose `nextUpdate` has passed is rejected on upload, download or directory scan.
+A CRL that expires while in use stays loaded, but it no longer counts.
+Certificates it covers become undetermined: allowed under `Permissive`, refused under `Require`.

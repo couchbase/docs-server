@@ -94,9 +94,17 @@ curl -X POST -u <administrator>:<password>
   -d warmupBehavior=[ background | blocking | none ]
   -d memoryLowWatermark=<integer>
   -d memoryHighWatermark=<integer>
+  -d dataServiceRebalanceType=[ auto | preferFileBased | preferDcp ]
+  -d continuousBackupEnabled=[ true | false]
+  -d continuousBackupLocation=<string>
+  -d continuousBackupCloudStorageCredId=<string>
+  -d continuousBackupInterval=<integer>
+  -d continuousBackupRetentionPeriod=<integer>
+  -d continuousBackupKmKeyUrl=<string>
+  -d continuousBackupKmCredId=<string>
 ----
 
-All parameters are described in the following subsections.
+The following subsections describe these parameters.
 
 NOTE: The `threadsNumber` parameter, which sets the number of threads for the bucket, has not had any effect since version Couchbase Server 7.0.0. 
 It's deprecated and is no longer listed in the syntax.
@@ -139,6 +147,14 @@ All other parameters are optional and have a default value.
 ** <<warmupbehavior,warmupBehavior>>
 ** <<memorylowwatermark,memoryLowWatermark>>
 ** <<memoryhighwatermark,memoryHighWatermark>>
+** <<dataservicerebalancetype,dataServiceRebalanceType>>
+** <<continuousBackupEnabled,continuousBackupEnabled>>
+** <<continuousBackupLocation,continuousBackupLocation>>
+** <<continuousBackupCloudStorageCredId,continuousBackupCloudStorageCredId>>
+** <<continuousBackupInterval,continuousBackupInterval>>
+** <<continuousBackupRetentionPeriod,continuousBackupRetentionPeriod>>
+** <<continuousBackupKmKeyUrl,continuousBackupKmKeyUrl>>
+** <<continuousBackupKmCredId,continuousBackupKmCredId>>
 +
 NOTE: When migrating a bucket between storage backends, you can edit only the bucket's xref:rest-api:rest-bucket-create.adoc#ramQuota[ramQuota], xref:rest-api:rest-bucket-create.adoc#evictionpolicy[evictionPolicy], and xref:rest-api:rest-bucket-create.adoc#storagebackend[storageBackend] parameters.
 For more information, see xref:manage:manage-buckets/migrate-bucket.adoc[].
@@ -599,6 +615,62 @@ curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket /
 ----
 
 Success returns `200 OK`, and changes the `rank` of `testBucket` to `200`.
+
+[#dataservicerebalancetype]
+=== dataServiceRebalanceType
+[.edition]#{enterprise}#
+
+Controls the rebalance method used for this bucket's vBucket moves during Data Service rebalance.
+This setting overrides the cluster-level `dataServiceFileBasedRebalanceEnabled` setting for the bucket you set it on.
+
+The valid values are:
+
+* `auto` (default): The server uses File-Based Rebalance (FBR) to transfer data between nodes if it can.
+If it cannot, it falls back to using data-change protocol (DCP) to transfer vBuckets.
+This is the recommended setting for most workloads.
+
+* `preferFileBased`: This setting is a synonym for `auto`.
+If the server can use FBR to move vBucket files, it does.
+Otherwise it uses DCP.
+
+* `preferDcp`: All vBucket moves for this bucket use DCP, regardless of the cluster-level FBR setting.
+Couchbase Server never uses FBR for the bucket when you select this setting.
+
+You can set this parameter when creating or modifying the bucket.
+
+For more information about FBR and how the `dataServiceRebalanceType` bucket-level setting interacts with the cluster-level `dataServiceFileBasedRebalanceEnabled` setting, see xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)].
+
+[#example-dataservicerebalancetype-create]
+==== Example: Setting a Rebalance Type During Bucket Creation
+
+The following creates a bucket named `testBucket` with `preferFileBased` rebalance.
+
+[source,bash]
+----
+curl -X POST http://localhost:8091/pools/default/buckets \
+  -u $USERNAME:$PASSWORD \
+  -d name=testBucket \
+  -d ramQuota=125 \
+  -d dataServiceRebalanceType=preferFileBased
+----
+
+A successful call returns `202 Accepted`.
+
+[#example-dataservicerebalancetype-edit]
+==== Example: Updating the Rebalance Type
+
+The following updates the rebalance type for `testBucket` to `auto`:
+
+[source,bash]
+----
+curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
+  -u Administrator:password \
+  -d dataServiceRebalanceType=auto
+----
+
+Success returns `200 OK`.
+
+For conceptual information about FBR and the bucket-level setting, see xref:learn:clusters-and-availability/rebalance.adoc#file-based-rebalance[File-Based Rebalance (FBR)].
 
 [#replicanumber]
 === replicaNumber
@@ -1285,7 +1357,7 @@ It keeps the inactive DEK to decrypt data that's still encrypted with it until i
 The default value is `2592000`, which means Couchbase Server rotates the DEKs every 30 days.
 Set this value to 0 to turn off DEK rotation.
 
-For more information about key rotation, see xref:learn:security/native-encryption-at-rest-overview.adoc#rotation-expiration[Encryption Key Rotation and Expiration].
+For more information about key rotation, see xref:learn:security/encryption-key-rotation-expiration.adoc[Encryption Key Rotation and Expiration].
 
 The following example sets the DEK rotation interval to 15 days (1,296,000 seconds):
 
@@ -1309,7 +1381,7 @@ When this limit is reached, Couchbase Server refuses to rotate the DEKs until yo
 
 IMPORTANT: Setting this value too low can cause performance issues because Couchbase Server may need to re-encrypt large amounts of data.
 
-For more information about key lifetime, see xref:learn:security/native-encryption-at-rest-overview.adoc##rotation-expiration[Encryption Key Rotation and Expiration].
+For more information about key lifetime, see xref:learn:security/encryption-key-rotation-expiration.adoc[Encryption Key Rotation and Expiration].
 
 The following example sets the DEK lifetime to 90 days (7,776,000 seconds):
 include::example$encryption-at-rest/bucket-encryption-examples.adoc[tag=set-dek-lifetime]
@@ -1586,7 +1658,7 @@ See the examples provided above, in xref:rest-api:rest-bucket-create.adoc#exampl
 Enabling Cross Cluster Versioning is a pre-requisite to a few XDCR features.
 The bucket property `enableCrossClusterVersioning` can only be set to true after a bucket has been created.
 When enabled, for each document processed by XDCR, XDCR stores additional metadata, called the Hybrid Logical Vector (HLV), in the document extended attributes (xattrs).
-For more information, see xref:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
+For more information, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[XDCR enableCrossClusterVersioning].
 
 See the example provided in xref:rest-api:rest-bucket-create.adoc#example-enablecrossclusterversioning-edit[Example: Turning on enableCrossClusterVersioning, when Editing]
 
@@ -1608,7 +1680,7 @@ curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
 
 Controls the pruning frequency of the Hybrid Logical Vector (HLV) metadata.
 The default value of versionPruningWindowHrs is 720 hours (30 days), which means that any HLV data older than 720 hours is pruned to remove the outdated entries.
-For more information, see xref:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[versionPruningWindowHrs] in xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc#version-pruning-window-hrs[XDCR enableCrossClusterVersioning].
+For more information, see xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc[versionPruningWindowHrs] in xref:learn:clusters-and-availability/xdcr-enable-crossclusterversioning.adoc#version-pruning-window-hrs[XDCR enableCrossClusterVersioning].
 
 See the example provided in xref:rest-api:rest-bucket-create.adoc#example-versionpruningwindowhrs-edit[Example: Specifying time value for versionPruningWindowHrs, when Editing]
 
@@ -1624,6 +1696,58 @@ curl -v -X POST http://localhost:8091/pools/default/buckets/testBucket \
 -u Administrator:password \
 -d versionPruningWindowHrs=120
 ----
+
+=== Continuous Backup Parameters
+
+The following parameters configure continuous backup for the bucket.
+For more information about continuous backup, see xref:learn:services-and-indexes/services/continuous-backup.adoc[].
+
+[#continuousBackupEnabled]
+`continuousBackupEnabled`::
+Set to `true` to enable continuous backup for the bucket.
+
+[#continuousBackupLocation]
+`continuousBackupLocation`::
+The location where the Backup Service will store the continuous backup data.
+This value must be either an absolute path to a Network File System (NFS) mount point on every node or a cloud storage URI.
+
+[#continuousBackupCloudStorageCredId]
+`continuousBackupCloudStorageCredId`::
+If you set `continuousBackupLocation` to a cloud storage URI, set this to the name of a credential in the credential store that the Backup Service can use to authenticate.
+You must grant the Backup Service access to this credential.
+
+[#continuousBackupInterval]
+`continuousBackupInterval`::
+How frequently, in minutes, the Backup Service copies data to the continuous backup location.
+When using a cloud-based storage location, lower settings for this value result in higher per-access costs.
+
+[#continuousBackupRetentionPeriod]
+`continuousBackupRetentionPeriod`::
+The number of hours the Backup Service keeps the continuous backup data before purging it.
+This value sets how far back in time you can use Point-in-Time Recovery (PITR).
+
+If you have enabled encryption at rest for the bucket, you must supply the following:
+
+[#continuousBackupKmKeyUrl]
+`continuousBackupKmKeyUrl`::
+The URI for the Key Management Service (KMS) key the Backup Service uses to manage the encryption key it uses to encrypt data encryption keys.
+This URI must start with `awskms`, `azurekeyvault`, or `gcpkms`.
+
+[#continuousBackupKmCredId]
+`continuousBackupKmCredId`::
+The name of a credential in the Couchbase Server credential store that grants the Backup Service access to a KMS to manage its encryption keys.
+
+
+==== Continuous Backup Example
+
+The following example enables continuous backup for the `travel-sample` bucket.
+It sets the backup interval to 10 minutes.
+The backup location is an NFS share mounted at `/shared/continuous-backup` on all nodes:
+
+[source,bash]
+```
+include::manage:example$continuous-backup.sh[tag=enable-travel-sample]
+```
 
 == Responses
 

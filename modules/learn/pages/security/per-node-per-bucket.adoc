@@ -1,0 +1,75 @@
+= Per-Node and Per-Bucket Encryption Principles
+:description: Encryption at rest in Couchbase Server is designed around two key architectural principles: encryption is managed independently on each node, and each bucket can be encrypted independently with its own key.
+:page-toclevels: 2
+:page-edition: Enterprise Edition
+
+== Per-Node DEK Management
+
+Each node in the cluster generates and manages its own Data Encryption Keys (DEKs).
+DEKs are not shared between nodes.
+This design means:
+
+* Each node independently encrypts and decrypts the data it stores on its local disk.
+* If a node is compromised, only the DEKs for that node are exposed — DEKs on other nodes remain unaffected.
+* When you add a new node to the cluster, Couchbase Server generates new DEKs for that node during the rebalance process. 
+During file-based rebalance, services such as the Data and Index services may transfer encrypted bucket DEKs along with data files between nodes.
+The transferred DEKs are used for decryption purposes only. 
+New DEKs are generated on the target node for any subsequent encryption.
+
+== Per-Node KEK Storage
+
+Key Encryption Keys (KEKs) are configured globally for the cluster, but each node stores its own encrypted copy of each KEK on disk.
+This ensures that each node can decrypt its DEKs independently, even if the node is temporarily disconnected from the rest of the cluster.
+
+For locally managed keys (Couchbase Server Secret Management), the key material is stored in an encrypted file on each node's disk.
+The key is encrypted using either the master password or another KEK, depending on your configuration.
+
+For external KMS keys (AWS KMS, Azure Key Vault, GCP Cloud KMS, HashiCorp Vault, KMIP), the key material remains in the external KMS.
+Each node independently contacts the external KMS to decrypt the KEK when needed — typically at node startup.
+
+== Per-Bucket Encryption
+
+You configure encryption independently for each bucket.
+This means:
+
+* Different buckets can use different encryption keys.
+* You can encrypt sensitive buckets (such as buckets containing PII) while leaving less-sensitive
+  buckets unencrypted.
+* In multi-tenant deployments, each tenant's bucket can use its own encryption key, ensuring
+  cryptographic separation of tenant data.
+
+When you enable encryption for a bucket, Couchbase Server generates separate DEKs on each node for that bucket.
+Each node uses its per-node, per-bucket DEK to encrypt data it writes to disk for that bucket.
+
+== Per-Data-Type Encryption
+
+Similarly, you configure encryption independently for each type of system data (configuration, logs, audit, and other).
+Each data type has its own DEKs on each node:
+
+[source]
+----
+Node 1                          Node 2
+├── DEK: bucket-A               ├── DEK: bucket-A
+├── DEK: bucket-B               ├── DEK: bucket-B
+├── DEK: configuration          ├── DEK: configuration
+├── DEK: logs                   ├── DEK: logs
+├── DEK: audit                  ├── DEK: audit
+└── DEK: other                  └── DEK: other
+----
+
+This granular approach means you can assign different KEKs to different data types on the same cluster.
+For example, you can protect bucket data with one KEK managed by AWS KMS, and protect log data with a different KEK managed locally by Couchbase Server.
+
+== Monitor Encryption Status
+
+You can check the encryption status of each data type on each node using the REST API:
+
+* `GET /pools/default` — Returns per-node encryption status for configuration, audit, and log data
+  (in the `encryptionAtRestInfo` field).
+* `GET /pools/default/buckets/<name>` — Returns aggregated encryption status for the bucket
+  (in the `encryptionAtRestInfo` field) and per-node encryption status
+  (in the `bucketEncryptionAtRestInfo` field).
+* `GET /settings/security/encryptionAtRest` — Returns aggregated encryption status for
+  configuration, log, and audit data (in the `info` field).
+
+For more information, see xref:manage:manage-security/manage-encryption-at-rest.adoc[Manage Native Encryption at Rest] .

@@ -1,0 +1,156 @@
+= External Authentication Methods
+:description: pass:q[Couchbase Server can hand the job of checking a user's credentials to an external system, \
+such as an LDAP directory or an identity provider that issues JSON Web Tokens.]
+
+[abstract]
+{description}
+
+== Why Use External Authentication?
+
+With _native authentication_, you create every user in Couchbase Server and Couchbase Server stores their password.
+That works, but it means one more place to manage accounts.
+
+External authentication lets you keep your user accounts in a system you already run.
+Couchbase Server checks credentials against that system instead of storing passwords of its own.
+This gives you:
+
+* *One place to grant and revoke access.*
+When someone joins or leaves, you change their account once and every connected application follows.
++
+With JWT there is one caveat: revoking a user at the identity provider stops it issuing *new* tokens, but any token it already issued stays valid until it expires.
+A JWT cannot be cancelled once issued, so keep token lifetimes short if you need revocation to take effect quickly.
+
+* *One password policy.*
+Your existing rules for password length, complexity, and rotation apply to Couchbase Server too.
+
+* *Features Couchbase Server does not provide itself*, such as multi-factor authentication, self-service password reset, and single sign-on.
+
+Users authenticated by an external system belong to the _external_ authentication domain.
+For more about domains, see xref:learn:security/authentication-domains.adoc[Authentication Domains].
+
+== Available Methods
+
+Couchbase Server supports four external authentication methods.
+
+[cols="1,3"]
+|===
+| Method | Summary
+
+| PAM
+| Uses the Linux host's own _Pluggable Authentication Modules_ framework, so Couchbase Server users can sign in with their operating system accounts.
+Available on Linux only.
+See xref:manage:manage-security/configure-pam.adoc[Configure PAM].
+
+| LDAP
+| Checks credentials against a directory server.
+Microsoft Active Directory is an implementation of LDAP, so Active Directory works here too.
+LDAP can also tell Couchbase Server which groups a user belongs to.
+See xref:manage:manage-security/configure-ldap.adoc[Configure LDAP].
+
+| SAML
+| Single sign-on for the Couchbase Server Web Console only.
+Clients, the CLI, and the REST API cannot use SAML.
+See xref:manage:manage-security/configure-saml.adoc[Configure SAML].
+
+| JWT
+| Accepts a signed token issued by an identity provider as proof of identity.
+Works with the Web Console, clients, the CLI, and the REST API.
+See <<jwt-overview,JSON Web Token (JWT) Authentication>> below.
+|===
+
+All four external authentication methods require the Enterprise Edition.
+For a side-by-side comparison of every authentication method, including the native ones, see xref:learn:security/authentication-overview.adoc#comparison[Compare Authentication Methods].
+
+[#jwt-overview]
+== JSON Web Token (JWT) Authentication
+[.edition]#{enterprise}#
+
+A _JSON Web Token_ (JWT) is a small, self-contained block of text that says who a user is.
+An identity provider (IdP) creates the token, signs it, and gives it to the user's application.
+The application then presents the token to Couchbase Server instead of a username and password.
+
+Because the token is signed, Couchbase Server can confirm it is genuine and unaltered without calling back to the IdP on every request.
+A token carries both the user's identity and the proof of it, so a JWT is as sensitive as a password.
+Treat it that way.
+
+A token can also carry the user's groups and roles, which lets the identity provider decide what a user may do in Couchbase Server.
+Couchbase Server reads them only when you enable just-in-time provisioning for that issuer, and groups and roles are the only permissions a token can convey.
+
+=== How a JWT Sign-In Works
+
+. The application signs in to the identity provider.
+. The identity provider returns a signed token.
+. The application sends the token to Couchbase Server in the HTTP `Authorization` header as a _bearer token_.
+. Couchbase Server checks the signature and the token's contents.
+If everything holds up, it grants access.
+
+Access lasts until the token expires.
+The IdP sets the expiry, not Couchbase Server, so applications need to fetch a fresh token before the current one runs out.
+
+=== Where You Can Use a JWT
+
+You can authenticate with a JWT from:
+
+* The Couchbase Server Web Console, by signing in through your identity provider in the browser.
+* Client applications built with the Couchbase SDKs.
+* `couchbase-cli` commands.
+* REST API calls.
+
+=== Identity Providers
+
+Couchbase Server does not issue tokens.
+It relies on an external identity provider to do that.
+Couchbase Server is developed and tested against Keycloak.
+Other providers that issue standard signed JWTs, such as Okta, are expected to work in the same way.
+
+You can use a self-hosted provider such as Keycloak, which means JWT authentication also works in air-gapped environments with no route to the internet.
+
+Before anyone can sign in with a JWT, you must tell Couchbase Server about at least one issuer.
+You can configure several.
+Every token names its issuer in its `iss` claim, and Couchbase Server uses that name to look up which configuration to apply.
+See xref:manage:manage-security/configure-jwt-issuer.adoc[Configure a JWT Issuer].
+
+=== Requirements for Tokens
+
+Couchbase Server accepts a token only if it meets these conditions:
+
+* *The token is signed.*
+The JWT standard does not strictly require this, but Couchbase Server does.
+Most identity providers sign their tokens by default.
+Couchbase Server rejects a token that does not name a signing algorithm.
+
+* *The token uses JSON Web Signature (JWS) compact format.*
+This is the usual three-part `header.payload.signature` form.
+Couchbase Server does not support the JWT JSON Serialization format, and it does not support encrypted tokens (JSON Web Encryption, or JWE).
+
+* *The signing algorithm matches the one you configured for that issuer.*
+This prevents an attacker from swapping in a weaker algorithm.
+
+JWS signs the token but does not encrypt it.
+Anyone who intercepts a token can read its contents, and can also reuse it until it expires.
+*Always use TLS-encrypted connections when you use JWT authentication.*
+
+=== Deciding Where to Define Your Users
+
+You have two ways to set up users for JWT authentication, and you can mix them.
+
+*Define users in Couchbase Server.*
+Create each user in the external authentication domain and assign their roles and groups in Couchbase Server, the same way you would for LDAP or SAML.
+The token proves who they are; Couchbase Server decides what they can do.
+
+*Define users only in the identity provider.*
+This is called _just-in-time_ (JIT) provisioning.
+Turn it on, and a user can sign in without having a Couchbase Server account at all.
+Couchbase Server reads their roles and groups from the token each time they authenticate.
+It does not create an account for them, and it keeps nothing after they sign out.
+
+If you enable JIT provisioning, a user who _does_ have a Couchbase Server account can still sign in with a token.
+In that case they get the roles and groups from their account *and* those from the token, combined.
+
+For details, see xref:manage:manage-security/jwt-roles-and-groups.adoc[Assign Roles and Groups from a Token].
+
+== Learn More
+
+* xref:learn:security/authentication-overview.adoc[Understanding Authentication] for how authentication fits together in Couchbase Server.
+* xref:learn:security/native-authentication.adoc[Native Authentication Methods] for passwords and client certificates.
+* xref:manage:manage-security/manage-jwt.adoc[JWT Authentication] for configuration steps.

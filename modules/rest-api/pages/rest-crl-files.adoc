@@ -1,0 +1,136 @@
+= Upload, List, and Delete CRL Files
+:description: CRL files can be uploaded to, listed on, and deleted from the cluster with the REST API.
+:page-topic-type: reference
+:page-edition: Enterprise Edition
+
+[abstract]
+{description}
+
+[#http-methods-and-uris]
+== HTTP Methods and URIs
+
+----
+GET    /settings/crl/files
+POST   /settings/crl/files
+DELETE /settings/crl/files/<filename>
+----
+
+[#description]
+== Description
+
+* Uploaded CRLs are stored by the cluster and copied to every node.
+* `GET` lists them, with the CRLs each file contains.
+* `POST` uploads one file as `multipart/form-data`.
+The name of the uploaded file becomes the CRL file's name, and an existing file with that name is replaced.
+* `DELETE` removes the file from every node.
+
+Upload requirements:
+
+* Exactly one file per request.
+* A `Content-Length` header (chunked uploads are not accepted; `curl -F` sets it for you).
+* A file name of 1 to 255 characters from `A-Z a-z 0-9 . - _`, other than `.` or `..`.
+* Content that is PEM with one or more X509 CRL blocks, or a single DER CRL.
+* Every CRL in the file must be signed by a CA in the trust store, currently valid (between `thisUpdate` and `nextUpdate`), and free of unsupported critical extensions.
+
+[#curl-syntax]
+== Curl Syntax
+
+----
+curl -X GET    http://<host>:8091/settings/crl/files -u <username>:<password>
+curl -X POST   http://<host>:8091/settings/crl/files -u <username>:<password> -F "file=@<path-to-crl>"
+curl -X DELETE http://<host>:8091/settings/crl/files/<filename> -u <username>:<password>
+----
+
+== Required Privileges
+
+* `GET`: `cluster.admin.security!read` (xref:learn:security/roles.adoc#full-admin[Full Admin], xref:learn:security/roles.adoc#security-admin[Security Admin], xref:learn:security/roles.adoc#read-only-admin[Read-Only Admin]).
+* `POST`, `DELETE`: `cluster.admin.security!write` (Full Admin, Security Admin).
+
+[#responses]
+== Responses
+
+[cols="1,3,4"]
+|===
+| Code | When | Body
+
+| 200
+| `GET`, or successful `POST`
+| Array of uploaded files (see <<example>>)
+
+| 200
+| Successful `DELETE`
+| `{}`
+
+| 400
+| Upload rejected
+| `{"error": "<message>"}`, see the table below
+
+| 404
+| `DELETE` of an unknown file
+| `{"error": "CRL file not found"}`
+
+| 503
+| Cluster cannot commit the change
+| See xref:rest-api:rest-certificate-revocation.adoc#common-behavior[Common Behavior]
+|===
+
+Upload error messages:
+
+[cols="2,3"]
+|===
+| Message | Meaning
+
+| `Content-Type must be multipart/form-data`
+| Send the file with `-F`, not `-d`.
+
+| `Content-Length header is required; chunked transfer encoding is not supported`
+| The client used chunked encoding.
+
+| `Invalid Content-Length header`
+| Malformed header.
+
+| `No file found in multipart form data`
+| The form contains no file part.
+
+| `Multiple files found in multipart form data; only one is allowed`
+| Upload files one at a time.
+
+| `Invalid filename: must be 1-255 characters of letters, digits, dot, hyphen, or underscore, and cannot be . or ..`
+| Rename the file.
+
+| `Failed to decode CRL: Invalid CRL` (or `Failed to decode CRL: <reason>`)
+| The file is not a CRL, or is corrupt.
+
+| `CRL validation failed: Entry issued by '<issuer>': <reason>` (several entries are separated by `;`)
+| One of the CRLs in the file was rejected.
+`<reason>` is `CRL expired`, `CRL not yet valid`, `CRL issuer not trusted`, or `unrecognized critical extension <OID>`.
+|===
+
+[#example]
+== Example (List)
+
+[source,json]
+----
+[
+  {
+    "filename": "issuing-ca.crl",
+    "checksum": "5f0c...e1",
+    "uploadTimestamp": "2026-09-22T10:00:00.000Z",
+    "entries": [
+      {
+        "issuer": "CN=Example Issuing CA,O=Example",
+        "thisUpdate": "2026-09-22T00:00:00.000Z",
+        "nextUpdate": "2026-09-29T00:00:00.000Z",
+        "crlNumber": 42
+      }
+    ]
+  }
+]
+----
+
+`crlNumber` is `null` if the CRL has no CRL number.
+
+[#see-also]
+== See Also
+
+xref:learn:security/certificate-revocation.adoc[Certificate Revocation], xref:manage:manage-security/manage-certificate-revocation.adoc#upload-a-crl-file[Upload a CRL File].

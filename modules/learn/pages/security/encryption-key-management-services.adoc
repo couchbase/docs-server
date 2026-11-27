@@ -1,0 +1,558 @@
+= Encryption Key Management Services
+:description: A key management service (KMS) creates, stores, and manages the lifecycle of encryption keys. Couchbase Server uses a KMS to manage its encryption-at-rest keys. It uses these keys to encrypt and decrypt data encryption keys (DEKs) which are the keys nodes use to encrypt and decrypt the data they store on disk.
+:page-toclevels: 2
+:page-edition: Enterprise Edition
+
+When you create an encryption-at-rest key, you choose which KMS you want to manage it.
+Couchbase Server works with several KMSs:
+
+[cols="1,1,1"]
+|===
+| KMS | Key Location | Minimum Version
+
+| <<couchbase-server-secret-management,Couchbase Server Secret Management>>
+| Local (on each node)
+| 8.0
+
+| <<aws-key-management-service,AWS Key Management Service>>
+| AWS
+| 8.0
+
+| <<gcp-cloud-kms,GCP Cloud KMS>>
+| Google Cloud Platform
+| The next major release
+
+| <<azure-key-vault,Azure Key Vault>>
+| Microsoft Azure
+| The next major release
+
+| <<hashicorp-vault,HashiCorp Vault>>
+| HashiCorp Vault server
+| The next major release
+
+| <<kmip-kms,KMSs that support KMIP>>
+| KMIP-compatible server
+| 8.0
+|===
+
+[#couchbase-server-secret-management]
+== Couchbase Server Secret Management
+You can have Couchbase Server act as a KMS.
+When you use Couchbase Server as a KMS, it generates, stores, and manages the encryption keys it uses to encrypt DEKs.
+
+When Couchbase Server manages the keys, it stores them locally in an encrypted format.
+You can use the master password to encrypt encryption-at-rest keys.
+For more information about the master password, see xref:manage:manage-security/manage-system-secrets.adoc#setting-the-master-password[Setting the Master Password].
+This password is not set by default--you must configure it for each node. 
+For more information about the master password, see xref:manage:manage-security/manage-system-secrets.adoc[].
+
+[#aws-key-management-service]
+== AWS Key Management Service
+You can use the https://docs.aws.amazon.com/kms/latest/developerguide/overview.html[AWS Key Management Service] (AWS KMS) to manage encryption-at-rest keys.
+This method enhances security by keeping the encryption keys stored in AWS rather than on the Couchbase Server cluster.
+Couchbase Server sends encryption and decryption requests to the AWS KMS. 
+
+=== Prerequisites
+
+Before you configure an AWS KMS encryption key in Couchbase Server, complete the following steps in AWS:
+
+. Create a symmetric encryption key in AWS KMS.
+Record the key's Amazon Resource Name (ARN).
+
+. Create an IAM user or role with the following minimum permissions on the key:
++
+--
+* `kms:Encrypt`
+* `kms:Decrypt`
+* `kms:DescribeKey`
+--
+
+. Generate an access key ID and secret access key for the IAM user (or configure an instance profile if running on EC2).
+
+=== Configuration Parameters
+
+When you create an encryption-at-rest key using the AWS KMS provider, you supply the following:
+
+[cols="1,2"]
+|===
+| Parameter | Description
+
+| `keyARN`
+| The Amazon Resource Name (ARN) of the AWS KMS key.
+
+| `keyRegion`
+| The AWS region where the key resides (for example, `us-east-1`).
+
+| `authByInstanceMetadata`
+| Set to `true` to use EC2 instance metadata (IMDS) for authentication instead of explicit credentials.
+
+| `accessKeyId` / `secretAccessKey`
+| The IAM credentials for the user or role.
+Not required if you use instance metadata.
+|===
+
+=== Considerations
+
+* AWS KMS enhances security by keeping key material stored in AWS rather than on the Couchbase Server cluster.
+
+* The cluster relies on AWS for key operations.
+Disruptions in AWS or in the network between your cluster and AWS can cause errors because Couchbase Server cannot encrypt or decrypt DEKs.
+
+* Using AWS KMS can cause latency if Couchbase Server relies on it for many encryption keys.
+For more information, see <<remote-kms-best-practice>>.
+
+[#gcp-cloud-kms]
+== GCP Cloud KMS
+
+You can use https://cloud.google.com/kms[Google Cloud Key Management Service^] (Cloud KMS) to manage encryption-at-rest keys.
+Key material resides entirely in GCP — it never leaves the Cloud KMS boundary.
+Couchbase Server sends encrypt and decrypt API calls to Cloud KMS.
+
+=== Prerequisites
+
+Before you configure a GCP Cloud KMS encryption key in Couchbase Server, complete the following steps in GCP:
+
+. *Create a key ring and key.*
+In the Google Cloud Console, navigate to *Security > Key Management* and create a key ring in the region closest to your Couchbase Server cluster.
+Create a symmetric encrypt/decrypt key within the key ring.
+Record the key's resource name, which follows this format:
++
+----
+projects/<project-id>/locations/<location>/keyRings/<key-ring>/cryptoKeys/<key-name>
+----
+
+. *Create a service account.*
+Create a service account (or use an existing one) with the following IAM role on the key:
++
+--
+* `roles/cloudkms.cryptoKeyEncrypterDecrypter` — allows the service account to encrypt and decrypt data using the key.
+--
+
+. *Generate a service account key file.*
+Download a JSON key file for the service account.
+This file contains the credentials Couchbase Server uses to authenticate with Cloud KMS.
++
+Alternatively, if your Couchbase Server nodes run on Google Compute Engine, you can use the instance's attached service account for authentication instead of a key file.
+
+=== Configuration Parameters
+
+When you create an encryption-at-rest key using the GCP Cloud KMS provider, you supply the following:
+
+[cols="1,2"]
+|===
+| Parameter | Description
+
+| `keyResourceName`
+| The full resource name of the Cloud KMS key (for example, `projects/my-project/locations/us-central1/keyRings/my-ring/cryptoKeys/my-key`).
+
+| `credentialsFile`
+| The path to the JSON service account key file on each Couchbase Server node.
+Not required if you use instance-attached service account credentials.
+|===
+
+NOTE: Place the service account key file on every node in the cluster at the same path.
+Couchbase Server reads this file to authenticate with Cloud KMS.
+
+=== Considerations
+
+* GCP Cloud KMS enhances security by keeping key material stored in GCP rather than on the Couchbase Server cluster.
+
+* The cluster relies on GCP for key operations. Disruptions in GCP or in the network between your cluster and GCP can cause errors because Couchbase Server cannot encrypt or decrypt DEKs.
+
+* Using GCP Cloud KMS can cause latency if Couchbase Server relies on it for many encryption keys.
+For more information, see <<remote-kms-best-practice>>.
+
+* Make sure that the GCP service account credentials file is present at the exact same file path on every node in the cluster.
+Couchbase Server does not distribute this file automatically.
+
+[#azure-key-vault]
+== Azure Key Vault
+
+You can use https://azure.microsoft.com/en-us/products/key-vault[Microsoft Azure Key Vault^] to manage encryption-at-rest keys.
+Key material resides entirely in Azure Key Vault — it never leaves the Azure boundary.
+Couchbase Server sends encrypt and decrypt API calls to Azure Key Vault.
+
+=== Prerequisites
+
+Before you configure an Azure Key Vault encryption key in Couchbase Server, complete the following steps in Azure:
+
+. *Create a Key Vault.*
+In the Azure Portal, create a Key Vault (or use an existing one).
+Choose the *Standard* or *Premium* pricing tier.
+The Premium tier uses Hardware Security Modules (HSMs) for key protection.
+Record the vault's URI (for example, `\https://my-vault.vault.azure.net/`).
+
+. *Create a key.*
+In the Key Vault, generate a new RSA key or EC key for encryption.
+Record the key name and, optionally, the key version.
++
+NOTE: Couchbase Server uses the key for wrap/unwrap operations (envelope encryption), not direct encrypt/decrypt of data.
+
+. *Register an application.*
+In *Microsoft Entra ID* (formerly Azure Active Directory), register an application to represent Couchbase Server.
+Record the following:
++
+--
+* *Application (client) ID*
+* *Directory (tenant) ID*
+* *Client secret* (or client certificate) — create a new client secret under the application's *Certificates & secrets* settings and record the secret value.
+--
+
+. *Assign Key Vault permissions.*
+Grant the registered application the following key permissions on the Key Vault:
++
+--
+* `wrapKey`
+* `unwrapKey`
+--
++
+You can grant these permissions using either Key Vault access policies or Azure RBAC (the *Key Vault Crypto User* role includes both permissions).
+
+=== Configuration Parameters
+
+When you create an encryption-at-rest key using the Azure Key Vault provider, you supply the following:
+
+[cols="1,2"]
+|===
+| Parameter | Description
+
+| `vaultUrl`
+| The Key Vault URI (for example, `\https://my-vault.vault.azure.net/`).
+
+| `keyName`
+| The name of the key in the Key Vault.
+
+| `keyVersion`
+| _(Optional)_ The specific key version.
+If omitted, Couchbase Server uses the latest version.
+
+| `tenantId`
+| The Microsoft Entra ID (Azure AD) tenant ID.
+
+| `clientId`
+| The application (client) ID of the registered application.
+
+| `clientSecret`
+| The client secret value for the registered application.
+
+| `azureDomain`
+| _(Optional)_ The Azure domain to use.
+Defaults to the global Azure environment.
+Set this if you use a sovereign cloud (for example, Azure Government or Azure China).
+|===
+
+=== Considerations
+
+* Azure Key Vault follows the same external-key model as AWS KMS and GCP Cloud KMS — key material never resides on Couchbase Server nodes.
+* The cluster relies on Azure for key operations.
+Disruptions in Azure or in the network between your cluster and Azure can cause errors.
+* The algorithm field is immutable after key creation — you cannot change the algorithm of an existing Azure Key Vault encryption key.
+* No backward compatibility concerns — this is a new KMS provider.
+* For best practices, see <<remote-kms-best-practice>>.
+
+
+[#hashicorp-vault]
+== HashiCorp Vault
+
+You can use https://www.hashicorp.com/products/vault[HashiCorp Vault^] to manage encryption-at-rest keys.
+Couchbase Server uses the Vault https://developer.hashicorp.com/vault/docs/secrets/transit[Transit secrets engine^] for encrypt and decrypt operations.
+Key material resides entirely in the Vault server — it never leaves the Vault boundary.
+
+NOTE: HashiCorp Vault is a key management system, not an at-rest encryption solution by itself.
+Couchbase Server uses Vault as an external KMS to manage KEKs.
+The actual data encryption is performed by Couchbase Server using DEKs.
+
+=== Prerequisites
+
+Before you configure a HashiCorp Vault encryption key in Couchbase Server, complete the following steps in Vault:
+
+. *Enable the Transit secrets engine.*
++
+[source,console]
+----
+vault secrets enable transit
+----
+
+. *Create a named encryption key.*
++
+[source,console]
+----
+vault write -f transit/keys/couchbase-kek type=aes256-gcm96
+----
++
+Record the key name (for example, `couchbase-kek`).
+Couchbase Server uses this name when sending encrypt and decrypt requests.
+
+. *Create a policy.*
+Create a Vault policy that grants encrypt and decrypt access to the Transit key:
++
+[source,hcl]
+----
+path "transit/encrypt/couchbase-kek" {
+  capabilities = ["update"]
+}
+
+path "transit/decrypt/couchbase-kek" {
+  capabilities = ["update"]
+}
+
+path "transit/keys/couchbase-kek" {
+  capabilities = ["read"]
+}
+----
+
+. *Configure an authentication method.*
+Couchbase Server supports the following Vault authentication methods:
++
+--
+* *Token authentication* — Provide a Vault token directly.
+The token must have the policy created in the previous step attached.
+* *TLS certificate authentication* — Provide a client certificate and private key.
+Vault uses mutual TLS to authenticate Couchbase Server.
+The private key must be in PKCS#8 format.
+--
++
+For TLS certificate authentication, configure a certificate auth method in Vault and create a certificate role:
++
+[source,console]
+----
+vault auth enable cert
+vault write auth/cert/certs/couchbase-role \
+  display_name=couchbase \
+  policies=couchbase-transit-policy \
+  certificate=@/path/to/client-cert.pem
+----
+
+=== Configuration Parameters
+
+When you create an encryption-at-rest key using the HashiCorp Vault provider, you supply the following:
+
+[cols="1,2"]
+|===
+| Parameter | Description
+
+| `address`
+| The URL of the Vault server (for example, `\https://vault.example.com:8200`).
+
+| `keyName`
+| The name of the Transit key (for example, `couchbase-kek`).
+
+| `transitMountPath`
+| _(Optional)_ The mount path of the Transit secrets engine.
+Defaults to `transit`.
+
+| `authMethod`
+| The authentication method: `token` or `cert`.
+
+| `token`
+| _(Token auth only)_ The Vault token.
+
+| `clientCertPath`
+| _(Cert auth only)_ The path to the client certificate file on each node.
+
+| `clientKeyPath`
+| _(Cert auth only)_ The path to the client private key file (PKCS#8 format) on each node.
+
+| `clientKeyPassphrase`
+| _(Cert auth only)_ The passphrase for the client private key.
+
+| `caCertPath`
+| _(Optional)_ The path to the CA certificate used to verify the Vault server's TLS certificate.
+If omitted, Couchbase Server uses the system CA bundle.
+|===
+
+=== Key Rotation
+
+HashiCorp Vault supports key versioning within the Transit engine.
+When you rotate a Transit key in Vault:
+
+. Vault creates a new key version.
+The key name stays the same.
+. Trigger rotation of the corresponding encryption key in Couchbase Server (on-demand).
+. Couchbase Server re-encrypts all keys encrypted by the Vault key using the new version.
+
+Previous key versions remain available in Vault for decrypting data encrypted with older versions.
+
+=== Considerations
+
+* HashiCorp Vault provides a cloud-agnostic KMS option — useful when your infrastructure spans multiple cloud providers or runs on-premises.
+* The cluster relies on Vault for key operations.
+Disruptions in Vault or in the network between your cluster and Vault can cause errors.
+* For TLS certificate authentication, place the client certificate and key files on every node in the cluster at the same path.
+* PKCS#8 format is required for the client private key.
+* No backward compatibility concerns — this is a new KMS provider.
+* For best practices, see <<remote-kms-best-practice>>.
+
+[#kmip-kms]
+=== KMSs that support Key Management Interoperability Protocol (KMIP)
+https://en.wikipedia.org/wiki/Key_Management_Interoperability_Protocol[KMIP] is a standards protocol implemented by key management services.
+Couchbase Server can work with any KMS that implements this standard.
+As with AWS KMS, using a KMIP-compliant KMS enhances security by storing the encryption keys remotely instead of locally in the cluster.
+It also has the same downside--Couchbase Server may report errors due to KMS downtime or network issues.
+
+=== Prerequisites
+
+Before you configure a KMIP encryption key in Couchbase Server:
+
+. *Set up a KMIP-compliant KMS.*
+Install and configure a KMS that supports KMIP 1.2 or later.
+
+. *Create a symmetric key in the KMS.*
+Create an AES-256 symmetric key and record its KMIP key ID.
+
+. *Configure mutual TLS authentication.*
+KMIP uses mutual TLS for authentication between Couchbase Server and the KMS.
+You need:
++
+--
+* A client certificate (`tls.crt`) issued to Couchbase Server
+* A client private key (`tls.key`) in PKCS#8 format, encrypted with a passphrase
+* The passphrase for the private key
+* The CA certificate used to verify the KMIP server's TLS certificate (optional — you can also use the system CA bundle or the Couchbase CA bundle)
+--
++
+Place the certificate and key files on every node in the cluster at the same path.
+
+=== Encryption Approaches
+
+Couchbase Server supports two approaches for KMIP key operations:
+
+[cols="1,2,1"]
+|===
+| Approach | Description | Key in Couchbase Memory?
+
+| `LocalEncrypt` (recommended)
+| Couchbase Server fetches the key material from the KMIP server, caches it in memory, and performs encrypt and decrypt operations locally.
+This is faster because only the initial key fetch requires a network call to the KMIP server.
+| Yes — key material is cached in Couchbase Server memory.
+
+| `NativeEncryptDecrypt`
+| Couchbase Server sends data to the KMIP server for encryption and decryption.
+The key material never leaves the KMIP server.
+This is more secure because the key is never present in Couchbase Server memory, but it is slower because every encrypt and decrypt operation requires a network call.
+| No — key material never leaves the KMIP server.
+|===
+
+Choose the approach that matches your security and performance requirements:
+
+* Use `LocalEncrypt` when performance is a priority and you trust the security of the Couchbase Server nodes.
+This approach is recommended for most deployments.
+* Use `NativeEncryptDecrypt` when regulatory or compliance requirements mandate that key material must never reside outside the KMS.
+
+=== Configuration Parameters
+
+When you create an encryption-at-rest key using the KMIP provider, you supply the following:
+
+[cols="1,2"]
+|===
+| Parameter | Description
+
+| `host`
+| The hostname or IP address of the KMIP server.
+
+| `port`
+| The KMIP server port (typically `5696`).
+Must be between 1 and 65536.
+
+| `keyID`
+| The KMIP key ID of the symmetric key.
+
+| `encryptionApproach`
+| `LocalEncrypt` or `NativeEncryptDecrypt`.
+
+| `certPath`
+| The path to the client certificate file on each node.
+
+| `keyPath`
+| The path to the client private key file (PKCS#8 format) on each node.
+
+| `keyPassphrase`
+| The passphrase for the client private key.
+
+| `caSelection`
+| How to verify the KMIP server's TLS certificate: `verifyWithSystemCA`, `verifyWithCouchbaseCA`, or `skipServerCertVerification`.
+
+| `reqTimeoutMs`
+| The request timeout in milliseconds (between 1000 and 300000).
+|===
+
+=== Key Rotation
+
+To rotate a KMIP key:
+
+. Generate a new symmetric key in the KMIP server and record its ID.
+. Update the KMIP key ID in the corresponding encryption key in Couchbase Server.
+. Couchbase Server re-encrypts all keys encrypted by the old KMIP key with the new key.
+Previous KMIP key IDs are saved until re-encryption is complete, then removed automatically.
+
+NOTE: Unlike AWS KMS (which uses transparent rotation), KMIP requires you to manually update the key ID in Couchbase Server after generating a new key in the KMIP server.
+
+[#bring-your-own-key]
+== Bring-Your-Own-Key (BYOK)
+
+Couchbase Server supports a Bring-Your-Own-Key (BYOK) model through its external KMS integrations.
+With BYOK, you create and manage your encryption keys in your own KMS and configure Couchbase Server to use those keys for encryption at rest.
+
+=== How BYOK Works
+
+BYOK in Couchbase Server uses envelope encryption:
+
+. You create a key in your external KMS (AWS KMS, Azure Key Vault, GCP Cloud KMS, HashiCorp Vault, or a KMIP server).
+. You configure this external key as a KEK in Couchbase Server.
+. Couchbase Server generates local encryption-at-rest keys and encrypts them with your external KEK.
+. These local keys encrypt the DEKs, which encrypt the data on disk.
+
+Your external key never leaves your KMS.
+You retain full lifecycle control: creation, rotation, suspension, and deletion.
+
+=== Benefits
+
+* *Full key control.* You manage the master key in your own infrastructure or cloud account.
+No Couchbase employee or process can access your key material.
+* *Compliance.* BYOK satisfies regulatory requirements that mandate customer-managed encryption keys (for example, PCI-DSS, HIPAA, SOX).
+* *Centralized key management.* You can use a single KMS to manage keys for Couchbase Server and other systems in your environment.
+* *Revocability.* If you disable or delete the external key in your KMS, Couchbase Server can no longer decrypt DEKs.
+This provides a cryptographic "kill switch" for the data.
+
+=== Considerations
+
+IMPORTANT: If you delete or permanently disable the external key in your KMS, Couchbase Server cannot start or decrypt any data encrypted by keys that depend on it.
+This action is irreversible if the KMS does not support key recovery.
+Always verify that your KMS supports a soft-delete or key-disabling mechanism before relying on key deletion as a security control.
+
+* BYOK does not prevent authorized Couchbase Server administrators from reading data while the cluster is running.
+When the cluster is operational, the data is decrypted transparently.
+BYOK protects against offline access to storage media.
+
+* Use the recommended multi-layer key hierarchy: external key → local KEK → DEK → data.
+For more information, see <<remote-kms-best-practice>>.
+
+* Key rotation in the external KMS must be coordinated with Couchbase Server.
+After rotating a key in your KMS, trigger a corresponding rotation in Couchbase Server.
+For more information, see xref:learn:security/encryption-key-rotation-expiration.adoc[].
+
+[#remote-kms-best-practice]
+== Remote KMS Best Practice
+====
+Do not assign encryption keys managed by an external KMS (AWS KMS, GCP Cloud KMS, Azure Key Vault, HashiCorp Vault, or a KMIP KMS) directly to encrypt Couchbase Server data.
+
+When you assign an encryption key to encrypt a particular type of data, Couchbase Server uses the key to encrypt the DEKs each node uses to encrypt the data.
+If a DEK is encrypted with a key managed by an external KMS, Couchbase Server has to send a request to the KMS to decrypt the DEK.
+These requests to a remote KMS can take less than a second.
+However, a starting cluster needs to decrypt all of the DEKs on all nodes.
+The volume of these synchronous requests can result in a significant delay in starting the cluster.
+
+To avoid this issue, use an external KMS encryption key only as a KEK for encryption-at-rest keys managed by Couchbase Server.
+Then assign these Couchbase Server-managed keys to encrypt data.
+This method reduces the number of requests to the remote KMS.
+Once Couchbase Server has the KMS decrypt its encryption keys, it can decrypt the DEKs locally.
+
+For more information about using multiple KMSs and multiple keys, see xref:learn:security/multiple-KMS-multiple-keys.adoc[].
+====
+
+== See Also 
+
+* xref:encryption-overview.adoc[]
+* xref:encryption-at-rest-keys.adoc[]
+* xref:encryption-key-rotation-expiration.adoc[]
+* xref:learn:security/multiple-KMS-multiple-keys.adoc[]
