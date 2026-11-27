@@ -46,6 +46,27 @@ External collections are read-only.
 You can only perform queries on them using the {sqlpp} `SELECT` statement.
 Attempting to use `INSERT`, `UPDATE`, `UPSERT`, `DELETE`, or `MERGE` on an external collection fails with error `3510`.
 
+[#query-restrictions]
+=== Statements and Clauses for Standard Collections Only
+
+External collections hold no documents and no document keys, so some {sqlpp} statements and clauses apply only to standard collections.
+Using any of the following with an external collection fails with error `3510`:
+
+* Index statements: `CREATE INDEX`, `CREATE PRIMARY INDEX`, `ALTER INDEX`, `BUILD INDEX`, and `DROP INDEX`.
+Couchbase Server does not index external collections.
+Instead, it limits the data it reads by using the table's metadata and, for Parquet files, the file statistics.
+* `INFER`, `UPDATE STATISTICS`, and `FLUSH COLLECTION`.
+* The `USE KEYS` clause, and lookup or index joins that use `ON KEYS` or `ON KEY`.
+Use an ANSI join with an `ON` clause instead.
+* A correlated subquery that reads from an external collection.
+
+[#scan-timeout]
+=== Query Timeout
+
+A query that reads from an external collection follows the query's timeout, if it has one.
+If the query has no timeout, Couchbase Server stops reading from the storage location after 2 minutes and the query fails with error `12057`.
+To give a long-running query more time, set a timeout on the query.
+
 [#roles]
 === Required Roles to Query External Collections
 
@@ -177,20 +198,26 @@ Set the `decimal-to-double` option on the external collection to convert to a nu
 To learn more about the `decimal-to-double` setting, see xref:manage:manage-scopes-and-collections/external-collection-options.adoc#convert-decimals-to-doubles[Convert Decimals to Doubles].
 
 |`date`
-|Number
+|Number, or string
 |Integer count of days since the Unix epoch (midnight on January 1^st^, 1970 UTC).
+With `temporal-to-string` set, an ISO-8601 date string, such as `"2026-09-01"`.
 
 |`time`
-|Number
+|Number, or string
 |Integer count of microseconds since midnight.
+With `temporal-to-string` set, an ISO-8601 time string, such as `"14:30:00"`.
 
 |`timestamp`, `timestamptz`
-|Number
+|Number, or string
 |Integer count of microseconds since the Unix epoch.
+With `temporal-to-string` set, an ISO-8601 timestamp string.
+A `timestamp` string has no time zone, such as `"2026-09-01T14:30:00"`.
+A `timestamptz` string is in UTC and ends with `Z`, such as `"2026-09-01T14:30:00Z"`.
 
 |`timestamp_ns`, `timestamptz_ns`
-|Number
+|Number, or string
 |Integer count of nanoseconds since the Unix epoch.
+With `temporal-to-string` set, an ISO-8601 timestamp string with up to 9 fractional digits.
 
 |`uuid`
 |String
@@ -202,7 +229,7 @@ To learn more about the `decimal-to-double` setting, see xref:manage:manage-scop
 
 |`fixed(L)`
 |String
-|Literal string representation of the underlying bytes, such as `"[222 173 190 239]"`.
+|Base64-encoded string, the same as `binary`.
 
 |`struct`
 |Object
@@ -217,7 +244,17 @@ Couchbase Server takes the JSON key names from the `struct` definition.
 |Object
 |JSON object.
 The map's keys become the object's field names.
+
+|`variant`
+|Any JSON value
+|The JSON object, array, or scalar value that the variant holds.
+The `variant` type requires Iceberg table format version 3.
+A `decimal` value inside a variant follows the `decimal-to-double` setting.
+A date, time, or timestamp value inside a variant is an integer, whatever the `temporal-to-string` setting.
 |===
+
+Fractional seconds in an ISO-8601 string appear only when they're not zero.
+To learn more about the `temporal-to-string` setting, see xref:manage:manage-scopes-and-collections/external-collection-options.adoc#convert-temporal-values-to-strings[Convert Date and Time Values to Strings].
 
 For example, suppose you create an external collection with the keyspace path `travel-sample.external.orders` that maps to an Iceberg table with the following columns:
 
@@ -293,7 +330,7 @@ The result shows how Couchbase Server converts the example data into a JSON obje
   "pickup_time": 52200000000,
   "created_at": 1788273000000000,
   "tracking_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "checksum": "[161 178 195 212 229 246 7 24]",
+  "checksum": "obLD1OX2Bxg=",
   "label_image": "SU1HX0RBVEE=",
   "notes": "Handle with care",
   "shipping_address": {
@@ -311,11 +348,11 @@ The result shows how Couchbase Server converts the example data into a JSON obje
 Some things to notice in the output:
 
 * Couchbase Server converts `unit_price` to the string `"49.99"` instead of a number. This conversion preserves precision that could be lost by converting to a double.
-* The `ship_date`, `pickup_time`, and `created_at` fields all convert to integer values.
+* The `ship_date`, `pickup_time`, and `created_at` fields all convert to integer values by default.
 Each number represents units of time since an epoch, not a formatted date or time string.
+With `temporal-to-string` set, they convert to `"2026-09-01"`, `"14:30:00"`, and `"2026-09-01T14:30:00"`.
 * The `tracking_id` UUID converts to a readable string.
-* The `label_image` binary field converts to a base64 string you can decode.
-* The `checksum` fixed-length binary string converts to a string representation: `"[161 178 195 212 229 246 7 24]"`.
+* The `label_image` binary field and the `checksum` fixed-length binary field both convert to base64 strings you can decode.
 
 == Frequently Asked Questions
 
@@ -323,6 +360,11 @@ Can I write to an external collection?::
 No.
 External collections are read-only.
 `INSERT`, `UPDATE`, `UPSERT`, `DELETE`, and `MERGE` all fail against an external collection with error `3510`.
+
+Can I create an index on an external collection?::
+No.
+Index statements fail against an external collection with error `3510`.
+See <<query-restrictions>> for the other statements and clauses that apply only to standard collections.
 
 Does querying an external collection copy the Iceberg data into Couchbase?::
 No.
